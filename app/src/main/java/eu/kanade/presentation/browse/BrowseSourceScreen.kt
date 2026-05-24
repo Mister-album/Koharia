@@ -44,6 +44,7 @@ fun BrowseSourceContent(
     displayMode: LibraryDisplayMode,
     snackbarHostState: SnackbarHostState,
     contentPadding: PaddingValues,
+    showLibraryBadges: Boolean = true,
     onWebViewClick: () -> Unit,
     onHelpClick: () -> Unit,
     onLocalSourceHelpClick: () -> Unit,
@@ -123,6 +124,7 @@ fun BrowseSourceContent(
                 mangaList = mangaList,
                 columns = columns,
                 contentPadding = contentPadding,
+                showLibraryBadges = showLibraryBadges,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )
@@ -131,6 +133,7 @@ fun BrowseSourceContent(
             BrowseSourceList(
                 mangaList = mangaList,
                 contentPadding = contentPadding,
+                showLibraryBadges = showLibraryBadges,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )
@@ -140,6 +143,7 @@ fun BrowseSourceContent(
                 mangaList = mangaList,
                 columns = columns,
                 contentPadding = contentPadding,
+                showLibraryBadges = showLibraryBadges,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )

@@ -2,7 +2,7 @@ package eu.kanade.domain.source.service
 
 import eu.kanade.domain.source.interactor.SetMigrateSorting
 import eu.kanade.tachiyomi.util.system.LocaleHelper
-import mihon.domain.migration.models.MigrationFlag
+import koharia.domain.migration.models.MigrationFlag
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum

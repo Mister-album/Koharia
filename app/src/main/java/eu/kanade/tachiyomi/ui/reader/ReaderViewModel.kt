@@ -492,6 +492,7 @@ class ReaderViewModel @JvmOverloads constructor(
             downloadManager.downloadChapters(
                 manga,
                 chaptersToDownload,
+                mode = Download.Mode.PAGE_CACHE,
             )
         }
     }

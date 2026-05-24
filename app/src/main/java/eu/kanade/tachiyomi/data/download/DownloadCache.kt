@@ -385,8 +385,8 @@ class DownloadCache(
                                         it.name?.endsWith(Downloader.TMP_DIR_SUFFIX) == true -> null
                                         // Folder of images
                                         it.isDirectory -> it.name
-                                        // CBZ files
-                                        it.isFile && it.extension == "cbz" -> it.nameWithoutExtension
+                                        // Supported downloaded files
+                                        it.isFile && DownloadProvider.isSupportedChapterFileExtension(it.extension) -> it.nameWithoutExtension
                                         // Anything else is irrelevant
                                         else -> null
                                     }

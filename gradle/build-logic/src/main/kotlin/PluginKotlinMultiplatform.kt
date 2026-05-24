@@ -1,11 +1,11 @@
 import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
-import mihon.gradle.configurations.configureKotlin
-import mihon.gradle.extensions.alias
-import mihon.gradle.extensions.configureTest
-import mihon.gradle.extensions.coreLibraryDesugaring
-import mihon.gradle.extensions.libs
-import mihon.gradle.extensions.mihonx
-import mihon.gradle.extensions.plugins
+import koharia.gradle.configurations.configureKotlin
+import koharia.gradle.extensions.alias
+import koharia.gradle.extensions.configureTest
+import koharia.gradle.extensions.coreLibraryDesugaring
+import koharia.gradle.extensions.libs
+import koharia.gradle.extensions.kohariax
+import koharia.gradle.extensions.plugins
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
@@ -31,8 +31,8 @@ class PluginKotlinMultiplatform : Plugin<Project> {
             applyDefaultHierarchyTemplate()
 
             android {
-                minSdk = mihonx.versions.android.sdk.min.get().toInt()
-                compileSdk = mihonx.versions.android.sdk.compile.get().toInt()
+                minSdk = kohariax.versions.android.sdk.min.get().toInt()
+                compileSdk = kohariax.versions.android.sdk.compile.get().toInt()
                 enableCoreLibraryDesugaring = true
             }
         }

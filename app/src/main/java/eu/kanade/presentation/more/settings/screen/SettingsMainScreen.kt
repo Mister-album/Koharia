@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Storage
@@ -44,6 +45,7 @@ import eu.kanade.presentation.more.settings.screen.about.AboutScreen
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Screen
+import koharia.source.komga.KomgaServerSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -203,12 +205,6 @@ object SettingsMainScreen : Screen() {
             screen = SettingsTrackingScreen,
         ),
         Item(
-            titleRes = MR.strings.browse,
-            subtitleRes = MR.strings.pref_browse_summary,
-            icon = Icons.Outlined.Explore,
-            screen = SettingsBrowseScreen,
-        ),
-        Item(
             titleRes = MR.strings.label_data_storage,
             subtitleRes = MR.strings.pref_backup_summary,
             icon = Icons.Outlined.Storage,
@@ -225,6 +221,12 @@ object SettingsMainScreen : Screen() {
             subtitleRes = MR.strings.pref_advanced_summary,
             icon = Icons.Outlined.Code,
             screen = SettingsAdvancedScreen,
+        ),
+        Item(
+            titleRes = MR.strings.pref_komga_server,
+            subtitleRes = MR.strings.pref_komga_server_summary,
+            icon = Icons.Outlined.Router,
+            screen = KomgaServerSettingsScreen(),
         ),
         Item(
             titleRes = MR.strings.pref_category_about,

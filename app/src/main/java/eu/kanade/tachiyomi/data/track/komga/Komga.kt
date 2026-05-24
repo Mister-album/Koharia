@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.data.track.BaseTracker
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.source.Source
+import koharia.source.komga.KomgaSource
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import okhttp3.Dns
@@ -90,7 +91,10 @@ class Komga(id: Long) : BaseTracker(id, "Komga"), EnhancedTracker {
         saveCredentials("user", "pass")
     }
 
-    override fun getAcceptedSources() = listOf("eu.kanade.tachiyomi.extension.all.komga.Komga")
+    override fun getAcceptedSources() = listOf(
+        "eu.kanade.tachiyomi.extension.all.komga.Komga",
+        KomgaSource::class.qualifiedName!!,
+    )
 
     override suspend fun match(manga: Manga): TrackSearch? =
         try {

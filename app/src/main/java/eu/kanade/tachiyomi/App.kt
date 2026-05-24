@@ -53,9 +53,9 @@ import kotlinx.coroutines.flow.onEach
 import logcat.AndroidLogcatLogger
 import logcat.LogPriority
 import logcat.LogcatLogger
-import mihon.core.migration.Migrator
-import mihon.core.migration.migrations.migrations
-import mihon.telemetry.TelemetryConfig
+import koharia.core.migration.Migrator
+import koharia.core.migration.migrations.migrations
+import koharia.telemetry.TelemetryConfig
 import org.conscrypt.Conscrypt
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.Preference

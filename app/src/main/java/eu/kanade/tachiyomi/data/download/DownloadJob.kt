@@ -12,6 +12,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.NetworkState
 import eu.kanade.tachiyomi.util.system.activeNetworkState
@@ -24,6 +25,10 @@ import kotlinx.coroutines.flow.combineTransform
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import logcat.LogPriority
+import koharia.source.komga.KomgaSource
+import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.download.service.DownloadPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -54,13 +59,29 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
     }
 
     override suspend fun doWork(): Result {
-        var networkCheck = checkNetworkState(
-            applicationContext.activeNetworkState(),
-            downloadPreferences.downloadOnlyOverWifi.get(),
-        )
-        var active = networkCheck && downloadManager.downloaderStart()
+        val requireWifi = downloadPreferences.downloadOnlyOverWifi.get()
+        val initialNetworkState = applicationContext.activeNetworkState()
+        var networkCheck = checkNetworkState(initialNetworkState, requireWifi)
+        val queueSizeBeforeStart = downloadManager.queueState.value.size
+        val downloaderStarted = if (networkCheck) downloadManager.downloaderStart() else false
+        var active = networkCheck && downloaderStarted
+
+        logcat(LogPriority.INFO) {
+            "DownloadJob.doWork(): networkCheck=$networkCheck, " +
+                "requireWifi=$requireWifi, " +
+                "isConnected=${initialNetworkState.isConnected}, " +
+                "isValidated=${initialNetworkState.isValidated}, " +
+                "isWifi=${initialNetworkState.isWifi}, " +
+                "queueSizeBeforeStart=$queueSizeBeforeStart, " +
+                "downloaderStarted=$downloaderStarted, " +
+                "managerIsRunning=${downloadManager.isRunning}"
+        }
 
         if (!active) {
+            logcat(LogPriority.WARN) {
+                "DownloadJob.doWork(): failing early due to start precondition, " +
+                    "networkCheck=$networkCheck, downloaderStarted=$downloaderStarted"
+            }
             return Result.failure()
         }
 
@@ -72,7 +93,12 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
                 downloadPreferences.downloadOnlyOverWifi.changes(),
                 transform = { a, b -> emit(checkNetworkState(a, b)) },
             )
-                .onEach { networkCheck = it }
+                .onEach {
+                    networkCheck = it
+                    logcat(LogPriority.DEBUG) {
+                        "DownloadJob.doWork(): networkCheck updated to $networkCheck"
+                    }
+                }
                 .launchIn(this)
         }
 
@@ -84,17 +110,55 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
         return Result.success()
     }
 
-    private fun checkNetworkState(state: NetworkState, requireWifi: Boolean): Boolean {
-        return if (state.isOnline) {
-            val noWifi = requireWifi && !state.isWifi
-            if (noWifi) {
-                downloadManager.downloaderStop(
-                    applicationContext.getString(R.string.download_notifier_text_only_wifi),
-                )
-            }
-            !noWifi
-        } else {
+    private suspend fun checkNetworkState(state: NetworkState, requireWifi: Boolean): Boolean {
+        if (!state.isConnected) {
             downloadManager.downloaderStop(applicationContext.getString(R.string.download_notifier_no_network))
+            return false
+        }
+
+        val noWifi = requireWifi && !state.isWifi
+        if (noWifi) {
+            downloadManager.downloaderStop(
+                applicationContext.getString(R.string.download_notifier_text_only_wifi),
+            )
+            return false
+        }
+
+        if (state.isValidated) {
+            return true
+        }
+
+        val komgaReachable = isQueuedKomgaSourceReachable()
+        if (komgaReachable) {
+            logcat(LogPriority.INFO) {
+                "DownloadJob.checkNetworkState(): allowing unvalidated connected network due to reachable Komga source"
+            }
+            return true
+        }
+
+        downloadManager.downloaderStop(applicationContext.getString(R.string.download_notifier_no_network))
+        return false
+    }
+
+    private suspend fun isQueuedKomgaSourceReachable(): Boolean {
+        val komgaSource = downloadManager.queueState.value.firstOrNull()?.source as? KomgaSource ?: return false
+        if (komgaSource.baseUrl.isBlank()) return false
+
+        return runCatching {
+            withIOContext {
+                komgaSource.client.newCall(GET("${komgaSource.baseUrl}/api/v1/libraries?size=1", komgaSource.headers))
+                    .execute()
+                    .use { response ->
+                        logcat(LogPriority.INFO) {
+                            "DownloadJob.isQueuedKomgaSourceReachable(): probe code=${response.code}"
+                        }
+                        response.isSuccessful
+                    }
+            }
+        }.getOrElse { error ->
+            logcat(LogPriority.WARN, error) {
+                "DownloadJob.isQueuedKomgaSourceReachable(): probe failed"
+            }
             false
         }
     }

@@ -7,6 +7,7 @@
     <string name="history">历史</string>
     <string name="label_settings">设置</string>
     <string name="label_download_queue">下载队列</string>
+    <string name="komga_label_offline_cache_queue">离线缓存队列</string>
     <string name="label_library">书架</string>
     <string name="label_recent_manga">历史</string>
     <string name="label_recent_updates">更新</string>
@@ -70,6 +71,26 @@
     <string name="pref_category_tracking">进度记录</string>
     <string name="pref_category_advanced">高级</string>
     <string name="pref_category_about">关于</string>
+    <string name="pref_komga_server">Komga 服务器</string>
+    <string name="pref_komga_server_summary">配置当前连接的 Komga 服务器地址和认证信息</string>
+    <string name="komga_pref_address_title">服务器地址</string>
+    <string name="komga_pref_address_summary">Komga 服务器地址</string>
+    <string name="komga_pref_address_dialog">地址末尾不能带斜杠。</string>
+    <string name="komga_pref_address_validation">URL 必须以 http:// 或 https:// 开头</string>
+    <string name="komga_pref_api_key_title">API Key</string>
+    <string name="komga_pref_api_key_summary">可选：使用 API Key 进行认证</string>
+    <string name="komga_pref_username_title">用户名</string>
+    <string name="komga_pref_username_summary">Komga 用户名或邮箱</string>
+    <string name="komga_pref_password_title">密码</string>
+    <string name="komga_pref_password_summary">Komga 账户密码</string>
+    <string name="komga_pref_default_libraries_title">默认分类</string>
+    <string name="komga_pref_default_libraries_summary">默认只显示所选 Komga 分类下的内容。</string>
+    <string name="komga_pref_default_libraries_reload_hint">退出并重新进入设置页后可加载分类选项。</string>
+    <string name="komga_pref_chapter_name_template_title">章节标题格式</string>
+    <string name="komga_pref_chapter_name_template_summary">自定义章节名称显示方式。阅读列表中的图书会自动加上作品标题前缀。</string>
+    <string name="komga_pref_chapter_name_template_dialog">支持的占位符：\n- {title}\n- {seriesTitle}\n- {number}\n- {createdDate}\n- {releaseDate}\n- {size}\n- {sizeBytes}</string>
+    <string name="komga_filter_fetch_failed">从服务器获取筛选选项失败</string>
+    <string name="komga_filter_fetch_hint">点击“重置”后显示筛选选项</string>
     <string name="pref_library_columns">每行数目</string>
     <string name="portrait">竖屏</string>
     <string name="landscape">横屏</string>
@@ -200,6 +221,7 @@
     <string name="source_not_installed">未安装图源：%1$s</string>
     <string name="display_mode_chapter">第 %1$s 章</string>
     <string name="chapter_downloading_progress">正在下载 (%1$d/%2$d)</string>
+    <string name="chapter_downloading_file_progress">正在下载 (%1$s/%2$s)</string>
     <string name="chapter_error">出错</string>
     <string name="chapter_paused">已暂停</string>
     <string name="show_title">图源标题</string>
@@ -207,6 +229,8 @@
     <string name="sort_by_source">按图源</string>
     <string name="sort_by_number">按章节编号</string>
     <string name="manga_download">下载</string>
+    <string name="komga_action_cache">缓存</string>
+    <string name="komga_action_remove_cache">删除缓存</string>
     <string name="download_unread">未读</string>
     <string name="confirm_delete_chapters">确定要删除所选章节吗？</string>
     <string name="manga_tracking_tab">进度记录</string>
@@ -258,6 +282,7 @@
     <string name="update_check_notification_download_error">下载失败</string>
     <string name="update_check_notification_update_available">有新版本！</string>
     <string name="information_no_downloads">无下载任务</string>
+    <string name="komga_information_no_offline_cache">无离线缓存任务</string>
     <string name="information_no_recent">最近没有更新</string>
     <string name="information_no_recent_manga">最近没有阅读</string>
     <string name="information_empty_library">书架为空</string>
@@ -348,6 +373,8 @@
     <string name="add_to_library">添加到书架</string>
     <string name="in_library">在书架中</string>
     <string name="label_downloaded_only">仅限已下载内容</string>
+    <string name="komga_label_cached_only">仅显示已缓存</string>
+    <string name="komga_cached_only_summary">仅显示已完成离线缓存的内容</string>
     <string name="creating_backup_error">备份失败</string>
     <string name="restoring_backup_canceled">已取消还原</string>
     <string name="restoring_backup_error">还原备份失败</string>
@@ -496,6 +523,7 @@
     <string name="tracking_guide">进度记录指南</string>
     <string name="information_empty_category_dialog">还没有创建分类。</string>
     <string name="action_start_downloading_now">立即开始下载</string>
+    <string name="komga_action_start_caching_now">立即开始缓存</string>
     <string name="about_dont_kill_my_app">部分厂商杀掉后台服务的现象比较严重，此网站提供了一些解决方法。</string>
     <string name="restore_miui_warning">如果关闭 MIUI 优化，备份与还原可能会出现问题。</string>
     <string name="pref_dark_theme_pure_black">纯黑深色模式</string>
@@ -652,6 +680,7 @@
     <string name="label_stats">统计</string>
     <string name="label_local">本地</string>
     <string name="label_downloaded">已下载</string>
+    <string name="komga_label_cached">已缓存</string>
     <string name="label_overview_section">总览</string>
     <string name="label_read_duration">阅读时长</string>
     <string name="label_titles_section">作品</string>
@@ -912,13 +941,13 @@
     <string name="supportUsScreen.perks">赞助者可访问专属频道，更多福利即将推出。</string>
     <string name="supportUsScreen.donationPlatform.patreon">Patreon（首选）</string>
     <string name="supportUsScreen.donationPlatform.opencollective">OpenCollective</string>
-    <string name="supportUsScreen.currentlySupportedBy">目前 Mihon 已获得 %d+ 位赞助者的支持。我们衷心感谢大家。让我们携手把 Mihon 办得更出色。</string>
+    <string name="supportUsScreen.currentlySupportedBy">目前 Koharia 已获得 %d+ 位赞助者的支持。我们衷心感谢大家。让我们携手把 Koharia 办得更出色。</string>
     <string name="supportUsScreen.contactForDetailsMessage">如需替代方案或有任何相关问题，请加入我们的 Discord 服务器。</string>
     <string name="supportUsScreen.contactPlatform">Discord</string>
     <string name="donationCampaign.title">喜欢本应用吗？</string>
-    <string name="donationCampaign.paragraph1">你好！我是 Mihon 的首席开发者，恳请你考虑为 Mihon 的开发工作给予资金方面的支持。有了足够的资金支持，我就能全职投入 Mihon 的开发，专注于解决长期存在的问题以及用户呼声很高的功能。</string>
-    <string name="donationCampaign.paragraph2">您可以通过 Patreon（首选）或 OpenCollective 进行捐赠。如果您有任何疑问，或者希望使用其他方式提供支持，欢迎通过 Mihon 的 Discord 服务器联系我。</string>
-    <string name="donationCampaign.paragraph3">无论如何，Mihon 仍将由我和志愿者们继续维护，并且会保持开源。</string>
+    <string name="donationCampaign.paragraph1">你好！我是 Koharia 的首席开发者，恳请你考虑为 Koharia 的开发工作给予资金方面的支持。有了足够的资金支持，我就能全职投入 Koharia 的开发，专注于解决长期存在的问题以及用户呼声很高的功能。</string>
+    <string name="donationCampaign.paragraph2">您可以通过 Patreon（首选）或 OpenCollective 进行捐赠。如果您有任何疑问，或者希望使用其他方式提供支持，欢迎通过 Koharia 的 Discord 服务器联系我。</string>
+    <string name="donationCampaign.paragraph3">无论如何，Koharia 仍将由我和志愿者们继续维护，并且会保持开源。</string>
     <string name="donationCampaign.contactPlatform">Discord</string>
     <string name="donationCampaign.dismiss">放弃</string>
 </resources>

@@ -10,7 +10,9 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import mihon.core.archive.archiveReader
+import koharia.core.archive.archiveReader
+import koharia.core.archive.epubReader
+import tachiyomi.core.common.storage.extension
 import tachiyomi.domain.manga.model.Manga
 import uy.kohesive.injekt.injectLazy
 
@@ -28,6 +30,7 @@ internal class DownloadPageLoader(
     private val context: Application by injectLazy()
 
     private var archivePageLoader: ArchivePageLoader? = null
+    private var epubPageLoader: EpubPageLoader? = null
 
     override var isLocal: Boolean = true
 
@@ -41,7 +44,11 @@ internal class DownloadPageLoader(
             source,
         )
         return if (chapterPath?.isFile == true) {
-            getPagesFromArchive(chapterPath)
+            if (chapterPath.extension.equals("epub", true)) {
+                getPagesFromEpub(chapterPath)
+            } else {
+                getPagesFromArchive(chapterPath)
+            }
         } else {
             getPagesFromDirectory()
         }
@@ -50,10 +57,16 @@ internal class DownloadPageLoader(
     override fun recycle() {
         super.recycle()
         archivePageLoader?.recycle()
+        epubPageLoader?.recycle()
     }
 
     private suspend fun getPagesFromArchive(file: UniFile): List<ReaderPage> {
         val loader = ArchivePageLoader(file.archiveReader(context)).also { archivePageLoader = it }
+        return loader.getPages()
+    }
+
+    private suspend fun getPagesFromEpub(file: UniFile): List<ReaderPage> {
+        val loader = EpubPageLoader(file.epubReader(context)).also { epubPageLoader = it }
         return loader.getPages()
     }
 
@@ -70,5 +83,6 @@ internal class DownloadPageLoader(
 
     override suspend fun loadPage(page: ReaderPage) {
         archivePageLoader?.loadPage(page)
+        epubPageLoader?.loadPage(page)
     }
 }

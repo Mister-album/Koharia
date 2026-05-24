@@ -52,12 +52,14 @@ fun ChapterDownloadIndicator(
     downloadStateProvider: () -> Download.State,
     downloadProgressProvider: () -> Int,
     onClick: (ChapterDownloadAction) -> Unit,
+    isKomgaCacheMode: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     when (val downloadState = downloadStateProvider()) {
         Download.State.NOT_DOWNLOADED -> NotDownloadedIndicator(
             enabled = enabled,
             modifier = modifier,
+            isKomgaCacheMode = isKomgaCacheMode,
             onClick = onClick,
         )
         Download.State.QUEUE, Download.State.DOWNLOADING -> DownloadingIndicator(
@@ -65,11 +67,13 @@ fun ChapterDownloadIndicator(
             modifier = modifier,
             downloadState = downloadState,
             downloadProgressProvider = downloadProgressProvider,
+            isKomgaCacheMode = isKomgaCacheMode,
             onClick = onClick,
         )
         Download.State.DOWNLOADED -> DownloadedIndicator(
             enabled = enabled,
             modifier = modifier,
+            isKomgaCacheMode = isKomgaCacheMode,
             onClick = onClick,
         )
         Download.State.ERROR -> ErrorIndicator(
@@ -83,6 +87,7 @@ fun ChapterDownloadIndicator(
 @Composable
 private fun NotDownloadedIndicator(
     enabled: Boolean,
+    isKomgaCacheMode: Boolean,
     modifier: Modifier = Modifier,
     onClick: (ChapterDownloadAction) -> Unit,
 ) {
@@ -100,7 +105,9 @@ private fun NotDownloadedIndicator(
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_download_chapter_24dp),
-            contentDescription = stringResource(MR.strings.manga_download),
+            contentDescription = stringResource(
+                if (isKomgaCacheMode) MR.strings.komga_action_cache else MR.strings.manga_download,
+            ),
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -112,6 +119,7 @@ private fun DownloadingIndicator(
     enabled: Boolean,
     downloadState: Download.State,
     downloadProgressProvider: () -> Int,
+    isKomgaCacheMode: Boolean,
     onClick: (ChapterDownloadAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -164,7 +172,17 @@ private fun DownloadingIndicator(
         }
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
             DropdownMenuItem(
-                text = { Text(text = stringResource(MR.strings.action_start_downloading_now)) },
+                text = {
+                    Text(
+                        text = stringResource(
+                            if (isKomgaCacheMode) {
+                                MR.strings.komga_action_start_caching_now
+                            } else {
+                                MR.strings.action_start_downloading_now
+                            },
+                        ),
+                    )
+                },
                 onClick = {
                     onClick(ChapterDownloadAction.START_NOW)
                     isMenuExpanded = false
@@ -190,6 +208,7 @@ private fun DownloadingIndicator(
 @Composable
 private fun DownloadedIndicator(
     enabled: Boolean,
+    isKomgaCacheMode: Boolean,
     modifier: Modifier = Modifier,
     onClick: (ChapterDownloadAction) -> Unit,
 ) {
@@ -213,7 +232,13 @@ private fun DownloadedIndicator(
         )
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
             DropdownMenuItem(
-                text = { Text(text = stringResource(MR.strings.action_delete)) },
+                text = {
+                    Text(
+                        text = stringResource(
+                            if (isKomgaCacheMode) MR.strings.komga_action_remove_cache else MR.strings.action_delete,
+                        ),
+                    )
+                },
                 onClick = {
                     onClick(ChapterDownloadAction.DELETE)
                     isMenuExpanded = false

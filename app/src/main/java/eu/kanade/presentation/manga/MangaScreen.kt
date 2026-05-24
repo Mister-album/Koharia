@@ -62,6 +62,7 @@ import eu.kanade.tachiyomi.source.getNameForMangaInfo
 import eu.kanade.tachiyomi.ui.manga.ChapterList
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel
 import eu.kanade.tachiyomi.util.system.copyToClipboard
+import koharia.source.komga.KomgaSource
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.missingChaptersCount
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -88,7 +89,7 @@ fun MangaScreen(
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
-    onAddToLibraryClicked: () -> Unit,
+    onAddToLibraryClicked: (() -> Unit)?,
     onWebViewClicked: (() -> Unit)?,
     onWebViewLongClicked: (() -> Unit)?,
     onTrackingClicked: () -> Unit,
@@ -127,6 +128,7 @@ fun MangaScreen(
     onInvertSelection: () -> Unit,
 ) {
     val context = LocalContext.current
+    val isKomgaCacheMode = state.source.id == KomgaSource.ID
     val onCopyTagToClipboard: (tag: String) -> Unit = {
         if (it.isNotEmpty()) {
             context.copyToClipboard(it, it)
@@ -140,6 +142,7 @@ fun MangaScreen(
             nextUpdate = nextUpdate,
             chapterSwipeStartAction = chapterSwipeStartAction,
             chapterSwipeEndAction = chapterSwipeEndAction,
+            isKomgaCacheMode = isKomgaCacheMode,
             navigateUp = navigateUp,
             onChapterClicked = onChapterClicked,
             onDownloadChapter = onDownloadChapter,
@@ -175,6 +178,7 @@ fun MangaScreen(
             snackbarHostState = snackbarHostState,
             chapterSwipeStartAction = chapterSwipeStartAction,
             chapterSwipeEndAction = chapterSwipeEndAction,
+            isKomgaCacheMode = isKomgaCacheMode,
             nextUpdate = nextUpdate,
             navigateUp = navigateUp,
             onChapterClicked = onChapterClicked,
@@ -215,10 +219,11 @@ private fun MangaScreenSmallImpl(
     nextUpdate: Instant?,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
+    isKomgaCacheMode: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
-    onAddToLibraryClicked: () -> Unit,
+    onAddToLibraryClicked: (() -> Unit)?,
     onWebViewClicked: (() -> Unit)?,
     onWebViewLongClicked: (() -> Unit)?,
     onTrackingClicked: () -> Unit,
@@ -293,6 +298,7 @@ private fun MangaScreenSmallImpl(
             MangaToolbar(
                 title = state.manga.title,
                 hasFilters = state.filterActive,
+                isKomgaCacheMode = isKomgaCacheMode,
                 navigateUp = navigateUp,
                 onClickFilter = onFilterClicked,
                 onClickShare = onShareClicked,
@@ -315,6 +321,7 @@ private fun MangaScreenSmallImpl(
             }
             SharedMangaBottomActionMenu(
                 selected = selectedChapters,
+                isKomgaCacheMode = isKomgaCacheMode,
                 onMultiBookmarkClicked = onMultiBookmarkClicked,
                 onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                 onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
@@ -378,7 +385,9 @@ private fun MangaScreenSmallImpl(
                             isTabletUi = false,
                             appBarPadding = topPadding,
                             manga = state.manga,
-                            sourceName = remember { state.source.getNameForMangaInfo() },
+                            sourceName = remember {
+                                if (state.source.id == KomgaSource.ID) "" else state.source.getNameForMangaInfo()
+                            },
                             isStubSource = remember { state.source is StubSource },
                             onCoverClick = onCoverClicked,
                             doSearch = onSearch,
@@ -436,6 +445,7 @@ private fun MangaScreenSmallImpl(
                     sharedChapterItems(
                         manga = state.manga,
                         chapters = listItem,
+                        isKomgaCacheMode = isKomgaCacheMode,
                         isAnyChapterSelected = chapters.fastAny { it.selected },
                         chapterSwipeStartAction = chapterSwipeStartAction,
                         chapterSwipeEndAction = chapterSwipeEndAction,
@@ -457,10 +467,11 @@ fun MangaScreenLargeImpl(
     nextUpdate: Instant?,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
+    isKomgaCacheMode: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
-    onAddToLibraryClicked: () -> Unit,
+    onAddToLibraryClicked: (() -> Unit)?,
     onWebViewClicked: (() -> Unit)?,
     onWebViewLongClicked: (() -> Unit)?,
     onTrackingClicked: () -> Unit,
@@ -528,6 +539,7 @@ fun MangaScreenLargeImpl(
                 modifier = Modifier.onSizeChanged { topBarHeight = it.height },
                 title = state.manga.title,
                 hasFilters = state.filterActive,
+                isKomgaCacheMode = isKomgaCacheMode,
                 navigateUp = navigateUp,
                 onClickFilter = onFilterButtonClicked,
                 onClickShare = onShareClicked,
@@ -554,6 +566,7 @@ fun MangaScreenLargeImpl(
                 }
                 SharedMangaBottomActionMenu(
                     selected = selectedChapters,
+                    isKomgaCacheMode = isKomgaCacheMode,
                     onMultiBookmarkClicked = onMultiBookmarkClicked,
                     onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                     onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
@@ -614,7 +627,9 @@ fun MangaScreenLargeImpl(
                             isTabletUi = true,
                             appBarPadding = contentPadding.calculateTopPadding(),
                             manga = state.manga,
-                            sourceName = remember { state.source.getNameForMangaInfo() },
+                            sourceName = remember {
+                                if (state.source.id == KomgaSource.ID) "" else state.source.getNameForMangaInfo()
+                            },
                             isStubSource = remember { state.source is StubSource },
                             onCoverClick = onCoverClicked,
                             doSearch = onSearch,
@@ -673,6 +688,7 @@ fun MangaScreenLargeImpl(
                             sharedChapterItems(
                                 manga = state.manga,
                                 chapters = listItem,
+                                isKomgaCacheMode = isKomgaCacheMode,
                                 isAnyChapterSelected = chapters.fastAny { it.selected },
                                 chapterSwipeStartAction = chapterSwipeStartAction,
                                 chapterSwipeEndAction = chapterSwipeEndAction,
@@ -692,6 +708,7 @@ fun MangaScreenLargeImpl(
 @Composable
 private fun SharedMangaBottomActionMenu(
     selected: List<ChapterList.Item>,
+    isKomgaCacheMode: Boolean,
     onMultiBookmarkClicked: (List<Chapter>, bookmarked: Boolean) -> Unit,
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
@@ -728,12 +745,14 @@ private fun SharedMangaBottomActionMenu(
         }.takeIf {
             selected.fastAny { it.downloadState == Download.State.DOWNLOADED }
         },
+        isKomgaCacheMode = isKomgaCacheMode,
     )
 }
 
 private fun LazyListScope.sharedChapterItems(
     manga: Manga,
     chapters: List<ChapterList>,
+    isKomgaCacheMode: Boolean,
     isAnyChapterSelected: Boolean,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
@@ -782,6 +801,7 @@ private fun LazyListScope.sharedChapterItems(
                     bookmark = item.chapter.bookmark,
                     selected = item.selected,
                     downloadIndicatorEnabled = !isAnyChapterSelected && !manga.isLocal(),
+                    isKomgaCacheMode = isKomgaCacheMode,
                     downloadStateProvider = { item.downloadState },
                     downloadProgressProvider = { item.downloadProgress },
                     chapterSwipeStartAction = chapterSwipeStartAction,

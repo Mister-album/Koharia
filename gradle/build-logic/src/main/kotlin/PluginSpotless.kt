@@ -1,7 +1,7 @@
 import com.diffplug.gradle.spotless.SpotlessExtension
-import mihon.gradle.extensions.alias
-import mihon.gradle.extensions.libs
-import mihon.gradle.extensions.plugins
+import koharia.gradle.extensions.alias
+import koharia.gradle.extensions.libs
+import koharia.gradle.extensions.plugins
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure

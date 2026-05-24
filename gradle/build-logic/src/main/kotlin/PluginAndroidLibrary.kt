@@ -1,7 +1,7 @@
-import mihon.gradle.extensions.alias
-import mihon.gradle.extensions.libs
-import mihon.gradle.extensions.mihonx
-import mihon.gradle.extensions.plugins
+import koharia.gradle.extensions.alias
+import koharia.gradle.extensions.libs
+import koharia.gradle.extensions.kohariax
+import koharia.gradle.extensions.plugins
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 
@@ -10,7 +10,7 @@ class PluginAndroidLibrary : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
         plugins {
             alias(libs.plugins.android.library)
-            alias(mihonx.plugins.android.base)
+            alias(kohariax.plugins.android.base)
         }
     }
 }

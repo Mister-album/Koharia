@@ -48,6 +48,7 @@ import uy.kohesive.injekt.api.get
 fun ChapterSettingsDialog(
     onDismissRequest: () -> Unit,
     manga: Manga? = null,
+    isKomgaCacheMode: Boolean = false,
     onDownloadFilterChanged: (TriState) -> Unit,
     onUnreadFilterChanged: (TriState) -> Unit,
     onBookmarkedFilterChanged: (TriState) -> Unit,
@@ -101,6 +102,7 @@ fun ChapterSettingsDialog(
                 0 -> {
                     FilterPage(
                         downloadFilter = manga?.downloadedFilter ?: TriState.DISABLED,
+                        isKomgaCacheMode = isKomgaCacheMode,
                         onDownloadFilterChanged = onDownloadFilterChanged
                             .takeUnless { downloadedOnly },
                         unreadFilter = manga?.unreadFilter ?: TriState.DISABLED,
@@ -132,6 +134,7 @@ fun ChapterSettingsDialog(
 @Composable
 private fun ColumnScope.FilterPage(
     downloadFilter: TriState,
+    isKomgaCacheMode: Boolean,
     onDownloadFilterChanged: ((TriState) -> Unit)?,
     unreadFilter: TriState,
     onUnreadFilterChanged: (TriState) -> Unit,
@@ -141,7 +144,9 @@ private fun ColumnScope.FilterPage(
     onScanlatorFilterClicked: (() -> Unit),
 ) {
     TriStateItem(
-        label = stringResource(MR.strings.label_downloaded),
+        label = stringResource(
+            if (isKomgaCacheMode) MR.strings.komga_label_cached else MR.strings.label_downloaded,
+        ),
         state = downloadFilter,
         onClick = onDownloadFilterChanged,
     )

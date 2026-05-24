@@ -127,7 +127,7 @@ fun AppStateBanners(
 @Composable
 private fun DownloadedOnlyModeBanner(modifier: Modifier = Modifier) {
     Text(
-        text = stringResource(MR.strings.label_downloaded_only),
+        text = stringResource(MR.strings.komga_label_cached_only),
         modifier = Modifier
             .background(DownloadedOnlyBannerBackgroundColor)
             .fillMaxWidth()

@@ -10,8 +10,8 @@ pluginManagement {
 
 dependencyResolutionManagement {
     versionCatalogs {
-        create("mihonx") {
-            from(files("gradle/mihon.versions.toml"))
+        create("kohariax") {
+            from(files("gradle/koharia.versions.toml"))
         }
     }
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
@@ -24,7 +24,7 @@ dependencyResolutionManagement {
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
-rootProject.name = "Mihon"
+rootProject.name = "Koharia"
 include(":app")
 include(":core-metadata")
 include(":core:archive")

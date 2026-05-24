@@ -176,7 +176,7 @@ fun MangaActionRow(
     trackingCount: Int,
     nextUpdate: Instant?,
     isUserIntervalMode: Boolean,
-    onAddToLibraryClicked: () -> Unit,
+    onAddToLibraryClicked: (() -> Unit)?,
     onWebViewClicked: (() -> Unit)?,
     onWebViewLongClicked: (() -> Unit)?,
     onTrackingClicked: () -> Unit,
@@ -197,17 +197,19 @@ fun MangaActionRow(
     }
 
     Row(modifier = modifier.padding(start = 16.dp, top = 8.dp, end = 16.dp)) {
-        MangaActionButton(
-            title = if (favorite) {
-                stringResource(MR.strings.in_library)
-            } else {
-                stringResource(MR.strings.add_to_library)
-            },
-            icon = if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-            color = if (favorite) MaterialTheme.colorScheme.primary else defaultActionButtonColor,
-            onClick = onAddToLibraryClicked,
-            onLongClick = onEditCategory,
-        )
+        if (onAddToLibraryClicked != null) {
+            MangaActionButton(
+                title = if (favorite) {
+                    stringResource(MR.strings.in_library)
+                } else {
+                    stringResource(MR.strings.add_to_library)
+                },
+                icon = if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                color = if (favorite) MaterialTheme.colorScheme.primary else defaultActionButtonColor,
+                onClick = onAddToLibraryClicked,
+                onLongClick = onEditCategory,
+            )
+        }
         MangaActionButton(
             title = when (nextUpdateDays) {
                 null -> stringResource(MR.strings.not_applicable)
@@ -445,7 +447,7 @@ private fun ColumnScope.MangaContentInfo(
                     )
                 }
             },
-            onClick = { if (title.isNotBlank()) doSearch(title, true) },
+            onClick = {},
         ),
         textAlign = textAlign,
     )
@@ -541,28 +543,30 @@ private fun ColumnScope.MangaContentInfo(
                 overflow = TextOverflow.Ellipsis,
                 maxLines = 1,
             )
-            DotSeparatorText()
-            if (isStubSource) {
-                Icon(
-                    imageVector = Icons.Filled.Warning,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .padding(end = 4.dp)
-                        .size(16.dp),
-                    tint = MaterialTheme.colorScheme.error,
+            if (sourceName.isNotBlank()) {
+                DotSeparatorText()
+                if (isStubSource) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(end = 4.dp)
+                            .size(16.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Text(
+                    text = sourceName,
+                    modifier = Modifier.clickableNoIndication {
+                        doSearch(
+                            sourceName,
+                            false,
+                        )
+                    },
+                    overflow = TextOverflow.Ellipsis,
+                    maxLines = 1,
                 )
             }
-            Text(
-                text = sourceName,
-                modifier = Modifier.clickableNoIndication {
-                    doSearch(
-                        sourceName,
-                        false,
-                    )
-                },
-                overflow = TextOverflow.Ellipsis,
-                maxLines = 1,
-            )
         }
     }
 }

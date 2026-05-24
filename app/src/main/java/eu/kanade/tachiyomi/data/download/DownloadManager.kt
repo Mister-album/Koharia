@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
+import koharia.source.komga.KomgaSource
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.launchIO
@@ -104,10 +105,18 @@ class DownloadManager(
         return queueState.value.find { it.chapter.id == chapterId }
     }
 
-    fun startDownloadNow(chapterId: Long) {
+    fun startDownloadNow(chapterId: Long, mode: Download.Mode? = null) {
         val existingDownload = getQueuedDownloadOrNull(chapterId)
         // If not in queue try to start a new download
-        val toAdd = existingDownload ?: runBlocking { Download.fromChapterId(chapterId) } ?: return
+        val toAdd = existingDownload ?: runBlocking {
+            val download = Download.fromChapterId(chapterId) ?: return@runBlocking null
+            Download(
+                source = download.source,
+                manga = download.manga,
+                chapter = download.chapter,
+                mode = mode ?: if (download.source is KomgaSource) Download.Mode.RAW_FILE else Download.Mode.PAGE_CACHE,
+            )
+        } ?: return
         queueState.value.toMutableList().apply {
             existingDownload?.let { remove(it) }
             add(0, toAdd)
@@ -132,8 +141,13 @@ class DownloadManager(
      * @param chapters the list of chapters to enqueue.
      * @param autoStart whether to start the downloader after enqueing the chapters.
      */
-    fun downloadChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean = true) {
-        downloader.queueChapters(manga, chapters, autoStart)
+    fun downloadChapters(
+        manga: Manga,
+        chapters: List<Chapter>,
+        autoStart: Boolean = true,
+        mode: Download.Mode? = null,
+    ) {
+        downloader.queueChapters(manga, chapters, autoStart, mode)
     }
 
     /**
@@ -381,8 +395,8 @@ class DownloadManager(
             .firstOrNull() ?: return
 
         var newName = provider.getChapterDirName(newChapter.name, newChapter.scanlator, newChapter.url)
-        if (oldDownload.isFile && oldDownload.extension == "cbz") {
-            newName += ".cbz"
+        if (oldDownload.isFile && DownloadProvider.isSupportedChapterFileExtension(oldDownload.extension)) {
+            newName += ".${oldDownload.extension}"
         }
 
         if (oldDownload.name == newName) return

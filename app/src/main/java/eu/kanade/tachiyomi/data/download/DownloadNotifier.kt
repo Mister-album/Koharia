@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.download
 import android.app.PendingIntent
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.text.format.Formatter
 import androidx.core.app.NotificationCompat
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
@@ -90,11 +91,18 @@ internal class DownloadNotifier(private val context: Context) {
                 )
             }
 
-            val downloadingProgressText = context.stringResource(
-                MR.strings.chapter_downloading_progress,
-                download.downloadedImages,
-                download.pages!!.size,
-            )
+            val downloadingProgressText = when (download.mode) {
+                Download.Mode.PAGE_CACHE -> context.stringResource(
+                    MR.strings.chapter_downloading_progress,
+                    download.downloadedImages,
+                    download.pages!!.size,
+                )
+                Download.Mode.RAW_FILE -> context.stringResource(
+                    MR.strings.chapter_downloading_file_progress,
+                    Formatter.formatFileSize(context, download.rawDownloadedBytes),
+                    Formatter.formatFileSize(context, download.rawTotalBytes.coerceAtLeast(download.rawDownloadedBytes)),
+                )
+            }
 
             if (preferences.hideNotificationContent.get()) {
                 setContentTitle(downloadingProgressText)
@@ -110,7 +118,10 @@ internal class DownloadNotifier(private val context: Context) {
                 setContentText(downloadingProgressText)
             }
 
-            setProgress(download.pages!!.size, download.downloadedImages, false)
+            when (download.mode) {
+                Download.Mode.PAGE_CACHE -> setProgress(download.pages!!.size, download.downloadedImages, false)
+                Download.Mode.RAW_FILE -> setProgress(100, download.totalProgress, false)
+            }
             setOngoing(true)
 
             show(Notifications.ID_DOWNLOAD_CHAPTER_PROGRESS)

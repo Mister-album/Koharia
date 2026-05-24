@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import logcat.LogPriority
-import mihon.core.common.utils.mutate
+import koharia.core.common.utils.mutate
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.model.Manga

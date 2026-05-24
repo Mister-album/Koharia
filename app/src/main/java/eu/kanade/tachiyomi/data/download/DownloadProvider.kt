@@ -245,14 +245,26 @@ class DownloadProvider(
         return buildList {
             // Folder of images
             add(chapterDirName)
-            // Archived chapters
-            add("$chapterDirName.cbz")
+            // Downloaded chapter files
+            SUPPORTED_CHAPTER_FILE_EXTENSIONS.forEach { extension ->
+                add("$chapterDirName.$extension")
+            }
 
             // any legacy names
             legacyChapterDirNames.forEach {
                 add(it)
-                add("$it.cbz")
+                SUPPORTED_CHAPTER_FILE_EXTENSIONS.forEach { extension ->
+                    add("$it.$extension")
+                }
             }
+        }
+    }
+
+    companion object {
+        val SUPPORTED_CHAPTER_FILE_EXTENSIONS = setOf("cbz", "zip", "rar", "cbr", "7z", "cb7", "tar", "cbt", "epub")
+
+        fun isSupportedChapterFileExtension(extension: String?): Boolean {
+            return extension?.lowercase() in SUPPORTED_CHAPTER_FILE_EXTENSIONS
         }
     }
 }

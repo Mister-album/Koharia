@@ -1,86 +1,61 @@
 <div align="center">
 
-<a href="https://mihon.app">
-    <img src="./.github/assets/logo.png" alt="Mihon logo" title="Mihon logo" width="80"/>
-</a>
+<img src="./.github/assets/logo.png" alt="Koharia logo" title="Koharia logo" width="80"/>
 
-# Mihon [App](#)
+# Koharia
 
-### Full-featured reader
-Discover and read manga, webtoons, comics, and more – easier than ever on your Android device.
+面向 Komga 服务器内容浏览与阅读的独立第三方 Android 阅读器。
 
-[![Discord server](https://img.shields.io/discord/1195734228319617024.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/mihon)
-[![GitHub downloads](https://img.shields.io/github/downloads/mihonapp/mihon/total?label=downloads&labelColor=27303D&color=0D1117&logo=github&logoColor=FFFFFF&style=flat)](https://mihon.app/download)
-
-[![CI](https://img.shields.io/github/actions/workflow/status/mihonapp/mihon/build.yml?labelColor=27303D)](https://github.com/mihonapp/mihon/actions/workflows/build_push.yml)
-[![License: Apache-2.0](https://img.shields.io/github/license/mihonapp/mihon?labelColor=27303D&color=0877d2)](/LICENSE)
-[![Translation status](https://img.shields.io/weblate/progress/mihon?labelColor=27303D&color=946300)](https://hosted.weblate.org/engage/mihon/)
-
-## Download
-
-[![Mihon Stable](https://img.shields.io/github/release/mihonapp/mihon.svg?maxAge=3600&label=Stable&labelColor=06599d&color=043b69)](https://mihon.app/download)
-[![Mihon Beta](https://img.shields.io/github/v/release/mihonapp/mihon-preview.svg?maxAge=3600&label=Beta&labelColor=2c2c47&color=1c1c39)](https://mihon.app/download)
-
-*Requires Android 8.0 or higher.*
-
-## Features
-
-<div align="left">
-
-* Local reading of content.
-* A configurable reader with multiple viewers, reading directions and other settings.
-* Tracker support: [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.app/), [MangaUpdates](https://mangaupdates.com), [Shikimori](https://shikimori.one), and [Bangumi](https://bgm.tv/) support.
-* Categories to organize your library.
-* Light and dark themes.
-* Schedule updating your library for new chapters.
-* Create backups locally to read offline or to your desired cloud service.
-* Plus much more...
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0877d2?labelColor=27303D)](./LICENSE)
 
 </div>
 
-## Contributing
+## Koharia 是什么
 
-[Code of conduct](./CODE_OF_CONDUCT.md) · [Contributing guide](./CONTRIBUTING.md)
+Koharia 是基于 [Mihon](https://github.com/mihonapp/mihon) 的衍生作品，针对由 Komga 提供内容的书架、阅读与离线访问场景，适配为专用 Android 客户端。
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+Koharia 是独立的第三方项目。它与 Mihon 项目或 Komga 项目不存在隶属、背书或维护关系。文中提及上游名称仅用于说明软件来源与兼容性。
 
-Before reporting a new issue, take a look at the [FAQ](https://mihon.app/docs/faq/general), the [changelog](https://mihon.app/changelogs/) and the already opened [issues](https://github.com/mihonapp/mihon/issues); if you got any questions, join our [Discord server](https://discord.gg/mihon).
+## 功能特性
 
+- 在专用客户端流程中浏览已配置 Komga 服务器上的书架内容。
+- 使用继承自 Mihon 代码库的 Android 阅读器阅读受支持的书籍与章节。
+- 为离线使用缓存内容；在服务器与文件格式支持时，可直接下载原始文件。
+- 当原始文件不适合当前阅读路径时，通过页面缓存下载方式保留阅读器的自动下载兼容性。
+- 保留底层应用现有支持的追踪器集成能力。
 
-### Repositories
+## 构建
 
-[![mihonapp/website - GitHub](https://github-readme-stats.vercel.app/api/pin/?username=mihonapp&repo=website&bg_color=161B22&text_color=c9d1d9&title_color=0877d2&icon_color=0877d2&border_radius=8&hide_border=true&description_lines_count=2)](https://github.com/mihonapp/website/)
-[![mihonapp/bitmap.kt - GitHub](https://github-readme-stats.vercel.app/api/pin/?username=mihonapp&repo=bitmap.kt&bg_color=161B22&text_color=c9d1d9&title_color=0877d2&icon_color=0877d2&border_radius=8&hide_border=true&description_lines_count=2)](https://github.com/mihonapp/bitmap.kt/)
+- 需要 Android 8.0 或更高版本。
+- 可在 Android Studio 中打开项目，或使用 Gradle 在本地构建。
+- 推荐验证命令：
 
-### Credits
+```bash
+./gradlew.bat :app:compileDebugKotlin
+```
 
-Thank you to all the people who have contributed!
+## 项目来源与署名
 
-<a href="https://github.com/mihonapp/mihon/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=mihonapp/mihon" alt="Mihon app contributors" title="Mihon app contributors" width="800"/>
-</a>
+- 原始上游项目：[mihonapp/mihon](https://github.com/mihonapp/mihon)
+- 上游许可证：Apache License 2.0
+- 衍生作品署名与再分发说明：[NOTICE](./NOTICE)
+- 贡献指南：[CONTRIBUTING.md](./CONTRIBUTING.md)
+- 社区行为预期：[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 
-### Disclaimer
+如果你再分发 Koharia 或创建自己的衍生版本，请保留许可证与署名说明，为修改过的文件保留醒目的变更提示，并避免将你的构建版本表述为 Mihon 或 Komga 的官方发布版本。
 
-The developer(s) of this application does not have any affiliation with the content providers available, and this application hosts zero content.
+## 致谢
 
-### License
+Koharia 建立在 Javier Tomas 为 Mihon 最初完成的工作，以及后续上游 Mihon 项目贡献者的持续投入之上，同时也感谢所有继续改进这一衍生版本的贡献者。
 
-<pre>
-Copyright © 2015 Javier Tomás
-Copyright © 2024 Mihon Open Source Project
+## 免责声明
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+Koharia 不托管也不提供任何内容。你能访问哪些内容，取决于所连接的 Komga 服务器及其管理员授予的权限。
 
-http://www.apache.org/licenses/LICENSE-2.0
+## 许可证
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-</pre>
+Copyright © 2015 Javier Tomas
+Copyright © Mihon contributors
+Copyright © 2026 Koharia contributors
 
-</div>
+本项目基于 Apache License, Version 2.0 进行授权。详见 [LICENSE](./LICENSE) 与 [NOTICE](./NOTICE)。

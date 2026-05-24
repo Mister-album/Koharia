@@ -55,7 +55,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import logcat.LogPriority
-import mihon.domain.chapter.interactor.FilterChaptersForDownload
+import koharia.domain.chapter.interactor.FilterChaptersForDownload
+import koharia.source.komga.KomgaSource
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.TriState
@@ -312,6 +313,7 @@ class MangaScreenModel(
         checkDuplicate: Boolean = true,
     ) {
         val state = successState ?: return
+        if (state.source.id == KomgaSource.ID) return
         screenModelScope.launchIO {
             val manga = state.manga
 
@@ -367,6 +369,7 @@ class MangaScreenModel(
 
     fun showChangeCategoryDialog() {
         val manga = successState?.manga ?: return
+        if (successState?.source?.id == KomgaSource.ID) return
         screenModelScope.launch {
             val categories = getCategories()
             val selection = getMangaCategoryIds(manga)
@@ -383,6 +386,7 @@ class MangaScreenModel(
 
     fun showSetFetchIntervalDialog() {
         val manga = successState?.manga ?: return
+        if (successState?.source?.id == KomgaSource.ID) return
         updateSuccessState {
             it.copy(dialog = Dialog.SetFetchInterval(manga))
         }

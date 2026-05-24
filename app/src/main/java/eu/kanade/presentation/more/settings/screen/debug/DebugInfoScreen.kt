@@ -28,7 +28,7 @@ import kotlinx.collections.immutable.mutate
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.launch
-import mihon.core.common.FeatureFlags
+import koharia.core.common.FeatureFlags
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt

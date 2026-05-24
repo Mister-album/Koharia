@@ -102,7 +102,7 @@ object DownloadQueueScreen : Screen() {
                     titleContent = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = stringResource(MR.strings.label_download_queue),
+                                text = stringResource(MR.strings.komga_label_offline_cache_queue),
                                 maxLines = 1,
                                 modifier = Modifier.weight(1f, false),
                                 overflow = TextOverflow.Ellipsis,
@@ -234,7 +234,7 @@ object DownloadQueueScreen : Screen() {
         ) { contentPadding ->
             if (downloadList.isEmpty()) {
                 EmptyScreen(
-                    stringRes = MR.strings.information_no_downloads,
+                    stringRes = MR.strings.komga_information_no_offline_cache,
                     modifier = Modifier.padding(contentPadding),
                 )
                 return@Scaffold

@@ -55,6 +55,7 @@ fun MangaChapterListItem(
     bookmark: Boolean,
     selected: Boolean,
     downloadIndicatorEnabled: Boolean,
+    isKomgaCacheMode: Boolean,
     downloadStateProvider: () -> Download.State,
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
@@ -174,6 +175,7 @@ fun MangaChapterListItem(
             ChapterDownloadIndicator(
                 enabled = downloadIndicatorEnabled,
                 modifier = Modifier.padding(start = 4.dp),
+                isKomgaCacheMode = isKomgaCacheMode,
                 downloadStateProvider = downloadStateProvider,
                 downloadProgressProvider = downloadProgressProvider,
                 onClick = { onDownloadClick?.invoke(it) },

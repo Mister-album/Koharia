@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.rememberScreenModel
@@ -11,9 +12,10 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
-import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
+import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import kotlinx.coroutines.launch
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -27,6 +29,7 @@ class DeepLinkScreen(
     override fun Content() {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
+        val scope = rememberCoroutineScope()
 
         val screenModel = rememberScreenModel {
             DeepLinkScreenModel(query = query)
@@ -46,7 +49,8 @@ class DeepLinkScreen(
                     LoadingScreen(Modifier.padding(contentPadding))
                 }
                 is DeepLinkScreenModel.State.NoResults -> {
-                    navigator.replace(GlobalSearchScreen(query))
+                    navigator.pop()
+                    scope.launch { HomeScreen.search(query) }
                 }
                 is DeepLinkScreenModel.State.Result -> {
                     val resultState = state as DeepLinkScreenModel.State.Result

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.download
 
+import android.text.format.Formatter
 import android.view.View
 import androidx.recyclerview.widget.ItemTouchHelper
 import eu.davidea.viewholders.FlexibleViewHolder
@@ -41,15 +42,24 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
         binding.mangaFullTitle.text = download.manga.title
 
         // Update the progress bar and the number of downloaded pages
-        val pages = download.pages
-        if (pages == null) {
-            binding.downloadProgress.progress = 0
-            binding.downloadProgress.max = 1
-            binding.downloadProgressText.text = ""
-        } else {
-            binding.downloadProgress.max = pages.size * 100
-            notifyProgress()
-            notifyDownloadedPages()
+        when (download.mode) {
+            Download.Mode.PAGE_CACHE -> {
+                val pages = download.pages
+                if (pages == null) {
+                    binding.downloadProgress.progress = 0
+                    binding.downloadProgress.max = 1
+                    binding.downloadProgressText.text = ""
+                } else {
+                    binding.downloadProgress.max = pages.size * 100
+                    notifyProgress()
+                    notifyDownloadedPages()
+                }
+            }
+            Download.Mode.RAW_FILE -> {
+                binding.downloadProgress.max = 100
+                notifyProgress()
+                notifyDownloadedPages()
+            }
         }
     }
 
@@ -57,9 +67,18 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
      * Updates the progress bar of the download.
      */
     fun notifyProgress() {
-        val pages = download.pages ?: return
-        if (binding.downloadProgress.max == 1) {
-            binding.downloadProgress.max = pages.size * 100
+        when (download.mode) {
+            Download.Mode.PAGE_CACHE -> {
+                val pages = download.pages ?: return
+                if (binding.downloadProgress.max == 1) {
+                    binding.downloadProgress.max = pages.size * 100
+                }
+            }
+            Download.Mode.RAW_FILE -> {
+                if (binding.downloadProgress.max != 100) {
+                    binding.downloadProgress.max = 100
+                }
+            }
         }
         binding.downloadProgress.setProgressCompat(download.totalProgress, true)
     }
@@ -68,8 +87,22 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
      * Updates the text field of the number of downloaded pages.
      */
     fun notifyDownloadedPages() {
-        val pages = download.pages ?: return
-        binding.downloadProgressText.text = "${download.downloadedImages}/${pages.size}"
+        binding.downloadProgressText.text = when (download.mode) {
+            Download.Mode.PAGE_CACHE -> {
+                val pages = download.pages ?: return
+                "${download.downloadedImages}/${pages.size}"
+            }
+            Download.Mode.RAW_FILE -> {
+                val downloaded = Formatter.formatFileSize(view.context, download.rawDownloadedBytes)
+                val totalBytes = download.rawTotalBytes
+                if (totalBytes > 0L) {
+                    val total = Formatter.formatFileSize(view.context, totalBytes)
+                    "$downloaded/$total"
+                } else {
+                    downloaded
+                }
+            }
+        }
     }
 
     override fun onItemReleased(position: Int) {

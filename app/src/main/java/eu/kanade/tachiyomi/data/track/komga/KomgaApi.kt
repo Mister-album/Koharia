@@ -6,9 +6,13 @@ import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.sourcePreferences
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
+import koharia.source.komga.KomgaSource
+import okhttp3.Credentials
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -16,6 +20,9 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.source.service.SourceManager
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 
 private const val READLIST_API = "/api/v1/readlists"
@@ -25,32 +32,58 @@ class KomgaApi(
     private val client: OkHttpClient,
 ) {
 
+    private val sourceManager: SourceManager by lazy { Injekt.get<SourceManager>() }
+    private val sourcePreferences by lazy {
+        (sourceManager.get(KomgaSource.ID) as? ConfigurableSource)?.sourcePreferences()
+    }
+
     private val headers: Headers by lazy {
-        Headers.Builder()
-            .add("User-Agent", "Mihon v${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
+        Headers.Builder().apply {
+            val apiKey = sourcePreferences?.getString("API key", "").orEmpty()
+            if (apiKey.isNotBlank()) {
+                add("X-API-Key", apiKey)
+            }
+        }
+            .add("User-Agent", "Koharia v${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
             .build()
     }
 
     private val json: Json by injectLazy()
+    private val requestClient: OkHttpClient by lazy {
+        val username = sourcePreferences?.getString("Username", "").orEmpty()
+        val password = sourcePreferences?.getString("Password", "").orEmpty()
+        val apiKey = sourcePreferences?.getString("API key", "").orEmpty()
+        client.newBuilder()
+            .authenticator { _, response ->
+                if (apiKey.isNotBlank() || response.request.header("Authorization") != null || username.isBlank()) {
+                    null
+                } else {
+                    response.request.newBuilder()
+                        .addHeader("Authorization", Credentials.basic(username, password))
+                        .build()
+                }
+            }
+            .build()
+    }
 
     suspend fun getTrackSearch(url: String): TrackSearch =
         withIOContext {
             try {
                 val track = with(json) {
                     if (url.contains(READLIST_API)) {
-                        client.newCall(GET(url, headers))
+                        requestClient.newCall(GET(url, headers))
                             .awaitSuccess()
                             .parseAs<ReadListDto>()
                             .toTrack()
                     } else {
-                        client.newCall(GET(url, headers))
+                        requestClient.newCall(GET(url, headers))
                             .awaitSuccess()
                             .parseAs<SeriesDto>()
                             .toTrack()
                     }
                 }
 
-                val progress = client
+                val progress = requestClient
                     .newCall(
                         GET("${url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi", headers),
                     )
@@ -87,7 +120,7 @@ class KomgaApi(
         } else {
             json.encodeToString(ReadProgressUpdateDto(track.last_chapter_read.toInt()))
         }
-        client.newCall(
+        requestClient.newCall(
             Request.Builder()
                 .url("${track.tracking_url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi")
                 .headers(headers)

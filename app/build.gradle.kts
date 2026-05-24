@@ -1,13 +1,13 @@
-import mihon.gradle.Config
-import mihon.gradle.getBuildTime
-import mihon.gradle.getLatestCommitCount
-import mihon.gradle.getLatestCommitSha
-import mihon.gradle.tasks.ReplaceShortcutsPlaceholderTask
+import koharia.gradle.Config
+import koharia.gradle.getBuildTime
+import koharia.gradle.getLatestCommitCount
+import koharia.gradle.getLatestCommitSha
+import koharia.gradle.tasks.ReplaceShortcutsPlaceholderTask
 
 plugins {
-    alias(mihonx.plugins.android.application)
-    alias(mihonx.plugins.compose)
-    alias(mihonx.plugins.spotless)
+    alias(kohariax.plugins.android.application)
+    alias(kohariax.plugins.compose)
+    alias(kohariax.plugins.spotless)
 
     alias(libs.plugins.aboutLibraries)
     alias(libs.plugins.kotlin.serialization)
@@ -24,7 +24,7 @@ android {
     namespace = "eu.kanade.tachiyomi"
 
     defaultConfig {
-        applicationId = "app.mihon"
+        applicationId = "app.koharia"
 
         versionCode = 22
         versionName = "0.19.9"

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.interactor.GetManga
@@ -22,14 +23,33 @@ data class Download(
     val source: HttpSource,
     val manga: Manga,
     val chapter: Chapter,
+    val mode: Mode = Mode.PAGE_CACHE,
 ) {
     var pages: List<Page>? = null
 
+    @Transient
+    private val _rawProgress = MutableStateFlow(0)
+
+    @Transient
+    private val _rawDownloadedBytes = MutableStateFlow(0L)
+
+    @Transient
+    private val _rawTotalBytes = MutableStateFlow(0L)
+
     val totalProgress: Int
-        get() = pages?.sumOf(Page::progress) ?: 0
+        get() = when (mode) {
+            Mode.PAGE_CACHE -> pages?.sumOf(Page::progress) ?: 0
+            Mode.RAW_FILE -> _rawProgress.value
+        }
 
     val downloadedImages: Int
         get() = pages?.count { it.status == Page.State.Ready } ?: 0
+
+    val rawDownloadedBytes: Long
+        get() = _rawDownloadedBytes.value
+
+    val rawTotalBytes: Long
+        get() = _rawTotalBytes.value
 
     @Transient
     private val _statusFlow = MutableStateFlow(State.NOT_DOWNLOADED)
@@ -44,15 +64,22 @@ data class Download(
 
     @Transient
     val progressFlow = flow {
-        if (pages == null) {
-            emit(0)
-            while (pages == null) {
-                delay(50)
+        when (mode) {
+            Mode.PAGE_CACHE -> {
+                if (pages == null) {
+                    emit(0)
+                    while (pages == null) {
+                        delay(50)
+                    }
+                }
+
+                val progressFlows = pages!!.map(Page::progressFlow)
+                emitAll(combine(progressFlows) { it.average().toInt() })
+            }
+            Mode.RAW_FILE -> {
+                emitAll(_rawProgress.map { it })
             }
         }
-
-        val progressFlows = pages!!.map(Page::progressFlow)
-        emitAll(combine(progressFlows) { it.average().toInt() })
     }
         .distinctUntilChanged()
         .debounce(50)
@@ -63,6 +90,16 @@ data class Download(
             return pages.map(Page::progress).average().toInt()
         }
 
+    fun updateRawProgress(downloadedBytes: Long, totalBytes: Long) {
+        _rawDownloadedBytes.value = downloadedBytes
+        _rawTotalBytes.value = totalBytes
+        _rawProgress.value = when {
+            totalBytes > 0L -> ((downloadedBytes * 100) / totalBytes).toInt().coerceIn(0, 100)
+            downloadedBytes > 0L -> 100
+            else -> 0
+        }
+    }
+
     enum class State(val value: Int) {
         NOT_DOWNLOADED(0),
         QUEUE(1),
@@ -71,9 +108,15 @@ data class Download(
         ERROR(4),
     }
 
+    enum class Mode {
+        PAGE_CACHE,
+        RAW_FILE,
+    }
+
     companion object {
         suspend fun fromChapterId(
             chapterId: Long,
+            mode: Mode = Mode.PAGE_CACHE,
             getChapter: GetChapter = Injekt.get(),
             getManga: GetManga = Injekt.get(),
             sourceManager: SourceManager = Injekt.get(),
@@ -82,7 +125,7 @@ data class Download(
             val manga = getManga.await(chapter.mangaId) ?: return null
             val source = sourceManager.get(manga.source) as? HttpSource ?: return null
 
-            return Download(source, manga, chapter)
+            return Download(source, manga, chapter, mode)
         }
     }
 }

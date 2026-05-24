@@ -74,7 +74,6 @@ import eu.kanade.presentation.components.AppStateBanners
 import eu.kanade.presentation.components.DownloadedOnlyBannerBackgroundColor
 import eu.kanade.presentation.components.IncognitoModeBannerBackgroundColor
 import eu.kanade.presentation.components.IndexingBannerBackgroundColor
-import eu.kanade.presentation.more.settings.screen.browse.ExtensionReposScreen
 import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.DefaultNavigatorScreenTransition
@@ -84,8 +83,6 @@ import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
 import eu.kanade.tachiyomi.extension.api.ExtensionApi
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
-import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
-import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.deeplink.DeepLinkScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
@@ -104,8 +101,9 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import logcat.LogPriority
-import mihon.core.migration.Migrator
-import mihon.feature.support.SupportUsScreen
+import koharia.core.migration.Migrator
+import koharia.komga.ui.library.KomgaLibraryScreen
+import koharia.feature.support.SupportUsScreen
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
@@ -197,7 +195,7 @@ class MainActivity : BaseActivity() {
                     }
                 }
                 LaunchedEffect(navigator.lastItem) {
-                    (navigator.lastItem as? BrowseSourceScreen)?.sourceId
+                    (navigator.lastItem as? KomgaLibraryScreen)?.sourceId
                         .let(getIncognitoState::subscribe)
                         .collectLatest { incognito = it }
                 }
@@ -245,7 +243,7 @@ class MainActivity : BaseActivity() {
                         .filter { !it }
                         .onEach {
                             val currentScreen = navigator.lastItem
-                            if (currentScreen is BrowseSourceScreen ||
+                            if (currentScreen is KomgaLibraryScreen ||
                                 (currentScreen is MangaScreen && currentScreen.fromSource)
                             ) {
                                 navigator.popUntilRoot()
@@ -529,8 +527,8 @@ class MainActivity : BaseActivity() {
             }
             Constants.SHORTCUT_UPDATES -> HomeScreen.Tab.Updates
             Constants.SHORTCUT_HISTORY -> HomeScreen.Tab.History
-            Constants.SHORTCUT_SOURCES -> HomeScreen.Tab.Browse(false)
-            Constants.SHORTCUT_EXTENSIONS -> HomeScreen.Tab.Browse(true)
+            Constants.SHORTCUT_SOURCES -> HomeScreen.Tab.Library()
+            Constants.SHORTCUT_EXTENSIONS -> HomeScreen.Tab.Library()
             Constants.SHORTCUT_DOWNLOADS -> {
                 navigator.popUntilRoot()
                 HomeScreen.Tab.More(toDownloads = true)
@@ -539,20 +537,19 @@ class MainActivity : BaseActivity() {
                 // If the intent match the "standard" Android search intent
                 // or the Google-specific search intent (triggered by saying or typing "search *query* on *Tachiyomi*" in Google Search/Google Assistant)
 
-                // Get the search query provided in extras, and if not null, perform a global search with it.
+                // Get the search query provided in extras, and if not null, perform a Komga library search with it.
                 val query = intent.getStringExtra(SearchManager.QUERY) ?: intent.getStringExtra(Intent.EXTRA_TEXT)
                 if (!query.isNullOrEmpty()) {
                     navigator.popUntilRoot()
-                    navigator.push(DeepLinkScreen(query))
+                    lifecycleScope.launch { HomeScreen.search(query) }
                 }
                 null
             }
             INTENT_SEARCH -> {
                 val query = intent.getStringExtra(INTENT_SEARCH_QUERY)
                 if (!query.isNullOrEmpty()) {
-                    val filter = intent.getStringExtra(INTENT_SEARCH_FILTER)
                     navigator.popUntilRoot()
-                    navigator.push(GlobalSearchScreen(query, filter))
+                    lifecycleScope.launch { HomeScreen.search(query) }
                 }
                 null
             }
@@ -561,13 +558,6 @@ class MainActivity : BaseActivity() {
                 if (intent.data.toString().endsWith(".tachibk")) {
                     navigator.popUntilRoot()
                     navigator.push(RestoreBackupScreen(intent.data.toString()))
-                }
-                // Deep link to add extension repo
-                else if (intent.scheme == "tachiyomi" && intent.data?.host == "add-repo") {
-                    intent.data?.getQueryParameter("url")?.let { repoUrl ->
-                        navigator.popUntilRoot()
-                        navigator.push(ExtensionReposScreen(repoUrl))
-                    }
                 }
                 null
             }

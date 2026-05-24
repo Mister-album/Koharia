@@ -1,5 +1,5 @@
 plugins {
-    alias(mihonx.plugins.android.test)
+    alias(kohariax.plugins.android.test)
 }
 
 android {

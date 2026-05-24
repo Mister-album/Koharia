@@ -3,12 +3,12 @@ package eu.kanade.presentation.more
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
-import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.QueryStats
+import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.HorizontalDivider
@@ -36,10 +36,10 @@ fun MoreScreen(
     incognitoMode: Boolean,
     onIncognitoModeChange: (Boolean) -> Unit,
     onClickDownloadQueue: () -> Unit,
-    onClickCategories: () -> Unit,
     onClickStats: () -> Unit,
     onClickDataAndStorage: () -> Unit,
     onClickSettings: () -> Unit,
+    onClickKomgaSettings: () -> Unit,
     onClickSupport: () -> Unit,
     onClickAbout: () -> Unit,
 ) {
@@ -54,8 +54,8 @@ fun MoreScreen(
             }
             item {
                 SwitchPreferenceWidget(
-                    title = stringResource(MR.strings.label_downloaded_only),
-                    subtitle = stringResource(MR.strings.downloaded_only_summary),
+                    title = stringResource(MR.strings.komga_label_cached_only),
+                    subtitle = stringResource(MR.strings.komga_cached_only_summary),
                     icon = Icons.Outlined.CloudOff,
                     checked = downloadedOnly,
                     onCheckedChanged = onDownloadedOnlyChange,
@@ -76,7 +76,7 @@ fun MoreScreen(
             item {
                 val downloadQueueState = downloadQueueStateProvider()
                 TextPreferenceWidget(
-                    title = stringResource(MR.strings.label_download_queue),
+                    title = stringResource(MR.strings.komga_label_offline_cache_queue),
                     subtitle = when (downloadQueueState) {
                         DownloadQueueState.Stopped -> null
                         is DownloadQueueState.Paused -> {
@@ -104,13 +104,6 @@ fun MoreScreen(
             }
             item {
                 TextPreferenceWidget(
-                    title = stringResource(MR.strings.categories),
-                    icon = Icons.AutoMirrored.Outlined.Label,
-                    onPreferenceClick = onClickCategories,
-                )
-            }
-            item {
-                TextPreferenceWidget(
                     title = stringResource(MR.strings.label_stats),
                     icon = Icons.Outlined.QueryStats,
                     onPreferenceClick = onClickStats,
@@ -126,6 +119,14 @@ fun MoreScreen(
 
             item { HorizontalDivider() }
 
+            item {
+                TextPreferenceWidget(
+                    title = stringResource(MR.strings.pref_komga_server),
+                    subtitle = stringResource(MR.strings.pref_komga_server_summary),
+                    icon = Icons.Outlined.Router,
+                    onPreferenceClick = onClickKomgaSettings,
+                )
+            }
             item {
                 TextPreferenceWidget(
                     title = stringResource(MR.strings.label_settings),

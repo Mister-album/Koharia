@@ -40,7 +40,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
-import mihon.domain.chapter.interactor.FilterChaptersForDownload
+import koharia.domain.chapter.interactor.FilterChaptersForDownload
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.core.common.util.lang.withIOContext
@@ -409,7 +409,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         private const val WORK_NAME_AUTO = "LibraryUpdate-auto"
         private const val WORK_NAME_MANUAL = "LibraryUpdate-manual"
 
-        private const val ERROR_LOG_HELP_URL = "https://mihon.app/docs/guides/troubleshooting/"
+        private const val ERROR_LOG_HELP_URL = "https://koharia.app/docs/guides/troubleshooting/"
 
         private const val MANGA_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 60
 

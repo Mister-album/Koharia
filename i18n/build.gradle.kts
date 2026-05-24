@@ -1,9 +1,9 @@
-import mihon.gradle.tasks.GenerateLocalesConfigTask
+import koharia.gradle.tasks.GenerateLocalesConfigTask
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 
 plugins {
-    alias(mihonx.plugins.kotlin.multiplatform)
-    alias(mihonx.plugins.spotless)
+    alias(kohariax.plugins.kotlin.multiplatform)
+    alias(kohariax.plugins.spotless)
 
     alias(libs.plugins.moko.resources)
 }

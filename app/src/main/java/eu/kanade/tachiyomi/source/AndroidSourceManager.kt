@@ -18,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
 import tachiyomi.domain.source.service.SourceManager
+import koharia.source.komga.KomgaSource
 import tachiyomi.source.local.LocalSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -56,6 +57,7 @@ class AndroidSourceManager(
                                 Injekt.get(),
                                 Injekt.get(),
                             ),
+                            KomgaSource.ID to KomgaSource(),
                         ),
                     )
                     extensions.forEach { extension ->

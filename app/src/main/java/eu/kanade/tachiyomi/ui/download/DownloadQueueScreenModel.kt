@@ -14,9 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -211,13 +209,7 @@ class DownloadQueueScreenModel(
      */
     private fun launchProgressJob(download: Download) {
         val job = screenModelScope.launch {
-            while (download.pages == null) {
-                delay(50)
-            }
-
-            val progressFlows = download.pages!!.map(Page::progressFlow)
-            combine(progressFlows, Array<Int>::sum)
-                .distinctUntilChanged()
+            download.progressFlow
                 .debounce(50)
                 .collectLatest {
                     onUpdateProgress(download)

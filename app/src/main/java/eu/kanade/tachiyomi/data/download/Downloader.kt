@@ -19,7 +19,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asFlow
@@ -38,7 +37,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
-import mihon.core.archive.ZipWriter
+import koharia.core.archive.ZipWriter
+import koharia.source.komga.KomgaSource
 import nl.adaptivity.xmlutil.serialization.XML
 import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
@@ -60,6 +60,8 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 /**
@@ -89,6 +91,10 @@ class Downloader(
      */
     private val _queueState = MutableStateFlow<List<Download>>(emptyList())
     val queueState = _queueState.asStateFlow()
+    private val restoreQueueLock = Any()
+
+    @Volatile
+    private var isQueueRestored = false
 
     /**
      * Notifier for the downloader state and progress.
@@ -112,8 +118,7 @@ class Downloader(
 
     init {
         launchNow {
-            val chapters = async { store.restore() }
-            addAllToQueue(chapters.await())
+            restorePersistedQueueIfNeeded()
         }
     }
 
@@ -124,18 +129,61 @@ class Downloader(
      * @return true if the downloader is started, false otherwise.
      */
     fun start(): Boolean {
-        if (isRunning || queueState.value.isEmpty()) {
+        val queueSizeBeforeRestore = queueState.value.size
+        restorePersistedQueueIfNeeded()
+        val queue = queueState.value
+        val pending = queue.filter { it.status != Download.State.DOWNLOADED }
+
+        if (isRunning || queue.isEmpty()) {
+            logcat(LogPriority.INFO) {
+                "Downloader.start(): early return, " +
+                    "isRunning=$isRunning, " +
+                    "queueSizeBeforeRestore=$queueSizeBeforeRestore, " +
+                    "queueSizeAfterRestore=${queue.size}, " +
+                    "pendingCount=${pending.size}, " +
+                    "statusSummary=${queue.statusSummary()}"
+            }
             return false
         }
 
-        val pending = queueState.value.filter { it.status != Download.State.DOWNLOADED }
         pending.forEach { if (it.status != Download.State.QUEUE) it.status = Download.State.QUEUE }
 
         isPaused = false
 
         launchDownloaderJob()
 
+        logcat(LogPriority.INFO) {
+            "Downloader.start(): started=${
+                pending.isNotEmpty()
+            }, queueSize=${queue.size}, pendingCount=${pending.size}, statusSummary=${queue.statusSummary()}"
+        }
+
         return pending.isNotEmpty()
+    }
+
+    private fun restorePersistedQueueIfNeeded() {
+        if (isQueueRestored) return
+
+        synchronized(restoreQueueLock) {
+            if (isQueueRestored) return
+
+            val existingChapterIds = queueState.value.mapTo(mutableSetOf()) { it.chapter.id }
+            val restoredDownloads = store.restore()
+                .filterNot { it.chapter.id in existingChapterIds }
+
+            if (restoredDownloads.isNotEmpty()) {
+                logcat(LogPriority.INFO) {
+                    "Downloader.restorePersistedQueueIfNeeded(): restoring ${restoredDownloads.size} downloads"
+                }
+                addAllToQueue(restoredDownloads)
+            } else {
+                logcat(LogPriority.INFO) {
+                    "Downloader.restorePersistedQueueIfNeeded(): no persisted downloads to restore"
+                }
+            }
+
+            isQueueRestored = true
+        }
     }
 
     /**
@@ -270,10 +318,11 @@ class Downloader(
      * @param chapters the list of chapters to download.
      * @param autoStart whether to start the downloader after enqueing the chapters.
      */
-    fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean) {
+    fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean, mode: Download.Mode?) {
         if (chapters.isEmpty()) return
 
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val resolvedMode = resolveDownloadMode(source, mode)
         val wasEmpty = queueState.value.isEmpty()
         val chaptersToQueue = chapters.asSequence()
             // Filter out those already downloaded.
@@ -283,7 +332,7 @@ class Downloader(
             // Filter out those already enqueued.
             .filter { chapter -> queueState.value.none { it.chapter.id == chapter.id } }
             // Create a download for each one.
-            .map { Download(source, manga, it) }
+            .map { Download(source, manga, it, resolvedMode) }
             .toList()
 
         if (chaptersToQueue.isNotEmpty()) {
@@ -344,6 +393,11 @@ class Downloader(
             download.chapter.scanlator,
             download.chapter.url,
         )
+
+        if (download.mode == Download.Mode.RAW_FILE && tryDownloadRawFile(download, mangaDir, chapterDirname)) {
+            return
+        }
+
         val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
 
         try {
@@ -423,6 +477,91 @@ class Downloader(
             download.status = Download.State.ERROR
             notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
         }
+    }
+
+    private fun resolveDownloadMode(source: HttpSource, mode: Download.Mode?): Download.Mode {
+        return mode ?: if (source is KomgaSource) Download.Mode.RAW_FILE else Download.Mode.PAGE_CACHE
+    }
+
+    private suspend fun tryDownloadRawFile(download: Download, mangaDir: UniFile, chapterDirname: String): Boolean {
+        val source = download.source as? KomgaSource ?: return false
+
+        return source.client.newCall(source.rawFileRequest(download.chapter.url)).execute().use { response ->
+            if (!response.isSuccessful) {
+                error("HTTP ${response.code}")
+            }
+
+            val body = response.body
+
+            val extension = resolveRawFileExtension(response)
+            if (!DownloadProvider.isSupportedChapterFileExtension(extension)) {
+                logcat(LogPriority.INFO) {
+                    "Downloader.tryDownloadRawFile(): unsupported raw file extension=$extension, falling back to page cache"
+                }
+                return false
+            }
+
+            val totalBytes = body.contentLength().takeIf { it > 0L } ?: 0L
+            download.updateRawProgress(0L, totalBytes)
+            download.status = Download.State.DOWNLOADING
+
+            val finalFileName = "$chapterDirname.$extension"
+            val tmpFileName = "$finalFileName$TMP_DIR_SUFFIX"
+            mangaDir.findFile(finalFileName)?.delete()
+            mangaDir.findFile(tmpFileName)?.delete()
+            val tmpFile = mangaDir.createFile(tmpFileName)
+                ?: error("Failed to create raw download file: $tmpFileName")
+
+            tmpFile.openOutputStream().use { output ->
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var downloadedBytes = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        downloadedBytes += read
+                        download.updateRawProgress(downloadedBytes, totalBytes)
+                        notifier.onProgressChange(download)
+                    }
+                    output.flush()
+                    download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
+                }
+            }
+
+            if (!tmpFile.renameTo(finalFileName)) {
+                error("Failed to finalize raw download file: $finalFileName")
+            }
+
+            cache.addChapter(finalFileName, mangaDir, download.manga)
+            DiskUtil.createNoMediaFile(mangaDir, context)
+            download.status = Download.State.DOWNLOADED
+
+            logcat(LogPriority.INFO) {
+                "Downloader.tryDownloadRawFile(): saved raw file $finalFileName"
+            }
+
+            true
+        }
+    }
+
+    private fun resolveRawFileExtension(response: Response): String? {
+        val header = response.header("Content-Disposition")
+        val filename = header?.let(::parseContentDispositionFilename)
+        return filename
+            ?.substringAfterLast('.', "")
+            ?.takeIf { it.isNotBlank() }
+            ?.lowercase(Locale.ROOT)
+    }
+
+    private fun parseContentDispositionFilename(header: String): String? {
+        val encodedMatch = Regex("""filename\*=UTF-8''([^;]+)""", RegexOption.IGNORE_CASE).find(header)
+        if (encodedMatch != null) {
+            return URLDecoder.decode(encodedMatch.groupValues[1].trim('"'), StandardCharsets.UTF_8.name())
+        }
+
+        val plainMatch = Regex("""filename="?([^";]+)"?""", RegexOption.IGNORE_CASE).find(header)
+        return plainMatch?.groupValues?.getOrNull(1)
     }
 
     /**
@@ -728,6 +867,17 @@ class Downloader(
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
+    }
+}
+
+private fun List<Download>.statusSummary(): String {
+    return if (isEmpty()) {
+        "empty"
+    } else {
+        groupBy { it.status }
+            .entries
+            .sortedBy { it.key.value }
+            .joinToString(separator = ",") { (status, downloads) -> "${status.name}:${downloads.size}" }
     }
 }
 
