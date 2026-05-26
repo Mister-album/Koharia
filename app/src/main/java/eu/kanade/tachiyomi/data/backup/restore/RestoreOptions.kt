@@ -8,19 +8,17 @@ data class RestoreOptions(
     val libraryEntries: Boolean = true,
     val categories: Boolean = true,
     val appSettings: Boolean = true,
-    val extensionRepoSettings: Boolean = true,
-    val sourceSettings: Boolean = true,
+    val komgaSettings: Boolean = true,
 ) {
 
     fun asBooleanArray() = booleanArrayOf(
         libraryEntries,
         categories,
         appSettings,
-        extensionRepoSettings,
-        sourceSettings,
+        komgaSettings,
     )
 
-    fun canRestore() = libraryEntries || categories || appSettings || extensionRepoSettings || sourceSettings
+    fun canRestore() = libraryEntries || categories || appSettings || komgaSettings
 
     companion object {
         val options = persistentListOf(
@@ -40,14 +38,9 @@ data class RestoreOptions(
                 setter = { options, enabled -> options.copy(appSettings = enabled) },
             ),
             Entry(
-                label = MR.strings.extensionRepo_settings,
-                getter = RestoreOptions::extensionRepoSettings,
-                setter = { options, enabled -> options.copy(extensionRepoSettings = enabled) },
-            ),
-            Entry(
-                label = MR.strings.source_settings,
-                getter = RestoreOptions::sourceSettings,
-                setter = { options, enabled -> options.copy(sourceSettings = enabled) },
+                label = MR.strings.pref_komga_server,
+                getter = RestoreOptions::komgaSettings,
+                setter = { options, enabled -> options.copy(komgaSettings = enabled) },
             ),
         )
 
@@ -55,8 +48,7 @@ data class RestoreOptions(
             libraryEntries = array[0],
             categories = array[1],
             appSettings = array[2],
-            extensionRepoSettings = array[3],
-            sourceSettings = array[4],
+            komgaSettings = array.getOrElse(4) { array.getOrElse(3) { true } },
         )
     }
 

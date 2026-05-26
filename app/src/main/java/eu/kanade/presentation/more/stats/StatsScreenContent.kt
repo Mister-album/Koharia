@@ -101,8 +101,8 @@ private fun LazyItemScope.TitlesStats(
                 stringResource(MR.strings.label_started),
             )
             StatsItem(
-                data.localMangaCount.toString(),
-                stringResource(MR.strings.label_local),
+                data.cachedMangaCount.toString(),
+                stringResource(MR.strings.komga_label_cached),
             )
         }
     }

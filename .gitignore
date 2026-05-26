@@ -1,5 +1,6 @@
 # Build files
 .gradle
+.gradle-home
 .kotlin
 build
 
@@ -11,6 +12,8 @@ build
 
 # Configuration files
 local.properties
+keystore.properties
+*.jks
 
 # macOS specific files
 .DS_Store

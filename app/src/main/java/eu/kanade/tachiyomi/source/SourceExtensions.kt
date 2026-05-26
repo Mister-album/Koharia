@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.source
 
 import eu.kanade.domain.source.service.SourcePreferences
 import tachiyomi.domain.source.model.StubSource
-import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -21,4 +20,4 @@ fun Source.getNameForMangaInfo(): String {
     }
 }
 
-fun Source.isLocalOrStub(): Boolean = isLocal() || this is StubSource
+fun Source.isLocalOrStub(): Boolean = this is StubSource

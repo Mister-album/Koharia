@@ -4,10 +4,6 @@ import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.chapter.interactor.SetReadStatus
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.download.interactor.DeleteDownload
-import eu.kanade.domain.extension.interactor.GetExtensionLanguages
-import eu.kanade.domain.extension.interactor.GetExtensionSources
-import eu.kanade.domain.extension.interactor.GetExtensionsByType
-import eu.kanade.domain.extension.interactor.TrustExtension
 import eu.kanade.domain.manga.interactor.GetExcludedScanlators
 import eu.kanade.domain.manga.interactor.SetExcludedScanlators
 import eu.kanade.domain.manga.interactor.SetMangaViewerFlags
@@ -25,16 +21,7 @@ import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.domain.track.interactor.RefreshTracks
 import eu.kanade.domain.track.interactor.SyncChapterProgressWithTrack
 import eu.kanade.domain.track.interactor.TrackChapter
-import koharia.data.repository.ExtensionRepoRepositoryImpl
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
-import koharia.domain.extensionrepo.interactor.CreateExtensionRepo
-import koharia.domain.extensionrepo.interactor.DeleteExtensionRepo
-import koharia.domain.extensionrepo.interactor.GetExtensionRepo
-import koharia.domain.extensionrepo.interactor.GetExtensionRepoCount
-import koharia.domain.extensionrepo.interactor.ReplaceExtensionRepo
-import koharia.domain.extensionrepo.interactor.UpdateExtensionRepo
-import koharia.domain.extensionrepo.repository.ExtensionRepoRepository
-import koharia.domain.extensionrepo.service.ExtensionRepoService
 import koharia.domain.migration.usecases.MigrateMangaUseCase
 import koharia.domain.upcoming.interactor.GetUpcomingManga
 import tachiyomi.data.category.CategoryRepositoryImpl
@@ -175,10 +162,6 @@ class DomainModule : InjektModule {
 
         addFactory { DeleteDownload(get(), get()) }
 
-        addFactory { GetExtensionsByType(get(), get()) }
-        addFactory { GetExtensionSources(get()) }
-        addFactory { GetExtensionLanguages(get(), get()) }
-
         addSingletonFactory<UpdatesRepository> { UpdatesRepositoryImpl(get()) }
         addFactory { GetUpdates(get()) }
 
@@ -193,17 +176,7 @@ class DomainModule : InjektModule {
         addFactory { ToggleLanguage(get()) }
         addFactory { ToggleSource(get()) }
         addFactory { ToggleSourcePin(get()) }
-        addFactory { TrustExtension(get(), get()) }
-
-        addSingletonFactory<ExtensionRepoRepository> { ExtensionRepoRepositoryImpl(get()) }
-        addFactory { ExtensionRepoService(get(), get()) }
-        addFactory { GetExtensionRepo(get()) }
-        addFactory { GetExtensionRepoCount(get()) }
-        addFactory { CreateExtensionRepo(get(), get()) }
-        addFactory { DeleteExtensionRepo(get()) }
-        addFactory { ReplaceExtensionRepo(get()) }
-        addFactory { UpdateExtensionRepo(get(), get()) }
         addFactory { ToggleIncognito(get()) }
-        addFactory { GetIncognitoState(get(), get(), get()) }
+        addFactory { GetIncognitoState(get()) }
     }
 }

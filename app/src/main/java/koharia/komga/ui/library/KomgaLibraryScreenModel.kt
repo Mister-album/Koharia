@@ -42,23 +42,20 @@ import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.domain.source.service.SourceManager
 import koharia.komga.api.dto.LibraryDto
 import koharia.source.komga.KomgaSource
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.source.model.Filter as SourceModelFilter
 
 class KomgaLibraryScreenModel(
     private val sourceId: Long,
     listingQuery: String?,
-    sourceManager: SourceManager = Injekt.get(),
-    sourcePreferences: SourcePreferences = Injekt.get(),
-    basePreferences: BasePreferences = Injekt.get(),
-    private val libraryPreferences: LibraryPreferences = Injekt.get(),
-    private val downloadManager: DownloadManager = Injekt.get(),
-    private val getRemoteManga: GetRemoteManga = Injekt.get(),
-    private val getManga: GetManga = Injekt.get(),
-    private val getIncognitoState: GetIncognitoState = Injekt.get(),
+    private val sourceManager: SourceManager,
+    private val sourcePreferences: SourcePreferences,
+    private val basePreferences: BasePreferences,
+    private val libraryPreferences: LibraryPreferences,
+    private val downloadManager: DownloadManager,
+    private val getRemoteManga: GetRemoteManga,
+    private val getManga: GetManga,
+    private val getIncognitoState: GetIncognitoState,
 ) : StateScreenModel<KomgaLibraryScreenModel.State>(State(Listing.valueOf(listingQuery))) {
-
     var displayMode by sourcePreferences.sourceDisplayMode.asState(screenModelScope)
     var cachedOnly by basePreferences.downloadedOnly.asState(screenModelScope)
 

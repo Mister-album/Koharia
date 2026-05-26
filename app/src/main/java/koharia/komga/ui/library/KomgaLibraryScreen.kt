@@ -35,6 +35,9 @@ import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
+import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.source.SourcePreferencesScreen
@@ -46,13 +49,19 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
 import koharia.presentation.core.util.collectAsLazyPagingItems
 import tachiyomi.core.common.Constants
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.source.interactor.GetRemoteManga
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
-import tachiyomi.source.local.LocalSource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import eu.kanade.tachiyomi.data.download.DownloadManager
 
 data class KomgaLibraryScreen(
     val sourceId: Long,
@@ -71,7 +80,29 @@ data class KomgaLibraryScreen(
             return
         }
 
-        val screenModel = rememberScreenModel { KomgaLibraryScreenModel(sourceId, listingQuery) }
+        val sourceManager: SourceManager = Injekt.get()
+        val sourcePreferences: SourcePreferences = Injekt.get()
+        val basePreferences: BasePreferences = Injekt.get()
+        val libraryPreferences: LibraryPreferences = Injekt.get()
+        val downloadManager: DownloadManager = Injekt.get()
+        val getRemoteManga: GetRemoteManga = Injekt.get()
+        val getManga: GetManga = Injekt.get()
+        val getIncognitoState: GetIncognitoState = Injekt.get()
+
+        val screenModel = rememberScreenModel {
+            KomgaLibraryScreenModel(
+                sourceId = sourceId,
+                listingQuery = listingQuery,
+                sourceManager = sourceManager,
+                sourcePreferences = sourcePreferences,
+                basePreferences = basePreferences,
+                libraryPreferences = libraryPreferences,
+                downloadManager = downloadManager,
+                getRemoteManga = getRemoteManga,
+                getManga = getManga,
+                getIncognitoState = getIncognitoState,
+            )
+        }
         val state by screenModel.state.collectAsState()
 
         val navigator = LocalNavigator.currentOrThrow
@@ -93,7 +124,7 @@ data class KomgaLibraryScreen(
         val uriHandler = LocalUriHandler.current
         val snackbarHostState = remember { SnackbarHostState() }
 
-        val onHelpClick = { uriHandler.openUri(LocalSource.HELP_URL) }
+        val onHelpClick = { uriHandler.openUri(Constants.URL_HELP) }
         val onWebViewClick = f@{
             val source = screenModel.source as? HttpSource ?: return@f
             navigator.push(
@@ -123,7 +154,6 @@ data class KomgaLibraryScreen(
                         displayMode = screenModel.displayMode,
                         onDisplayModeChange = { screenModel.displayMode = it },
                         navigateUp = navigateUp.takeIf { showNavigationUp },
-                        onWebViewClick = onWebViewClick,
                         onHelpClick = onHelpClick,
                         onSettingsClick = { navigator.push(SourcePreferencesScreen(sourceId)) },
                         onSearch = screenModel::search,
@@ -189,7 +219,6 @@ data class KomgaLibraryScreen(
                 showLibraryBadges = false,
                 onWebViewClick = onWebViewClick,
                 onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
-                onLocalSourceHelpClick = onHelpClick,
                 onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
                 onMangaLongClick = {},
             )

@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
+import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.core.security.PrivacyPreferences
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
@@ -30,10 +31,11 @@ object SettingsSecurityScreen : SearchableSettings {
 
     @Composable
     override fun getPreferences(): List<Preference> {
+        val basePreferences = remember { Injekt.get<BasePreferences>() }
         val securityPreferences = remember { Injekt.get<SecurityPreferences>() }
         val privacyPreferences = remember { Injekt.get<PrivacyPreferences>() }
         return buildList(2) {
-            add(getSecurityGroup(securityPreferences))
+            add(getSecurityGroup(basePreferences, securityPreferences))
             if (!telemetryIncluded) return@buildList
             add(getFirebaseGroup(privacyPreferences))
         }
@@ -41,6 +43,7 @@ object SettingsSecurityScreen : SearchableSettings {
 
     @Composable
     private fun getSecurityGroup(
+        basePreferences: BasePreferences,
         securityPreferences: SecurityPreferences,
     ): Preference.PreferenceGroup {
         val context = LocalContext.current
@@ -84,6 +87,11 @@ object SettingsSecurityScreen : SearchableSettings {
                 Preference.PreferenceItem.SwitchPreference(
                     preference = securityPreferences.hideNotificationContent,
                     title = stringResource(MR.strings.hide_notification_content),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = basePreferences.incognitoMode,
+                    title = stringResource(MR.strings.pref_incognito_mode),
+                    subtitle = stringResource(MR.strings.pref_incognito_mode_summary),
                 ),
                 Preference.PreferenceItem.ListPreference(
                     preference = securityPreferences.secureScreen,

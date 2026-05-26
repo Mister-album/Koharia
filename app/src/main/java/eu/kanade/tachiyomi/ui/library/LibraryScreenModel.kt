@@ -63,7 +63,6 @@ import tachiyomi.domain.manga.model.applyFilter
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracksPerManga
 import tachiyomi.domain.track.model.Track
-import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.random.Random
@@ -203,8 +202,7 @@ class LibraryScreenModel(
 
         val filterFnDownloaded: (LibraryItem) -> Boolean = {
             applyFilter(filterDownloaded) {
-                it.libraryManga.manga.isLocal() ||
-                    it.downloadCount > 0 ||
+                it.downloadCount > 0 ||
                     downloadManager.getDownloadCount(it.libraryManga.manga) > 0
             }
         }
@@ -354,7 +352,6 @@ class LibraryScreenModel(
         return combine(
             libraryPreferences.downloadBadge.changes(),
             libraryPreferences.unreadBadge.changes(),
-            libraryPreferences.localBadge.changes(),
             libraryPreferences.languageBadge.changes(),
             libraryPreferences.autoUpdateMangaRestrictions.changes(),
 
@@ -369,16 +366,15 @@ class LibraryScreenModel(
             ItemPreferences(
                 downloadBadge = it[0] as Boolean,
                 unreadBadge = it[1] as Boolean,
-                localBadge = it[2] as Boolean,
-                languageBadge = it[3] as Boolean,
-                skipOutsideReleasePeriod = LibraryPreferences.MANGA_OUTSIDE_RELEASE_PERIOD in (it[4] as Set<*>),
-                globalFilterDownloaded = it[5] as Boolean,
-                filterDownloaded = it[6] as TriState,
-                filterUnread = it[7] as TriState,
-                filterStarted = it[8] as TriState,
-                filterBookmarked = it[9] as TriState,
-                filterCompleted = it[10] as TriState,
-                filterIntervalCustom = it[11] as TriState,
+                languageBadge = it[2] as Boolean,
+                skipOutsideReleasePeriod = LibraryPreferences.MANGA_OUTSIDE_RELEASE_PERIOD in (it[3] as Set<*>),
+                globalFilterDownloaded = it[4] as Boolean,
+                filterDownloaded = it[5] as TriState,
+                filterUnread = it[6] as TriState,
+                filterStarted = it[7] as TriState,
+                filterBookmarked = it[8] as TriState,
+                filterCompleted = it[9] as TriState,
+                filterIntervalCustom = it[10] as TriState,
             )
         }
     }
@@ -402,11 +398,7 @@ class LibraryScreenModel(
                     } else {
                         0
                     },
-                    isLocal = if (preferences.localBadge) {
-                        manga.manga.isLocal()
-                    } else {
-                        false
-                    },
+                    isLocal = false,
                     sourceLanguage = if (preferences.languageBadge) {
                         sourceManager.getOrStub(manga.manga.source).lang
                     } else {
@@ -735,7 +727,6 @@ class LibraryScreenModel(
     private data class ItemPreferences(
         val downloadBadge: Boolean,
         val unreadBadge: Boolean,
-        val localBadge: Boolean,
         val languageBadge: Boolean,
         val skipOutsideReleasePeriod: Boolean,
 

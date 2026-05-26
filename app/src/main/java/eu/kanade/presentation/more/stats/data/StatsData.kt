@@ -11,7 +11,7 @@ sealed interface StatsData {
     data class Titles(
         val globalUpdateItemCount: Int,
         val startedMangaCount: Int,
-        val localMangaCount: Int,
+        val cachedMangaCount: Int,
     ) : StatsData
 
     data class Chapters(

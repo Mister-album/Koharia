@@ -34,7 +34,6 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
-import tachiyomi.source.local.LocalSource
 
 @Composable
 fun BrowseSourceContent(
@@ -47,7 +46,6 @@ fun BrowseSourceContent(
     showLibraryBadges: Boolean = true,
     onWebViewClick: () -> Unit,
     onHelpClick: () -> Unit,
-    onLocalSourceHelpClick: () -> Unit,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
 ) {
@@ -86,33 +84,23 @@ fun BrowseSourceContent(
                 is LoadState.Error -> getErrorMessage(errorState)
                 else -> stringResource(MR.strings.no_results_found)
             },
-            actions = if (source is LocalSource) {
-                persistentListOf(
-                    EmptyScreenAction(
-                        stringRes = MR.strings.local_source_help_guide,
-                        icon = Icons.AutoMirrored.Outlined.HelpOutline,
-                        onClick = onLocalSourceHelpClick,
-                    ),
-                )
-            } else {
-                persistentListOf(
-                    EmptyScreenAction(
-                        stringRes = MR.strings.action_retry,
-                        icon = Icons.Outlined.Refresh,
-                        onClick = mangaList::refresh,
-                    ),
-                    EmptyScreenAction(
-                        stringRes = MR.strings.action_open_in_web_view,
-                        icon = Icons.Outlined.Public,
-                        onClick = onWebViewClick,
-                    ),
-                    EmptyScreenAction(
-                        stringRes = MR.strings.label_help,
-                        icon = Icons.AutoMirrored.Outlined.HelpOutline,
-                        onClick = onHelpClick,
-                    ),
-                )
-            },
+            actions = persistentListOf(
+                EmptyScreenAction(
+                    stringRes = MR.strings.action_retry,
+                    icon = Icons.Outlined.Refresh,
+                    onClick = mangaList::refresh,
+                ),
+                EmptyScreenAction(
+                    stringRes = MR.strings.action_open_in_web_view,
+                    icon = Icons.Outlined.Public,
+                    onClick = onWebViewClick,
+                ),
+                EmptyScreenAction(
+                    stringRes = MR.strings.label_help,
+                    icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                    onClick = onHelpClick,
+                ),
+            ),
         )
 
         return

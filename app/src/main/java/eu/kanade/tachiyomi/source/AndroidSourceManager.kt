@@ -2,8 +2,8 @@ package eu.kanade.tachiyomi.source
 
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadManager
-import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.online.HttpSource
+import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,16 +18,12 @@ import kotlinx.coroutines.runBlocking
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
 import tachiyomi.domain.source.service.SourceManager
-import koharia.source.komga.KomgaSource
-import tachiyomi.source.local.LocalSource
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.util.concurrent.ConcurrentHashMap
 
 class AndroidSourceManager(
-    private val context: Context,
-    private val extensionManager: ExtensionManager,
+    @Suppress("UNUSED_PARAMETER")
+    context: Context,
     private val sourceRepository: StubSourceRepository,
 ) : SourceManager {
 
@@ -47,29 +43,10 @@ class AndroidSourceManager(
     }
 
     init {
-        scope.launch {
-            extensionManager.installedExtensionsFlow
-                .collectLatest { extensions ->
-                    val mutableMap = ConcurrentHashMap<Long, Source>(
-                        mapOf(
-                            LocalSource.ID to LocalSource(
-                                context,
-                                Injekt.get(),
-                                Injekt.get(),
-                            ),
-                            KomgaSource.ID to KomgaSource(),
-                        ),
-                    )
-                    extensions.forEach { extension ->
-                        extension.sources.forEach {
-                            mutableMap[it.id] = it
-                            registerStubSource(StubSource.from(it))
-                        }
-                    }
-                    sourcesMapFlow.value = mutableMap
-                    _isInitialized.value = true
-                }
-        }
+        val komgaSource = KomgaSource()
+        sourcesMapFlow.value = ConcurrentHashMap(mapOf(KomgaSource.ID to komgaSource))
+        registerStubSource(StubSource.from(komgaSource))
+        _isInitialized.value = true
 
         scope.launch {
             sourceRepository.subscribeAll()
@@ -114,10 +91,6 @@ class AndroidSourceManager(
 
     private suspend fun createStubSource(id: Long): StubSource {
         sourceRepository.getStubSource(id)?.let {
-            return it
-        }
-        extensionManager.getSourceData(id)?.let {
-            registerStubSource(it)
             return it
         }
         return StubSource(id = id, lang = "", name = "")

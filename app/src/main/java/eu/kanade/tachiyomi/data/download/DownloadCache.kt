@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.Context
 import androidx.core.net.toUri
 import com.hippo.unifile.UniFile
-import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -65,7 +64,6 @@ class DownloadCache(
     private val context: Context,
     private val provider: DownloadProvider = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
-    private val extensionManager: ExtensionManager = Injekt.get(),
     private val storageManager: StorageManager = Injekt.get(),
 ) {
 
@@ -352,7 +350,6 @@ class DownloadCache(
             // Try to wait until extensions and sources have loaded
             var sources = emptyList<Source>()
             withTimeoutOrNull(30.seconds) {
-                extensionManager.isInitialized.first { it }
                 sourceManager.isInitialized.first { it }
 
                 sources = getSources()

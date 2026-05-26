@@ -3,6 +3,7 @@ import koharia.gradle.getBuildTime
 import koharia.gradle.getLatestCommitCount
 import koharia.gradle.getLatestCommitSha
 import koharia.gradle.tasks.ReplaceShortcutsPlaceholderTask
+import java.util.Properties
 
 plugins {
     alias(kohariax.plugins.android.application)
@@ -20,14 +21,43 @@ if (Config.includeTelemetry) {
     }
 }
 
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+val hasReleaseKeystore = keystorePropertiesFile.exists().also { exists ->
+    if (exists) {
+        keystorePropertiesFile.inputStream().use(keystoreProperties::load)
+    }
+}
+
+fun requireKeystoreProperty(name: String): String {
+    return keystoreProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+        ?: error("Missing `$name` in ${keystorePropertiesFile.name}")
+}
+
 android {
     namespace = "eu.kanade.tachiyomi"
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                val releaseStoreFile = rootProject.file(requireKeystoreProperty("storeFile"))
+                check(releaseStoreFile.exists()) {
+                    "Release keystore not found at `${releaseStoreFile.path}`"
+                }
+
+                storeFile = releaseStoreFile
+                storePassword = requireKeystoreProperty("storePassword")
+                keyAlias = requireKeystoreProperty("keyAlias")
+                keyPassword = requireKeystoreProperty("keyPassword")
+            }
+        }
+    }
 
     defaultConfig {
         applicationId = "app.koharia"
 
-        versionCode = 22
-        versionName = "0.19.9"
+        versionCode = 2
+        versionName = "0.0.2"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getLatestCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getLatestCommitSha()}\"")
@@ -47,6 +77,9 @@ android {
         val release by getting {
             isMinifyEnabled = Config.enableCodeShrink
             isShrinkResources = Config.enableCodeShrink
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
 
             proguardFiles("proguard-android-optimize.txt", "proguard-rules.pro")
 
@@ -59,6 +92,9 @@ android {
             initWith(release)
 
             applicationIdSuffix = ".foss"
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
 
             matchingFallbacks.addAll(commonMatchingFallbacks)
         }
@@ -173,7 +209,6 @@ dependencies {
     implementation(projects.core.common)
     implementation(projects.coreMetadata)
     implementation(projects.sourceApi)
-    implementation(projects.sourceLocal)
     implementation(projects.data)
     implementation(projects.domain)
     implementation(projects.presentationCore)
