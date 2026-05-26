@@ -36,6 +36,7 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
@@ -120,6 +121,7 @@ class MangaScreenModel(
     private val setMangaCategories: SetMangaCategories = Injekt.get(),
     private val mangaRepository: MangaRepository = Injekt.get(),
     private val filterChaptersForDownload: FilterChaptersForDownload = Injekt.get(),
+    private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -211,6 +213,7 @@ class MangaScreenModel(
             val manga = getMangaAndChapters.awaitManga(mangaId)
             val chapters = getMangaAndChapters.awaitChapters(mangaId, applyScanlatorFilter = true)
                 .toChapterListItems(manga)
+            val source = Injekt.get<SourceManager>().getOrStub(manga.source)
 
             if (!manga.favorite) {
                 setMangaDefaultChapterFlags.await(manga)
@@ -223,7 +226,7 @@ class MangaScreenModel(
             mutableState.update {
                 State.Success(
                     manga = manga,
-                    source = Injekt.get<SourceManager>().getOrStub(manga.source),
+                    source = source,
                     isFromSource = isFromSource,
                     chapters = chapters,
                     availableScanlators = getAvailableScanlators.await(mangaId),
@@ -244,6 +247,11 @@ class MangaScreenModel(
                     async { if (needRefreshChapter) fetchChaptersFromSource() },
                 )
                 fetchFromSourceTasks.awaitAll()
+            }
+
+            if (source.id == KomgaSource.ID) {
+                addTracks.bindEnhancedTrackers(manga, source)
+                komgaProgressSyncService.syncFromServer(manga)
             }
 
             // Initial loading finished
@@ -562,6 +570,10 @@ class MangaScreenModel(
 
                 if (manualFetch) {
                     downloadNewChapters(newChapters)
+                }
+
+                if (state.source.id == KomgaSource.ID) {
+                    komgaProgressSyncService.syncFromServer(state.manga)
                 }
             }
         } catch (e: Throwable) {

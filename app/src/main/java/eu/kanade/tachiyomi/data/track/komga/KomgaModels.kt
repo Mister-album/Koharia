@@ -105,3 +105,26 @@ data class ReadProgressV2Dto(
     val lastReadContinuousNumberSort: Double,
     val maxNumberSort: Float,
 )
+
+@Serializable
+data class PageWrapperDto<T>(
+    val content: List<T> = emptyList(),
+)
+
+@Serializable
+data class BookDto(
+    val id: String,
+    val readProgress: BookReadProgressDto? = null,
+)
+
+@Serializable
+data class BookReadProgressDto(
+    val completed: Boolean = false,
+    val page: Int? = null,
+)
+
+@Serializable
+data class BookReadProgressUpdateDto(
+    val completed: Boolean? = null,
+    val page: Int? = null,
+)

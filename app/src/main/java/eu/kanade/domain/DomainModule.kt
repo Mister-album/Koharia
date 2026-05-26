@@ -21,6 +21,7 @@ import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.domain.track.interactor.RefreshTracks
 import eu.kanade.domain.track.interactor.SyncChapterProgressWithTrack
 import eu.kanade.domain.track.interactor.TrackChapter
+import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
 import koharia.domain.migration.usecases.MigrateMangaUseCase
 import koharia.domain.upcoming.interactor.GetUpcomingManga
@@ -141,6 +142,7 @@ class DomainModule : InjektModule {
         addFactory { GetTracks(get()) }
         addFactory { InsertTrack(get()) }
         addFactory { SyncChapterProgressWithTrack(get(), get(), get()) }
+        addFactory { KomgaProgressSyncService(get(), get(), get()) }
 
         addSingletonFactory<ChapterRepository> { ChapterRepositoryImpl(get()) }
         addFactory { GetChapter(get()) }

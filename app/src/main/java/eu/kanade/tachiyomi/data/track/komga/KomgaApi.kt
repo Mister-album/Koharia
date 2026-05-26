@@ -131,6 +131,45 @@ class KomgaApi(
         return getTrackSearch(track.tracking_url)
     }
 
+    suspend fun getSeriesBookProgress(url: String): List<SeriesBookProgress> =
+        withIOContext {
+            with(json) {
+                val baseUrl = url.substringBefore("/api/v1/series/")
+                requestClient.newCall(GET("$url/books?unpaged=true&media_status=READY&deleted=false", headers))
+                    .awaitSuccess()
+                    .parseAs<PageWrapperDto<BookDto>>()
+                    .content
+                    .map { book ->
+                        SeriesBookProgress(
+                            url = "$baseUrl/api/v1/books/${book.id}",
+                            readProgress = book.readProgress,
+                        )
+                    }
+            }
+        }
+
+    suspend fun updateBookProgress(
+        bookUrl: String,
+        page: Int,
+        completed: Boolean,
+    ) {
+        val payload = json.encodeToString(
+            if (completed) {
+                BookReadProgressUpdateDto(completed = true, page = page)
+            } else {
+                BookReadProgressUpdateDto(page = page)
+            },
+        )
+
+        requestClient.newCall(
+            Request.Builder()
+                .url("$bookUrl/read-progress")
+                .headers(headers)
+                .patch(payload.toRequestBody("application/json".toMediaType()))
+                .build(),
+        ).awaitSuccess()
+    }
+
     private fun SeriesDto.toTrack(): TrackSearch = TrackSearch.create(trackId).also {
         it.title = metadata.title
         it.summary = metadata.summary
@@ -140,4 +179,9 @@ class KomgaApi(
     private fun ReadListDto.toTrack(): TrackSearch = TrackSearch.create(trackId).also {
         it.title = name
     }
+
+    data class SeriesBookProgress(
+        val url: String,
+        val readProgress: BookReadProgressDto?,
+    )
 }

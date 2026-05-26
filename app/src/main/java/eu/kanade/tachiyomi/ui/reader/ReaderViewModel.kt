@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
+import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
@@ -100,6 +101,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
     private val getIncognitoState: GetIncognitoState = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
 ) : ViewModel() {
 
     private val mutableState = MutableStateFlow(State())
@@ -279,6 +281,7 @@ class ReaderViewModel @JvmOverloads constructor(
             try {
                 val manga = getManga.await(mangaId)
                 if (manga != null) {
+                    komgaProgressSyncService.syncFromServer(manga)
                     sourceManager.isInitialized.first { it }
                     mutableState.update { it.copy(manga = manga) }
                     if (chapterId == -1L) chapterId = initialChapterId
@@ -553,6 +556,13 @@ class ReaderViewModel @JvmOverloads constructor(
                     read = readerChapter.chapter.read,
                     lastPageRead = readerChapter.chapter.last_page_read.toLong(),
                 ),
+            )
+
+            komgaProgressSyncService.pushPageProgress(
+                sourceId = manga?.source ?: return,
+                chapterUrl = readerChapter.chapter.url,
+                pageIndex = pageIndex,
+                totalPages = readerChapter.pages?.size ?: 0,
             )
         }
     }
