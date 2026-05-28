@@ -17,7 +17,6 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.tachiyomi.ui.more.DownloadQueueState
-import tachiyomi.core.common.Constants
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -106,7 +105,6 @@ fun MoreScreen(
             item {
                 TextPreferenceWidget(
                     title = stringResource(MR.strings.pref_komga_server),
-                    subtitle = stringResource(MR.strings.pref_komga_server_summary),
                     icon = Icons.Outlined.Router,
                     onPreferenceClick = onClickKomgaSettings,
                 )
@@ -129,7 +127,7 @@ fun MoreScreen(
                 TextPreferenceWidget(
                     title = stringResource(MR.strings.label_help),
                     icon = Icons.AutoMirrored.Outlined.HelpOutline,
-                    onPreferenceClick = { uriHandler.openUri(Constants.URL_HELP) },
+                    onPreferenceClick = { uriHandler.openUri("https://github.com/Mister-album/Koharia") },
                 )
             }
         }

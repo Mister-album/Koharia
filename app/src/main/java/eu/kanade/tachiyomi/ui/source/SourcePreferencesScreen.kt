@@ -44,7 +44,10 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class SourcePreferencesScreen(val sourceId: Long) : Screen() {
+class SourcePreferencesScreen(
+    val sourceId: Long,
+    private val titleOverride: String? = null,
+) : Screen() {
 
     @Composable
     override fun Content() {
@@ -59,7 +62,7 @@ class SourcePreferencesScreen(val sourceId: Long) : Screen() {
         Scaffold(
             topBar = {
                 AppBar(
-                    title = Injekt.get<SourceManager>().getOrStub(sourceId).toString(),
+                    title = titleOverride ?: Injekt.get<SourceManager>().getOrStub(sourceId).toString(),
                     navigateUp = navigator::pop,
                     scrollBehavior = it,
                 )

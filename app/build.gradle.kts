@@ -1,3 +1,4 @@
+import com.android.build.api.variant.FilterConfiguration
 import koharia.gradle.Config
 import koharia.gradle.getBuildTime
 import koharia.gradle.getLatestCommitCount
@@ -57,7 +58,7 @@ android {
         applicationId = "app.koharia"
 
         versionCode = 2
-        versionName = "0.0.2"
+        versionName = "0.0.5"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getLatestCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getLatestCommitSha()}\"")
@@ -327,6 +328,17 @@ dependencies {
 
 androidComponents {
     onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val versionName = output.versionName.orNull ?: "0.0.0"
+            val abiSuffix = output.filters
+                .find { it.filterType == FilterConfiguration.FilterType.ABI }
+                ?.identifier
+                ?.let { "-$it" }
+                ?: ""
+
+            output.outputFileName.set("${rootProject.name}-v$versionName-${variant.name}$abiSuffix.apk")
+        }
+
         val resSource = variant.sources.res ?: return@onVariants
 
         val variantName = variant.name.replaceFirstChar { it.uppercase() }

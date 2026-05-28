@@ -557,13 +557,6 @@ class ReaderViewModel @JvmOverloads constructor(
                     lastPageRead = readerChapter.chapter.last_page_read.toLong(),
                 ),
             )
-
-            komgaProgressSyncService.pushPageProgress(
-                sourceId = manga?.source ?: return,
-                chapterUrl = readerChapter.chapter.url,
-                pageIndex = pageIndex,
-                totalPages = readerChapter.pages?.size ?: 0,
-            )
         }
     }
 
@@ -571,6 +564,13 @@ class ReaderViewModel @JvmOverloads constructor(
         readerChapter.chapter.read = true
         updateTrackChapterRead(readerChapter)
         deleteChapterIfNeeded(readerChapter)
+
+        komgaProgressSyncService.pushPageProgress(
+            sourceId = manga?.source ?: return,
+            chapterUrl = readerChapter.chapter.url,
+            pageIndex = readerChapter.pages?.lastIndex ?: 0,
+            totalPages = readerChapter.pages?.size ?: 0,
+        )
 
         val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead.get()
             .contains(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_EXISTING)
@@ -605,6 +605,15 @@ class ReaderViewModel @JvmOverloads constructor(
             val chapterId = readerChapter.chapter.id!!
             val endTime = Date()
             val sessionReadDuration = chapterReadStartTime?.let { endTime.time - it } ?: 0
+
+            if (sessionReadDuration > 0) {
+                komgaProgressSyncService.pushPageProgress(
+                    sourceId = manga?.source ?: return@let,
+                    chapterUrl = readerChapter.chapter.url,
+                    pageIndex = readerChapter.chapter.last_page_read,
+                    totalPages = readerChapter.pages?.size ?: 0,
+                )
+            }
 
             upsertHistory.await(HistoryUpdate(chapterId, endTime, sessionReadDuration))
             chapterReadStartTime = null

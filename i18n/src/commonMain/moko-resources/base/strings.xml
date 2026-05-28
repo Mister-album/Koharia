@@ -215,9 +215,9 @@
     <string name="pref_category_tracking">Tracking</string>
     <string name="pref_category_advanced">Advanced</string>
     <string name="pref_category_about">About</string>
-    <string name="pref_komga_server">Komga server</string>
+    <string name="pref_komga_server">Server</string>
     <string name="pref_komga_server_summary">Configure the connected Komga server address and authentication</string>
-    <string name="komga_pref_address_title">Address</string>
+    <string name="komga_pref_address_title">Komga server address</string>
     <string name="komga_pref_address_summary">The Komga server address</string>
     <string name="komga_pref_address_dialog">The address must not end with a forward slash.</string>
     <string name="komga_pref_address_validation">The URL must start with http:// or https://</string>

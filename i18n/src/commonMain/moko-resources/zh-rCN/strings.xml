@@ -71,9 +71,9 @@
     <string name="pref_category_tracking">进度记录</string>
     <string name="pref_category_advanced">高级</string>
     <string name="pref_category_about">关于</string>
-    <string name="pref_komga_server">Komga 服务器</string>
+    <string name="pref_komga_server">服务器</string>
     <string name="pref_komga_server_summary">配置当前连接的 Komga 服务器地址和认证信息</string>
-    <string name="komga_pref_address_title">服务器地址</string>
+    <string name="komga_pref_address_title">Komga服务器地址</string>
     <string name="komga_pref_address_summary">Komga 服务器地址</string>
     <string name="komga_pref_address_dialog">地址末尾不能带斜杠。</string>
     <string name="komga_pref_address_validation">URL 必须以 http:// 或 https:// 开头</string>

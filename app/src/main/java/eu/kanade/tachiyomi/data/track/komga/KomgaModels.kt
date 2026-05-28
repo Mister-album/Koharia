@@ -114,6 +114,7 @@ data class PageWrapperDto<T>(
 @Serializable
 data class BookDto(
     val id: String,
+    val seriesId: String = "",
     val readProgress: BookReadProgressDto? = null,
 )
 
@@ -121,6 +122,7 @@ data class BookDto(
 data class BookReadProgressDto(
     val completed: Boolean = false,
     val page: Int? = null,
+    val readDate: String? = null,
 )
 
 @Serializable

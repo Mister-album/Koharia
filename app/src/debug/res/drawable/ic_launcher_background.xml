@@ -1,23 +1,30 @@
+<!--
+  ~ Copyright (C) 2026 The Android Open Source Project
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~      http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="432"
-    android:viewportHeight="432">
-  <group>
-    <clip-path
-        android:pathData="M0,0h432v432h-432z"/>
+    android:width="512dp"
+    android:height="512dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
     <path
-        android:pathData="M0,0h432v432h-432z"
-        android:fillColor="#FAFAFA"/>
+        android:pathData="M0,0h512v512H0V0Z"
+        android:fillColor="#fafafa" />
     <path
-        android:pathData="M0,0h432v432h-432z"
-        android:fillColor="#2E3943"/>
+        android:pathData="M256.23,251.69m-139.76,0a139.76,139.76 0,1 1,279.52 0a139.76,139.76 0,1 1,-279.52 0"
+        android:fillColor="#2f3e4c" />
     <path
-        android:pathData="M322.13,215.5C322.13,272.66 274.64,319 216.07,319C157.49,319 110,272.66 110,215.5C110,158.34 157.49,112 216.07,112C274.64,112 322.13,158.34 322.13,215.5Z"
-        android:fillColor="#F2FAFF"/>
-    <path
-        android:pathData="M216.07,299.59C263.66,299.59 302.24,261.94 302.24,215.5C302.24,169.06 263.66,131.41 216.07,131.41C168.47,131.41 129.89,169.06 129.89,215.5C129.89,261.94 168.47,299.59 216.07,299.59ZM216.07,319C274.64,319 322.13,272.66 322.13,215.5C322.13,158.34 274.64,112 216.07,112C157.49,112 110,158.34 110,215.5C110,272.66 157.49,319 216.07,319Z"
-        android:fillColor="#7EBBED"
-        android:fillType="evenOdd"/>
-  </group>
+        android:pathData="M256.23,251.69m-113.11,0a113.11,113.11 0,1 1,226.22 0a113.11,113.11 0,1 1,-226.22 0"
+        android:fillColor="#86b9e9" />
 </vector>

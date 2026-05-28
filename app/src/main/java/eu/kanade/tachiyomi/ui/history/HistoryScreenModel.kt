@@ -8,6 +8,7 @@ import eu.kanade.core.util.insertSeparators
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.presentation.history.HistoryUiModel
+import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.util.lang.toLocalDate
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -53,6 +54,7 @@ class HistoryScreenModel(
     private val getManga: GetManga = Injekt.get(),
     private val getNextChapters: GetNextChapters = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
     private val removeHistory: RemoveHistory = Injekt.get(),
     private val setMangaCategories: SetMangaCategories = Injekt.get(),
     private val updateManga: UpdateManga = Injekt.get(),
@@ -64,6 +66,10 @@ class HistoryScreenModel(
     val events: Flow<Event> = _events.receiveAsFlow()
 
     init {
+        screenModelScope.launchIO {
+            syncKomgaHistory()
+        }
+
         screenModelScope.launch {
             state.map { it.searchQuery }
                 .distinctUntilChanged()
@@ -79,6 +85,13 @@ class HistoryScreenModel(
                 }
                 .collect { newList -> mutableState.update { it.copy(list = newList) } }
         }
+    }
+
+    private suspend fun syncKomgaHistory() {
+        runCatching { komgaProgressSyncService.syncHistoryFromServer() }
+            .onFailure { error ->
+                logcat(LogPriority.WARN, error) { "Failed to sync Komga history from server" }
+            }
     }
 
     private fun List<HistoryWithRelations>.toHistoryUiModels(): List<HistoryUiModel> {

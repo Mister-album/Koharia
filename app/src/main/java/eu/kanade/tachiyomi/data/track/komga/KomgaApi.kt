@@ -148,6 +148,30 @@ class KomgaApi(
             }
         }
 
+    suspend fun getInProgressBookProgress(): List<SeriesBookProgress> =
+        withIOContext {
+            with(json) {
+                val baseUrl = (sourceManager.get(KomgaSource.ID) as? KomgaSource)?.baseUrl?.trimEnd('/').orEmpty()
+                if (baseUrl.isBlank()) {
+                    logcat(LogPriority.WARN) { "KomgaApi.getInProgressBookProgress: blank server base URL" }
+                    emptyList()
+                } else {
+                    requestClient
+                        .newCall(GET("$baseUrl/api/v1/books?unpaged=true&read_status=IN_PROGRESS&deleted=false", headers))
+                        .awaitSuccess()
+                        .parseAs<PageWrapperDto<BookDto>>()
+                        .content
+                        .map { book ->
+                            SeriesBookProgress(
+                                seriesUrl = "$baseUrl/api/v1/series/${book.seriesId}",
+                                url = "$baseUrl/api/v1/books/${book.id}",
+                                readProgress = book.readProgress,
+                            )
+                        }
+                }
+            }
+        }
+
     suspend fun updateBookProgress(
         bookUrl: String,
         page: Int,
@@ -181,6 +205,7 @@ class KomgaApi(
     }
 
     data class SeriesBookProgress(
+        val seriesUrl: String? = null,
         val url: String,
         val readProgress: BookReadProgressDto?,
     )
