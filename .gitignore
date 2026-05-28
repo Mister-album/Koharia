@@ -1,0 +1,23 @@
+# Build files
+.gradle
+.gradle-home
+.kotlin
+build
+
+# IDE files
+*.iml
+.idea/*
+!.idea/icon.svg
+/captures
+
+# Configuration files
+local.properties
+keystore.properties
+*.jks
+app/google-services.json
+
+# macOS specific files
+.DS_Store
+
+
+.github/workflows/

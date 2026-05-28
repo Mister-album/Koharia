@@ -1,0 +1,103 @@
+name: 🐞 Issue report
+description: Report an issue in Koharia
+labels: [bug]
+body:
+  - type: textarea
+    id: reproduce-steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide an example of the issue.
+      placeholder: |
+        Example:
+          1. First step
+          2. Second step
+          3. Issue here
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: Explain what you should expect to happen.
+      placeholder: |
+        Example:
+          "This should happen..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: Explain what actually happens.
+      placeholder: |
+        Example:
+          "This happened instead..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: crash-logs
+    attributes:
+      label: Crash logs
+      description: |
+        If you're experiencing crashes, if possible, go to the app's **More → Settings → Advanced** page, press **Dump crash logs** and share the crash logs here.
+      placeholder: |
+        You can upload the crash log file as an attachment, or paste the crash logs in plain text if needed.
+
+  - type: input
+    id: koharia-version
+    attributes:
+      label: Koharia version
+      description: You can find your Koharia version in **More → About**.
+      placeholder: |
+        Example: "0.19.9"
+    validations:
+      required: true
+
+  - type: input
+    id: android-version
+    attributes:
+      label: Android version
+      description: You can find this somewhere in your Android settings.
+      placeholder: |
+        Example: "Android 11"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: List your device and model.
+      placeholder: |
+        Example: "Google Pixel 5"
+    validations:
+      required: true
+
+  - type: textarea
+    id: other-details
+    attributes:
+      label: Other details
+      placeholder: |
+        Additional details and attachments.
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      description: Read this carefully, we will close and ignore your issue if you skimmed through this.
+      options:
+        - label: I have searched the existing issues and this is a new ticket, **NOT** a duplicate or related to another open or closed issue.
+          required: true
+        - label: I have written a short but informative title.
+          required: true
+        - label: I have checked the README, troubleshooting notes, and existing issues for this repository.
+          required: true
+        - label: I have updated the app to the latest available Koharia build for this repository.
+          required: true
+        - label: I have filled out all of the requested information in this form, including specific version numbers.
+          required: true
+        - label: I understand that Koharia is an independent third-party client and that server-side or deployment-specific issues may require separate verification.
+          required: true

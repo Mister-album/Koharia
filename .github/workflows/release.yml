@@ -1,0 +1,181 @@
+name: Release
+on:
+  push:
+    tags:
+      - v*
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  get_tag:
+    if: github.repository == 'Mister-album/Koharia'
+    name: Extract tag name
+    runs-on: 'ubuntu-24.04'
+    outputs:
+      tag: ${{ steps.extract.outputs.tag }}
+
+    steps:
+      - name: Get tag name
+        id: extract
+        run: echo "tag=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_OUTPUT
+
+  build:
+    if: github.repository == 'Mister-album/Koharia'
+    name: Build
+    runs-on: 'ubuntu-24.04'
+    needs: get_tag
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version-file: .github/.java-version
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+
+      - name: Build
+        run: ./gradlew assembleRelease -Penable-updater
+
+      - name: Sign APK
+        uses: r0adkll/sign-android-release@a391126403df92c6a0a3988a829dd47f79b89ed7
+        with:
+          releaseDirectory: app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+          alias: ${{ secrets.ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: '35.0.1'
+
+      - name: Rename APK
+        run: |
+          set -e
+
+          shopt -s nullglob
+
+          for file in app/build/outputs/apk/release/*signed.apk; do
+            name=$(basename "$file")
+            renamed="${name%-unsigned-signed.apk}.apk"
+            if [[ "$renamed" == "$name" ]]; then
+              renamed="${name%-signed.apk}.apk"
+            fi
+            mv "$file" "$renamed"
+          done
+
+      - name: Upload APK
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: koharia
+          path: |
+            Koharia-v*-release.apk
+            Koharia-v*-release-arm64-v8a.apk
+            Koharia-v*-release-armeabi-v7a.apk
+            Koharia-v*-release-x86.apk
+            Koharia-v*-release-x86_64.apk
+
+  build_foss:
+    if: github.repository == 'Mister-album/Koharia'
+    name: Build (FOSS)
+    runs-on: ubuntu-24.04
+    needs: get_tag
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version-file: .github/.java-version
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        with:
+          cache-disabled: true
+
+      - name: Build
+        run: ./gradlew assembleFoss -Penable-updater
+
+      - name: Sign APK
+        uses: r0adkll/sign-android-release@a391126403df92c6a0a3988a829dd47f79b89ed7
+        with:
+          releaseDirectory: app/build/outputs/apk/foss
+          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+          alias: ${{ secrets.ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: '35.0.1'
+
+      - name: Rename APK
+        run: |
+          set -e
+
+          shopt -s nullglob
+
+          for file in app/build/outputs/apk/foss/*signed.apk; do
+            name=$(basename "$file")
+            renamed="${name%-unsigned-signed.apk}.apk"
+            if [[ "$renamed" == "$name" ]]; then
+              renamed="${name%-signed.apk}.apk"
+            fi
+            mv "$file" "$renamed"
+          done
+
+      - name: Upload APK
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: koharia-foss
+          path: app/build/outputs/apk/foss/Koharia-v*-foss.apk
+
+  release:
+    if: github.repository == 'Mister-album/Koharia'
+    name: Create GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [get_tag, build, build_foss]
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          merge-multiple: true
+
+      - name: Delete all artifacts
+        uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
+        with:
+          failOnError: false
+          name: |
+            koharia
+            koharia-foss
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ needs.get_tag.outputs.tag }}
+          name: Koharia ${{ needs.get_tag.outputs.tag }}
+          body: |
+            Koharia is a manga client focused on connecting to Komga servers.
+
+            Current builds include the standard Android release variants, plus a FOSS build when needed.
+
+            > [!TIP]
+            >
+            > If you are unsure which package to download, start with the universal `Koharia-v*-release.apk` asset.
+          files: |
+            Koharia-v*-release.apk
+            Koharia-v*-release-arm64-v8a.apk
+            Koharia-v*-release-armeabi-v7a.apk
+            Koharia-v*-release-x86.apk
+            Koharia-v*-release-x86_64.apk
+            Koharia-v*-foss.apk
+          draft: true
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
