@@ -1,0 +1,20 @@
+Koharia
+
+This product is a derivative work based on Mihon:
+https://github.com/mihonapp/mihon
+
+Original upstream work:
+- Mihon
+- Originally created by Javier Tomas
+- Later maintained and extended by Mihon contributors
+- Licensed under the Apache License, Version 2.0
+
+Koharia-specific modifications include, among other changes:
+- Renaming and rebranding the application and package identifiers
+- Adapting the application into an independent third-party client focused on Komga server browsing and reading
+- Reworking download behavior for Komga offline caching and raw-file downloads
+- Updating documentation, repository metadata, and project descriptions for derivative-work compliance
+
+Koharia is an independent third-party project and is not affiliated with, endorsed by, or maintained by the Mihon project or the Komga project.
+
+Names of upstream projects are used in this repository only to identify origin, compatibility, or attribution where required.
