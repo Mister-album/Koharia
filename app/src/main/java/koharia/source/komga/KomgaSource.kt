@@ -270,6 +270,17 @@ class KomgaSource :
         }
     }
 
+    fun invalidateBrowseCache() {
+        libraries = emptyList()
+        collections = emptyList()
+        genres = emptySet()
+        tags = emptySet()
+        publishers = emptySet()
+        authors = emptyMap()
+        fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
+        fetchFiltersAttempts = 0
+    }
+
     fun buildFilterListForLibrary(libraryId: String?): FilterList {
         val filters = getFilterList()
         filters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.forEach { option ->

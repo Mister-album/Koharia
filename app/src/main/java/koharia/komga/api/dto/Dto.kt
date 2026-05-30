@@ -23,6 +23,11 @@ data class LibraryDto(
 )
 
 @Serializable
+data class ClientSettingDto(
+    val value: String? = null,
+)
+
+@Serializable
 data class AuthorDto(
     val name: String,
     val role: String,

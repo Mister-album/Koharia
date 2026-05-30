@@ -1,13 +1,19 @@
 package koharia.komga.ui.library
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
+import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material3.FilterChip
@@ -19,14 +25,19 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -62,6 +73,7 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import androidx.paging.LoadState
 
 data class KomgaLibraryScreen(
     val sourceId: Long,
@@ -73,6 +85,7 @@ data class KomgaLibraryScreen(
 
     override fun onProvideAssistUrl() = assistUrl
 
+    @OptIn(ExperimentalMaterialApi::class)
     @Composable
     override fun Content() {
         if (!ifSourcesLoaded()) {
@@ -123,6 +136,20 @@ data class KomgaLibraryScreen(
 
         val uriHandler = LocalUriHandler.current
         val snackbarHostState = remember { SnackbarHostState() }
+        val mangaList = screenModel.mangaPagerFlowFlow.collectAsLazyPagingItems()
+        val isRefreshing = state.isRefreshing || (mangaList.itemCount > 0 && mangaList.loadState.refresh is LoadState.Loading)
+        val pullRefreshState = rememberPullRefreshState(
+            refreshing = isRefreshing,
+            onRefresh = screenModel::refresh,
+        )
+        val density = LocalDensity.current
+        val pullOffsetPx by remember(isRefreshing, pullRefreshState, density) {
+            derivedStateOf<Float> {
+                val restingOffset = with(density) { 56.dp.toPx() }
+                val dragOffset = with(density) { 72.dp.toPx() } * pullRefreshState.progress.coerceAtMost(1f)
+                if (isRefreshing) restingOffset else dragOffset
+            }
+        }
 
         val onHelpClick = { uriHandler.openUri(Constants.URL_HELP) }
         val onWebViewClick = f@{
@@ -209,19 +236,39 @@ data class KomgaLibraryScreen(
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { paddingValues ->
-            BrowseSourceContent(
-                source = screenModel.source,
-                mangaList = screenModel.mangaPagerFlowFlow.collectAsLazyPagingItems(),
-                columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
-                displayMode = screenModel.displayMode,
-                snackbarHostState = snackbarHostState,
-                contentPadding = paddingValues,
-                showLibraryBadges = false,
-                onWebViewClick = onWebViewClick,
-                onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
-                onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
-                onMangaLongClick = {},
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pullRefresh(pullRefreshState),
+            ) {
+                Box(
+                    modifier = Modifier.graphicsLayer { translationY = pullOffsetPx },
+                ) {
+                    BrowseSourceContent(
+                        source = screenModel.source,
+                        mangaList = mangaList,
+                        columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
+                        displayMode = screenModel.displayMode,
+                        snackbarHostState = snackbarHostState,
+                        contentPadding = paddingValues,
+                        showLibraryBadges = false,
+                        onWebViewClick = onWebViewClick,
+                        onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
+                        onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
+                        onMangaLongClick = {},
+                    )
+                }
+                PullRefreshIndicator(
+                    refreshing = isRefreshing,
+                    state = pullRefreshState,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = paddingValues.calculateTopPadding()),
+                    backgroundColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    scale = true,
+                )
+            }
         }
 
         val onDismissRequest = { screenModel.setDialog(null) }
@@ -247,13 +294,21 @@ data class KomgaLibraryScreen(
                     }
                 }
         }
+
+        LaunchedEffect(Unit) {
+            refreshEvent.receiveAsFlow().collectLatest {
+                screenModel.refresh()
+            }
+        }
     }
 
     suspend fun search(query: String) = queryEvent.send(SearchType.Text(query))
     suspend fun searchGenre(name: String) = queryEvent.send(SearchType.Genre(name))
+    suspend fun refresh() = refreshEvent.send(Unit)
 
     companion object {
         private val queryEvent = Channel<SearchType>()
+        private val refreshEvent = Channel<Unit>(capacity = Channel.CONFLATED)
     }
 
     sealed class SearchType(val txt: String) {
