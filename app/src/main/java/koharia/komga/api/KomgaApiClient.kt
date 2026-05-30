@@ -8,6 +8,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import koharia.komga.api.dto.AuthorDto
+import koharia.komga.api.dto.ClientSettingDto
 import koharia.komga.api.dto.CollectionDto
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.api.dto.PageWrapperDto
@@ -123,6 +124,19 @@ class KomgaApiClient(
 
     suspend fun getLibraries(): List<LibraryDto> =
         client.newCall(GET("$baseUrl/api/v1/libraries", headers)).executeAndParse()
+
+    suspend fun getLibraryOrders(): Map<String, Int> {
+        val settings = client.newCall(GET("$baseUrl/api/v1/client-settings/user/list", headers))
+            .executeAndParse<Map<String, ClientSettingDto>>()
+        val librariesValue = settings["webui.libraries"]?.value?.takeIf { it.isNotBlank() } ?: return emptyMap()
+        val librariesOrder = json.parseToJsonElement(librariesValue).jsonObject
+
+        return librariesOrder.mapNotNull { (libraryId, value) ->
+            value.jsonObject["order"]?.jsonPrimitive?.content?.toIntOrNull()?.let { order ->
+                libraryId to order
+            }
+        }.toMap()
+    }
 
     suspend fun getCollections(): List<CollectionDto> =
         client.newCall(GET("$baseUrl/api/v1/collections?unpaged=true", headers)).executeAndParse<PageWrapperDto<CollectionDto>>().content

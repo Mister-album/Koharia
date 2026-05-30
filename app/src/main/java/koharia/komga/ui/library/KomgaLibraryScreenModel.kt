@@ -26,6 +26,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
@@ -58,6 +59,7 @@ class KomgaLibraryScreenModel(
 ) : StateScreenModel<KomgaLibraryScreenModel.State>(State(Listing.valueOf(listingQuery))) {
     var displayMode by sourcePreferences.sourceDisplayMode.asState(screenModelScope)
     var cachedOnly by basePreferences.downloadedOnly.asState(screenModelScope)
+    private val refreshSignal = MutableStateFlow(0)
 
     val source = sourceManager.getOrStub(sourceId)
 
@@ -114,9 +116,10 @@ class KomgaLibraryScreenModel(
     val mangaPagerFlowFlow = combine(
         state.map { it.listing }.distinctUntilChanged(),
         basePreferences.downloadedOnly.changes().onStart { emit(basePreferences.downloadedOnly.get()) },
-    ) { listing, cachedOnly ->
-        listing to cachedOnly
-    }.map { (listing, cachedOnly) ->
+        refreshSignal,
+    ) { listing, cachedOnly, refreshSignal ->
+        Triple(listing, cachedOnly, refreshSignal)
+    }.map { (listing, cachedOnly, _) ->
             Pager(PagingConfig(pageSize = 25)) {
                 getRemoteManga(sourceId, listing.query ?: "", listing.filters)
             }.flow.map { pagingData ->
@@ -235,6 +238,41 @@ class KomgaLibraryScreenModel(
         mutableState.update { it.copy(toolbarQuery = query) }
     }
 
+    fun refresh() {
+        val komgaSource = source as? KomgaSource
+        if (komgaSource != null) {
+            screenModelScope.launchIO {
+                mutableState.update { it.copy(isRefreshing = true) }
+                komgaSource.invalidateBrowseCache()
+
+                if (!komgaSource.hasValidBaseUrl()) {
+                    mutableState.update { it.copy(isRefreshing = false) }
+                    return@launchIO
+                }
+
+                try {
+                    val libraries = komgaSource.getBrowseLibraries()
+                    val selectedLibraryId = state.value.selectedKomgaLibraryId
+                        ?.takeIf { selectedId -> libraries.any { it.id == selectedId } }
+
+                    mutableState.update {
+                        it.copy(
+                            komgaLibraries = libraries.toImmutableList(),
+                            selectedKomgaLibraryId = selectedLibraryId,
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e("KomgaLibraryScreenModel", "Failed to refresh Komga libraries", e)
+                } finally {
+                    mutableState.update { it.copy(isRefreshing = false) }
+                    refreshSignal.value += 1
+                }
+            }
+        } else {
+            refreshSignal.value += 1
+        }
+    }
+
     fun selectKomgaLibrary(libraryId: String?) {
         val komgaSource = source as? KomgaSource ?: return
         val filters = komgaSource.buildFilterListForLibrary(libraryId)
@@ -279,6 +317,7 @@ class KomgaLibraryScreenModel(
         val dialog: Dialog? = null,
         val komgaLibraries: ImmutableList<LibraryDto> = persistentListOf(),
         val selectedKomgaLibraryId: String? = null,
+        val isRefreshing: Boolean = false,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }

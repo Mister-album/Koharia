@@ -120,8 +120,10 @@ class KomgaRepository(
         }
 
     suspend fun fetchFilterOptions(): KomgaFilterOptions = withIOContext {
+        val libraryOrders = apiClient.getLibraryOrders()
         KomgaFilterOptions(
-            libraries = apiClient.getLibraries(),
+            libraries = apiClient.getLibraries()
+                .sortedBy { libraryOrders[it.id] ?: Int.MAX_VALUE },
             collections = apiClient.getCollections(),
             genres = apiClient.getGenres(),
             tags = apiClient.getTags(),

@@ -4,6 +4,11 @@ import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
@@ -34,10 +39,25 @@ data object LibraryTab : Tab {
             )
         }
 
-    override suspend fun onReselect(navigator: Navigator) = Unit
+    override suspend fun onReselect(navigator: Navigator) {
+        komgaBrowseScreen.refresh()
+    }
 
     @Composable
     override fun Content() {
+        val isSelected = LocalTabNavigator.current.current.key == key
+        var hasEntered by remember { mutableStateOf(false) }
+
+        LaunchedEffect(isSelected) {
+            if (isSelected) {
+                if (hasEntered) {
+                    komgaBrowseScreen.refresh()
+                } else {
+                    hasEntered = true
+                }
+            }
+        }
+
         komgaBrowseScreen.Content()
     }
 

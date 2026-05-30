@@ -219,6 +219,7 @@ dependencies {
     // Compose
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.foundation)
+    implementation("androidx.compose.material:material")
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.materialIcons)
     implementation(libs.androidx.compose.animation)
