@@ -7,6 +7,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
+import androidx.paging.PagingData
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
@@ -25,12 +26,13 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -110,29 +112,29 @@ class KomgaLibraryScreenModel(
         }
     }
 
-    /**
-     * Flow of Pager flow tied to [State.listing]
-     */
-    val mangaPagerFlowFlow = combine(
+    val mangaPagerFlow: Flow<PagingData<StateFlow<Manga>>> = combine(
         state.map { it.listing }.distinctUntilChanged(),
         basePreferences.downloadedOnly.changes().onStart { emit(basePreferences.downloadedOnly.get()) },
         refreshSignal,
     ) { listing, cachedOnly, refreshSignal ->
         Triple(listing, cachedOnly, refreshSignal)
-    }.map { (listing, cachedOnly, _) ->
+    }.flatMapLatest { (listing, cachedOnly, _) ->
             Pager(PagingConfig(pageSize = 25)) {
                 getRemoteManga(sourceId, listing.query ?: "", listing.filters)
             }.flow.map { pagingData ->
-                pagingData.map { manga ->
-                    getManga.subscribe(manga.url, manga.source)
-                        .map { it ?: manga }
-                        .stateIn(ioCoroutineScope)
+                pagingData.map { remoteManga ->
+                    getManga.subscribe(remoteManga.url, remoteManga.source)
+                        .map { localManga -> mergeRemoteWithLocal(remoteManga, localManga) }
+                        .stateIn(
+                            scope = ioCoroutineScope,
+                            started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+                            initialValue = remoteManga,
+                        )
                 }
-                    .filter { !cachedOnly || downloadManager.getDownloadCount(it.value) > 0 }
+                    .filter { mangaStateFlow -> !cachedOnly || downloadManager.getDownloadCount(mangaStateFlow.value) > 0 }
             }
-                .cachedIn(ioCoroutineScope)
         }
-        .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyFlow())
+        .cachedIn(ioCoroutineScope)
 
     fun getColumnsPreference(orientation: Int): GridCells {
         val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -321,4 +323,26 @@ class KomgaLibraryScreenModel(
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }
+}
+
+private fun mergeRemoteWithLocal(remote: Manga, local: Manga?): Manga {
+    if (local == null) return remote
+
+    return remote.copy(
+        id = local.id,
+        favorite = local.favorite,
+        lastUpdate = local.lastUpdate,
+        nextUpdate = local.nextUpdate,
+        fetchInterval = local.fetchInterval,
+        dateAdded = local.dateAdded,
+        viewerFlags = local.viewerFlags,
+        chapterFlags = local.chapterFlags,
+        coverLastModified = local.coverLastModified,
+        updateStrategy = local.updateStrategy,
+        initialized = local.initialized,
+        lastModifiedAt = local.lastModifiedAt,
+        favoriteModifiedAt = local.favoriteModifiedAt,
+        version = local.version,
+        notes = local.notes,
+    )
 }

@@ -284,7 +284,11 @@ class KomgaSource :
     fun buildFilterListForLibrary(libraryId: String?): FilterList {
         val filters = getFilterList()
         filters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.forEach { option ->
-            option.state = libraryId != null && option.id == libraryId
+            option.state = if (libraryId == null) {
+                true
+            } else {
+                option.id == libraryId
+            }
         }
         filters.filterIsInstance<TypeSelect>().firstOrNull()?.state = 0
         filters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(1, true)

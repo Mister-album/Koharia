@@ -37,6 +37,7 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 
 @Composable
 fun BrowseSourceContent(
+    modifier: Modifier = Modifier,
     source: Source?,
     mangaList: LazyPagingItems<StateFlow<Manga>>,
     columns: GridCells,
@@ -73,13 +74,13 @@ fun BrowseSourceContent(
     }
 
     if (mangaList.itemCount == 0 && mangaList.loadState.refresh is LoadState.Loading) {
-        LoadingScreen(Modifier.padding(contentPadding))
+        LoadingScreen(modifier.padding(contentPadding))
         return
     }
 
     if (mangaList.itemCount == 0) {
         EmptyScreen(
-            modifier = Modifier.padding(contentPadding),
+            modifier = modifier.padding(contentPadding),
             message = when (errorState) {
                 is LoadState.Error -> getErrorMessage(errorState)
                 else -> stringResource(MR.strings.no_results_found)
@@ -109,6 +110,7 @@ fun BrowseSourceContent(
     when (displayMode) {
         LibraryDisplayMode.ComfortableGrid -> {
             BrowseSourceComfortableGrid(
+                modifier = modifier,
                 mangaList = mangaList,
                 columns = columns,
                 contentPadding = contentPadding,
@@ -119,6 +121,7 @@ fun BrowseSourceContent(
         }
         LibraryDisplayMode.List -> {
             BrowseSourceList(
+                modifier = modifier,
                 mangaList = mangaList,
                 contentPadding = contentPadding,
                 showLibraryBadges = showLibraryBadges,
@@ -128,6 +131,7 @@ fun BrowseSourceContent(
         }
         LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> {
             BrowseSourceCompactGrid(
+                modifier = modifier,
                 mangaList = mangaList,
                 columns = columns,
                 contentPadding = contentPadding,

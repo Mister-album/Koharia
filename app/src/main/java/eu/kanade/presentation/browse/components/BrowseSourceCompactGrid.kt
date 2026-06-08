@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
@@ -20,6 +21,7 @@ import tachiyomi.presentation.core.util.plus
 
 @Composable
 fun BrowseSourceCompactGrid(
+    modifier: Modifier = Modifier,
     mangaList: LazyPagingItems<StateFlow<Manga>>,
     columns: GridCells,
     contentPadding: PaddingValues,
@@ -28,6 +30,7 @@ fun BrowseSourceCompactGrid(
     onMangaLongClick: (Manga) -> Unit,
 ) {
     LazyVerticalGrid(
+        modifier = modifier,
         columns = columns,
         contentPadding = contentPadding + PaddingValues(8.dp),
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
