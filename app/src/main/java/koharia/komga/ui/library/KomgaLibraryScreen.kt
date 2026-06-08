@@ -6,6 +6,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -32,12 +33,14 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
+import androidx.paging.LoadState
+import androidx.paging.compose.collectAsLazyPagingItems
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -58,7 +61,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
-import koharia.presentation.core.util.collectAsLazyPagingItems
 import tachiyomi.core.common.Constants
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
@@ -73,7 +75,7 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.data.download.DownloadManager
-import androidx.paging.LoadState
+import kotlin.math.roundToInt
 
 data class KomgaLibraryScreen(
     val sourceId: Long,
@@ -136,7 +138,7 @@ data class KomgaLibraryScreen(
 
         val uriHandler = LocalUriHandler.current
         val snackbarHostState = remember { SnackbarHostState() }
-        val mangaList = screenModel.mangaPagerFlowFlow.collectAsLazyPagingItems()
+        val mangaList = screenModel.mangaPagerFlow.collectAsLazyPagingItems()
         val isRefreshing = state.isRefreshing || (mangaList.itemCount > 0 && mangaList.loadState.refresh is LoadState.Loading)
         val pullRefreshState = rememberPullRefreshState(
             refreshing = isRefreshing,
@@ -145,9 +147,9 @@ data class KomgaLibraryScreen(
         val density = LocalDensity.current
         val pullOffsetPx by remember(isRefreshing, pullRefreshState, density) {
             derivedStateOf<Float> {
-                val restingOffset = with(density) { 56.dp.toPx() }
+                val pullProgress = pullRefreshState.progress.coerceAtMost(1f)
                 val dragOffset = with(density) { 72.dp.toPx() } * pullRefreshState.progress.coerceAtMost(1f)
-                if (isRefreshing) restingOffset else dragOffset
+                if (pullProgress > 0f) dragOffset else 0f
             }
         }
 
@@ -241,23 +243,20 @@ data class KomgaLibraryScreen(
                     .fillMaxSize()
                     .pullRefresh(pullRefreshState),
             ) {
-                Box(
-                    modifier = Modifier.graphicsLayer { translationY = pullOffsetPx },
-                ) {
-                    BrowseSourceContent(
-                        source = screenModel.source,
-                        mangaList = mangaList,
-                        columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
-                        displayMode = screenModel.displayMode,
-                        snackbarHostState = snackbarHostState,
-                        contentPadding = paddingValues,
-                        showLibraryBadges = false,
-                        onWebViewClick = onWebViewClick,
-                        onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
-                        onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
-                        onMangaLongClick = {},
-                    )
-                }
+                BrowseSourceContent(
+                    source = screenModel.source,
+                    mangaList = mangaList,
+                    columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
+                    displayMode = screenModel.displayMode,
+                    snackbarHostState = snackbarHostState,
+                    contentPadding = paddingValues,
+                    showLibraryBadges = false,
+                    onWebViewClick = onWebViewClick,
+                    onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
+                    onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
+                    onMangaLongClick = {},
+                    modifier = Modifier.offset { IntOffset(x = 0, y = pullOffsetPx.roundToInt()) },
+                )
                 PullRefreshIndicator(
                     refreshing = isRefreshing,
                     state = pullRefreshState,

@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
@@ -17,6 +18,7 @@ import tachiyomi.presentation.core.util.plus
 
 @Composable
 fun BrowseSourceList(
+    modifier: Modifier = Modifier,
     mangaList: LazyPagingItems<StateFlow<Manga>>,
     contentPadding: PaddingValues,
     showLibraryBadges: Boolean,
@@ -24,6 +26,7 @@ fun BrowseSourceList(
     onMangaLongClick: (Manga) -> Unit,
 ) {
     LazyColumn(
+        modifier = modifier,
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
     ) {
         item {
