@@ -667,7 +667,7 @@ class MangaScreenModel(
         chapters: List<Chapter>,
         startNow: Boolean,
     ) {
-        val successState = successState ?: return
+        successState ?: return
 
         screenModelScope.launchNonCancellable {
             if (startNow) {
@@ -675,20 +675,6 @@ class MangaScreenModel(
                 downloadManager.startDownloadNow(chapterId)
             } else {
                 downloadChapters(chapters)
-            }
-
-            if (!isFavorited && !successState.hasPromptedToAddBefore) {
-                updateSuccessState { state ->
-                    state.copy(hasPromptedToAddBefore = true)
-                }
-                val result = snackbarHostState.showSnackbar(
-                    message = context.stringResource(MR.strings.snack_add_to_library),
-                    actionLabel = context.stringResource(MR.strings.action_add),
-                    withDismissAction = true,
-                )
-                if (result == SnackbarResult.ActionPerformed && !isFavorited) {
-                    toggleFavorite()
-                }
             }
         }
     }
