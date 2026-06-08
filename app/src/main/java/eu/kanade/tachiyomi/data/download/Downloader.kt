@@ -19,7 +19,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -486,14 +488,21 @@ class Downloader(
     private suspend fun tryDownloadRawFile(download: Download, mangaDir: UniFile, chapterDirname: String): Boolean {
         val source = download.source as? KomgaSource ?: return false
 
-        return source.client.newCall(source.rawFileRequest(download.chapter.url)).execute().use { response ->
-            if (!response.isSuccessful) {
-                error("HTTP ${response.code}")
+        fun tmpFileFor(extension: String): Pair<String, UniFile> {
+            val finalFileName = "$chapterDirname.$extension"
+            val tmpFileName = "$finalFileName$TMP_DIR_SUFFIX"
+            val existing = mangaDir.findFile(tmpFileName)
+            val tmpFile = existing ?: mangaDir.createFile(tmpFileName)
+                ?: error("Failed to create raw download file: $tmpFileName")
+            return finalFileName to tmpFile
+        }
+
+        return source.client.newCall(source.rawFileRequest(download.chapter.url)).execute().use { probeResponse ->
+            if (!probeResponse.isSuccessful) {
+                error("HTTP ${probeResponse.code}")
             }
 
-            val body = response.body
-
-            val extension = resolveRawFileExtension(response)
+            val extension = resolveRawFileExtension(probeResponse)
             if (!DownloadProvider.isSupportedChapterFileExtension(extension)) {
                 logcat(LogPriority.INFO) {
                     "Downloader.tryDownloadRawFile(): unsupported raw file extension=$extension, falling back to page cache"
@@ -501,34 +510,58 @@ class Downloader(
                 return false
             }
 
-            val totalBytes = body.contentLength().takeIf { it > 0L } ?: 0L
-            download.updateRawProgress(0L, totalBytes)
-            download.status = Download.State.DOWNLOADING
+            var (finalFileName, tmpFile) = tmpFileFor(extension!!)
+            val existingBytes = tmpFile.length().takeIf { it > 0L } ?: 0L
+            probeResponse.close()
 
-            val finalFileName = "$chapterDirname.$extension"
-            val tmpFileName = "$finalFileName$TMP_DIR_SUFFIX"
-            mangaDir.findFile(finalFileName)?.delete()
-            mangaDir.findFile(tmpFileName)?.delete()
-            val tmpFile = mangaDir.createFile(tmpFileName)
-                ?: error("Failed to create raw download file: $tmpFileName")
-
-            tmpFile.openOutputStream().use { output ->
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var downloadedBytes = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        downloadedBytes += read
-                        download.updateRawProgress(downloadedBytes, totalBytes)
-                        notifier.onProgressChange(download)
-                    }
-                    output.flush()
-                    download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
+            val coroutineContext = currentCoroutineContext()
+            val responseCall = source.client.newCall(source.rawFileRequest(download.chapter.url, existingBytes.takeIf { it > 0L }))
+            val cancellationHandle = coroutineContext[Job]?.invokeOnCompletion { cause: Throwable? ->
+                if (cause != null) {
+                    responseCall.cancel()
                 }
             }
+            try {
+                val response = responseCall.execute()
+                response.use {
+                    if (existingBytes > 0L && response.code == 200) {
+                        tmpFile.delete()
+                        val recreated = mangaDir.createFile("$finalFileName$TMP_DIR_SUFFIX")
+                            ?: error("Failed to recreate raw download file: $finalFileName$TMP_DIR_SUFFIX")
+                        tmpFile = recreated
+                    } else if (!response.isSuccessful) {
+                        error("HTTP ${response.code}")
+                    }
 
+                    val resumedBytes = if (response.code == 206) existingBytes else 0L
+                    val totalBytes = resolveRawFileTotalBytes(response, resumedBytes)
+                    download.updateRawProgress(resumedBytes, totalBytes)
+                    download.status = Download.State.DOWNLOADING
+
+                    val outputMode = if (resumedBytes > 0L) "wa" else "w"
+                    context.contentResolver.openOutputStream(tmpFile.uri, outputMode)?.use { output ->
+                        response.body.byteStream().use { input ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var downloadedBytes = resumedBytes
+                            while (true) {
+                                coroutineContext.ensureActive()
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                output.write(buffer, 0, read)
+                                downloadedBytes += read
+                                download.updateRawProgress(downloadedBytes, totalBytes)
+                                notifier.onProgressChange(download)
+                            }
+                            output.flush()
+                            download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
+                        }
+                    } ?: error("Failed to open raw download output stream: ${tmpFile.name}")
+                }
+            } finally {
+                cancellationHandle?.dispose()
+            }
+
+            mangaDir.findFile(finalFileName)?.delete()
             if (!tmpFile.renameTo(finalFileName)) {
                 error("Failed to finalize raw download file: $finalFileName")
             }
@@ -552,6 +585,22 @@ class Downloader(
             ?.substringAfterLast('.', "")
             ?.takeIf { it.isNotBlank() }
             ?.lowercase(Locale.ROOT)
+    }
+
+    private fun resolveRawFileTotalBytes(response: Response, resumedBytes: Long): Long {
+        val contentRangeTotal = response.header("Content-Range")
+            ?.substringAfterLast('/')
+            ?.toLongOrNull()
+        if (contentRangeTotal != null && contentRangeTotal > 0L) {
+            return contentRangeTotal
+        }
+
+        val bodyLength = response.body.contentLength().takeIf { it > 0L } ?: 0L
+        return if (response.code == 206) {
+            resumedBytes + bodyLength
+        } else {
+            bodyLength
+        }
     }
 
     private fun parseContentDispositionFilename(header: String): String? {

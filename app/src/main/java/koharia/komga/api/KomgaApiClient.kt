@@ -120,7 +120,16 @@ class KomgaApiClient(
 
     fun pageListRequest(url: String): Request = GET("$url/pages", headers)
 
-    fun bookFileRequest(url: String): Request = GET("$url/file", headers)
+    fun bookFileRequest(url: String, rangeStart: Long? = null): Request {
+        val request = GET("$url/file", headers)
+        return if (rangeStart != null && rangeStart > 0L) {
+            request.newBuilder()
+                .header("Range", "bytes=$rangeStart-")
+                .build()
+        } else {
+            request
+        }
+    }
 
     suspend fun getLibraries(): List<LibraryDto> =
         client.newCall(GET("$baseUrl/api/v1/libraries", headers)).executeAndParse()
