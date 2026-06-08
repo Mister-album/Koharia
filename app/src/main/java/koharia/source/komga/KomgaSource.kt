@@ -129,7 +129,7 @@ class KomgaSource :
     override fun imageRequest(page: Page): Request =
         GET(page.imageUrl!!, headersBuilder().add("Accept", "image/*,*/*;q=0.8").build())
 
-    fun rawFileRequest(chapterUrl: String): Request = apiClient.bookFileRequest(chapterUrl)
+    fun rawFileRequest(chapterUrl: String, rangeStart: Long? = null): Request = apiClient.bookFileRequest(chapterUrl, rangeStart)
 
     fun hasValidBaseUrl(): Boolean = baseUrl.startsWith("http://") || baseUrl.startsWith("https://")
 
