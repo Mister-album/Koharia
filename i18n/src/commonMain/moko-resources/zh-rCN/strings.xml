@@ -939,6 +939,7 @@
     <string name="download_bookmarked">已添加书签</string>
     <string name="label_support_us">支持我们</string>
     <string name="supportUsScreen.perks">赞助者可访问专属频道，更多福利即将推出。</string>
+    <string name="supportUsScreen.donationPlatform.ifdian">爱发电</string>
     <string name="supportUsScreen.donationPlatform.patreon">Patreon（首选）</string>
     <string name="supportUsScreen.donationPlatform.opencollective">OpenCollective</string>
     <string name="supportUsScreen.currentlySupportedBy">目前 Koharia 已获得 %d+ 位赞助者的支持。我们衷心感谢大家。让我们携手把 Koharia 办得更出色。</string>

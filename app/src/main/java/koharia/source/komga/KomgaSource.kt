@@ -76,7 +76,7 @@ class KomgaSource :
         get() = KomgaRepository(baseUrl, apiClient)
 
     override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", "MihonKomga/${AppInfo.getVersionName()}")
+        .set("User-Agent", "KohariaKomga/${AppInfo.getVersionName()}")
         .also { builder ->
             if (apiKey.isNotBlank()) {
                 builder.set("X-API-Key", apiKey)

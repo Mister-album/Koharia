@@ -59,3 +59,8 @@ Copyright © Mihon contributors
 Copyright © 2026 Koharia contributors
 
 本项目基于 Apache License, Version 2.0 进行授权。详见 [LICENSE](./LICENSE) 与 [NOTICE](./NOTICE)。
+
+
+## Support
+- Afdian: [https://ifdian.net/a/album-Koharia](https://ifdian.net/a/album-Koharia)
+

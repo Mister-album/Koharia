@@ -128,16 +128,20 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
             return true
         }
 
-        val komgaReachable = isQueuedKomgaSourceReachable()
-        if (komgaReachable) {
+        if (hasQueuedKomgaDownload()) {
+            val komgaReachable = isQueuedKomgaSourceReachable()
             logcat(LogPriority.INFO) {
-                "DownloadJob.checkNetworkState(): allowing unvalidated connected network due to reachable Komga source"
+                "DownloadJob.checkNetworkState(): allowing unvalidated connected network for Komga queue, probeReachable=$komgaReachable"
             }
             return true
         }
 
         downloadManager.downloaderStop(applicationContext.getString(R.string.download_notifier_no_network))
         return false
+    }
+
+    private fun hasQueuedKomgaDownload(): Boolean {
+        return downloadManager.queueState.value.any { it.source is KomgaSource }
     }
 
     private suspend fun isQueuedKomgaSourceReachable(): Boolean {

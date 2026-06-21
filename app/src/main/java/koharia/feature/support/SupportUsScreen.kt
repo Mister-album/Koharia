@@ -87,6 +87,11 @@ class SupportUsScreen : Screen() {
                 )
 
                 SupportItem(
+                    icon = Icons.AutoMirrored.Filled.OpenInNew,
+                    title = stringResource(MR.strings.supportUsScreen_donationPlatform_ifdian),
+                    onClick = { uriHandler.openUri(Constants.URL_DONATE_IFDIAN) },
+                )
+                SupportItem(
                     icon = CustomIcons.Patreon,
                     title = stringResource(MR.strings.supportUsScreen_donationPlatform_patreon),
                     onClick = { uriHandler.openUri(Constants.URL_DONATE_PATREON) },

@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.GetApp
+import androidx.compose.material.icons.outlined.VolunteerActivism
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Router
@@ -33,6 +34,7 @@ fun MoreScreen(
     onClickDataAndStorage: () -> Unit,
     onClickSettings: () -> Unit,
     onClickKomgaSettings: () -> Unit,
+    onClickSupport: () -> Unit,
     onClickAbout: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -114,6 +116,13 @@ fun MoreScreen(
                     title = stringResource(MR.strings.label_settings),
                     icon = Icons.Outlined.Settings,
                     onPreferenceClick = onClickSettings,
+                )
+            }
+            item {
+                TextPreferenceWidget(
+                    title = stringResource(MR.strings.label_support_us),
+                    icon = Icons.Outlined.VolunteerActivism,
+                    onPreferenceClick = onClickSupport,
                 )
             }
             item {

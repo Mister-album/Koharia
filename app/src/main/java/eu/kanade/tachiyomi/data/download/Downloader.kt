@@ -62,6 +62,7 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.io.IOException
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
@@ -497,22 +498,11 @@ class Downloader(
             return finalFileName to tmpFile
         }
 
-        return source.client.newCall(source.rawFileRequest(download.chapter.url)).execute().use { probeResponse ->
-            if (!probeResponse.isSuccessful) {
-                error("HTTP ${probeResponse.code}")
-            }
-
-            val extension = resolveRawFileExtension(probeResponse)
-            if (!DownloadProvider.isSupportedChapterFileExtension(extension)) {
-                logcat(LogPriority.INFO) {
-                    "Downloader.tryDownloadRawFile(): unsupported raw file extension=$extension, falling back to page cache"
-                }
-                return false
-            }
-
-            var (finalFileName, tmpFile) = tmpFileFor(extension!!)
-            val existingBytes = tmpFile.length().takeIf { it > 0L } ?: 0L
-            probeResponse.close()
+        repeat(4) { attempt ->
+            val existingRawTmpFile = findExistingRawTmpFile(mangaDir, chapterDirname)
+            var finalFileName = existingRawTmpFile?.first
+            var tmpFile = existingRawTmpFile?.second
+            val existingBytes = tmpFile?.length()?.takeIf { it > 0L } ?: 0L
 
             val coroutineContext = currentCoroutineContext()
             val responseCall = source.client.newCall(source.rawFileRequest(download.chapter.url, existingBytes.takeIf { it > 0L }))
@@ -524,13 +514,34 @@ class Downloader(
             try {
                 val response = responseCall.execute()
                 response.use {
-                    if (existingBytes > 0L && response.code == 200) {
-                        tmpFile.delete()
-                        val recreated = mangaDir.createFile("$finalFileName$TMP_DIR_SUFFIX")
-                            ?: error("Failed to recreate raw download file: $finalFileName$TMP_DIR_SUFFIX")
-                        tmpFile = recreated
-                    } else if (!response.isSuccessful) {
+                    if (!response.isSuccessful) {
                         error("HTTP ${response.code}")
+                    }
+
+                    val extension = finalFileName
+                        ?.substringAfterLast('.', "")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: resolveRawFileExtension(response)
+                    if (!DownloadProvider.isSupportedChapterFileExtension(extension)) {
+                        logcat(LogPriority.INFO) {
+                            "Downloader.tryDownloadRawFile(): unsupported raw file extension=$extension, falling back to page cache"
+                        }
+                        return false
+                    }
+
+                    if (tmpFile == null || finalFileName == null) {
+                        val created = tmpFileFor(extension!!)
+                        finalFileName = created.first
+                        tmpFile = created.second
+                    }
+
+                    val resolvedFinalFileName = checkNotNull(finalFileName)
+                    var resolvedTmpFile = checkNotNull(tmpFile)
+
+                    if (existingBytes > 0L && response.code == 200) {
+                        resolvedTmpFile.delete()
+                        resolvedTmpFile = mangaDir.createFile("$resolvedFinalFileName$TMP_DIR_SUFFIX")
+                            ?: error("Failed to recreate raw download file: $resolvedFinalFileName$TMP_DIR_SUFFIX")
                     }
 
                     val resumedBytes = if (response.code == 206) existingBytes else 0L
@@ -539,7 +550,7 @@ class Downloader(
                     download.status = Download.State.DOWNLOADING
 
                     val outputMode = if (resumedBytes > 0L) "wa" else "w"
-                    context.contentResolver.openOutputStream(tmpFile.uri, outputMode)?.use { output ->
+                    context.contentResolver.openOutputStream(resolvedTmpFile.uri, outputMode)?.use { output ->
                         response.body.byteStream().use { input ->
                             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                             var downloadedBytes = resumedBytes
@@ -555,27 +566,54 @@ class Downloader(
                             output.flush()
                             download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
                         }
-                    } ?: error("Failed to open raw download output stream: ${tmpFile.name}")
+                    } ?: error("Failed to open raw download output stream: ${resolvedTmpFile.name}")
+
+                    mangaDir.findFile(resolvedFinalFileName)?.delete()
+                    if (!resolvedTmpFile.renameTo(resolvedFinalFileName)) {
+                        error("Failed to finalize raw download file: $resolvedFinalFileName")
+                    }
+
+                    cache.addChapter(resolvedFinalFileName, mangaDir, download.manga)
+                    DiskUtil.createNoMediaFile(mangaDir, context)
+                    download.status = Download.State.DOWNLOADED
+
+                    logcat(LogPriority.INFO) {
+                        "Downloader.tryDownloadRawFile(): saved raw file $resolvedFinalFileName"
+                    }
+                }
+
+                return true
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                if (error is IOException && attempt < 3) {
+                    logcat(LogPriority.WARN, error) {
+                        "Downloader.tryDownloadRawFile(): retrying after failure, attempt=${attempt + 1}, existingBytes=$existingBytes"
+                    }
+                    delay((2L shl attempt) * 1000)
+                } else {
+                    throw error
                 }
             } finally {
                 cancellationHandle?.dispose()
             }
-
-            mangaDir.findFile(finalFileName)?.delete()
-            if (!tmpFile.renameTo(finalFileName)) {
-                error("Failed to finalize raw download file: $finalFileName")
-            }
-
-            cache.addChapter(finalFileName, mangaDir, download.manga)
-            DiskUtil.createNoMediaFile(mangaDir, context)
-            download.status = Download.State.DOWNLOADED
-
-            logcat(LogPriority.INFO) {
-                "Downloader.tryDownloadRawFile(): saved raw file $finalFileName"
-            }
-
-            true
         }
+
+        return false
+    }
+
+    private fun findExistingRawTmpFile(mangaDir: UniFile, chapterDirname: String): Pair<String, UniFile>? {
+        return mangaDir.listFiles()
+            ?.firstOrNull { file ->
+                !file.isDirectory &&
+                    file.name.orEmpty().startsWith("$chapterDirname.") &&
+                    file.name.orEmpty().endsWith(TMP_DIR_SUFFIX)
+            }
+            ?.let { tmpFile ->
+                tmpFile.name
+                    ?.removeSuffix(TMP_DIR_SUFFIX)
+                    ?.takeIf { it != tmpFile.name }
+                    ?.let { finalFileName -> finalFileName to tmpFile }
+            }
     }
 
     private fun resolveRawFileExtension(response: Response): String? {

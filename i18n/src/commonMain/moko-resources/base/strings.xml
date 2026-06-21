@@ -1077,6 +1077,7 @@
     <string name="migrationListScreen.matchWithoutChapterToast">No chapters found, this entry cannot be used for migration</string>
 
     <string name="supportUsScreen.perks">Patrons get access to exclusive channels, with more perks to come.</string>
+    <string name="supportUsScreen.donationPlatform.ifdian">Afdian</string>
     <string name="supportUsScreen.donationPlatform.patreon">Patreon (preferred)</string>
     <string name="supportUsScreen.donationPlatform.opencollective">OpenCollective</string>
     <string name="supportUsScreen.currentlySupportedBy">Koharia is currently backed by %d+ patrons. We want to thank each and everyone of you. Let's make Koharia even better together.</string>
