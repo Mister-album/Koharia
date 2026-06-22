@@ -100,7 +100,10 @@ internal class DownloadNotifier(private val context: Context) {
                 Download.Mode.RAW_FILE -> context.stringResource(
                     MR.strings.chapter_downloading_file_progress,
                     Formatter.formatFileSize(context, download.rawDownloadedBytes),
-                    Formatter.formatFileSize(context, download.rawTotalBytes.coerceAtLeast(download.rawDownloadedBytes)),
+                    Formatter.formatFileSize(
+                        context,
+                        download.rawTotalBytes.coerceAtLeast(download.rawDownloadedBytes),
+                    ),
                 )
             }
 

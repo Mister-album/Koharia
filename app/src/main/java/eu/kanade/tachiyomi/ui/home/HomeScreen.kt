@@ -60,6 +60,7 @@ import uy.kohesive.injekt.api.get
 object HomeScreen : Screen() {
 
     private val librarySearchEvent = Channel<String>()
+    private val libraryGenreSearchEvent = Channel<String>()
     private val openTabEvent = Channel<Tab>()
     private val showBottomNavEvent = Channel<Boolean>()
 
@@ -145,6 +146,12 @@ object HomeScreen : Screen() {
                     librarySearchEvent.receiveAsFlow().collectLatest {
                         goToLibraryTab()
                         LibraryTab.search(it)
+                    }
+                }
+                launch {
+                    libraryGenreSearchEvent.receiveAsFlow().collectLatest {
+                        goToLibraryTab()
+                        LibraryTab.searchGenre(it)
                     }
                 }
                 launch {
@@ -264,6 +271,10 @@ object HomeScreen : Screen() {
 
     suspend fun search(query: String) {
         librarySearchEvent.send(query)
+    }
+
+    suspend fun searchGenre(name: String) {
+        libraryGenreSearchEvent.send(name)
     }
 
     suspend fun openTab(tab: Tab) {

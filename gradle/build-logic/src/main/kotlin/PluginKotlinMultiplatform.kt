@@ -3,8 +3,8 @@ import koharia.gradle.configurations.configureKotlin
 import koharia.gradle.extensions.alias
 import koharia.gradle.extensions.configureTest
 import koharia.gradle.extensions.coreLibraryDesugaring
-import koharia.gradle.extensions.libs
 import koharia.gradle.extensions.kohariax
+import koharia.gradle.extensions.libs
 import koharia.gradle.extensions.plugins
 import org.gradle.api.Plugin
 import org.gradle.api.Project

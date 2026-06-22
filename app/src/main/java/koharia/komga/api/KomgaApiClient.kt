@@ -1,17 +1,17 @@
 package koharia.komga.api
 
 import eu.kanade.tachiyomi.network.GET
-import kotlinx.serialization.serializer
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import koharia.komga.api.dto.AuthorDto
 import koharia.komga.api.dto.ClientSettingDto
 import koharia.komga.api.dto.CollectionDto
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.api.dto.PageWrapperDto
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.serializer
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -148,7 +148,9 @@ class KomgaApiClient(
     }
 
     suspend fun getCollections(): List<CollectionDto> =
-        client.newCall(GET("$baseUrl/api/v1/collections?unpaged=true", headers)).executeAndParse<PageWrapperDto<CollectionDto>>().content
+        client.newCall(
+            GET("$baseUrl/api/v1/collections?unpaged=true", headers),
+        ).executeAndParse<PageWrapperDto<CollectionDto>>().content
 
     suspend fun getGenres(): Set<String> =
         client.newCall(GET("$baseUrl/api/v1/genres", headers)).executeAndParse()

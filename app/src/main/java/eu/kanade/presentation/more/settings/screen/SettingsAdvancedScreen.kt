@@ -274,5 +274,4 @@ object SettingsAdvancedScreen : SearchableSettings {
             ),
         )
     }
-
 }

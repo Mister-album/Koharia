@@ -1,8 +1,8 @@
 package koharia.gradle.extensions
 
 import com.android.build.api.dsl.CommonExtension
-import org.gradle.accessors.dm.LibrariesForLibs
 import org.gradle.accessors.dm.LibrariesForKohariax
+import org.gradle.accessors.dm.LibrariesForLibs
 import org.gradle.api.Project
 import org.gradle.api.plugins.PluginManager
 import org.gradle.api.tasks.testing.Test

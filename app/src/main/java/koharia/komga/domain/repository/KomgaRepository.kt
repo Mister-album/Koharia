@@ -69,8 +69,14 @@ class KomgaRepository(
         }
 
         val mangas = when {
-            response.request.url.toString().contains("/api/v1/readlists") -> data.content.filterIsInstance<ReadListDto>().map { it.toSManga(baseUrl) }
-            response.request.url.toString().contains("/api/v1/books") -> data.content.filterIsInstance<BookDto>().map { it.toSManga(baseUrl) }
+            response.request.url.toString().contains(
+                "/api/v1/readlists",
+            ) -> data.content.filterIsInstance<ReadListDto>().map {
+                it.toSManga(baseUrl)
+            }
+            response.request.url.toString().contains("/api/v1/books") -> data.content.filterIsInstance<BookDto>().map {
+                it.toSManga(baseUrl)
+            }
             else -> data.content.filterIsInstance<SeriesDto>().map { it.toSManga(baseUrl) }
         }
         return MangasPage(mangas, !data.last)
@@ -162,8 +168,12 @@ class KomgaRepository(
 
     companion object {
         val formatterDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-        val formatterDateTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-        val SUPPORTED_IMAGE_TYPES = setOf("image/jpeg", "image/png", "image/gif", "image/webp", "image/jxl", "image/heif", "image/avif")
+        val formatterDateTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
+            timeZone =
+                TimeZone.getTimeZone("UTC")
+        }
+        val SUPPORTED_IMAGE_TYPES =
+            setOf("image/jpeg", "image/png", "image/gif", "image/webp", "image/jxl", "image/heif", "image/avif")
 
         fun parseDate(date: String): Long = try {
             formatterDate.parse(date)?.time ?: 0L
@@ -187,7 +197,9 @@ private fun FilterList.searchType(): KomgaApiClient.SearchType = when {
 }
 
 private fun FilterList.collectionId(): String? =
-    filterIsInstance<CollectionSelect>().firstOrNull()?.collections?.getOrNull(filterIsInstance<CollectionSelect>().firstOrNull()?.state ?: 0)?.id
+    filterIsInstance<CollectionSelect>().firstOrNull()?.collections?.getOrNull(
+        filterIsInstance<CollectionSelect>().firstOrNull()?.state ?: 0,
+    )?.id
 
 private fun FilterList.sortSelection(): Pair<Int, Boolean> {
     val sort = filterIsInstance<SeriesSort>().firstOrNull()?.state ?: return 0 to true

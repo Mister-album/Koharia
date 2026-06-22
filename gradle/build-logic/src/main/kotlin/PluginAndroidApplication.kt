@@ -1,6 +1,6 @@
 import koharia.gradle.extensions.alias
-import koharia.gradle.extensions.libs
 import koharia.gradle.extensions.kohariax
+import koharia.gradle.extensions.libs
 import koharia.gradle.extensions.plugins
 import org.gradle.api.Plugin
 import org.gradle.api.Project
