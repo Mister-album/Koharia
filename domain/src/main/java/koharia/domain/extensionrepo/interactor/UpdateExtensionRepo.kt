@@ -1,11 +1,11 @@
 package koharia.domain.extensionrepo.interactor
 
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import koharia.domain.extensionrepo.model.ExtensionRepo
 import koharia.domain.extensionrepo.repository.ExtensionRepoRepository
 import koharia.domain.extensionrepo.service.ExtensionRepoService
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 class UpdateExtensionRepo(
     private val repository: ExtensionRepoRepository,

@@ -1,10 +1,10 @@
 package koharia.domain.extensionrepo.interactor
 
-import logcat.LogPriority
 import koharia.domain.extensionrepo.exception.SaveExtensionRepoException
 import koharia.domain.extensionrepo.model.ExtensionRepo
 import koharia.domain.extensionrepo.repository.ExtensionRepoRepository
 import koharia.domain.extensionrepo.service.ExtensionRepoService
+import logcat.LogPriority
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.core.common.util.system.logcat
 

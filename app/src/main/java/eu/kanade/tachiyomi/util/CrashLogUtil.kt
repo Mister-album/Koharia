@@ -51,5 +51,4 @@ class CrashLogUtil(
             Current time: ${OffsetDateTime.now(ZoneId.systemDefault())}
         """.trimIndent()
     }
-
 }

@@ -14,13 +14,13 @@ import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.app.shizuku.IShellInterface
+import koharia.app.shizuku.ShellInterface
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import logcat.LogPriority
-import koharia.app.shizuku.IShellInterface
-import koharia.app.shizuku.ShellInterface
 import rikka.shizuku.Shizuku
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
@@ -145,7 +145,7 @@ class ShizukuInstaller(private val service: Service) : Installer(service) {
             service,
             receiver,
             IntentFilter(ACTION_INSTALL_RESULT),
-            ContextCompat.RECEIVER_EXPORTED,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
         )
 
         initShizuku()

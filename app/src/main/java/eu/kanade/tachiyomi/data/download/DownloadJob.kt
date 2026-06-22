@@ -12,13 +12,14 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.system.NetworkState
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.networkStateFlow
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
+import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combineTransform
@@ -26,7 +27,6 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import logcat.LogPriority
-import koharia.source.komga.KomgaSource
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -150,7 +150,9 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
 
         return runCatching {
             withIOContext {
-                komgaSource.client.newCall(GET("${komgaSource.baseUrl}/api/v1/libraries?size=1", komgaSource.headers))
+                komgaSource.client.newCall(
+                    GET("${komgaSource.baseUrl}/api/v1/libraries?size=1", komgaSource.currentHeaders()),
+                )
                     .execute()
                     .use { response ->
                         logcat(LogPriority.INFO) {

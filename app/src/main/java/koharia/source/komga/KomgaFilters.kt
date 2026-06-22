@@ -1,8 +1,8 @@
 package koharia.source.komga
 
+import eu.kanade.tachiyomi.source.model.Filter
 import koharia.komga.api.dto.AuthorDto
 import koharia.komga.api.dto.LibraryDto
-import eu.kanade.tachiyomi.source.model.Filter
 
 class TypeSelect :
     Filter.Select<String>(

@@ -180,4 +180,3 @@ private fun TriState.toTriStateInt(): Int {
         TriState.ENABLED_NOT -> Filter.TriState.STATE_EXCLUDE
     }
 }
-

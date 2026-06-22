@@ -9,6 +9,10 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
+import koharia.domain.migration.usecases.MigrateMangaUseCase
+import koharia.feature.migration.list.models.MigratingManga
+import koharia.feature.migration.list.models.MigratingManga.SearchResult
+import koharia.feature.migration.list.search.SmartSourceSearchEngine
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -27,10 +31,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
-import koharia.domain.migration.usecases.MigrateMangaUseCase
-import koharia.feature.migration.list.models.MigratingManga
-import koharia.feature.migration.list.models.MigratingManga.SearchResult
-import koharia.feature.migration.list.search.SmartSourceSearchEngine
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat

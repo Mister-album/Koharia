@@ -1,17 +1,17 @@
 package eu.kanade.tachiyomi.data.track.komga
 
-import eu.kanade.tachiyomi.data.track.TrackerManager
-import logcat.LogPriority
-import koharia.source.komga.KomgaSource
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
+import eu.kanade.tachiyomi.data.track.TrackerManager
+import koharia.source.komga.KomgaSource
+import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.history.interactor.UpsertHistory
 import tachiyomi.domain.history.model.HistoryUpdate
-import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
@@ -150,7 +150,10 @@ class KomgaProgressSyncService(
             updateChapter.awaitAll(chapterUpdates)
         }
         historyUpdates.forEach { upsertHistory.await(it) }
-        if (missingSeriesCount > 0 || missingChapterCount > 0 || chapterUpdates.isNotEmpty() || historyUpdates.isNotEmpty() || refreshedChapterSets > 0) {
+        if (missingSeriesCount > 0 || missingChapterCount > 0 || chapterUpdates.isNotEmpty() ||
+            historyUpdates.isNotEmpty() ||
+            refreshedChapterSets > 0
+        ) {
             logcat(LogPriority.INFO) {
                 "Komga history sync result: remoteBooks=${remoteBooks.size}, matchedSeries=$matchedSeriesCount, matchedChapters=$matchedChapterCount, missingSeries=$missingSeriesCount, missingChapters=$missingChapterCount, refreshedChapterSets=$refreshedChapterSets, chapterUpdates=${chapterUpdates.size}, historyUpdates=${historyUpdates.size}"
             }

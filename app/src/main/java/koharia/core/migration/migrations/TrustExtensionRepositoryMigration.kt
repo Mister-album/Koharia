@@ -1,11 +1,11 @@
 package koharia.core.migration.migrations
 
 import eu.kanade.domain.source.service.SourcePreferences
-import logcat.LogPriority
 import koharia.core.migration.Migration
 import koharia.core.migration.MigrationContext
 import koharia.domain.extensionrepo.exception.SaveExtensionRepoException
 import koharia.domain.extensionrepo.repository.ExtensionRepoRepository
+import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 

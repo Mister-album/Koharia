@@ -14,6 +14,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
+import koharia.core.archive.ZipWriter
+import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,8 +41,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
-import koharia.core.archive.ZipWriter
-import koharia.source.komga.KomgaSource
 import nl.adaptivity.xmlutil.serialization.XML
 import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
@@ -505,7 +505,15 @@ class Downloader(
             val existingBytes = tmpFile?.length()?.takeIf { it > 0L } ?: 0L
 
             val coroutineContext = currentCoroutineContext()
-            val responseCall = source.client.newCall(source.rawFileRequest(download.chapter.url, existingBytes.takeIf { it > 0L }))
+            val responseCall = source.client.newCall(
+                source.rawFileRequest(
+                    download.chapter.url,
+                    existingBytes.takeIf {
+                        it >
+                            0L
+                    },
+                ),
+            )
             val cancellationHandle = coroutineContext[Job]?.invokeOnCompletion { cause: Throwable? ->
                 if (cause != null) {
                     responseCall.cancel()

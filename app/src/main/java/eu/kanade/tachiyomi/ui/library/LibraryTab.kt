@@ -14,8 +14,8 @@ import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
-import koharia.source.komga.KomgaSource
 import koharia.komga.ui.library.KomgaLibraryScreen
+import koharia.source.komga.KomgaSource
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -62,4 +62,6 @@ data object LibraryTab : Tab {
     }
 
     suspend fun search(query: String) = komgaBrowseScreen.search(query)
+
+    suspend fun searchGenre(name: String) = komgaBrowseScreen.searchGenre(name)
 }

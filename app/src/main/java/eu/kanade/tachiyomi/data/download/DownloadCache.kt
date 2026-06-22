@@ -383,7 +383,9 @@ class DownloadCache(
                                         // Folder of images
                                         it.isDirectory -> it.name
                                         // Supported downloaded files
-                                        it.isFile && DownloadProvider.isSupportedChapterFileExtension(it.extension) -> it.nameWithoutExtension
+                                        it.isFile && DownloadProvider.isSupportedChapterFileExtension(
+                                            it.extension,
+                                        ) -> it.nameWithoutExtension
                                         // Anything else is irrelevant
                                         else -> null
                                     }

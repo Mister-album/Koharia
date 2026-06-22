@@ -42,8 +42,6 @@ import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.isLocalOrStub
 import eu.kanade.tachiyomi.source.online.HttpSource
-import koharia.komga.ui.library.KomgaLibraryScreen
-import koharia.source.komga.KomgaSource
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.manga.notes.MangaNotesScreen
@@ -52,6 +50,8 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.komga.ui.library.KomgaLibraryScreen
+import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withIOContext
@@ -321,12 +321,26 @@ class MangaScreen(
         }
 
         val previousController = navigator.items[navigator.size - 2]
-        if (previousController is KomgaLibraryScreen && source is HttpSource) {
-            navigator.pop()
-            previousController.searchGenre(genreName)
-        } else {
-            performSearch(navigator, genreName, global = false)
+        logcat(LogPriority.DEBUG) {
+            "MangaScreen.performGenreSearch: tag=$genreName sourceId=${source.id} " +
+                "sourceType=${source::class.qualifiedName} previous=${previousController::class.qualifiedName}"
         }
-    }
 
+        if (source.id == KomgaSource.ID) {
+            when (previousController) {
+                is HomeScreen -> {
+                    navigator.pop()
+                    previousController.searchGenre(genreName)
+                    return
+                }
+                is KomgaLibraryScreen -> {
+                    navigator.pop()
+                    previousController.searchGenre(genreName)
+                    return
+                }
+            }
+        }
+
+        performSearch(navigator, genreName, global = false)
+    }
 }
