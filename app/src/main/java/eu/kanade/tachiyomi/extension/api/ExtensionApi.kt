@@ -9,14 +9,14 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import koharia.domain.extensionrepo.interactor.GetExtensionRepo
+import koharia.domain.extensionrepo.interactor.UpdateExtensionRepo
+import koharia.domain.extensionrepo.model.ExtensionRepo
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
-import koharia.domain.extensionrepo.interactor.GetExtensionRepo
-import koharia.domain.extensionrepo.interactor.UpdateExtensionRepo
-import koharia.domain.extensionrepo.model.ExtensionRepo
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.util.lang.withIOContext

@@ -424,6 +424,8 @@
     <string name="pref_flash_style_white_black">White and Black</string>
     <string name="pref_double_tap_anim_speed">Double tap animation speed</string>
     <string name="pref_show_page_number">Show page number</string>
+    <string name="pref_webtoon_vertical_navigator">Use vertical navigator for long strip reading</string>
+    <string name="pref_webtoon_vertical_navigator_on_left">Place vertical navigator on the left side</string>
     <string name="pref_show_reading_mode">Show reading mode</string>
     <string name="pref_show_reading_mode_summary">Briefly show current mode when reader is opened</string>
     <string name="pref_hardware_bitmap_threshold">Custom hardware bitmap threshold</string>
@@ -1076,12 +1078,16 @@
     <string name="migrationListScreen.progressDialog.cancelLabel">Cancel</string>
     <string name="migrationListScreen.matchWithoutChapterToast">No chapters found, this entry cannot be used for migration</string>
 
-    <string name="supportUsScreen.perks">Patrons get access to exclusive channels, with more perks to come.</string>
-    <string name="supportUsScreen.donationPlatform.patreon">Patreon (preferred)</string>
+    <string name="supportUsScreen.perks">Supporting Koharia helps keep development moving at a healthy pace and gives us the motivation to continue improving the project.</string>
+    <string name="supportUsScreen.donationPlatform.ifdian">Afdian</string>
+    <string name="supportUsScreen.donationPlatform.patreon">Patreon</string>
     <string name="supportUsScreen.donationPlatform.opencollective">OpenCollective</string>
     <string name="supportUsScreen.currentlySupportedBy">Koharia is currently backed by %d+ patrons. We want to thank each and everyone of you. Let's make Koharia even better together.</string>
     <string name="supportUsScreen.contactForDetailsMessage">For alternative options or any related questions, join our Discord server.</string>
     <string name="supportUsScreen.contactPlatform">Discord</string>
+    <string name="supportUsScreen.mihonSupportTitle">Support Mihon</string>
+    <string name="supportUsScreen.mihonSupportPrefix">Mihon donations: </string>
+    <string name="supportUsScreen.mihonSupportSeparator"> or </string>
 
     <string name="donationCampaign.title">Enjoying the app?</string>
     <string name="donationCampaign.paragraph1">Hi! I’m the main developer behind Koharia, and I’d like to ask you to consider supporting its development financially. With enough support, I’ll be able to work on Koharia full-time and focus on long-standing issues as well as highly requested features.</string>

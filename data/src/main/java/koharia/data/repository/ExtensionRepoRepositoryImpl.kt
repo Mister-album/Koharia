@@ -3,11 +3,11 @@ package koharia.data.repository
 import android.database.SQLException
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
 import koharia.domain.extensionrepo.exception.SaveExtensionRepoException
 import koharia.domain.extensionrepo.model.ExtensionRepo
 import koharia.domain.extensionrepo.repository.ExtensionRepoRepository
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
 import tachiyomi.data.subscribeToOne

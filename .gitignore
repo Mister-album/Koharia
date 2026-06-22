@@ -14,10 +14,6 @@ build
 local.properties
 keystore.properties
 *.jks
-app/google-services.json
 
 # macOS specific files
 .DS_Store
-
-
-.github/workflows/

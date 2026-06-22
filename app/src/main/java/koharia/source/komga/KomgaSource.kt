@@ -6,7 +6,6 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.Log
 import android.widget.Button
-import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
@@ -14,20 +13,21 @@ import eu.kanade.tachiyomi.AppInfo
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.UnmeteredSource
-import eu.kanade.tachiyomi.source.sourcePreferences
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.komga.api.KomgaApiClient
+import koharia.komga.api.dto.LibraryDto
+import koharia.komga.domain.repository.KomgaRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import koharia.komga.api.dto.LibraryDto
-import koharia.komga.api.KomgaApiClient
-import koharia.komga.domain.repository.KomgaRepository
 import okhttp3.Credentials
 import okhttp3.Dns
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -70,13 +70,15 @@ class KomgaSource :
         get() = preferences.getString(PREF_CHAPTER_NAME_TEMPLATE, PREF_CHAPTER_NAME_TEMPLATE_DEFAULT)!!
 
     private val apiClient: KomgaApiClient
-        get() = KomgaApiClient(baseUrl, headers, client, json)
+        get() = KomgaApiClient(baseUrl, currentHeaders(), client, json)
 
     private val repository: KomgaRepository
         get() = KomgaRepository(baseUrl, apiClient)
 
+    fun currentHeaders(): Headers = headersBuilder().build()
+
     override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", "MihonKomga/${AppInfo.getVersionName()}")
+        .set("User-Agent", "KohariaKomga/${AppInfo.getVersionName()}")
         .also { builder ->
             if (apiKey.isNotBlank()) {
                 builder.set("X-API-Key", apiKey)
@@ -112,15 +114,18 @@ class KomgaSource :
 
     override fun getMangaUrl(manga: eu.kanade.tachiyomi.source.model.SManga): String = manga.url.replace("/api/v1", "")
 
-    override fun mangaDetailsRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request = repository.mangaDetailsRequest(manga)
+    override fun mangaDetailsRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request =
+        repository.mangaDetailsRequest(manga)
 
     override fun mangaDetailsParse(response: Response) = repository.mangaDetailsParse(response)
 
-    override fun chapterListRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request = repository.chapterListRequest(manga)
+    override fun chapterListRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request =
+        repository.chapterListRequest(manga)
 
     override fun chapterListParse(response: Response) = repository.chapterListParse(response, chapterNameTemplate)
 
-    override fun pageListRequest(chapter: eu.kanade.tachiyomi.source.model.SChapter): Request = repository.pageListRequest(chapter)
+    override fun pageListRequest(chapter: eu.kanade.tachiyomi.source.model.SChapter): Request =
+        repository.pageListRequest(chapter)
 
     override fun pageListParse(response: Response) = repository.pageListParse(response)
 
@@ -129,7 +134,10 @@ class KomgaSource :
     override fun imageRequest(page: Page): Request =
         GET(page.imageUrl!!, headersBuilder().add("Accept", "image/*,*/*;q=0.8").build())
 
-    fun rawFileRequest(chapterUrl: String, rangeStart: Long? = null): Request = apiClient.bookFileRequest(chapterUrl, rangeStart)
+    fun rawFileRequest(chapterUrl: String, rangeStart: Long? = null): Request = apiClient.bookFileRequest(
+        chapterUrl,
+        rangeStart,
+    )
 
     fun hasValidBaseUrl(): Boolean = baseUrl.startsWith("http://") || baseUrl.startsWith("https://")
 
@@ -141,10 +149,12 @@ class KomgaSource :
             InProgressFilter(),
             ReadFilter(),
             TypeSelect(),
-            CollectionSelect(buildList {
-                add(CollectionFilterEntry("None"))
-                collections.forEach { add(CollectionFilterEntry(it.name, it.id)) }
-            }),
+            CollectionSelect(
+                buildList {
+                    add(CollectionFilterEntry("None"))
+                    collections.forEach { add(CollectionFilterEntry(it.name, it.id)) }
+                },
+            ),
             LibraryFilter(libraries, defaultLibraries),
             UriMultiSelectFilter(
                 "Status",
@@ -186,7 +196,6 @@ class KomgaSource :
             validate = { it.startsWith("http://") || it.startsWith("https://") },
             validationMessage = screen.context.stringResource(MR.strings.komga_pref_address_validation),
             key = PREF_ADDRESS,
-            restartRequired = true,
         )
         screen.addEditTextPreference(
             title = screen.context.stringResource(MR.strings.komga_pref_api_key_title),
@@ -198,7 +207,6 @@ class KomgaSource :
             },
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
             key = PREF_API_KEY,
-            restartRequired = true,
         )
         if (apiKey.isBlank()) {
             screen.addEditTextPreference(
@@ -206,7 +214,6 @@ class KomgaSource :
                 default = "",
                 summary = username.ifBlank { screen.context.stringResource(MR.strings.komga_pref_username_summary) },
                 key = PREF_USERNAME,
-                restartRequired = true,
             )
             screen.addEditTextPreference(
                 title = screen.context.stringResource(MR.strings.komga_pref_password_title),
@@ -218,7 +225,6 @@ class KomgaSource :
                 },
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
                 key = PREF_PASSWORD,
-                restartRequired = true,
             )
         }
 
@@ -281,6 +287,23 @@ class KomgaSource :
         fetchFiltersAttempts = 0
     }
 
+    fun registerServerSettingsChangeListener(
+        onChanged: () -> Unit,
+    ): SharedPreferences.OnSharedPreferenceChangeListener {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key in SERVER_SETTING_KEYS) {
+                invalidateBrowseCache()
+                onChanged()
+            }
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        return listener
+    }
+
+    fun unregisterServerSettingsChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        preferences.unregisterOnSharedPreferenceChangeListener(listener)
+    }
+
     fun buildFilterListForLibrary(libraryId: String?): FilterList {
         val filters = getFilterList()
         filters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.forEach { option ->
@@ -290,6 +313,20 @@ class KomgaSource :
                 option.id == libraryId
             }
         }
+        filters.filterIsInstance<TypeSelect>().firstOrNull()?.state = 0
+        filters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(1, true)
+        return filters
+    }
+
+    fun buildFilterListForTagSearch(tag: String): FilterList {
+        val targetGroup = when {
+            tags.any { it.equals(tag, true) } -> "Tags"
+            genres.any { it.equals(tag, true) } -> "Genres"
+            else -> "Tags"
+        }
+        Log.d("KomgaSource", "buildFilterListForTagSearch: tag=$tag targetGroup=$targetGroup")
+
+        val filters = getFilterList().withSelectedMultiOption(targetGroup, tag)
         filters.filterIsInstance<TypeSelect>().firstOrNull()?.state = 0
         filters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(1, true)
         return filters
@@ -342,6 +379,15 @@ class KomgaSource :
         const val TYPE_READ_LISTS = "Read lists"
         const val TYPE_BOOKS = "Books"
 
+        private val SERVER_SETTING_KEYS = setOf(
+            PREF_ADDRESS,
+            PREF_USERNAME,
+            PREF_PASSWORD,
+            PREF_API_KEY,
+            PREF_DEFAULT_LIBRARIES,
+            PREF_CHAPTER_NAME_TEMPLATE,
+        )
+
         val ID: Long by lazy {
             val key = "${SOURCE_NAME.lowercase()}/$SOURCE_LANG/$SOURCE_VERSION"
             val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
@@ -354,6 +400,44 @@ private enum class FetchFilterStatus {
     NOT_FETCHED,
     FETCHING,
     FETCHED,
+}
+
+private fun FilterList.withSelectedMultiOption(groupName: String, optionId: String): FilterList {
+    var groupFound = false
+    val updatedFilters = list.map { filter ->
+        if (filter !is UriMultiSelectFilter || filter.name != groupName) {
+            return@map filter
+        }
+
+        groupFound = true
+        var optionFound = false
+        val options = filter.state.map { option ->
+            option.apply {
+                if (id.equals(optionId, true) || name.equals(optionId, true)) {
+                    state = true
+                    optionFound = true
+                }
+            }
+        }.let { options ->
+            if (optionFound) {
+                options
+            } else {
+                options + UriMultiSelectOption(optionId).apply { state = true }
+            }
+        }
+        UriMultiSelectFilter(groupName, options)
+    }
+
+    return FilterList(
+        if (groupFound) {
+            updatedFilters
+        } else {
+            list + UriMultiSelectFilter(
+                groupName,
+                listOf(UriMultiSelectOption(optionId).apply { state = true }),
+            )
+        },
+    )
 }
 
 private const val PREF_ADDRESS = "Address"
@@ -373,7 +457,6 @@ private fun PreferenceScreen.addEditTextPreference(
     validate: ((String) -> Boolean)? = null,
     validationMessage: String? = null,
     key: String = title,
-    restartRequired: Boolean = false,
 ) {
     EditTextPreference(context).apply {
         this.key = key
@@ -396,7 +479,8 @@ private fun PreferenceScreen.addEditTextPreference(
                             val text = editable?.toString().orEmpty()
                             val isValid = text.isBlank() || validate(text)
                             editText.error = if (!isValid) validationMessage else null
-                            editText.rootView.findViewById<Button>(android.R.id.button1)?.isEnabled = editText.error == null
+                            editText.rootView.findViewById<Button>(android.R.id.button1)?.isEnabled =
+                                editText.error == null
                         }
                     },
                 )
@@ -406,9 +490,6 @@ private fun PreferenceScreen.addEditTextPreference(
         setOnPreferenceChangeListener { _, newValue ->
             val text = newValue as String
             val isValid = text.isBlank() || validate?.invoke(text) ?: true
-            if (restartRequired && isValid) {
-                Toast.makeText(context, context.stringResource(MR.strings.requires_app_restart), Toast.LENGTH_LONG).show()
-            }
             isValid
         }
     }.also(::addPreference)

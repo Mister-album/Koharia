@@ -1,7 +1,7 @@
 package koharia.domain.extensionrepo.repository
 
-import kotlinx.coroutines.flow.Flow
 import koharia.domain.extensionrepo.model.ExtensionRepo
+import kotlinx.coroutines.flow.Flow
 
 interface ExtensionRepoRepository {
 

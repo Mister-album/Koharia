@@ -8,10 +8,10 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.source.komga.KomgaSource
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
-import koharia.source.komga.KomgaSource
 import okhttp3.Credentials
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
@@ -37,34 +37,36 @@ class KomgaApi(
         (sourceManager.get(KomgaSource.ID) as? ConfigurableSource)?.sourcePreferences()
     }
 
-    private val headers: Headers by lazy {
-        Headers.Builder().apply {
-            val apiKey = sourcePreferences?.getString("API key", "").orEmpty()
-            if (apiKey.isNotBlank()) {
-                add("X-API-Key", apiKey)
-            }
-        }
-            .add("User-Agent", "Koharia v${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
-            .build()
-    }
-
-    private val json: Json by injectLazy()
-    private val requestClient: OkHttpClient by lazy {
-        val username = sourcePreferences?.getString("Username", "").orEmpty()
-        val password = sourcePreferences?.getString("Password", "").orEmpty()
-        val apiKey = sourcePreferences?.getString("API key", "").orEmpty()
-        client.newBuilder()
-            .authenticator { _, response ->
-                if (apiKey.isNotBlank() || response.request.header("Authorization") != null || username.isBlank()) {
-                    null
-                } else {
-                    response.request.newBuilder()
-                        .addHeader("Authorization", Credentials.basic(username, password))
-                        .build()
+    private val headers: Headers
+        get() {
+            return Headers.Builder().apply {
+                val apiKey = sourcePreferences?.getString("API key", "").orEmpty()
+                if (apiKey.isNotBlank()) {
+                    add("X-API-Key", apiKey)
                 }
             }
-            .build()
-    }
+                .add("User-Agent", "Koharia v${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
+                .build()
+        }
+
+    private val json: Json by injectLazy()
+    private val requestClient: OkHttpClient
+        get() {
+            val username = sourcePreferences?.getString("Username", "").orEmpty()
+            val password = sourcePreferences?.getString("Password", "").orEmpty()
+            val apiKey = sourcePreferences?.getString("API key", "").orEmpty()
+            return client.newBuilder()
+                .authenticator { _, response ->
+                    if (apiKey.isNotBlank() || response.request.header("Authorization") != null || username.isBlank()) {
+                        null
+                    } else {
+                        response.request.newBuilder()
+                            .addHeader("Authorization", Credentials.basic(username, password))
+                            .build()
+                    }
+                }
+                .build()
+        }
 
     suspend fun getTrackSearch(url: String): TrackSearch =
         withIOContext {
@@ -157,7 +159,9 @@ class KomgaApi(
                     emptyList()
                 } else {
                     requestClient
-                        .newCall(GET("$baseUrl/api/v1/books?unpaged=true&read_status=IN_PROGRESS&deleted=false", headers))
+                        .newCall(
+                            GET("$baseUrl/api/v1/books?unpaged=true&read_status=IN_PROGRESS&deleted=false", headers),
+                        )
                         .awaitSuccess()
                         .parseAs<PageWrapperDto<BookDto>>()
                         .content

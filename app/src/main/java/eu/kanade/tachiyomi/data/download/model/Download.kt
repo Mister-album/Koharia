@@ -28,7 +28,7 @@ data class Download(
     var pages: List<Page>? = null
 
     @Transient
-    private val _rawProgress = MutableStateFlow(0)
+    private val rawProgressState = MutableStateFlow(0)
 
     @Transient
     private val _rawDownloadedBytes = MutableStateFlow(0L)
@@ -39,7 +39,7 @@ data class Download(
     val totalProgress: Int
         get() = when (mode) {
             Mode.PAGE_CACHE -> pages?.sumOf(Page::progress) ?: 0
-            Mode.RAW_FILE -> _rawProgress.value
+            Mode.RAW_FILE -> rawProgressState.value
         }
 
     val downloadedImages: Int
@@ -77,7 +77,7 @@ data class Download(
                 emitAll(combine(progressFlows) { it.average().toInt() })
             }
             Mode.RAW_FILE -> {
-                emitAll(_rawProgress.map { it })
+                emitAll(rawProgressState.map { it })
             }
         }
     }
@@ -93,7 +93,7 @@ data class Download(
     fun updateRawProgress(downloadedBytes: Long, totalBytes: Long) {
         _rawDownloadedBytes.value = downloadedBytes
         _rawTotalBytes.value = totalBytes
-        _rawProgress.value = when {
+        rawProgressState.value = when {
             totalBytes > 0L -> ((downloadedBytes * 100) / totalBytes).toInt().coerceIn(0, 100)
             downloadedBytes > 0L -> 100
             else -> 0

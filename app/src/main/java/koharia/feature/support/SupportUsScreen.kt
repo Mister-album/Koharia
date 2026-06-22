@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -20,6 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -32,10 +38,6 @@ import tachiyomi.core.common.Constants
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.icons.CustomIcons
-import tachiyomi.presentation.core.icons.Discord
-import tachiyomi.presentation.core.icons.OpenCollective
-import tachiyomi.presentation.core.icons.Patreon
 
 class SupportUsScreen : Screen() {
 
@@ -87,37 +89,55 @@ class SupportUsScreen : Screen() {
                 )
 
                 SupportItem(
-                    icon = CustomIcons.Patreon,
-                    title = stringResource(MR.strings.supportUsScreen_donationPlatform_patreon),
-                    onClick = { uriHandler.openUri(Constants.URL_DONATE_PATREON) },
+                    icon = Icons.AutoMirrored.Filled.OpenInNew,
+                    title = stringResource(MR.strings.supportUsScreen_donationPlatform_ifdian),
+                    onClick = { uriHandler.openUri(Constants.URL_DONATE_IFDIAN) },
                 )
-                SupportItem(
-                    icon = CustomIcons.OpenCollective,
-                    title = stringResource(MR.strings.supportUsScreen_donationPlatform_opencollective),
-                    onClick = { uriHandler.openUri(Constants.URL_DONATE_OPENCOLLECTIVE) },
-                )
-
                 Text(
-                    text = stringResource(MR.strings.supportUsScreen_currentlySupportedBy, 200),
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = stringResource(MR.strings.supportUsScreen_mihonSupportTitle),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                 )
-
-                Text(
-                    text = stringResource(MR.strings.supportUsScreen_contactForDetailsMessage),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-                )
-
-                SupportItem(
-                    icon = CustomIcons.Discord,
-                    title = stringResource(MR.strings.supportUsScreen_contactPlatform),
-                    onClick = { uriHandler.openUri(Constants.URL_DISCORD) },
-                )
+                MihonSupportLinks()
 
                 Spacer(modifier = Modifier.height(paddingValues.calculateBottomPadding()))
             }
         }
+    }
+
+    @Composable
+    private fun MihonSupportLinks() {
+        val uriHandler = LocalUriHandler.current
+        val primary = MaterialTheme.colorScheme.primary
+        val annotated = buildAnnotatedString {
+            append(stringResource(MR.strings.supportUsScreen_mihonSupportPrefix))
+
+            pushStringAnnotation(tag = "URL", annotation = Constants.URL_DONATE_PATREON)
+            withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
+                append("Patreon")
+            }
+            pop()
+
+            append(stringResource(MR.strings.supportUsScreen_mihonSupportSeparator))
+
+            pushStringAnnotation(tag = "URL", annotation = Constants.URL_DONATE_OPENCOLLECTIVE)
+            withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
+                append("OpenCollective")
+            }
+            pop()
+        }
+
+        ClickableText(
+            text = annotated,
+            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+            onClick = { offset ->
+                annotated.getStringAnnotations(tag = "URL", start = offset, end = offset)
+                    .firstOrNull()
+                    ?.let { uriHandler.openUri(it.item) }
+            },
+        )
     }
 
     @Composable

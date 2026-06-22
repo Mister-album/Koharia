@@ -104,4 +104,3 @@ fun KomgaLibraryToolbar(
         scrollBehavior = scrollBehavior,
     )
 }
-

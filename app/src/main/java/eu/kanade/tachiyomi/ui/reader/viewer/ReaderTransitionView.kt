@@ -32,15 +32,15 @@ class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: At
                 transition = transition,
                 currChapterDownloaded = transition.from.pageLoader?.isLocal == true,
                 goingToChapterDownloaded = transition.to?.chapter?.let { goingToChapter ->
-                        downloadManager.isChapterDownloaded(
-                            chapterName = goingToChapter.name,
-                            chapterScanlator = goingToChapter.scanlator,
-                            chapterUrl = goingToChapter.url,
-                            mangaTitle = manga.title,
-                            sourceId = manga.source,
-                            skipCache = true,
-                        )
-                    } ?: false,
+                    downloadManager.isChapterDownloaded(
+                        chapterName = goingToChapter.name,
+                        chapterScanlator = goingToChapter.scanlator,
+                        chapterUrl = goingToChapter.url,
+                        mangaTitle = manga.title,
+                        sourceId = manga.source,
+                        skipCache = true,
+                    )
+                } ?: false,
             )
         } else {
             null

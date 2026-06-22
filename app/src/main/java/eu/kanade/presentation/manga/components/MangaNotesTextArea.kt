@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -55,9 +54,6 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import kotlin.time.Duration.Companion.seconds
 
-private const val MAX_LENGTH = 250
-private const val MAX_LENGTH_WARN = MAX_LENGTH * 0.9
-
 @Composable
 fun MangaNotesTextArea(
     state: MangaNotesScreen.State,
@@ -92,7 +88,6 @@ fun MangaNotesTextArea(
     LaunchedEffect(focusRequester) {
         focusRequester.requestFocus()
     }
-    val textLength = remember(richTextState.annotatedString) { richTextState.toText().length }
 
     Column(
         modifier = modifier
@@ -102,7 +97,6 @@ fun MangaNotesTextArea(
         RichTextEditor(
             state = richTextState,
             textStyle = MaterialTheme.typography.bodyLarge,
-            maxLength = MAX_LENGTH,
             placeholder = {
                 Text(text = stringResource(MR.strings.notes_placeholder))
             },
@@ -119,76 +113,57 @@ fun MangaNotesTextArea(
                 .fillMaxWidth()
                 .focusRequester(focusRequester),
         )
-        Row(
+        LazyRow(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
             modifier = Modifier
                 .padding(vertical = MaterialTheme.padding.small)
                 .fillMaxWidth(),
         ) {
-            LazyRow(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                item {
-                    MangaNotesTextAreaButton(
-                        onClick = { richTextState.toggleSpanStyle(SpanStyle(fontWeight = FontWeight.Bold)) },
-                        isSelected = richTextState.currentSpanStyle.fontWeight == FontWeight.Bold,
-                        icon = Icons.Outlined.FormatBold,
-                    )
-                }
-                item {
-                    MangaNotesTextAreaButton(
-                        onClick = { richTextState.toggleSpanStyle(SpanStyle(fontStyle = FontStyle.Italic)) },
-                        isSelected = richTextState.currentSpanStyle.fontStyle == FontStyle.Italic,
-                        icon = Icons.Outlined.FormatItalic,
-                    )
-                }
-                item {
-                    MangaNotesTextAreaButton(
-                        onClick = {
-                            richTextState.toggleSpanStyle(SpanStyle(textDecoration = TextDecoration.Underline))
-                        },
-                        isSelected = richTextState.currentSpanStyle.textDecoration
-                            ?.contains(TextDecoration.Underline)
-                            ?: false,
-                        icon = Icons.Outlined.FormatUnderlined,
-                    )
-                }
-                item {
-                    VerticalDivider(
-                        modifier = Modifier
-                            .padding(horizontal = MaterialTheme.padding.extraSmall)
-                            .height(MaterialTheme.padding.large),
-                    )
-                }
-                item {
-                    MangaNotesTextAreaButton(
-                        onClick = { richTextState.toggleUnorderedList() },
-                        isSelected = richTextState.isUnorderedList,
-                        icon = Icons.AutoMirrored.Outlined.FormatListBulleted,
-                    )
-                }
-                item {
-                    MangaNotesTextAreaButton(
-                        onClick = { richTextState.toggleOrderedList() },
-                        isSelected = richTextState.isOrderedList,
-                        icon = Icons.Outlined.FormatListNumbered,
-                    )
-                }
+            item {
+                MangaNotesTextAreaButton(
+                    onClick = { richTextState.toggleSpanStyle(SpanStyle(fontWeight = FontWeight.Bold)) },
+                    isSelected = richTextState.currentSpanStyle.fontWeight == FontWeight.Bold,
+                    icon = Icons.Outlined.FormatBold,
+                )
             }
-
-            Box(
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = (MAX_LENGTH - textLength).toString(),
-                    color = if (textLength > MAX_LENGTH_WARN) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        Color.Unspecified
+            item {
+                MangaNotesTextAreaButton(
+                    onClick = { richTextState.toggleSpanStyle(SpanStyle(fontStyle = FontStyle.Italic)) },
+                    isSelected = richTextState.currentSpanStyle.fontStyle == FontStyle.Italic,
+                    icon = Icons.Outlined.FormatItalic,
+                )
+            }
+            item {
+                MangaNotesTextAreaButton(
+                    onClick = {
+                        richTextState.toggleSpanStyle(SpanStyle(textDecoration = TextDecoration.Underline))
                     },
-                    modifier = Modifier.padding(MaterialTheme.padding.extraSmall),
+                    isSelected = richTextState.currentSpanStyle.textDecoration
+                        ?.contains(TextDecoration.Underline)
+                        ?: false,
+                    icon = Icons.Outlined.FormatUnderlined,
+                )
+            }
+            item {
+                VerticalDivider(
+                    modifier = Modifier
+                        .padding(horizontal = MaterialTheme.padding.extraSmall)
+                        .height(MaterialTheme.padding.large),
+                )
+            }
+            item {
+                MangaNotesTextAreaButton(
+                    onClick = { richTextState.toggleUnorderedList() },
+                    isSelected = richTextState.isUnorderedList,
+                    icon = Icons.AutoMirrored.Outlined.FormatListBulleted,
+                )
+            }
+            item {
+                MangaNotesTextAreaButton(
+                    onClick = { richTextState.toggleOrderedList() },
+                    isSelected = richTextState.isOrderedList,
+                    icon = Icons.Outlined.FormatListNumbered,
                 )
             }
         }

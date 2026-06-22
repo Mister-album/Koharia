@@ -4,58 +4,86 @@
 
 # Koharia
 
-面向 Komga 服务器内容浏览与阅读的独立第三方 Android 阅读器。
+面向 Komga 服务器的第三方 Android 阅读器
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0877d2?labelColor=27303D)](./LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/Mister-album/Koharia?label=release)](https://github.com/Mister-album/Koharia/releases/latest)
 
 </div>
 
-## Koharia 是什么
+## 项目简介
 
-Koharia 是基于 [Mihon](https://github.com/mihonapp/mihon) 的衍生作品，针对由 Komga 提供内容的书架、阅读与离线访问场景，适配为专用 Android 客户端。
+Koharia 是一个基于 [Mihon](https://github.com/mihonapp/mihon) 的 Android 阅读器分支，目标是为使用 [Komga](https://komga.org/) 管理漫画、书籍或图像类内容的用户提供更直接的移动端阅读体验。
 
-Koharia 是独立的第三方项目。它与 Mihon 项目或 Komga 项目不存在隶属、背书或维护关系。文中提及上游名称仅用于说明软件来源与兼容性。
+它不是 Mihon 或 Komga 的官方项目，也不托管任何内容。你能看到和阅读的内容，取决于你连接的 Komga 服务器、服务器中的媒体库，以及账号拥有的访问权限。
 
-## 功能特性
+## 适合谁使用
 
-- 在专用客户端流程中浏览已配置 Komga 服务器上的书架内容。
-- 使用继承自 Mihon 代码库的 Android 阅读器阅读受支持的书籍与章节。
-- 为离线使用缓存内容；在服务器与文件格式支持时，可直接下载原始文件。
-- 当原始文件不适合当前阅读路径时，通过页面缓存下载方式保留阅读器的自动下载兼容性。
-- 保留底层应用现有支持的追踪器集成能力。
+如果你已经在使用 Komga 作为个人或家庭内容服务器，并希望在 Android 设备上阅读、缓存和同步阅读进度，Koharia 会更贴近这个使用场景。
 
-## 构建
+如果你只是想浏览公共在线源，或依赖传统扩展生态，Koharia 可能不是最合适的选择。这个项目的方向是 Komga 优先，而不是还原完整的上游 Mihon 使用方式。
 
-- 需要 Android 8.0 或更高版本。
-- 可在 Android Studio 中打开项目，或使用 Gradle 在本地构建。
-- 推荐验证命令：
+## 主要功能
 
-```bash
-./gradlew.bat :app:compileDebugKotlin
+- 浏览已配置 Komga 服务器中的媒体库、系列、书籍和章节。
+- 使用继承自 Mihon 的成熟 Android 阅读器界面。
+- 与 Komga 同步阅读进度和阅读历史。
+- 支持离线缓存和下载，便于在网络不稳定或无网络环境下阅读。
+- 在服务器和文件格式支持时，优先使用 Komga 原始文件下载；不适合直接读取的内容会回退到页面缓存方式。
+- 保留部分底层兼容能力，以便继续使用现有阅读器、数据库、备份和迁移基础设施。
+
+## 下载
+
+1. 打开 [GitHub Releases](https://github.com/Mister-album/Koharia/releases/latest)。
+2. 在最新版本的 `Assets` 区域下载 APK 文件。
+
+## 构建项目
+
+本项目面向 Android 8.0 及以上系统。推荐使用 Android Studio 打开项目，也可以在 Windows PowerShell 中使用 Gradle 构建。
+
+常用验证命令：
+
+```powershell
+.\gradlew.bat spotlessCheck
+.\gradlew.bat :app:compileDebugKotlin
 ```
 
-## 项目来源与署名
+生成发布包：
 
-- 原始上游项目：[mihonapp/mihon](https://github.com/mihonapp/mihon)
-- 上游许可证：Apache License 2.0
-- 衍生作品署名与再分发说明：[NOTICE](./NOTICE)
-- 贡献指南：[CONTRIBUTING.md](./CONTRIBUTING.md)
-- 社区行为预期：[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+```powershell
+.\gradlew.bat :app:assembleRelease
+```
 
-如果你再分发 Koharia 或创建自己的衍生版本，请保留许可证与署名说明，为修改过的文件保留醒目的变更提示，并避免将你的构建版本表述为 Mihon 或 Komga 的官方发布版本。
+发布签名会读取本地的 `keystore.properties`。如果你只是本地开发或调试，通常不需要配置发布签名。
+
+## 项目来源与声明
+
+Koharia 基于 [Mihon](https://github.com/mihonapp/mihon) 开发，并遵循 Apache License 2.0。许可证与署名信息见 [LICENSE](./LICENSE) 和 [NOTICE](./NOTICE)。
+
+贡献相关说明见 [CONTRIBUTING.md](./CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)。再分发或制作衍生版本时，请保留必要署名，并避免将其描述为 Mihon 或 Komga 的官方版本。
 
 ## 致谢
 
-Koharia 建立在 Javier Tomas 为 Mihon 最初完成的工作，以及后续上游 Mihon 项目贡献者的持续投入之上，同时也感谢所有继续改进这一衍生版本的贡献者。
+Koharia 建立在 Javier Tomas 最初完成的工作、Mihon 项目贡献者的持续投入，以及 Komga 社区提供的服务器生态之上。感谢所有继续改进这一衍生版本的贡献者。
+
+## 支持
+
+Koharia 是一个个人维护的开源项目。持续维护需要投入时间处理上游变更、Komga 适配、下载与同步问题、Android 版本兼容，以及日常测试和发布工作。
+
+如果 Koharia 对你的阅读流程有帮助，欢迎通过爱发电支持项目。你的支持会直接帮助项目保持更新，并让我能更稳定地投入到修复问题、打磨体验和跟进 Komga 相关改进上。
+
+- 爱发电：[https://ifdian.net/a/album-Koharia](https://ifdian.net/a/album-Koharia)
 
 ## 免责声明
 
-Koharia 不托管也不提供任何内容。你能访问哪些内容，取决于所连接的 Komga 服务器及其管理员授予的权限。
+Koharia 不提供、不托管、不索引任何内容。应用只负责连接你配置的 Komga 服务器并展示你有权访问的内容。请确保你对服务器中的内容拥有相应的使用权限，并遵守所在地法律法规。
 
 ## 许可证
 
-Copyright © 2015 Javier Tomas
-Copyright © Mihon contributors
-Copyright © 2026 Koharia contributors
+Copyright (C) 2015 Javier Tomas
 
-本项目基于 Apache License, Version 2.0 进行授权。详见 [LICENSE](./LICENSE) 与 [NOTICE](./NOTICE)。
+Copyright (C) Mihon contributors
+
+Copyright (C) 2026 Koharia contributors
+
+本项目基于 Apache License, Version 2.0 授权。详情见 [LICENSE](./LICENSE) 与 [NOTICE](./NOTICE)。

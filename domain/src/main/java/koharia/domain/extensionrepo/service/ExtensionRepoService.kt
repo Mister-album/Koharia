@@ -4,9 +4,9 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import koharia.domain.extensionrepo.model.ExtensionRepo
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
-import koharia.domain.extensionrepo.model.ExtensionRepo
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 
