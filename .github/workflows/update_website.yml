@@ -2,7 +2,7 @@ name: Update website
 
 on:
   release:
-    types: 
+    types:
       - published
       - deleted
       - edited
