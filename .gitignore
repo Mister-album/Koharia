@@ -20,3 +20,4 @@ keystore.properties
 
 # AI files
 .codex-work
+.trae/
