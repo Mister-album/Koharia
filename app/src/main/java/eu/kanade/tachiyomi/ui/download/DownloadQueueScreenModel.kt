@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -40,78 +40,6 @@ class DownloadQueueScreenModel(
      * Map of jobs for active downloads.
      */
     private val progressJobs = mutableMapOf<Download, Job>()
-
-    val listener = object : DownloadAdapter.DownloadItemListener {
-        /**
-         * Called when an item is released from a drag.
-         *
-         * @param position The position of the released item.
-         */
-        override fun onItemReleased(position: Int) {
-            val adapter = adapter ?: return
-            val downloads = adapter.headerItems.flatMap { header ->
-                adapter.getSectionItems(header).map { item ->
-                    (item as DownloadItem).download
-                }
-            }
-            reorder(downloads)
-        }
-
-        /**
-         * Called when the menu item of a download is pressed
-         *
-         * @param position The position of the item
-         * @param menuItem The menu Item pressed
-         */
-        override fun onMenuItemClick(position: Int, menuItem: MenuItem) {
-            val item = adapter?.getItem(position) ?: return
-            if (item is DownloadItem) {
-                when (menuItem.itemId) {
-                    R.id.move_to_top, R.id.move_to_bottom -> {
-                        val headerItems = adapter?.headerItems ?: return
-                        val newDownloads = mutableListOf<Download>()
-                        headerItems.forEach { headerItem ->
-                            headerItem as DownloadHeaderItem
-                            if (headerItem == item.header) {
-                                headerItem.removeSubItem(item)
-                                if (menuItem.itemId == R.id.move_to_top) {
-                                    headerItem.addSubItem(0, item)
-                                } else {
-                                    headerItem.addSubItem(item)
-                                }
-                            }
-                            newDownloads.addAll(headerItem.subItems.map { it.download })
-                        }
-                        reorder(newDownloads)
-                    }
-                    R.id.move_to_top_series, R.id.move_to_bottom_series -> {
-                        val (selectedSeries, otherSeries) = adapter?.currentItems
-                            ?.filterIsInstance<DownloadItem>()
-                            ?.map(DownloadItem::download)
-                            ?.partition { item.download.manga.id == it.manga.id }
-                            ?: Pair(emptyList(), emptyList())
-                        if (menuItem.itemId == R.id.move_to_top_series) {
-                            reorder(selectedSeries + otherSeries)
-                        } else {
-                            reorder(otherSeries + selectedSeries)
-                        }
-                    }
-                    R.id.cancel_download -> {
-                        cancel(listOf(item.download))
-                    }
-                    R.id.cancel_series -> {
-                        val allDownloadsForSeries = adapter?.currentItems
-                            ?.filterIsInstance<DownloadItem>()
-                            ?.filter { item.download.manga.id == it.download.manga.id }
-                            ?.map(DownloadItem::download)
-                        if (!allDownloadsForSeries.isNullOrEmpty()) {
-                            cancel(allDownloadsForSeries)
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     init {
         screenModelScope.launch {
@@ -142,6 +70,7 @@ class DownloadQueueScreenModel(
 
     fun getDownloadStatusFlow() = downloadManager.statusFlow()
     fun getDownloadProgressFlow() = downloadManager.progressFlow()
+    fun getDownloadAt(position: Int): Download? = (adapter?.getItem(position) as? DownloadItem)?.download
 
     fun startDownloads() {
         downloadManager.startDownloads()
@@ -149,6 +78,14 @@ class DownloadQueueScreenModel(
 
     fun pauseDownloads() {
         downloadManager.pauseDownloads()
+    }
+
+    fun pause(download: Download) {
+        downloadManager.pauseDownload(download)
+    }
+
+    fun resume(download: Download) {
+        downloadManager.resumeDownload(download)
     }
 
     fun clearQueue() {
@@ -161,6 +98,16 @@ class DownloadQueueScreenModel(
 
     fun cancel(downloads: List<Download>) {
         downloadManager.cancelQueuedDownloads(downloads)
+    }
+
+    fun onItemReleased(position: Int) {
+        val adapter = adapter ?: return
+        val downloads = adapter.headerItems.flatMap { header ->
+            adapter.getSectionItems(header).map { item ->
+                (item as DownloadItem).download
+            }
+        }
+        reorder(downloads)
     }
 
     fun <R : Comparable<R>> reorderQueue(selector: (DownloadItem) -> R, reverse: Boolean = false) {
@@ -184,6 +131,8 @@ class DownloadQueueScreenModel(
      * @param download the download whose status has changed.
      */
     fun onStatusChange(download: Download) {
+        getHolder(download)?.notifyStatus()
+        refreshVisibleStatuses()
         when (download.status) {
             Download.State.DOWNLOADING -> {
                 launchProgressJob(download)
@@ -195,7 +144,7 @@ class DownloadQueueScreenModel(
                 onUpdateProgress(download)
                 onUpdateDownloadedPages(download)
             }
-            Download.State.ERROR -> cancelProgressJob(download)
+            Download.State.ERROR, Download.State.PAUSED -> cancelProgressJob(download)
             else -> {
                 /* unused */
             }
@@ -210,7 +159,7 @@ class DownloadQueueScreenModel(
     private fun launchProgressJob(download: Download) {
         val job = screenModelScope.launch {
             download.progressFlow
-                .debounce(50)
+                .conflate()
                 .collectLatest {
                     onUpdateProgress(download)
                 }
@@ -249,6 +198,11 @@ class DownloadQueueScreenModel(
         getHolder(download)?.notifyDownloadedPages()
     }
 
+    fun onProgressChange(download: Download) {
+        onUpdateProgress(download)
+        onUpdateDownloadedPages(download)
+    }
+
     /**
      * Returns the holder for the given download.
      *
@@ -257,5 +211,13 @@ class DownloadQueueScreenModel(
      */
     private fun getHolder(download: Download): DownloadHolder? {
         return controllerBinding.root.findViewHolderForItemId(download.chapter.id) as? DownloadHolder
+    }
+
+    private fun refreshVisibleStatuses() {
+        val recyclerView = controllerBinding.root
+        for (index in 0 until recyclerView.childCount) {
+            val holder = recyclerView.getChildViewHolder(recyclerView.getChildAt(index)) as? DownloadHolder ?: continue
+            holder.notifyStatus()
+        }
     }
 }

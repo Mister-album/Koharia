@@ -31,6 +31,7 @@ internal class DownloadPageLoader(
 
     private var archivePageLoader: ArchivePageLoader? = null
     private var epubPageLoader: EpubPageLoader? = null
+    private var pdfPageLoader: PdfPageLoader? = null
 
     override var isLocal: Boolean = true
 
@@ -44,10 +45,10 @@ internal class DownloadPageLoader(
             source,
         )
         return if (chapterPath?.isFile == true) {
-            if (chapterPath.extension.equals("epub", true)) {
-                getPagesFromEpub(chapterPath)
-            } else {
-                getPagesFromArchive(chapterPath)
+            when {
+                chapterPath.extension.equals("epub", true) -> getPagesFromEpub(chapterPath)
+                chapterPath.extension.equals("pdf", true) -> getPagesFromPdf(chapterPath)
+                else -> getPagesFromArchive(chapterPath)
             }
         } else {
             getPagesFromDirectory()
@@ -58,6 +59,7 @@ internal class DownloadPageLoader(
         super.recycle()
         archivePageLoader?.recycle()
         epubPageLoader?.recycle()
+        pdfPageLoader?.recycle()
     }
 
     private suspend fun getPagesFromArchive(file: UniFile): List<ReaderPage> {
@@ -67,6 +69,11 @@ internal class DownloadPageLoader(
 
     private suspend fun getPagesFromEpub(file: UniFile): List<ReaderPage> {
         val loader = EpubPageLoader(file.epubReader(context)).also { epubPageLoader = it }
+        return loader.getPages()
+    }
+
+    private suspend fun getPagesFromPdf(file: UniFile): List<ReaderPage> {
+        val loader = PdfPageLoader(context, file).also { pdfPageLoader = it }
         return loader.getPages()
     }
 
@@ -84,5 +91,6 @@ internal class DownloadPageLoader(
     override suspend fun loadPage(page: ReaderPage) {
         archivePageLoader?.loadPage(page)
         epubPageLoader?.loadPage(page)
+        pdfPageLoader?.loadPage(page)
     }
 }

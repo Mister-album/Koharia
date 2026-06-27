@@ -6,7 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
@@ -23,7 +23,7 @@ data class Download(
     val source: HttpSource,
     val manga: Manga,
     val chapter: Chapter,
-    val mode: Mode = Mode.PAGE_CACHE,
+    var mode: Mode = Mode.PAGE_CACHE,
 ) {
     var pages: List<Page>? = null
 
@@ -82,12 +82,15 @@ data class Download(
         }
     }
         .distinctUntilChanged()
-        .debounce(50)
+        .conflate()
 
     val progress: Int
-        get() {
-            val pages = pages ?: return 0
-            return pages.map(Page::progress).average().toInt()
+        get() = when (mode) {
+            Mode.PAGE_CACHE -> {
+                val pages = pages ?: return 0
+                pages.map(Page::progress).average().toInt()
+            }
+            Mode.RAW_FILE -> rawProgressState.value
         }
 
     fun updateRawProgress(downloadedBytes: Long, totalBytes: Long) {
@@ -95,7 +98,6 @@ data class Download(
         _rawTotalBytes.value = totalBytes
         rawProgressState.value = when {
             totalBytes > 0L -> ((downloadedBytes * 100) / totalBytes).toInt().coerceIn(0, 100)
-            downloadedBytes > 0L -> 100
             else -> 0
         }
     }
@@ -106,6 +108,7 @@ data class Download(
         DOWNLOADING(2),
         DOWNLOADED(3),
         ERROR(4),
+        PAUSED(5),
     }
 
     enum class Mode {

@@ -99,13 +99,23 @@ class DownloadStore(
         val downloads = mutableListOf<Download>()
         if (objs.isNotEmpty()) {
             val cachedManga = mutableMapOf<Long, Manga?>()
-            for ((mangaId, chapterId, _, mode) in objs) {
+            for (obj in objs) {
+                val mangaId = obj.mangaId
+                val chapterId = obj.chapterId
+                val mode = obj.mode
+                val rawTotalBytes = obj.rawTotalBytes
                 val manga = cachedManga.getOrPut(mangaId) {
                     runBlocking { getManga.await(mangaId) }
                 } ?: continue
                 val source = sourceManager.get(manga.source) as? HttpSource ?: continue
                 val chapter = runBlocking { getChapter.await(chapterId) } ?: continue
-                downloads.add(Download(source, manga, chapter, mode))
+                downloads.add(
+                    Download(source, manga, chapter, mode).apply {
+                        if (mode == Download.Mode.RAW_FILE && rawTotalBytes > 0L) {
+                            updateRawProgress(0L, rawTotalBytes)
+                        }
+                    },
+                )
             }
         }
 
@@ -120,7 +130,16 @@ class DownloadStore(
      * @param download the download to serialize.
      */
     private fun serialize(download: Download): String {
-        val obj = DownloadObject(download.manga.id, download.chapter.id, counter++, download.mode)
+        val existingOrder = preferences.getString(getKey(download), null)
+            ?.let(::deserialize)
+            ?.order
+        val obj = DownloadObject(
+            mangaId = download.manga.id,
+            chapterId = download.chapter.id,
+            order = existingOrder ?: counter++,
+            mode = download.mode,
+            rawTotalBytes = download.rawTotalBytes,
+        )
         return json.encodeToString(obj)
     }
 
@@ -151,4 +170,5 @@ private data class DownloadObject(
     val chapterId: Long,
     val order: Int,
     val mode: Download.Mode = Download.Mode.PAGE_CACHE,
+    val rawTotalBytes: Long = 0L,
 )

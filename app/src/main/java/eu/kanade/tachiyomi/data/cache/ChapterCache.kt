@@ -34,8 +34,20 @@ class ChapterCache(
         File(context.cacheDir, "chapter_disk_cache"),
         PARAMETER_APP_VERSION,
         PARAMETER_VALUE_COUNT,
-        PARAMETER_CACHE_SIZE,
+        calculateCacheSize(context),
     )
+
+    private fun calculateCacheSize(context: Context): Long {
+        return try {
+            val stat = android.os.StatFs(context.cacheDir.absolutePath)
+            val totalBytes = stat.blockCountLong * stat.blockSizeLong
+            val availableBytes = stat.availableBlocksLong * stat.blockSizeLong
+            // 取可用空间的 10% 或总空间的 10% 作为上限，并且设置一个合理的上下限
+            (availableBytes * 0.1).toLong().coerceIn(100L * 1024 * 1024, totalBytes / 10)
+        } catch (e: Exception) {
+            100L * 1024 * 1024 // 默认 100MB
+        }
+    }
 
     /**
      * Returns directory of cache.

@@ -53,7 +53,7 @@
             android:maxLines="1"
             android:textAppearance="?attr/textAppearanceBodyMedium"
             android:textSize="12sp"
-            app:layout_constraintEnd_toStartOf="@+id/menu"
+            app:layout_constraintEnd_toStartOf="@+id/btn_pause_resume"
             app:layout_constraintStart_toStartOf="@+id/manga_full_title"
             app:layout_constraintTop_toBottomOf="@+id/manga_full_title"
             tools:text="Chapter Title" />
@@ -65,7 +65,7 @@
             android:layout_marginTop="8dp"
             android:layout_marginBottom="4dp"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toStartOf="@+id/menu"
+            app:layout_constraintEnd_toStartOf="@+id/btn_pause_resume"
             app:layout_constraintStart_toEndOf="@+id/reorder"
             app:layout_constraintTop_toBottomOf="@+id/chapter_title" />
 
@@ -79,24 +79,37 @@
             android:textColor="?android:textColorSecondary"
             android:textSize="12sp"
             app:layout_constraintBottom_toBottomOf="@+id/manga_full_title"
-            app:layout_constraintEnd_toStartOf="@+id/menu"
+            app:layout_constraintEnd_toStartOf="@+id/btn_pause_resume"
             app:layout_constraintTop_toTopOf="@+id/manga_full_title"
             tools:text="0/10" />
 
         <ImageButton
-            android:id="@+id/menu"
+            android:id="@+id/btn_pause_resume"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="16dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@+id/btn_cancel"
+            app:layout_constraintTop_toTopOf="parent"
+            app:srcCompat="@drawable/ic_pause_24dp"
+            app:tint="?attr/colorOnBackground"
+            tools:ignore="ContentDescription" />
+
+        <ImageButton
+            android:id="@+id/btn_cancel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginEnd="4dp"
-            android:layout_toEndOf="@id/download_progress_text"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/action_menu"
+            android:contentDescription="@string/action_cancel"
             android:paddingHorizontal="10dp"
             android:paddingVertical="16dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:srcCompat="@drawable/ic_overflow_24dp"
+            app:srcCompat="@drawable/ic_close_24dp"
             app:tint="?attr/colorOnBackground" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>

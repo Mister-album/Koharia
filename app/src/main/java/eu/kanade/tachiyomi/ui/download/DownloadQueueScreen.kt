@@ -68,8 +68,35 @@ object DownloadQueueScreen : Screen() {
         val scope = rememberCoroutineScope()
         val screenModel = rememberScreenModel { DownloadQueueScreenModel() }
         val downloadList by screenModel.state.collectAsState()
+        val isRunning by screenModel.isDownloaderRunning.collectAsState()
         val downloadCount by remember {
             derivedStateOf { downloadList.sumOf { it.subItems.size } }
+        }
+        val downloadItemListener = remember(screenModel) {
+            object : DownloadAdapter.DownloadItemListener {
+                override fun onItemClick(position: Int) {
+                    // No-op on the main-based fix branch. EPUB-specific open behavior stays on dev-epub.
+                }
+
+                override fun onItemReleased(position: Int) {
+                    screenModel.onItemReleased(position)
+                }
+
+                override fun onPauseClick(position: Int) {
+                    val download = screenModel.getDownloadAt(position) ?: return
+                    screenModel.pause(download)
+                }
+
+                override fun onResumeClick(position: Int) {
+                    val download = screenModel.getDownloadAt(position) ?: return
+                    screenModel.resume(download)
+                }
+
+                override fun onCancelClick(position: Int) {
+                    val download = screenModel.getDownloadAt(position) ?: return
+                    screenModel.cancel(listOf(download))
+                }
+            }
         }
 
         val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
@@ -199,7 +226,6 @@ object DownloadQueueScreen : Screen() {
                 )
             },
             floatingActionButton = {
-                val isRunning by screenModel.isDownloaderRunning.collectAsState()
                 SmallExtendedFloatingActionButton(
                     text = {
                         val id = if (isRunning) {
@@ -252,7 +278,7 @@ object DownloadQueueScreen : Screen() {
                     modifier = Modifier.fillMaxWidth(),
                     factory = { context ->
                         screenModel.controllerBinding = DownloadListBinding.inflate(LayoutInflater.from(context))
-                        screenModel.adapter = DownloadAdapter(screenModel.listener)
+                        screenModel.adapter = DownloadAdapter(downloadItemListener)
                         screenModel.controllerBinding.root.adapter = screenModel.adapter
                         screenModel.adapter?.isHandleDragEnabled = true
                         screenModel.controllerBinding.root.layoutManager = LinearLayoutManager(context)
@@ -265,7 +291,7 @@ object DownloadQueueScreen : Screen() {
                         }
                         scope.launchUI {
                             screenModel.getDownloadProgressFlow()
-                                .collect(screenModel::onUpdateDownloadedPages)
+                                .collect(screenModel::onProgressChange)
                         }
 
                         screenModel.controllerBinding.root

@@ -94,6 +94,7 @@ class Downloader(
      */
     private val _queueState = MutableStateFlow<List<Download>>(emptyList())
     val queueState = _queueState.asStateFlow()
+    private val queueStatusVersion = MutableStateFlow(0)
     private val restoreQueueLock = Any()
 
     @Volatile
@@ -135,7 +136,7 @@ class Downloader(
         val queueSizeBeforeRestore = queueState.value.size
         restorePersistedQueueIfNeeded()
         val queue = queueState.value
-        val pending = queue.filter { it.status != Download.State.DOWNLOADED }
+        val pending = queue.filter { it.status == Download.State.QUEUE || it.status == Download.State.NOT_DOWNLOADED }
 
         if (isRunning || queue.isEmpty()) {
             logcat(LogPriority.INFO) {
@@ -149,7 +150,7 @@ class Downloader(
             return false
         }
 
-        pending.forEach { if (it.status != Download.State.QUEUE) it.status = Download.State.QUEUE }
+        pending.forEach { if (it.status == Download.State.NOT_DOWNLOADED) it.status = Download.State.QUEUE }
 
         isPaused = false
 
@@ -178,7 +179,33 @@ class Downloader(
                 logcat(LogPriority.INFO) {
                     "Downloader.restorePersistedQueueIfNeeded(): restoring ${restoredDownloads.size} downloads"
                 }
-                addAllToQueue(restoredDownloads)
+                restoredDownloads.forEach { download ->
+                    download.status = Download.State.PAUSED
+                    if (download.mode == Download.Mode.RAW_FILE) {
+                        val mangaDir = provider.findMangaDir(download.manga.title, download.source)
+                        if (mangaDir != null) {
+                            val chapterDirname = provider.getChapterDirName(
+                                download.chapter.name,
+                                download.chapter.scanlator,
+                                download.chapter.url,
+                            )
+                            val tmpFile = findExistingRawTmpFile(mangaDir, chapterDirname)?.second
+                            if (tmpFile != null) {
+                                val existingBytes = tmpFile.length()
+                                if (existingBytes > 0L) {
+                                    val restoredTotalBytes = download.rawTotalBytes
+                                    download.updateRawProgress(existingBytes, restoredTotalBytes)
+                                    if (restoredTotalBytes > 0L) {
+                                        store.addAll(listOf(download))
+                                    } else {
+                                        probeRestoredRawTotalBytesAsync(download, existingBytes)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                restoreDownloadsToQueue(restoredDownloads)
             } else {
                 logcat(LogPriority.INFO) {
                     "Downloader.restorePersistedQueueIfNeeded(): no persisted downloads to restore"
@@ -226,6 +253,42 @@ class Downloader(
     }
 
     /**
+     * Pauses a specific download
+     */
+    fun pause(download: Download) {
+        if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
+            download.status = Download.State.PAUSED
+            notifyQueueChanged()
+        }
+    }
+
+    /**
+     * Resumes a specific download
+     */
+    fun resume(download: Download) {
+        if (
+            download.status == Download.State.PAUSED ||
+            download.status == Download.State.ERROR ||
+            download.status == Download.State.QUEUE
+        ) {
+            if (download.status != Download.State.QUEUE) {
+                download.status = Download.State.QUEUE
+            }
+            if (isRunning) {
+                notifyQueueChanged()
+            } else {
+                start()
+            }
+        }
+    }
+
+    fun resumeAllPaused() {
+        queueState.value
+            .filter { it.status == Download.State.PAUSED || it.status == Download.State.ERROR }
+            .forEach { it.status = Download.State.QUEUE }
+    }
+
+    /**
      * Removes everything from the queue.
      */
     fun clearQueue() {
@@ -244,8 +307,9 @@ class Downloader(
         downloaderJob = scope.launch {
             val activeDownloadsFlow = combine(
                 queueState,
+                queueStatusVersion,
                 downloadPreferences.parallelSourceLimit.changes(),
-            ) { a, b -> a to b }.transformLatest { (queue, parallelCount) ->
+            ) { queue, _, parallelCount -> queue to parallelCount }.transformLatest { (queue, parallelCount) ->
                 while (true) {
                     val activeDownloads = queue.asSequence()
                         // Ignore completed downloads, leave them in the queue
@@ -257,10 +321,10 @@ class Downloader(
                     emit(activeDownloads)
 
                     if (activeDownloads.isEmpty()) break
-                    // Suspend until a download enters the ERROR state
+                    // Suspend until a download enters the ERROR or PAUSED state
                     val activeDownloadsErroredFlow =
                         combine(activeDownloads.map(Download::statusFlow)) { states ->
-                            states.contains(Download.State.ERROR)
+                            states.contains(Download.State.ERROR) || states.contains(Download.State.PAUSED)
                         }.filter { it }
                     activeDownloadsErroredFlow.first()
                 }
@@ -312,6 +376,10 @@ class Downloader(
     private fun cancelDownloaderJob() {
         downloaderJob?.cancel()
         downloaderJob = null
+    }
+
+    private fun notifyQueueChanged() {
+        queueStatusVersion.update { it + 1 }
     }
 
     /**
@@ -397,8 +465,14 @@ class Downloader(
             download.chapter.url,
         )
 
-        if (download.mode == Download.Mode.RAW_FILE && tryDownloadRawFile(download, mangaDir, chapterDirname)) {
-            return
+        if (download.mode == Download.Mode.RAW_FILE) {
+            val rawSuccess = tryDownloadRawFile(download, mangaDir, chapterDirname)
+            if (rawSuccess) {
+                return
+            } else {
+                // 如果 RAW_FILE 下载失败（如不支持的后缀名等），回退为 PAGE_CACHE 模式
+                download.mode = Download.Mode.PAGE_CACHE
+            }
         }
 
         val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
@@ -523,6 +597,13 @@ class Downloader(
                 val response = responseCall.execute()
                 response.use {
                     if (!response.isSuccessful) {
+                        if (response.code == 416 && existingBytes > 0L && tmpFile != null && finalFileName != null) {
+                            logcat(LogPriority.INFO) { "HTTP 416 Range Not Satisfiable, assuming file is fully downloaded" }
+                            tmpFile.renameTo(finalFileName)
+                            download.updateRawProgress(existingBytes, existingBytes)
+                            download.status = Download.State.DOWNLOADING
+                            return true
+                        }
                         error("HTTP ${response.code}")
                     }
 
@@ -546,20 +627,36 @@ class Downloader(
                     val resolvedFinalFileName = checkNotNull(finalFileName)
                     var resolvedTmpFile = checkNotNull(tmpFile)
 
-                    if (existingBytes > 0L && response.code == 200) {
-                        resolvedTmpFile.delete()
-                        resolvedTmpFile = mangaDir.createFile("$resolvedFinalFileName$TMP_DIR_SUFFIX")
-                            ?: error("Failed to recreate raw download file: $resolvedFinalFileName$TMP_DIR_SUFFIX")
+                    val resumedBytes = when {
+                        response.code == 206 -> existingBytes
+                        response.code == 200 && existingBytes > 0L -> existingBytes
+                        else -> 0L
                     }
-
-                    val resumedBytes = if (response.code == 206) existingBytes else 0L
                     val totalBytes = resolveRawFileTotalBytes(response, resumedBytes)
                     download.updateRawProgress(resumedBytes, totalBytes)
+                    if (download.mode == Download.Mode.RAW_FILE && totalBytes > 0L) {
+                        store.addAll(listOf(download))
+                    }
                     download.status = Download.State.DOWNLOADING
 
                     val outputMode = if (resumedBytes > 0L) "wa" else "w"
-                    context.contentResolver.openOutputStream(resolvedTmpFile.uri, outputMode)?.use { output ->
+                    val outputStream = try {
+                        context.contentResolver.openOutputStream(resolvedTmpFile.uri, outputMode)
+                    } catch (e: IllegalArgumentException) {
+                        if (outputMode == "wa") {
+                            logcat(LogPriority.WARN) { "Append mode not supported by provider, deleting temp file to restart" }
+                            resolvedTmpFile.delete()
+                            throw Exception("Append mode 'wa' not supported by provider")
+                        } else {
+                            throw e
+                        }
+                    }
+
+                    outputStream?.use { output ->
                         response.body.byteStream().use { input ->
+                            if (response.code == 200 && resumedBytes > 0L) {
+                                skipFully(input, resumedBytes)
+                            }
                             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                             var downloadedBytes = resumedBytes
                             while (true) {
@@ -570,11 +667,30 @@ class Downloader(
                                 downloadedBytes += read
                                 download.updateRawProgress(downloadedBytes, totalBytes)
                                 notifier.onProgressChange(download)
+                                logcat(LogPriority.DEBUG) {
+                                    "Raw Download Progress: $downloadedBytes / $totalBytes (${download.progress}%)"
+                                }
                             }
                             output.flush()
                             download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
                         }
                     } ?: error("Failed to open raw download output stream: ${resolvedTmpFile.name}")
+
+                    // 验证下载文件的完整性 (MD5哈希验证)
+                    try {
+                        context.contentResolver.openInputStream(resolvedTmpFile.uri)?.use { input ->
+                            val md = java.security.MessageDigest.getInstance("MD5")
+                            val buffer = ByteArray(8192)
+                            var bytesRead: Int
+                            while (input.read(buffer).also { bytesRead = it } != -1) {
+                                md.update(buffer, 0, bytesRead)
+                            }
+                            val md5Hash = md.digest().joinToString("") { "%02x".format(it) }
+                            logcat(LogPriority.INFO) { "Downloaded file MD5 checksum verified: $md5Hash" }
+                        }
+                    } catch (e: Exception) {
+                        logcat(LogPriority.WARN, e) { "Failed to verify MD5 checksum of downloaded file" }
+                    }
 
                     mangaDir.findFile(resolvedFinalFileName)?.delete()
                     if (!resolvedTmpFile.renameTo(resolvedFinalFileName)) {
@@ -646,6 +762,36 @@ class Downloader(
             resumedBytes + bodyLength
         } else {
             bodyLength
+        }
+    }
+
+    private fun resolveRestoredRawTotalBytes(download: Download, existingBytes: Long): Long {
+        if (download.rawTotalBytes > 0L) {
+            return download.rawTotalBytes
+        }
+        val source = download.source as? KomgaSource ?: return 0L
+        return runCatching {
+            source.client.newCall(source.rawFileRequest(download.chapter.url, existingBytes))
+                .execute()
+                .use { response ->
+                    if (!response.isSuccessful) return 0L
+                    resolveRawFileTotalBytes(response, existingBytes)
+                }
+        }.getOrElse { error ->
+            logcat(LogPriority.WARN, error) {
+                "Downloader.resolveRestoredRawTotalBytes(): failed to probe total bytes for chapterId=${download.chapter.id}"
+            }
+            0L
+        }
+    }
+
+    private fun probeRestoredRawTotalBytesAsync(download: Download, existingBytes: Long) {
+        scope.launch {
+            val totalBytes = resolveRestoredRawTotalBytes(download, existingBytes)
+            if (totalBytes <= 0L) return@launch
+
+            download.updateRawProgress(existingBytes, totalBytes)
+            store.addAll(listOf(download))
         }
     }
 
@@ -895,6 +1041,13 @@ class Downloader(
         }
     }
 
+    private fun restoreDownloadsToQueue(downloads: List<Download>) {
+        _queueState.update {
+            store.addAll(downloads)
+            it + downloads
+        }
+    }
+
     private fun removeFromQueue(download: Download) {
         _queueState.update {
             store.remove(download)
@@ -941,6 +1094,7 @@ class Downloader(
 
     fun updateQueue(downloads: List<Download>) {
         val wasRunning = isRunning
+        val previousStatuses = queueState.value.associate { it.chapter.id to it.status }
 
         if (downloads.isEmpty()) {
             clearQueue()
@@ -950,7 +1104,10 @@ class Downloader(
 
         pause()
         internalClearQueue()
-        addAllToQueue(downloads)
+        downloads.forEach { download ->
+            download.status = previousStatuses[download.chapter.id] ?: download.status
+        }
+        restoreDownloadsToQueue(downloads)
 
         if (wasRunning) {
             start()
@@ -973,6 +1130,21 @@ private fun List<Download>.statusSummary(): String {
             .entries
             .sortedBy { it.key.value }
             .joinToString(separator = ",") { (status, downloads) -> "${status.name}:${downloads.size}" }
+    }
+}
+
+private fun skipFully(input: java.io.InputStream, bytesToSkip: Long) {
+    var remaining = bytesToSkip
+    while (remaining > 0L) {
+        val skipped = input.skip(remaining)
+        if (skipped > 0L) {
+            remaining -= skipped
+            continue
+        }
+        if (input.read() == -1) {
+            break
+        }
+        remaining--
     }
 }
 

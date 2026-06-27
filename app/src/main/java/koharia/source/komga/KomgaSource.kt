@@ -87,6 +87,8 @@ class KomgaSource :
 
     override val client: OkHttpClient
         get() = network.client.newBuilder()
+            .addInterceptor(KomgaOfflineInterceptor(uy.kohesive.injekt.Injekt.get<android.app.Application>()))
+            .addNetworkInterceptor(KomgaCacheControlInterceptor())
             .authenticator { _, response ->
                 if (apiKey.isNotBlank() || response.request.header("Authorization") != null) {
                     null

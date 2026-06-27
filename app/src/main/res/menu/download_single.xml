@@ -18,6 +18,14 @@
         android:title="@string/action_move_to_bottom_all_for_series" />
 
     <item
+        android:id="@+id/pause_download"
+        android:title="@string/action_pause" />
+
+    <item
+        android:id="@+id/resume_download"
+        android:title="@string/action_resume" />
+
+    <item
         android:id="@+id/cancel_download"
         android:title="@string/action_cancel" />
 

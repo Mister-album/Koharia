@@ -72,6 +72,21 @@ class DownloadManager(
     fun startDownloads() {
         if (downloader.isRunning) return
 
+        downloader.resumeAllPaused()
+
+        if (DownloadJob.isRunning(context)) {
+            downloader.start()
+        } else {
+            DownloadJob.start(context)
+        }
+    }
+
+    private fun startQueuedDownloadsOnly() {
+        if (downloader.isRunning) {
+            downloader.start()
+            return
+        }
+
         if (DownloadJob.isRunning(context)) {
             downloader.start()
         } else {
@@ -85,6 +100,20 @@ class DownloadManager(
     fun pauseDownloads() {
         downloader.pause()
         downloader.stop()
+    }
+
+    /**
+     * Tells the downloader to pause a specific download.
+     */
+    fun pauseDownload(download: Download) {
+        downloader.pause(download)
+    }
+
+    /**
+     * Tells the downloader to resume a specific download.
+     */
+    fun resumeDownload(download: Download) {
+        downloader.resume(download)
     }
 
     /**
@@ -117,12 +146,13 @@ class DownloadManager(
                 mode = mode ?: if (download.source is KomgaSource) Download.Mode.RAW_FILE else Download.Mode.PAGE_CACHE,
             )
         } ?: return
+        toAdd.status = Download.State.QUEUE
         queueState.value.toMutableList().apply {
             existingDownload?.let { remove(it) }
             add(0, toAdd)
             reorderQueue(this)
         }
-        startDownloads()
+        startQueuedDownloadsOnly()
     }
 
     /**
