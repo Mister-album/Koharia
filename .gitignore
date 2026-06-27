@@ -17,3 +17,6 @@ keystore.properties
 
 # macOS specific files
 .DS_Store
+
+# AI files
+.codex-work

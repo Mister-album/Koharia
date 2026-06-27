@@ -407,8 +407,8 @@ class Downloader(
         if (chaptersToQueue.isNotEmpty()) {
             addAllToQueue(chaptersToQueue)
 
-            // Start downloader if needed
-            if (autoStart && wasEmpty) {
+            // Start queued downloads without reviving paused items when the downloader is idle.
+            if (autoStart && !isRunning) {
                 val queuedDownloads = queueState.value.count { it.source !is UnmeteredSource }
                 val maxDownloadsFromSource = queueState.value
                     .groupBy { it.source }
