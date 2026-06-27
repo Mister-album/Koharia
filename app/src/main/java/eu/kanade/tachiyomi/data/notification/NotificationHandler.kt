@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.net.toUri
 import eu.kanade.tachiyomi.extension.util.ExtensionInstaller
+import eu.kanade.tachiyomi.data.updater.AppUpdateInstallActivity
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import tachiyomi.core.common.Constants
 
@@ -57,11 +58,13 @@ object NotificationHandler {
      * @param uri uri of apk that is installed
      */
     fun installApkPendingActivity(context: Context, uri: Uri): PendingIntent {
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, ExtensionInstaller.APK_MIME)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-        }
-        return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+        val intent = AppUpdateInstallActivity.intent(context, uri)
+        return PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     fun openUrl(context: Context, url: String): PendingIntent {

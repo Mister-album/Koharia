@@ -1019,6 +1019,7 @@
     <string name="update_check_notification_download_complete">Tap to install update</string>
     <string name="update_check_notification_download_error">Download error</string>
     <string name="update_check_notification_update_available">New version available!</string>
+    <string name="app_update_install_permission_required">Allow app installs for this app to continue the update</string>
 
     <!-- Information Text -->
     <string name="information_no_downloads">No downloads</string>

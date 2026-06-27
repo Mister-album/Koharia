@@ -80,11 +80,23 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
 
             // Keep track of the last notification sent to avoid posting too many.
             var lastTick = 0L
+            var hasShownIndeterminateProgress = false
 
             override fun update(bytesRead: Long, contentLength: Long, done: Boolean) {
-                val progress = (100 * (bytesRead.toFloat() / contentLength)).toInt()
                 val currentTime = System.currentTimeMillis()
-                if (progress > savedProgress && currentTime - 200 > lastTick) {
+                if (contentLength <= 0L) {
+                    if (!hasShownIndeterminateProgress || done) {
+                        hasShownIndeterminateProgress = true
+                        lastTick = currentTime
+                        notifier.onProgressChange(null)
+                    }
+                    return
+                }
+
+                val progress = ((100 * bytesRead) / contentLength)
+                    .toInt()
+                    .coerceIn(0, 100)
+                if ((progress > savedProgress && currentTime - 200 > lastTick) || done) {
                     savedProgress = progress
                     lastTick = currentTime
                     notifier.onProgressChange(progress)

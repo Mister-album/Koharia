@@ -83,6 +83,8 @@ internal class AppUpdateNotifier(private val context: Context) {
             title?.let { setContentTitle(title) }
             setContentText(context.stringResource(MR.strings.update_check_notification_download_in_progress))
             setSmallIcon(android.R.drawable.stat_sys_download)
+            setProgress(100, 0, true)
+            setOnlyAlertOnce(true)
             setOngoing(true)
 
             clearActions()
@@ -101,9 +103,13 @@ internal class AppUpdateNotifier(private val context: Context) {
      *
      * @param progress progress of download (xx%/100).
      */
-    fun onProgressChange(progress: Int) {
+    fun onProgressChange(progress: Int?) {
         with(notificationBuilder) {
-            setProgress(100, progress, false)
+            if (progress == null) {
+                setProgress(100, 0, true)
+            } else {
+                setProgress(100, progress.coerceIn(0, 100), false)
+            }
             setOnlyAlertOnce(true)
         }
         notificationBuilder.show()
