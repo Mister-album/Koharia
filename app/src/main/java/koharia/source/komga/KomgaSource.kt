@@ -33,6 +33,8 @@ import okhttp3.Request
 import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 import java.util.Locale
@@ -44,6 +46,7 @@ class KomgaSource :
 
     private val preferences: SharedPreferences by lazy { sourcePreferences() }
     private val json: Json by injectLazy()
+    private val application: android.app.Application by lazy { Injekt.get() }
 
     override val name: String = SOURCE_NAME
     override val lang: String = SOURCE_LANG
@@ -87,6 +90,8 @@ class KomgaSource :
 
     override val client: OkHttpClient
         get() = network.client.newBuilder()
+            .addInterceptor(KomgaOfflineInterceptor(application))
+            .addNetworkInterceptor(KomgaCacheControlInterceptor(application))
             .authenticator { _, response ->
                 if (apiKey.isNotBlank() || response.request.header("Authorization") != null) {
                     null

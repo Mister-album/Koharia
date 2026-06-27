@@ -623,6 +623,7 @@ class MangaScreenModel(
                     -> ChapterDownloadAction.START_NOW
                     Download.State.QUEUE,
                     Download.State.DOWNLOADING,
+                    Download.State.PAUSED,
                     -> ChapterDownloadAction.CANCEL
                     Download.State.DOWNLOADED -> ChapterDownloadAction.DELETE
                 }

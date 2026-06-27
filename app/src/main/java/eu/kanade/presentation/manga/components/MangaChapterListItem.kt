@@ -208,7 +208,10 @@ private fun getSwipeAction(
         LibraryPreferences.ChapterSwipeAction.Download -> swipeAction(
             icon = when (downloadState) {
                 Download.State.NOT_DOWNLOADED, Download.State.ERROR -> Icons.Outlined.Download
-                Download.State.QUEUE, Download.State.DOWNLOADING -> Icons.Outlined.FileDownloadOff
+                Download.State.QUEUE,
+                Download.State.DOWNLOADING,
+                Download.State.PAUSED,
+                -> Icons.Outlined.FileDownloadOff
                 Download.State.DOWNLOADED -> Icons.Outlined.Delete
             },
             background = background,

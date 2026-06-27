@@ -261,7 +261,8 @@ class DownloadProvider(
     }
 
     companion object {
-        val SUPPORTED_CHAPTER_FILE_EXTENSIONS = setOf("cbz", "zip", "rar", "cbr", "7z", "cb7", "tar", "cbt", "epub")
+        val SUPPORTED_CHAPTER_FILE_EXTENSIONS =
+            setOf("cbz", "zip", "rar", "cbr", "7z", "cb7", "tar", "cbt", "epub", "pdf")
 
         fun isSupportedChapterFileExtension(extension: String?): Boolean {
             return extension?.lowercase() in SUPPORTED_CHAPTER_FILE_EXTENSIONS

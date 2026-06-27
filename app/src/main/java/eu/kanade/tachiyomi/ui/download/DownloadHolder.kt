@@ -7,7 +7,6 @@ import eu.davidea.viewholders.FlexibleViewHolder
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.databinding.DownloadItemBinding
-import eu.kanade.tachiyomi.util.view.popupMenu
 
 /**
  * Class used to hold the data of a download.
@@ -23,7 +22,20 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
 
     init {
         setDragHandleView(binding.reorder)
-        binding.menu.setOnClickListener { it.post { showPopupMenu(it) } }
+        binding.container.setOnClickListener {
+            adapter.downloadItemListener.onItemClick(bindingAdapterPosition)
+        }
+        binding.btnPauseResume.setOnClickListener {
+            val status = download.status
+            if (shouldShowPauseAction(status)) {
+                adapter.downloadItemListener.onPauseClick(bindingAdapterPosition)
+            } else {
+                adapter.downloadItemListener.onResumeClick(bindingAdapterPosition)
+            }
+        }
+        binding.btnCancel.setOnClickListener {
+            adapter.downloadItemListener.onCancelClick(bindingAdapterPosition)
+        }
     }
 
     private lateinit var download: Download
@@ -61,6 +73,25 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
                 notifyDownloadedPages()
             }
         }
+
+        notifyStatus()
+    }
+
+    /**
+     * Updates the status of the pause/resume button.
+     */
+    fun notifyStatus() {
+        val status = download.status
+        if (shouldShowPauseAction(status)) {
+            binding.btnPauseResume.setImageResource(R.drawable.ic_pause_24dp)
+        } else {
+            binding.btnPauseResume.setImageResource(R.drawable.ic_play_arrow_24dp)
+        }
+    }
+
+    private fun shouldShowPauseAction(status: Download.State): Boolean {
+        return status == Download.State.DOWNLOADING ||
+            (status == Download.State.QUEUE && adapter.hasRunningDownloads())
     }
 
     /**
@@ -75,12 +106,28 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
                 }
             }
             Download.Mode.RAW_FILE -> {
-                if (binding.downloadProgress.max != 100) {
+                val totalBytes = download.rawTotalBytes
+                if (totalBytes > 0L && totalBytes <= Int.MAX_VALUE.toLong()) {
+                    if (binding.downloadProgress.max != totalBytes.toInt()) {
+                        binding.downloadProgress.max = totalBytes.toInt()
+                    }
+                } else if (binding.downloadProgress.max != 100) {
                     binding.downloadProgress.max = 100
                 }
             }
         }
-        binding.downloadProgress.setProgressCompat(download.totalProgress, true)
+        val progress = when (download.mode) {
+            Download.Mode.PAGE_CACHE -> download.totalProgress
+            Download.Mode.RAW_FILE -> {
+                val totalBytes = download.rawTotalBytes
+                if (totalBytes > 0L && totalBytes <= Int.MAX_VALUE.toLong()) {
+                    download.rawDownloadedBytes.coerceAtMost(totalBytes).toInt()
+                } else {
+                    download.totalProgress
+                }
+            }
+        }
+        binding.downloadProgress.setProgressCompat(progress, true)
     }
 
     /**
@@ -116,19 +163,5 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
         if (actionState == ItemTouchHelper.ACTION_STATE_DRAG) {
             binding.container.isDragged = true
         }
-    }
-
-    private fun showPopupMenu(view: View) {
-        view.popupMenu(
-            menuRes = R.menu.download_single,
-            initMenu = {
-                findItem(R.id.move_to_top).isVisible = bindingAdapterPosition > 1
-                findItem(R.id.move_to_bottom).isVisible =
-                    bindingAdapterPosition != adapter.itemCount - 1
-            },
-            onMenuItemClick = {
-                adapter.downloadItemListener.onMenuItemClick(bindingAdapterPosition, this)
-            },
-        )
     }
 }

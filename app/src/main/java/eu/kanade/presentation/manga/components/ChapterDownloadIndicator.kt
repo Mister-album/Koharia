@@ -62,7 +62,7 @@ fun ChapterDownloadIndicator(
             isKomgaCacheMode = isKomgaCacheMode,
             onClick = onClick,
         )
-        Download.State.QUEUE, Download.State.DOWNLOADING -> DownloadingIndicator(
+        Download.State.QUEUE, Download.State.DOWNLOADING, Download.State.PAUSED -> DownloadingIndicator(
             enabled = enabled,
             modifier = modifier,
             downloadState = downloadState,

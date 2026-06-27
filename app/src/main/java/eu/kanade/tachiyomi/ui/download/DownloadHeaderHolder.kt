@@ -13,8 +13,10 @@ class DownloadHeaderHolder(view: View, adapter: FlexibleAdapter<*>) : Expandable
 
     @SuppressLint("SetTextI18n")
     fun bind(item: DownloadHeaderItem) {
-        setDragHandleView(binding.reorder)
-        binding.title.text = "${item.name} (${item.size})"
+        // Hide the entire header since there's only one source and the top bar already shows the count
+        binding.root.visibility = View.GONE
+        binding.root.layoutParams.height = 0
+        binding.root.requestLayout()
     }
 
     override fun onActionStateChanged(position: Int, actionState: Int) {
