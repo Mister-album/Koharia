@@ -18,10 +18,22 @@ internal class PdfPageLoader(
     file: UniFile,
 ) : PageLoader() {
 
-    private val fileDescriptor = context.contentResolver.openFileDescriptor(file.uri, "r")
-        ?: error("Failed to open pdf file descriptor: ${file.uri}")
-    private val renderer = PdfRenderer(fileDescriptor)
     private val renderLock = Any()
+    private val fileDescriptor: android.os.ParcelFileDescriptor
+    private val renderer: PdfRenderer
+
+    init {
+        val fd = context.contentResolver.openFileDescriptor(file.uri, "r")
+            ?: error("Failed to open pdf file descriptor: ${file.uri}")
+
+        try {
+            fileDescriptor = fd
+            renderer = PdfRenderer(fd)
+        } catch (e: Throwable) {
+            fd.close()
+            throw e
+        }
+    }
 
     override var isLocal: Boolean = true
 
@@ -64,8 +76,10 @@ internal class PdfPageLoader(
 
     override fun recycle() {
         super.recycle()
-        renderer.close()
-        fileDescriptor.close()
+        synchronized(renderLock) {
+            renderer.close()
+            fileDescriptor.close()
+        }
     }
 
     private companion object {

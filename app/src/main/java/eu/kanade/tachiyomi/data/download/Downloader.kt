@@ -195,9 +195,7 @@ class Downloader(
                                 if (existingBytes > 0L) {
                                     val restoredTotalBytes = download.rawTotalBytes
                                     download.updateRawProgress(existingBytes, restoredTotalBytes)
-                                    if (restoredTotalBytes > 0L) {
-                                        store.addAll(listOf(download))
-                                    } else {
+                                    if (restoredTotalBytes <= 0L) {
                                         probeRestoredRawTotalBytesAsync(download, existingBytes)
                                     }
                                 }
@@ -675,22 +673,6 @@ class Downloader(
                             download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
                         }
                     } ?: error("Failed to open raw download output stream: ${resolvedTmpFile.name}")
-
-                    // 验证下载文件的完整性 (MD5哈希验证)
-                    try {
-                        context.contentResolver.openInputStream(resolvedTmpFile.uri)?.use { input ->
-                            val md = java.security.MessageDigest.getInstance("MD5")
-                            val buffer = ByteArray(8192)
-                            var bytesRead: Int
-                            while (input.read(buffer).also { bytesRead = it } != -1) {
-                                md.update(buffer, 0, bytesRead)
-                            }
-                            val md5Hash = md.digest().joinToString("") { "%02x".format(it) }
-                            logcat(LogPriority.INFO) { "Downloaded file MD5 checksum verified: $md5Hash" }
-                        }
-                    } catch (e: Exception) {
-                        logcat(LogPriority.WARN, e) { "Failed to verify MD5 checksum of downloaded file" }
-                    }
 
                     mangaDir.findFile(resolvedFinalFileName)?.delete()
                     if (!resolvedTmpFile.renameTo(resolvedFinalFileName)) {

@@ -4,21 +4,16 @@ import android.content.Context
 import eu.kanade.tachiyomi.util.system.isOnline
 import logcat.LogPriority
 import okhttp3.CacheControl
-import okhttp3.Headers
 import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.Protocol
 import okhttp3.Response
-import okhttp3.ResponseBody.Companion.toResponseBody
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
-import java.io.File
 import java.io.IOException
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
+    private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext)
 
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
@@ -49,7 +44,7 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
             try {
                 response = chain.proceed(request)
                 if (!isOnline && response.code == 504) {
-                    val fallbackResponse = loadDiskCachedResponse(request)
+                    val fallbackResponse = metadataCacheStore.load(request)
                     if (fallbackResponse != null) {
                         response.close()
                         response = fallbackResponse
@@ -108,76 +103,6 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
             throw exception ?: IOException("请求失败，已重试 $maxRetries 次。")
         }
 
-        // 针对 API 请求写入缓存控制头，让 OkHttp 可以缓存元数据
-        if (isOnline && response.isSuccessful) {
-            val urlStr = request.url.toString()
-            // 针对元数据接口缓存
-            if (urlStr.contains("/api/v1/series") || urlStr.contains("/api/v1/books")) {
-                response = response.newBuilder()
-                    .header("Cache-Control", "public, max-age=${60 * 60}") // 缓存 1 小时
-                    .build()
-            }
-        }
-
         return response
-    }
-
-    private fun loadDiskCachedResponse(request: okhttp3.Request): Response? {
-        val url = request.url.toString()
-        if (!url.contains("/api/v1/") || url.endsWith("/file") || PAGE_IMAGE_REGEX.containsMatchIn(url)) {
-            return null
-        }
-
-        val cacheDir = File(context.cacheDir, "network_cache")
-        val cacheKey = md5(url)
-        val metadataFile = File(cacheDir, "$cacheKey.0")
-        val bodyFile = File(cacheDir, "$cacheKey.1")
-        if (!metadataFile.exists() || !bodyFile.exists()) {
-            return null
-        }
-
-        val metadataLines = metadataFile.readLines()
-        if (metadataLines.firstOrNull() != url) {
-            return null
-        }
-
-        val statusCode = metadataLines.firstOrNull { it.startsWith("HTTP/") }
-            ?.split(' ')
-            ?.getOrNull(1)
-            ?.toIntOrNull()
-            ?: 200
-        if (statusCode !in 200..299) {
-            return null
-        }
-
-        val contentType = metadataLines.firstOrNull { it.startsWith("Content-Type:", ignoreCase = true) }
-            ?.substringAfter(':')
-            ?.trim()
-            ?.toMediaTypeOrNull()
-            ?: "application/json".toMediaTypeOrNull()
-
-        val headers = Headers.Builder()
-            .add("Content-Type", contentType.toString())
-            .add("X-Koharia-Offline-Cache", "disk")
-            .build()
-
-        return Response.Builder()
-            .request(request)
-            .protocol(Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
-            .headers(headers)
-            .body(bodyFile.readBytes().toResponseBody(contentType))
-            .build()
-    }
-
-    private fun md5(value: String): String {
-        return MessageDigest.getInstance("MD5")
-            .digest(value.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-    }
-
-    companion object {
-        private val PAGE_IMAGE_REGEX = Regex("/pages/\\d+(?:\\?.*)?$")
     }
 }

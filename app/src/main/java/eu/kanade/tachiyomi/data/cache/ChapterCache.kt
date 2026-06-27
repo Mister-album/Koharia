@@ -42,8 +42,10 @@ class ChapterCache(
             val stat = android.os.StatFs(context.cacheDir.absolutePath)
             val totalBytes = stat.blockCountLong * stat.blockSizeLong
             val availableBytes = stat.availableBlocksLong * stat.blockSizeLong
+            val minCacheBytes = 100L * 1024 * 1024
+            val maxCacheBytes = (totalBytes / 10).coerceAtLeast(minCacheBytes)
             // 取可用空间的 10% 或总空间的 10% 作为上限，并且设置一个合理的上下限
-            (availableBytes * 0.1).toLong().coerceIn(100L * 1024 * 1024, totalBytes / 10)
+            (availableBytes * 0.1).toLong().coerceIn(minCacheBytes, maxCacheBytes)
         } catch (e: Exception) {
             100L * 1024 * 1024 // 默认 100MB
         }

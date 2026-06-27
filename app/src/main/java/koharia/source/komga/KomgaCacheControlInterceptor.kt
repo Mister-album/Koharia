@@ -1,9 +1,13 @@
 package koharia.source.komga
 
+import android.content.Context
 import okhttp3.Interceptor
 import okhttp3.Response
 
-class KomgaCacheControlInterceptor : Interceptor {
+class KomgaCacheControlInterceptor(
+    context: Context,
+) : Interceptor {
+    private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext)
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
@@ -13,27 +17,18 @@ class KomgaCacheControlInterceptor : Interceptor {
             return response
         }
 
-        val url = request.url.toString()
-        if (url.endsWith("/file")) {
+        if (!metadataCacheStore.isEligible(request)) {
             return response
         }
 
-        val maxAgeSeconds = when {
-            url.contains("/api/v1/client-settings/") -> 60 * 60
-            url.contains("/api/v1/series") -> 60 * 60
-            url.contains("/api/v1/books") && !url.contains("/pages/") -> 60 * 60
-            url.contains("/api/v1/readlists") -> 60 * 60
-            url.contains("/api/v1/libraries") -> 60 * 60
-            url.contains("/api/v1/collections") -> 60 * 60
-            url.contains("/api/v1/genres") -> 60 * 60
-            url.contains("/api/v1/tags") -> 60 * 60
-            url.contains("/api/v1/publishers") -> 60 * 60
-            url.contains("/api/v1/authors") -> 60 * 60
-            else -> return response
-        }
-
-        return response.newBuilder()
+        val cacheableResponse = response.newBuilder()
             .header("Cache-Control", "public, max-age=$maxAgeSeconds")
             .build()
+
+        return metadataCacheStore.save(request, cacheableResponse)
+    }
+
+    private companion object {
+        const val maxAgeSeconds = 60 * 60
     }
 }
