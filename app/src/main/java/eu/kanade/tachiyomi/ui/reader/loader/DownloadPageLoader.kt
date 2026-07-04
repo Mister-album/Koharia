@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
 import tachiyomi.core.common.storage.extension
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
 import uy.kohesive.injekt.injectLazy
 
@@ -44,6 +45,14 @@ internal class DownloadPageLoader(
             manga.title,
             source,
         )
+        logcat {
+            "KohariaOfflineDebug: using download page loader " +
+                "mangaId=${manga.id} mangaTitle=${manga.title} " +
+                "chapterId=${dbChapter.id} chapterName=${dbChapter.name} " +
+                "chapterUrl=${dbChapter.url} " +
+                "downloadPath=${chapterPath?.name ?: "<missing>"} " +
+                "isFile=${chapterPath?.isFile}"
+        }
         return if (chapterPath?.isFile == true) {
             when {
                 chapterPath.extension.equals("epub", true) -> getPagesFromEpub(chapterPath)

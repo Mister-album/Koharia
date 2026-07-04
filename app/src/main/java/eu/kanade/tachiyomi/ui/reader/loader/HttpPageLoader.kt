@@ -15,8 +15,10 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
+import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.PriorityBlockingQueue
@@ -68,12 +70,29 @@ internal class HttpPageLoader(
      */
     override suspend fun getPages(): List<ReaderPage> {
         val pages = try {
-            chapterCache.getPageListFromCache(chapter.chapter.toDomainChapter()!!)
+            chapterCache.getPageListFromCache(chapter.chapter.toDomainChapter()!!).also {
+                logcat {
+                    "KohariaOfflineDebug: page list cache hit " +
+                        "chapterId=${chapter.chapter.id} chapterName=${chapter.chapter.name} " +
+                        "chapterUrl=${chapter.chapter.url} pages=${it.size}"
+                }
+            }
         } catch (e: Throwable) {
             if (e is CancellationException) {
                 throw e
             }
-            source.getPageList(chapter.chapter)
+            logcat(LogPriority.WARN, e) {
+                "KohariaOfflineDebug: page list cache miss, fetching from source " +
+                    "chapterId=${chapter.chapter.id} chapterName=${chapter.chapter.name} " +
+                    "chapterUrl=${chapter.chapter.url}"
+            }
+            source.getPageList(chapter.chapter).also {
+                logcat {
+                    "KohariaOfflineDebug: page list fetched from source " +
+                        "chapterId=${chapter.chapter.id} chapterName=${chapter.chapter.name} " +
+                        "chapterUrl=${chapter.chapter.url} pages=${it.size}"
+                }
+            }
         }
         return pages.mapIndexed { index, page ->
             // Don't trust sources and use our own indexing
@@ -180,7 +199,13 @@ internal class HttpPageLoader(
             }
             val imageUrl = page.imageUrl!!
 
-            if (force || !chapterCache.isImageInCache(imageUrl)) {
+            val imageInCache = chapterCache.isImageInCache(imageUrl)
+            logcat {
+                "KohariaOfflineDebug: image cache check " +
+                    "chapterId=${chapter.chapter.id} page=${page.number} " +
+                    "force=$force imageInCache=$imageInCache imageUrl=$imageUrl"
+            }
+            if (force || !imageInCache) {
                 page.status = Page.State.DownloadImage
                 val imageResponse = source.getImage(page)
                 chapterCache.putImageToCache(imageUrl, imageResponse)
