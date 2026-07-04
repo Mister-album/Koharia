@@ -596,7 +596,9 @@ class Downloader(
                 response.use {
                     if (!response.isSuccessful) {
                         if (response.code == 416 && existingBytes > 0L && tmpFile != null && finalFileName != null) {
-                            logcat(LogPriority.INFO) { "HTTP 416 Range Not Satisfiable, assuming file is fully downloaded" }
+                            logcat(LogPriority.INFO) {
+                                "HTTP 416 Range Not Satisfiable, assuming file is fully downloaded"
+                            }
                             tmpFile.renameTo(finalFileName)
                             download.updateRawProgress(existingBytes, existingBytes)
                             download.status = Download.State.DOWNLOADING
@@ -642,7 +644,9 @@ class Downloader(
                         context.contentResolver.openOutputStream(resolvedTmpFile.uri, outputMode)
                     } catch (e: IllegalArgumentException) {
                         if (outputMode == "wa") {
-                            logcat(LogPriority.WARN) { "Append mode not supported by provider, deleting temp file to restart" }
+                            logcat(LogPriority.WARN) {
+                                "Append mode not supported by provider, deleting temp file to restart"
+                            }
                             resolvedTmpFile.delete()
                             throw Exception("Append mode 'wa' not supported by provider")
                         } else {
