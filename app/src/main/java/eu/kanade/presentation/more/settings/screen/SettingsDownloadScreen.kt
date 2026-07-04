@@ -59,6 +59,11 @@ object SettingsDownloadScreen : SearchableSettings {
                 subtitle = stringResource(MR.strings.pref_download_concurrent_pages_summary),
                 onValueChanged = { downloadPreferences.parallelPageLimit.set(it) },
             ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = downloadPreferences.cacheCurrentChapterWhileReading,
+                title = stringResource(MR.strings.pref_cache_current_chapter_while_reading),
+                subtitle = stringResource(MR.strings.pref_cache_current_chapter_while_reading_summary),
+            ),
             getDeleteChaptersGroup(
                 downloadPreferences = downloadPreferences,
                 categories = allCategories,

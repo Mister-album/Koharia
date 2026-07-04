@@ -219,8 +219,9 @@ class MangaScreenModel(
                 setMangaDefaultChapterFlags.await(manga)
             }
 
-            val needRefreshInfo = !manga.initialized
-            val needRefreshChapter = chapters.isEmpty()
+            val shouldRefreshKomga = source.id == KomgaSource.ID
+            val needRefreshInfo = !manga.initialized || shouldRefreshKomga
+            val needRefreshChapter = chapters.isEmpty() || shouldRefreshKomga
 
             // Show what we have earlier
             mutableState.update {
@@ -673,7 +674,7 @@ class MangaScreenModel(
         screenModelScope.launchNonCancellable {
             if (startNow) {
                 val chapterId = chapters.singleOrNull()?.id ?: return@launchNonCancellable
-                downloadManager.startDownloadNow(chapterId)
+                downloadManager.startOfflineCacheNow(chapterId)
             } else {
                 downloadChapters(chapters)
             }
@@ -806,7 +807,7 @@ class MangaScreenModel(
      */
     private fun downloadChapters(chapters: List<Chapter>) {
         val manga = successState?.manga ?: return
-        downloadManager.downloadChapters(manga, chapters)
+        downloadManager.cacheChaptersForOffline(manga, chapters)
         toggleAllSelection(false)
     }
 
@@ -833,7 +834,7 @@ class MangaScreenModel(
         screenModelScope.launchNonCancellable {
             try {
                 successState?.let { state ->
-                    downloadManager.deleteChapters(
+                    downloadManager.removeOfflineCache(
                         chapters,
                         state.manga,
                         state.source,

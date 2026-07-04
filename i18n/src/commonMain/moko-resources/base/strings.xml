@@ -556,6 +556,8 @@
     <string name="pref_download_concurrent_sources">Concurrent source downloads</string>
     <string name="pref_download_concurrent_pages">Concurrent page downloads</string>
     <string name="pref_download_concurrent_pages_summary">Pages downloaded simultaneously per source</string>
+    <string name="pref_cache_current_chapter_while_reading">Cache current chapter while reading</string>
+    <string name="pref_cache_current_chapter_while_reading_summary">Saves the current chapter for offline reading and marks it cached when complete</string>
 
     <!-- Tracking section -->
     <string name="tracking_guide">Tracking guide</string>
@@ -614,11 +616,11 @@
     <string name="pref_storage_usage">Storage usage</string>
     <string name="available_disk_space_info">Available: %1$s / Total: %2$s</string>
     <string name="pref_clear_chapter_cache">Clear chapter cache</string>
-    <string name="pref_manage_local_cache">Clear local cache</string>
+    <string name="pref_manage_local_cache">Clear temporary cache</string>
     <string name="pref_manage_local_cache_removed_manga">Deleted manga cache</string>
     <string name="pref_manage_local_cache_chapter">Chapter cache</string>
     <string name="pref_manage_local_cache_cover">Cover cache</string>
-    <string name="pref_manage_local_cache_temporary">All local temporary cache</string>
+    <string name="pref_manage_local_cache_temporary">All temporary cache (keeps offline chapters)</string>
     <string name="used_cache">Used: %1$s</string>
     <string name="cache_deleted">Cache cleared, %1$d files deleted</string>
     <string name="cache_delete_error">Error occurred while clearing</string>
