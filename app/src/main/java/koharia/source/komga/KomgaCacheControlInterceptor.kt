@@ -22,13 +22,13 @@ class KomgaCacheControlInterceptor(
         }
 
         val cacheableResponse = response.newBuilder()
-            .header("Cache-Control", "public, max-age=$maxAgeSeconds")
+            .header("Cache-Control", "public, max-age=$MAX_AGE_SECONDS")
             .build()
 
         return metadataCacheStore.save(request, cacheableResponse)
     }
 
     private companion object {
-        const val maxAgeSeconds = 60 * 60
+        const val MAX_AGE_SECONDS = 60 * 60
     }
 }
