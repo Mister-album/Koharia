@@ -9,7 +9,7 @@ import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.brotli.BrotliInterceptor
 import okhttp3.logging.HttpLoggingInterceptor
-import java.io.File
+import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import java.util.concurrent.TimeUnit
 
 class NetworkHelper(
@@ -18,6 +18,11 @@ class NetworkHelper(
 ) {
 
     val cookieJar = AndroidCookieJar()
+    private val cacheDirectory = LocalTempCacheDirectoryProvider.networkCacheDir(context)
+    private val okHttpCache = Cache(
+        directory = cacheDirectory,
+        maxSize = 5L * 1024 * 1024, // 5 MiB
+    )
 
     private val clientBuilder: OkHttpClient.Builder = run {
         val builder = OkHttpClient.Builder()
@@ -25,12 +30,7 @@ class NetworkHelper(
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .callTimeout(2, TimeUnit.MINUTES)
-            .cache(
-                Cache(
-                    directory = File(context.cacheDir, "network_cache"),
-                    maxSize = 5L * 1024 * 1024, // 5 MiB
-                ),
-            )
+            .cache(okHttpCache)
             .addInterceptor(UncaughtExceptionInterceptor())
             .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
             .addNetworkInterceptor(IgnoreGzipInterceptor())
@@ -76,4 +76,11 @@ class NetworkHelper(
     val cloudflareClient: OkHttpClient = client
 
     fun defaultUserAgentProvider() = preferences.defaultUserAgent.get().trim()
+
+    fun clearDiskCache(): Int {
+        val deleted = LocalTempCacheDirectoryProvider.countNetworkCacheFiles(context)
+        okHttpCache.evictAll()
+        LocalTempCacheDirectoryProvider.clearLegacyNetworkCache(context)
+        return deleted
+    }
 }

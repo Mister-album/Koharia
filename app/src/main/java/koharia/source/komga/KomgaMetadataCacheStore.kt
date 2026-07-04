@@ -6,6 +6,7 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
@@ -14,9 +15,7 @@ internal class KomgaMetadataCacheStore(
     context: Context,
 ) {
 
-    private val cacheDir = File(context.cacheDir, CACHE_DIR_NAME).apply {
-        mkdirs()
-    }
+    private val cacheDir = LocalTempCacheDirectoryProvider.metadataCacheDir(context)
 
     fun isEligible(request: Request): Boolean {
         if (request.method != "GET") return false
@@ -125,7 +124,6 @@ internal class KomgaMetadataCacheStore(
     )
 
     companion object {
-        private const val CACHE_DIR_NAME = "komga_metadata_cache"
         private val MAX_STALE_MILLIS = TimeUnit.DAYS.toMillis(7)
 
         fun isEligibleUrl(url: String): Boolean {

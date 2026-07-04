@@ -4,10 +4,11 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
 import eu.kanade.tachiyomi.BuildConfig
+import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import java.io.File
 
 val Context.cacheImageDir: File
-    get() = File(cacheDir, "shared_image")
+    get() = LocalTempCacheDirectoryProvider.sharedImageDir(this)
 
 /**
  * Returns the uri of a file
