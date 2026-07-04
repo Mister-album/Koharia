@@ -38,6 +38,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 class KomgaSource :
     HttpSource(),
@@ -77,6 +78,7 @@ class KomgaSource :
 
     private val repository: KomgaRepository
         get() = KomgaRepository(baseUrl, apiClient)
+    private val forceBrowseRequestsUntil = AtomicLong(0L)
 
     fun currentHeaders(): Headers = headersBuilder().build()
 
@@ -104,33 +106,35 @@ class KomgaSource :
             .dns(Dns.SYSTEM)
             .build()
 
-    override fun popularMangaRequest(page: Int): Request = repository.popularMangaRequest(page, defaultLibraries)
+    override fun popularMangaRequest(page: Int): Request =
+        repository.popularMangaRequest(page, defaultLibraries, consumeBrowseCachePolicy())
 
     override fun popularMangaParse(response: Response) = repository.parseMangasPage(response)
 
-    override fun latestUpdatesRequest(page: Int): Request = repository.latestUpdatesRequest(page, defaultLibraries)
+    override fun latestUpdatesRequest(page: Int): Request =
+        repository.latestUpdatesRequest(page, defaultLibraries, consumeBrowseCachePolicy())
 
     override fun latestUpdatesParse(response: Response) = repository.parseMangasPage(response)
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request =
-        repository.searchMangaRequest(page, query, filters, defaultLibraries)
+        repository.searchMangaRequest(page, query, filters, defaultLibraries, consumeBrowseCachePolicy())
 
     override fun searchMangaParse(response: Response) = repository.parseMangasPage(response)
 
     override fun getMangaUrl(manga: eu.kanade.tachiyomi.source.model.SManga): String = manga.url.replace("/api/v1", "")
 
     override fun mangaDetailsRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request =
-        repository.mangaDetailsRequest(manga)
+        repository.mangaDetailsRequest(manga, KomgaCachePolicy.NetworkFirst)
 
     override fun mangaDetailsParse(response: Response) = repository.mangaDetailsParse(response)
 
     override fun chapterListRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request =
-        repository.chapterListRequest(manga)
+        repository.chapterListRequest(manga, KomgaCachePolicy.NetworkFirst)
 
     override fun chapterListParse(response: Response) = repository.chapterListParse(response, chapterNameTemplate)
 
     override fun pageListRequest(chapter: eu.kanade.tachiyomi.source.model.SChapter): Request =
-        repository.pageListRequest(chapter)
+        repository.pageListRequest(chapter, KomgaCachePolicy.NetworkFirst)
 
     override fun pageListParse(response: Response) = repository.pageListParse(response)
 
@@ -258,14 +262,14 @@ class KomgaSource :
         )
     }
 
-    suspend fun getBrowseLibraries(): List<LibraryDto> {
+    suspend fun getBrowseLibraries(forceRefresh: Boolean = false): List<LibraryDto> {
         if (!hasValidBaseUrl()) {
             fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
             return emptyList()
         }
 
         return try {
-            val options = repository.fetchFilterOptions()
+            val options = repository.fetchFilterOptions(forceRefresh)
             libraries = options.libraries
             collections = options.collections
             genres = options.genres
@@ -290,6 +294,10 @@ class KomgaSource :
         authors = emptyMap()
         fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
         fetchFiltersAttempts = 0
+    }
+
+    fun refreshBrowseRequests() {
+        forceBrowseRequestsUntil.set(System.currentTimeMillis() + BROWSE_REFRESH_WINDOW_MILLIS)
     }
 
     fun registerServerSettingsChangeListener(
@@ -374,6 +382,14 @@ class KomgaSource :
         }
     }
 
+    private fun consumeBrowseCachePolicy(): KomgaCachePolicy {
+        return if (System.currentTimeMillis() <= forceBrowseRequestsUntil.get()) {
+            KomgaCachePolicy.NetworkFirst
+        } else {
+            KomgaCachePolicy.Default
+        }
+    }
+
     override fun chapterPageParse(response: Response) = throw UnsupportedOperationException()
 
     companion object {
@@ -383,6 +399,7 @@ class KomgaSource :
         const val TYPE_SERIES = "Series"
         const val TYPE_READ_LISTS = "Read lists"
         const val TYPE_BOOKS = "Books"
+        private const val BROWSE_REFRESH_WINDOW_MILLIS = 30_000L
 
         private val SERVER_SETTING_KEYS = setOf(
             PREF_ADDRESS,

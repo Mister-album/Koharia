@@ -92,11 +92,11 @@ class KomgaLibraryScreenModel(
             komgaSettingsChangeListener = source.registerServerSettingsChangeListener {
                 screenModelScope.launchIO {
                     source.invalidateBrowseCache()
-                    reloadKomgaState(source, showRefreshing = true, resetSelection = true)
+                    reloadKomgaState(source, showRefreshing = true, resetSelection = true, forceRefresh = true)
                 }
             }
             screenModelScope.launchIO {
-                reloadKomgaState(source, showRefreshing = false, resetSelection = true)
+                reloadKomgaState(source, showRefreshing = false, resetSelection = true, forceRefresh = true)
             }
         }
 
@@ -256,7 +256,12 @@ class KomgaLibraryScreenModel(
         if (komgaSource != null) {
             screenModelScope.launchIO {
                 komgaSource.invalidateBrowseCache()
-                reloadKomgaState(komgaSource, showRefreshing = true, resetSelection = false)
+                reloadKomgaState(
+                    komgaSource = komgaSource,
+                    showRefreshing = true,
+                    resetSelection = false,
+                    forceRefresh = true,
+                )
             }
         } else {
             refreshSignal.value += 1
@@ -274,12 +279,15 @@ class KomgaLibraryScreenModel(
                 toolbarQuery = null,
             )
         }
+        komgaSource.refreshBrowseRequests()
+        refreshSignal.value += 1
     }
 
     private suspend fun reloadKomgaState(
         komgaSource: KomgaSource,
         showRefreshing: Boolean,
         resetSelection: Boolean,
+        forceRefresh: Boolean,
     ) {
         if (showRefreshing) {
             mutableState.update { it.copy(isRefreshing = true) }
@@ -301,7 +309,7 @@ class KomgaLibraryScreenModel(
         }
 
         try {
-            val libraries = komgaSource.getBrowseLibraries()
+            val libraries = komgaSource.getBrowseLibraries(forceRefresh)
             val selectedLibraryId = if (resetSelection) {
                 null
             } else {
@@ -318,6 +326,9 @@ class KomgaLibraryScreenModel(
                     selectedKomgaLibraryId = selectedLibraryId,
                     toolbarQuery = null,
                 )
+            }
+            if (forceRefresh) {
+                komgaSource.refreshBrowseRequests()
             }
         } catch (e: Exception) {
             if (resetSelection) {

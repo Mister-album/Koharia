@@ -155,6 +155,10 @@ class DownloadManager(
         startQueuedDownloadsOnly()
     }
 
+    fun startOfflineCacheNow(chapterId: Long) {
+        startDownloadNow(chapterId)
+    }
+
     /**
      * Reorders the download queue.
      *
@@ -178,6 +182,22 @@ class DownloadManager(
         mode: Download.Mode? = null,
     ) {
         downloader.queueChapters(manga, chapters, autoStart, mode)
+    }
+
+    fun cacheChaptersForOffline(
+        manga: Manga,
+        chapters: List<Chapter>,
+        autoStart: Boolean = true,
+    ) {
+        downloadChapters(manga, chapters, autoStart)
+    }
+
+    fun cacheChapterPagesForOffline(
+        manga: Manga,
+        chapter: Chapter,
+        autoStart: Boolean = true,
+    ) {
+        downloadChapters(manga, listOf(chapter), autoStart, Download.Mode.PAGE_CACHE)
     }
 
     /**
@@ -282,6 +302,10 @@ class DownloadManager(
                 deleteManga(manga, source, removeQueued = false)
             }
         }
+    }
+
+    fun removeOfflineCache(chapters: List<Chapter>, manga: Manga, source: Source) {
+        deleteChapters(chapters, manga, source)
     }
 
     /**
