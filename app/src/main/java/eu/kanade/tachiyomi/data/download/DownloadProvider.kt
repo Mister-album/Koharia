@@ -123,11 +123,7 @@ class DownloadProvider(
                 append("hit=${result?.name ?: "<none>"} ")
                 append("candidates=${validNames.joinToString(limit = 8, truncated = "...")}")
                 if (result == null) {
-                    val nearbyFiles = mangaDir?.listFiles()
-                        .orEmpty()
-                        .mapNotNull { it.name }
-                        .take(12)
-                    append(" existing=${nearbyFiles.joinToString(limit = 12, truncated = "...")}")
+                    append(" hasMangaDir=${mangaDir != null}")
                 }
             }
         }

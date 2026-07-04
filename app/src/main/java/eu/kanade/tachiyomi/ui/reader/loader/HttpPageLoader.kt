@@ -199,7 +199,7 @@ internal class HttpPageLoader(
             }
             val imageUrl = page.imageUrl!!
 
-            val imageInCache = chapterCache.isImageInCache(imageUrl)
+            val imageInCache = if (force) false else chapterCache.isImageInCache(imageUrl)
             logcat {
                 "KohariaOfflineDebug: image cache check " +
                     "chapterId=${chapter.chapter.id} page=${page.number} " +
