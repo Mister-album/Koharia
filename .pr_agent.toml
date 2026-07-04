@@ -1,0 +1,23 @@
+[config]
+model = "gemini/gemini-2.0-flash"
+fallback_models = ["gemini/gemini-2.5-flash"]
+restricted_mode = true
+
+[pr_reviewer]
+enable_review_labels_effort = false
+enable_review_labels_security = false
+extra_instructions = """
+This repository is Koharia, an Android reader forked from Mihon and specialized for Komga.
+Prioritize concrete behavioral regressions, edge cases, and missing validation over style-only feedback.
+Pay extra attention to:
+- Jetpack Compose state, side effects, navigation, and lifecycle handling.
+- SQLDelight schema/query changes, migrations, adapters, and mapper signature mismatches.
+- Reader loading/viewer logic, download queue/resume/delete behavior, cache invalidation, and file/storage changes.
+- Komga source behavior, progress sync, history sync, and Komga-specific library or browse flows.
+- Backup/restore compatibility, numbered migration or proto changes, and build-variant-specific behavior.
+If the diff changes compile-sensitive code or persistence behavior, call out missing compile/test/migration verification when relevant.
+Avoid suggestions that would reintroduce Mihon extension-store or generic multi-source behavior unless the diff explicitly intends that.
+"""
+
+[pr_code_suggestions]
+num_code_suggestions = 4

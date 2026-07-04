@@ -1,0 +1,38 @@
+name: PR Agent
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  checks: write
+
+jobs:
+  pr_agent:
+    if: >
+      github.event.sender.type != 'Bot' &&
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Run PR Agent
+        uses: the-pr-agent/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          config.ai_timeout: ${{ vars.PR_AGENT_AI_TIMEOUT || '300' }}
+          config.verbosity_level: ${{ vars.PR_AGENT_VERBOSITY_LEVEL || '1' }}
+          github_action_config.auto_review: ${{ vars.PR_AGENT_AUTO_REVIEW || 'true' }}
+          github_action_config.auto_describe: ${{ vars.PR_AGENT_AUTO_DESCRIBE || 'false' }}
+          github_action_config.auto_improve: ${{ vars.PR_AGENT_AUTO_IMPROVE || 'false' }}
+          github_action_config.pr_actions: ${{ vars.PR_AGENT_PR_ACTIONS || '["opened","reopened","ready_for_review","synchronize"]' }}
+          pr_reviewer.require_tests_review: ${{ vars.PR_AGENT_REQUIRE_TESTS_REVIEW || 'true' }}
