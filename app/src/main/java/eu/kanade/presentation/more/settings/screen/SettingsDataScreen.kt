@@ -4,9 +4,11 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.text.format.Formatter
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -66,6 +68,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
 import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.backup.service.BackupPreferences
@@ -289,10 +292,14 @@ object SettingsDataScreen : SearchableSettings {
 
         val chapterCache = remember { Injekt.get<ChapterCache>() }
         var cacheReadableSizeSema by remember { mutableIntStateOf(0) }
-        val cacheReadableSize = remember(cacheReadableSizeSema) { chapterCache.readableSize }
-        val localTempCacheReadableSize =
-            remember(cacheReadableSizeSema) { localCacheCleaner.temporaryCacheReadableSize() }
+        var cacheReadableSize by remember { mutableStateOf(Formatter.formatFileSize(context, 0)) }
+        var localTempCacheReadableSize by remember { mutableStateOf(Formatter.formatFileSize(context, 0)) }
         var showCacheCleanupDialog by rememberSaveable { mutableStateOf(false) }
+
+        LaunchedEffect(cacheReadableSizeSema) {
+            cacheReadableSize = withIOContext { chapterCache.readableSize }
+            localTempCacheReadableSize = withIOContext { localCacheCleaner.temporaryCacheReadableSize() }
+        }
 
         if (showCacheCleanupDialog) {
             CacheCleanupDialog(
@@ -300,17 +307,20 @@ object SettingsDataScreen : SearchableSettings {
                     showCacheCleanupDialog = false
                     scope.launchNonCancellable {
                         try {
-                            var deletedFiles = 0
-                            if (CleanupTarget.RemovedMangaCache in selections) {
-                                deletedFiles += localCacheCleaner.clearDeletedMangaCache(getFavorites.await())
-                            }
-                            if (CleanupTarget.CoverCache in selections) {
-                                deletedFiles += localCacheCleaner.clearCoverCache()
-                            }
-                            if (CleanupTarget.AllTemporaryCache in selections) {
-                                deletedFiles += localCacheCleaner.clearAllTemporaryCache()
-                            } else if (CleanupTarget.ChapterCache in selections) {
-                                deletedFiles += localCacheCleaner.clearChapterCache()
+                            val deletedFiles = withIOContext {
+                                var count = 0
+                                if (CleanupTarget.RemovedMangaCache in selections) {
+                                    count += localCacheCleaner.clearDeletedMangaCache(getFavorites.await())
+                                }
+                                if (CleanupTarget.CoverCache in selections) {
+                                    count += localCacheCleaner.clearCoverCache()
+                                }
+                                if (CleanupTarget.AllTemporaryCache in selections) {
+                                    count += localCacheCleaner.clearAllTemporaryCache()
+                                } else if (CleanupTarget.ChapterCache in selections) {
+                                    count += localCacheCleaner.clearChapterCache()
+                                }
+                                count
                             }
                             withUIContext {
                                 context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
@@ -560,10 +570,15 @@ object SettingsDataScreen : SearchableSettings {
         checked: Boolean,
         onCheckedChange: (Boolean) -> Unit,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onCheckedChange(!checked) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Checkbox(
                 checked = checked,
-                onCheckedChange = onCheckedChange,
+                onCheckedChange = null,
             )
             Text(text = label)
         }

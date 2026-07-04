@@ -1,6 +1,8 @@
 package tachiyomi.core.common.storage
 
 import android.content.Context
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import java.io.File
 
 object LocalTempCacheDirectoryProvider {
@@ -107,7 +109,11 @@ object LocalTempCacheDirectoryProvider {
     @Synchronized
     private fun prepareDirectory(context: Context, name: String): File {
         val target = File(rootDir(context), name)
-        migrateDirectory(legacyDirectory(context, name), target)
+        runCatching {
+            migrateDirectory(legacyDirectory(context, name), target)
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "Failed to migrate local cache directory $name" }
+        }
         target.mkdirs()
         return target
     }
@@ -116,7 +122,11 @@ object LocalTempCacheDirectoryProvider {
     private fun prepareFile(context: Context, name: String): File {
         val target = File(rootDir(context), name)
         target.parentFile?.mkdirs()
-        migrateFile(legacyFile(context, name), target)
+        runCatching {
+            migrateFile(legacyFile(context, name), target)
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "Failed to migrate local cache file $name" }
+        }
         return target
     }
 
@@ -132,10 +142,55 @@ object LocalTempCacheDirectoryProvider {
     private fun migrateDirectory(source: File, target: File) {
         if (!source.exists() || source.absolutePath == target.absolutePath) return
         if (target.exists() && target.listFiles()?.isNotEmpty() == true) {
-            source.deleteRecursively()
             return
         }
 
+        val temporaryTarget = File(target.parentFile, "${target.name}.migrating")
+        temporaryTarget.deleteRecursively()
+
+        try {
+            copyDirectory(source, temporaryTarget)
+            if (target.exists()) {
+                target.deleteRecursively()
+            }
+            if (!temporaryTarget.renameTo(target)) {
+                copyDirectory(temporaryTarget, target)
+                temporaryTarget.deleteRecursively()
+            }
+            source.deleteRecursively()
+        } catch (error: Throwable) {
+            temporaryTarget.deleteRecursively()
+            throw error
+        }
+    }
+
+    private fun migrateFile(source: File, target: File) {
+        if (!source.exists() || source.absolutePath == target.absolutePath) return
+        if (target.exists() && target.length() > 0L) {
+            return
+        }
+
+        val temporaryTarget = File(target.parentFile, "${target.name}.migrating")
+        temporaryTarget.delete()
+
+        try {
+            temporaryTarget.parentFile?.mkdirs()
+            source.copyTo(temporaryTarget, overwrite = true)
+            if (target.exists()) {
+                target.delete()
+            }
+            if (!temporaryTarget.renameTo(target)) {
+                temporaryTarget.copyTo(target, overwrite = true)
+                temporaryTarget.delete()
+            }
+            source.delete()
+        } catch (error: Throwable) {
+            temporaryTarget.delete()
+            throw error
+        }
+    }
+
+    private fun copyDirectory(source: File, target: File) {
         target.mkdirs()
         source.walkTopDown().forEach { file ->
             val relativePath = file.relativeTo(source).path
@@ -151,19 +206,6 @@ object LocalTempCacheDirectoryProvider {
                 file.copyTo(destination, overwrite = true)
             }
         }
-        source.deleteRecursively()
-    }
-
-    private fun migrateFile(source: File, target: File) {
-        if (!source.exists() || source.absolutePath == target.absolutePath) return
-        if (target.exists() && target.length() > 0L) {
-            source.delete()
-            return
-        }
-
-        target.parentFile?.mkdirs()
-        source.copyTo(target, overwrite = true)
-        source.delete()
     }
 
     private fun clearCurrentAndLegacyDirectory(current: File, legacy: File): Int {

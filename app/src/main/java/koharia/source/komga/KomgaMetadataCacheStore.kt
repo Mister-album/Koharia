@@ -9,6 +9,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 
 internal class KomgaMetadataCacheStore(
     context: Context,
@@ -61,7 +62,14 @@ internal class KomgaMetadataCacheStore(
 
         return runCatching {
             val metadata = metaFile.readLines()
-            if (metadata.size < 2 || metadata[0] != url) {
+            if (metadata.size < 3 || metadata[0] != url) {
+                return null
+            }
+
+            val savedAt = metadata[2].toLongOrNull() ?: return null
+            if (System.currentTimeMillis() - savedAt > MAX_STALE_MILLIS) {
+                bodyFile.delete()
+                metaFile.delete()
                 return null
             }
 
@@ -82,6 +90,7 @@ internal class KomgaMetadataCacheStore(
             val metadata = buildString {
                 appendLine(url)
                 appendLine(contentType?.toString().orEmpty())
+                appendLine(System.currentTimeMillis().toString())
             }
 
             tmpBodyFile.writeBytes(body)
@@ -115,7 +124,7 @@ internal class KomgaMetadataCacheStore(
     )
 
     companion object {
-        private const val CACHE_DIR_NAME = "komga_metadata_cache"
+        private val MAX_STALE_MILLIS = TimeUnit.DAYS.toMillis(7)
 
         fun isEligibleUrl(url: String): Boolean {
             if (!url.contains("/api/v1/")) return false
