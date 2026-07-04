@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,7 @@ import eu.kanade.presentation.util.relativeTimeSpanString
 import eu.kanade.tachiyomi.data.backup.create.BackupCreateJob
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.cache.LocalCacheCleaner
 import eu.kanade.tachiyomi.data.export.LibraryExporter
 import eu.kanade.tachiyomi.data.export.LibraryExporter.ExportOptions
 import eu.kanade.tachiyomi.util.system.DeviceUtil
@@ -282,10 +284,47 @@ object SettingsDataScreen : SearchableSettings {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
+        val localCacheCleaner = remember { Injekt.get<LocalCacheCleaner>() }
+        val getFavorites = remember { Injekt.get<GetFavorites>() }
 
         val chapterCache = remember { Injekt.get<ChapterCache>() }
         var cacheReadableSizeSema by remember { mutableIntStateOf(0) }
         val cacheReadableSize = remember(cacheReadableSizeSema) { chapterCache.readableSize }
+        val localTempCacheReadableSize =
+            remember(cacheReadableSizeSema) { localCacheCleaner.temporaryCacheReadableSize() }
+        var showCacheCleanupDialog by rememberSaveable { mutableStateOf(false) }
+
+        if (showCacheCleanupDialog) {
+            CacheCleanupDialog(
+                onConfirm = { selections ->
+                    showCacheCleanupDialog = false
+                    scope.launchNonCancellable {
+                        try {
+                            var deletedFiles = 0
+                            if (CleanupTarget.RemovedMangaCache in selections) {
+                                deletedFiles += localCacheCleaner.clearDeletedMangaCache(getFavorites.await())
+                            }
+                            if (CleanupTarget.CoverCache in selections) {
+                                deletedFiles += localCacheCleaner.clearCoverCache()
+                            }
+                            if (CleanupTarget.AllTemporaryCache in selections) {
+                                deletedFiles += localCacheCleaner.clearAllTemporaryCache()
+                            } else if (CleanupTarget.ChapterCache in selections) {
+                                deletedFiles += localCacheCleaner.clearChapterCache()
+                            }
+                            withUIContext {
+                                context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
+                                cacheReadableSizeSema++
+                            }
+                        } catch (e: Throwable) {
+                            logcat(LogPriority.ERROR, e)
+                            withUIContext { context.toast(MR.strings.cache_delete_error) }
+                        }
+                    }
+                },
+                onDismissRequest = { showCacheCleanupDialog = false },
+            )
+        }
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_storage_usage),
@@ -303,26 +342,14 @@ object SettingsDataScreen : SearchableSettings {
                 },
 
                 Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.pref_clear_chapter_cache),
-                    subtitle = stringResource(MR.strings.used_cache, cacheReadableSize),
-                    onClick = {
-                        scope.launchNonCancellable {
-                            try {
-                                val deletedFiles = chapterCache.clear()
-                                withUIContext {
-                                    context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
-                                    cacheReadableSizeSema++
-                                }
-                            } catch (e: Throwable) {
-                                logcat(LogPriority.ERROR, e)
-                                withUIContext { context.toast(MR.strings.cache_delete_error) }
-                            }
-                        }
-                    },
+                    title = stringResource(MR.strings.pref_manage_local_cache),
+                    subtitle = stringResource(MR.strings.used_cache, localTempCacheReadableSize),
+                    onClick = { showCacheCleanupDialog = true },
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = libraryPreferences.autoClearChapterCache,
                     title = stringResource(MR.strings.pref_auto_clear_chapter_cache),
+                    subtitle = stringResource(MR.strings.used_cache, cacheReadableSize),
                 ),
             ),
         )
@@ -463,5 +490,89 @@ object SettingsDataScreen : SearchableSettings {
                 }
             },
         )
+    }
+
+    @Composable
+    private fun CacheCleanupDialog(
+        onConfirm: (Set<CleanupTarget>) -> Unit,
+        onDismissRequest: () -> Unit,
+    ) {
+        var removeDeletedMangaCache by rememberSaveable { mutableStateOf(false) }
+        var clearChapterCache by rememberSaveable { mutableStateOf(false) }
+        var clearCoverCache by rememberSaveable { mutableStateOf(false) }
+        var clearAllTemporaryCache by rememberSaveable { mutableStateOf(false) }
+
+        val selections = buildSet {
+            if (removeDeletedMangaCache) add(CleanupTarget.RemovedMangaCache)
+            if (clearChapterCache) add(CleanupTarget.ChapterCache)
+            if (clearCoverCache) add(CleanupTarget.CoverCache)
+            if (clearAllTemporaryCache) add(CleanupTarget.AllTemporaryCache)
+        }
+
+        AlertDialog(
+            onDismissRequest = onDismissRequest,
+            title = {
+                Text(text = stringResource(MR.strings.pref_manage_local_cache))
+            },
+            text = {
+                Column {
+                    CacheCleanupOptionRow(
+                        label = stringResource(MR.strings.pref_manage_local_cache_removed_manga),
+                        checked = removeDeletedMangaCache,
+                        onCheckedChange = { removeDeletedMangaCache = it },
+                    )
+                    CacheCleanupOptionRow(
+                        label = stringResource(MR.strings.pref_manage_local_cache_chapter),
+                        checked = clearChapterCache,
+                        onCheckedChange = { clearChapterCache = it },
+                    )
+                    CacheCleanupOptionRow(
+                        label = stringResource(MR.strings.pref_manage_local_cache_cover),
+                        checked = clearCoverCache,
+                        onCheckedChange = { clearCoverCache = it },
+                    )
+                    CacheCleanupOptionRow(
+                        label = stringResource(MR.strings.pref_manage_local_cache_temporary),
+                        checked = clearAllTemporaryCache,
+                        onCheckedChange = { clearAllTemporaryCache = it },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { onConfirm(selections) },
+                    enabled = selections.isNotEmpty(),
+                ) {
+                    Text(text = stringResource(MR.strings.action_ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissRequest) {
+                    Text(text = stringResource(MR.strings.action_cancel))
+                }
+            },
+        )
+    }
+
+    @Composable
+    private fun CacheCleanupOptionRow(
+        label: String,
+        checked: Boolean,
+        onCheckedChange: (Boolean) -> Unit,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+            )
+            Text(text = label)
+        }
+    }
+
+    private enum class CleanupTarget {
+        RemovedMangaCache,
+        ChapterCache,
+        CoverCache,
+        AllTemporaryCache,
     }
 }

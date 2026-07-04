@@ -98,8 +98,44 @@ class CoverCache(private val context: Context) {
         }
     }
 
+    fun deleteOrphaned(activeManga: Collection<Manga>): Int {
+        val activeCoverNames = activeManga.mapNotNull { manga ->
+            manga.thumbnailUrl?.let(DiskUtil::hashKeyForDisk)
+        }.toSet()
+        val activeCustomCoverNames = activeManga.mapNotNull { manga ->
+            manga.id.takeIf { it > 0 }?.toString()?.let(DiskUtil::hashKeyForDisk)
+        }.toSet()
+
+        var deleted = 0
+        cacheDir.listFiles().orEmpty().forEach { file ->
+            if (file.isFile && file.name !in activeCoverNames && file.delete()) {
+                deleted++
+            }
+        }
+        customCoverCacheDir.listFiles().orEmpty().forEach { file ->
+            if (file.isFile && file.name !in activeCustomCoverNames && file.delete()) {
+                deleted++
+            }
+        }
+        return deleted
+    }
+
+    fun clear(): Int {
+        return clearDirectory(cacheDir) + clearDirectory(customCoverCacheDir)
+    }
+
     private fun getCacheDir(dir: String): File {
         return context.getExternalFilesDir(dir)
             ?: File(context.filesDir, dir).also { it.mkdirs() }
+    }
+
+    private fun clearDirectory(directory: File): Int {
+        var deleted = 0
+        directory.listFiles().orEmpty().forEach { file ->
+            if (file.isFile && file.delete()) {
+                deleted++
+            }
+        }
+        return deleted
     }
 }

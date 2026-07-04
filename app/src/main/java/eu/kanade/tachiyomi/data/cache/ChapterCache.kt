@@ -11,6 +11,7 @@ import logcat.LogPriority
 import okhttp3.Response
 import okio.buffer
 import okio.sink
+import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import java.io.File
@@ -31,7 +32,7 @@ class ChapterCache(
 
     /** Cache class used for cache management. */
     private val diskCache = DiskLruCache.open(
-        File(context.cacheDir, "chapter_disk_cache"),
+        LocalTempCacheDirectoryProvider.chapterCacheDir(context),
         PARAMETER_APP_VERSION,
         PARAMETER_VALUE_COUNT,
         calculateCacheSize(context),
@@ -39,7 +40,7 @@ class ChapterCache(
 
     private fun calculateCacheSize(context: Context): Long {
         return try {
-            val stat = android.os.StatFs(context.cacheDir.absolutePath)
+            val stat = android.os.StatFs(LocalTempCacheDirectoryProvider.chapterCacheDir(context).absolutePath)
             val totalBytes = stat.blockCountLong * stat.blockSizeLong
             val availableBytes = stat.availableBlocksLong * stat.blockSizeLong
             val minCacheBytes = 100L * 1024 * 1024

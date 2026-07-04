@@ -189,6 +189,11 @@
     <string name="restoring_backup">正在还原备份</string>
     <string name="creating_backup">正在创建备份</string>
     <string name="pref_clear_chapter_cache">清除章节缓存</string>
+    <string name="pref_manage_local_cache">清理本地缓存</string>
+    <string name="pref_manage_local_cache_removed_manga">已被删除漫画缓存</string>
+    <string name="pref_manage_local_cache_chapter">章节缓存</string>
+    <string name="pref_manage_local_cache_cover">封面缓存</string>
+    <string name="pref_manage_local_cache_temporary">全部本地临时缓存</string>
     <string name="used_cache">已使用：%1$s</string>
     <string name="cache_deleted">已清除缓存，删除了 %1$d 个文件</string>
     <string name="cache_delete_error">清除时发生错误</string>

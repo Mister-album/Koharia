@@ -17,6 +17,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.allowRgb565
@@ -56,10 +57,12 @@ import kotlinx.coroutines.flow.onEach
 import logcat.AndroidLogcatLogger
 import logcat.LogPriority
 import logcat.LogcatLogger
+import okio.Path.Companion.toOkioPath
 import org.conscrypt.Conscrypt
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
@@ -206,6 +209,12 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             memoryCache(
                 MemoryCache.Builder()
                     .maxSizePercent(context)
+                    .build(),
+            )
+            diskCache(
+                DiskCache.Builder()
+                    .directory(LocalTempCacheDirectoryProvider.coilDiskCacheDir(this@App).toOkioPath())
+                    .maxSizePercent(0.02)
                     .build(),
             )
 

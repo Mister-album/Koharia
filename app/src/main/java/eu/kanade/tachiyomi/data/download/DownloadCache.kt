@@ -39,6 +39,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
+import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.storage.nameWithoutExtension
 import tachiyomi.core.common.util.lang.launchIO
@@ -92,7 +93,7 @@ class DownloadCache(
         .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     private val diskCacheFile: File
-        get() = File(context.cacheDir, "dl_index_cache_v3")
+        get() = LocalTempCacheDirectoryProvider.downloadIndexCacheFile(context)
 
     private val rootDownloadsDirMutex = Mutex()
     private var rootDownloadsDir = RootDirectory(storageManager.getDownloadsDirectory())
@@ -331,6 +332,13 @@ class DownloadCache(
         renewalJob?.cancel()
         diskCacheFile.delete()
         renewCache()
+    }
+
+    fun clearDiskCache(): Int {
+        val deleted = LocalTempCacheDirectoryProvider.countDownloadIndexFiles(context)
+        invalidateCache()
+        LocalTempCacheDirectoryProvider.clearLegacyDownloadIndexCache(context)
+        return deleted
     }
 
     /**
