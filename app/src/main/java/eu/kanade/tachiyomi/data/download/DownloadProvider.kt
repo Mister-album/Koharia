@@ -107,9 +107,28 @@ class DownloadProvider(
         source: Source,
     ): UniFile? {
         val mangaDir = findMangaDir(mangaTitle, source)
-        return getValidChapterDirNames(chapterName, chapterScanlator, chapterUrl).asSequence()
+        val validNames = getValidChapterDirNames(chapterName, chapterScanlator, chapterUrl)
+        val result = validNames.asSequence()
             .mapNotNull { mangaDir?.findFile(it) }
             .firstOrNull()
+
+        logcat {
+            buildString {
+                append("KohariaOfflineDebug: download lookup ")
+                append("source=${source.name} ")
+                append("mangaTitle=$mangaTitle ")
+                append("chapterName=$chapterName ")
+                append("chapterUrl=$chapterUrl ")
+                append("mangaDir=${mangaDir?.displayablePath ?: "<missing>"} ")
+                append("hit=${result?.name ?: "<none>"} ")
+                append("candidates=${validNames.joinToString(limit = 8, truncated = "...")}")
+                if (result == null) {
+                    append(" hasMangaDir=${mangaDir != null}")
+                }
+            }
+        }
+
+        return result
     }
 
     /**

@@ -81,6 +81,13 @@ class ChapterLoader(
             manga.source,
             skipCache = true,
         )
+        logcat {
+            "KohariaOfflineDebug: chapter loader selected " +
+                "mangaId=${manga.id} mangaTitle=${manga.title} " +
+                "chapterId=${dbChapter.id} chapterName=${dbChapter.name} " +
+                "chapterUrl=${dbChapter.url} source=${source.name} " +
+                "downloadedOnDisk=$isDownloaded"
+        }
         return when {
             isDownloaded -> DownloadPageLoader(
                 chapter,
