@@ -96,7 +96,6 @@ class MangaScreen(
         MangaScreen(
             state = successState,
             snackbarHostState = screenModel.snackbarHostState,
-            nextUpdate = successState.manga.expectedNextUpdate,
             isTabletUi = isTabletUi(),
             chapterSwipeStartAction = screenModel.chapterSwipeStartAction,
             chapterSwipeEndAction = screenModel.chapterSwipeEndAction,
@@ -109,7 +108,6 @@ class MangaScreen(
             }.takeIf { successState.source.id != KomgaSource.ID },
             onWebViewClicked = null,
             onWebViewLongClicked = null,
-            onTrackingClicked = screenModel::showTrackDialog,
             onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onRefresh = screenModel::fetchAllFromSource,
@@ -119,9 +117,6 @@ class MangaScreen(
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
             onDownloadActionClicked = screenModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
             onEditCategoryClicked = screenModel::showChangeCategoryDialog.takeIf {
-                successState.manga.favorite && successState.source.id != KomgaSource.ID
-            },
-            onEditFetchIntervalClicked = screenModel::showSetFetchIntervalDialog.takeIf {
                 successState.manga.favorite && successState.source.id != KomgaSource.ID
             },
             onMigrateClicked = null,
