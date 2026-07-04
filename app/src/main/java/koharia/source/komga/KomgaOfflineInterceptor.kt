@@ -18,7 +18,6 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
         val isOnline = context.isOnline()
-        val cachePolicy = originalRequest.komgaCachePolicy
         val request = if (isOnline) {
             originalRequest
         } else {
@@ -59,7 +58,7 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
                 if (response.code >= 500) {
                     response.close()
                     retryCount++
-                    response = if (retryCount >= maxRetries && cachePolicy == KomgaCachePolicy.NetworkFirst) {
+                    response = if (retryCount >= maxRetries) {
                         metadataCacheStore.load(originalRequest)
                     } else {
                         null
