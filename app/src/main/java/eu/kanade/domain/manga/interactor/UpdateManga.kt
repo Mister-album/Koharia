@@ -1,9 +1,12 @@
 package eu.kanade.domain.manga.interactor
 
 import eu.kanade.domain.manga.model.hasCustomCover
+import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import kotlinx.serialization.json.jsonPrimitive
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.model.Manga
@@ -66,6 +69,9 @@ class UpdateManga(
 
         val thumbnailUrl = remoteManga.thumbnail_url?.takeIf { it.isNotEmpty() }
 
+        // Sync reading direction from Komga server metadata when user hasn't overridden
+        val viewerFlags = resolveViewerFlagsFromMemo(localManga, remoteManga)
+
         val success = mangaRepository.update(
             MangaUpdate(
                 id = localManga.id,
@@ -79,6 +85,8 @@ class UpdateManga(
                 status = remoteManga.status.toLong(),
                 updateStrategy = remoteManga.update_strategy,
                 initialized = true,
+                viewerFlags = viewerFlags,
+                memo = remoteManga.memo.takeIf { it.isNotEmpty() },
             ),
         )
         if (success && title != null) {
@@ -113,5 +121,32 @@ class UpdateManga(
         return mangaRepository.update(
             MangaUpdate(id = mangaId, favorite = favorite, dateAdded = dateAdded),
         )
+    }
+
+    /**
+     * Maps Komga readingDirection from SManga.memo to viewer flags.
+     * Returns null (no change) if the user has already set a reading mode,
+     * or if the server doesn't specify a direction.
+     */
+    private fun resolveViewerFlagsFromMemo(localManga: Manga, remoteManga: SManga): Long? {
+        // Don't override if user has manually set a reading mode
+        if (localManga.readingMode != ReadingMode.DEFAULT.flagValue.toLong()) return null
+
+        val direction = remoteManga.memo["readingDirection"]
+            ?.jsonPrimitive?.content
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+
+        val mode = when (direction) {
+            "LEFT_TO_RIGHT" -> ReadingMode.LEFT_TO_RIGHT
+            "RIGHT_TO_LEFT" -> ReadingMode.RIGHT_TO_LEFT
+            "VERTICAL" -> ReadingMode.VERTICAL
+            "WEBTOON" -> ReadingMode.WEBTOON
+            else -> return null
+        }
+
+        return localManga.viewerFlags
+            .and(ReadingMode.MASK.toLong().inv())
+            .or(mode.flagValue.toLong())
     }
 }

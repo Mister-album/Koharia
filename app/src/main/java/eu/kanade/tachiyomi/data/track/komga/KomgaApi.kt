@@ -14,6 +14,7 @@ import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import okhttp3.Credentials
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -172,6 +173,29 @@ class KomgaApi(
                                 readProgress = book.readProgress,
                             )
                         }
+                }
+            }
+        }
+
+    suspend fun search(query: String): List<TrackSearch> =
+        withIOContext {
+            with(json) {
+                val baseUrl = (sourceManager.get(KomgaSource.ID) as? KomgaSource)?.baseUrl?.trimEnd('/').orEmpty()
+                if (baseUrl.isBlank()) {
+                    logcat(LogPriority.WARN) { "KomgaApi.search: blank server base URL" }
+                    emptyList()
+                } else {
+                    val url = "$baseUrl/api/v1/series".toHttpUrl().newBuilder()
+                        .addQueryParameter("search", query)
+                        .addQueryParameter("deleted", "false")
+                        .build()
+
+                    requestClient
+                        .newCall(GET(url, headers))
+                        .awaitSuccess()
+                        .parseAs<PageWrapperDto<SeriesDto>>()
+                        .content
+                        .map { it.toTrack().apply { tracking_url = "$baseUrl/api/v1/series/${it.id}" } }
                 }
             }
         }

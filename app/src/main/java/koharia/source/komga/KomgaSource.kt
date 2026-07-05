@@ -11,6 +11,7 @@ import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.AppInfo
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Filter
@@ -19,8 +20,11 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.komga.api.KomgaApiClient
+import koharia.komga.api.KomgaSseClient
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.domain.repository.KomgaRepository
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -47,6 +51,19 @@ class KomgaSource :
     private val preferences: SharedPreferences by lazy { sourcePreferences() }
     private val json: Json by injectLazy()
     private val application: android.app.Application by lazy { Injekt.get() }
+    private val komgaSseClient by lazy {
+        KomgaSseClient(
+            context = application,
+            networkHelper = network,
+            komgaProgressSyncService = lazy { Injekt.get() },
+            baseUrlProvider = { baseUrl },
+            headersProvider = { currentHeaders() }
+        )
+    }
+
+    init {
+        komgaSseClient.start(ProcessLifecycleOwner.get().lifecycleScope)
+    }
 
     override val name: String = SOURCE_NAME
     override val lang: String = SOURCE_LANG
@@ -146,6 +163,45 @@ class KomgaSource :
 
     fun hasValidBaseUrl(): Boolean = baseUrl.startsWith("http://") || baseUrl.startsWith("https://")
 
+    suspend fun getMe(): koharia.komga.api.dto.UserDto? {
+        if (!hasValidBaseUrl()) return null
+        return try {
+            client.newCall(apiClient.meRequest())
+                .awaitSuccess()
+                .let { apiClient.parse<koharia.komga.api.dto.UserDto>(it) }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    suspend fun updateMangaViewerFlags(mangaId: String, viewerFlags: Long) {
+        if (!hasValidBaseUrl()) return
+        try {
+            apiClient.updateClientSettings(
+                mapOf(
+                    "koharia.manga.$mangaId.viewerFlags" to
+                        koharia.komga.api.dto.ClientSettingUpdateDto(value = viewerFlags.toString()),
+                ),
+            )
+        } catch (e: Exception) {
+            // Ignore for now
+        }
+    }
+
+    suspend fun getMangaViewerFlags(mangaId: String): Long? {
+        if (!hasValidBaseUrl()) return null
+        return try {
+            val settings = client.newCall(
+                eu.kanade.tachiyomi.network.GET("$baseUrl/api/v1/client-settings/user/list", headers),
+            )
+                .awaitSuccess()
+                .let { apiClient.parse<Map<String, koharia.komga.api.dto.ClientSettingDto>>(it) }
+            settings["koharia.manga.$mangaId.viewerFlags"]?.value?.toLongOrNull()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     override fun getFilterList(): FilterList {
         fetchFilterOptions()
 
@@ -153,6 +209,7 @@ class KomgaSource :
             UnreadFilter(),
             InProgressFilter(),
             ReadFilter(),
+            OneshotFilter(),
             TypeSelect(),
             CollectionSelect(
                 buildList {

@@ -1,11 +1,14 @@
 package koharia.komga.api
 
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import koharia.komga.api.dto.AuthorDto
 import koharia.komga.api.dto.ClientSettingDto
+import koharia.komga.api.dto.ClientSettingUpdateDto
 import koharia.komga.api.dto.CollectionDto
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.api.dto.PageWrapperDto
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
@@ -15,8 +18,10 @@ import kotlinx.serialization.serializer
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
 class KomgaApiClient(
@@ -63,6 +68,7 @@ class KomgaApiClient(
         tags: Set<String> = emptySet(),
         publishers: Set<String> = emptySet(),
         authors: List<Pair<String, String>> = emptyList(),
+        oneshot: Boolean? = null,
     ): Request {
         val typePath = when {
             collectionId != null -> "collections/$collectionId/series"
@@ -90,6 +96,7 @@ class KomgaApiClient(
         authors.forEach { (name, role) ->
             url.addQueryParameter("author", "$name,$role")
         }
+        oneshot?.let { url.addQueryParameter("oneshot", it.toString()) }
 
         val sortCriteria = when (sortIndex) {
             0 -> "relevance"
@@ -120,6 +127,8 @@ class KomgaApiClient(
 
     fun pageListRequest(url: String): Request = GET("$url/pages", headers)
 
+    fun meRequest(): Request = GET("$baseUrl/api/v1/users/me", headers)
+
     fun bookFileRequest(url: String, rangeStart: Long? = null): Request {
         val request = GET("$url/file", headers)
         return if (rangeStart != null && rangeStart > 0L) {
@@ -133,6 +142,17 @@ class KomgaApiClient(
 
     suspend fun getLibraries(): List<LibraryDto> =
         client.newCall(GET("$baseUrl/api/v1/libraries", headers)).executeAndParse()
+
+    suspend fun updateClientSettings(updates: Map<String, ClientSettingUpdateDto>) {
+        val payload = json.encodeToString(updates)
+        client.newCall(
+            Request.Builder()
+                .url("$baseUrl/api/v1/client-settings/user")
+                .headers(headers)
+                .patch(payload.toRequestBody("application/json".toMediaType()))
+                .build(),
+        ).awaitSuccess()
+    }
 
     suspend fun getLibraryOrders(): Map<String, Int> {
         val settings = client.newCall(GET("$baseUrl/api/v1/client-settings/user/list", headers))

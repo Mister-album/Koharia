@@ -282,6 +282,22 @@ class MangaScreenModel(
             withIOContext {
                 val networkManga = state.source.getMangaDetails(state.manga.toSManga())
                 updateManga.awaitUpdateFromSource(state.manga, networkManga, manualFetch)
+
+                if (state.source is koharia.source.komga.KomgaSource) {
+                    val komgaSource = state.source as koharia.source.komga.KomgaSource
+                    val seriesId = state.manga.url.substringAfterLast("/")
+                    if (seriesId.isNotBlank()) {
+                        val flags = komgaSource.getMangaViewerFlags(seriesId)
+                        if (flags != null && flags != state.manga.viewerFlags) {
+                            mangaRepository.update(
+                                tachiyomi.domain.manga.model.MangaUpdate(
+                                    id = state.manga.id,
+                                    viewerFlags = flags,
+                                ),
+                            )
+                        }
+                    }
+                }
             }
         } catch (e: Throwable) {
             // Ignore early hints "errors" that aren't handled by OkHttp
