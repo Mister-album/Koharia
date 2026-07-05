@@ -4,6 +4,7 @@ import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -61,6 +62,9 @@ data object MoreTab : Tab {
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
         val user by screenModel.user.collectAsState()
+        LaunchedEffect(Unit) {
+            screenModel.refreshUser()
+        }
         MoreScreen(
             user = user,
             downloadQueueStateProvider = { downloadQueueState },
@@ -108,6 +112,10 @@ private class MoreScreenModel(
                 }
         }
 
+        refreshUser()
+    }
+
+    fun refreshUser() {
         screenModelScope.launchIO {
             val komgaSource = sourceManager.get(
                 koharia.source.komga.KomgaSource.ID,

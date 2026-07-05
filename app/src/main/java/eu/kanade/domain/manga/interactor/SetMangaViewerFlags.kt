@@ -21,7 +21,7 @@ class SetMangaViewerFlags(
                 viewerFlags = newFlags,
             ),
         )
-        syncToKomga(manga.url, newFlags)
+        syncToKomga(manga.source, manga.url, newFlags)
     }
 
     suspend fun awaitSetOrientation(id: Long, flag: Long) {
@@ -33,10 +33,12 @@ class SetMangaViewerFlags(
                 viewerFlags = newFlags,
             ),
         )
-        syncToKomga(manga.url, newFlags)
+        syncToKomga(manga.source, manga.url, newFlags)
     }
 
-    private suspend fun syncToKomga(mangaUrl: String, flags: Long) {
+    private suspend fun syncToKomga(sourceId: Long, mangaUrl: String, flags: Long) {
+        if (sourceId != koharia.source.komga.KomgaSource.ID) return
+
         try {
             val sourceManager: SourceManager = Injekt.get()
             val komgaSource =

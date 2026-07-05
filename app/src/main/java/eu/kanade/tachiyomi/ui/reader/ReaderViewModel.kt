@@ -145,6 +145,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private var chapterReadStartTime: Long? = null
 
     private var chapterToDownload: Download? = null
+    private val currentChapterAutoCacheRequests = mutableSetOf<Long>()
 
     private val unfilteredChapterList by lazy {
         val manga = manga!!
@@ -228,6 +229,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
     private val incognitoMode: Boolean by lazy { getIncognitoState.await(manga?.source) }
     private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading.get()
+    private val cacheCurrentChapterWhileReading = downloadPreferences.cacheCurrentChapterWhileReading.get()
 
     init {
         // To save state
@@ -242,6 +244,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     currentChapter.requestedPage = currentChapter.chapter.last_page_read
                 }
                 chapterId = currentChapter.chapter.id!!
+                cacheCurrentChapterForOffline(currentChapter)
             }
             .launchIn(viewModelScope)
     }
@@ -491,11 +494,38 @@ class ReaderViewModel @JvmOverloads constructor(
                 }
             }.take(downloadAheadAmount)
 
-            downloadManager.downloadChapters(
+            downloadManager.cacheChaptersForOffline(
                 manga,
                 chaptersToDownload,
-                mode = Download.Mode.PAGE_CACHE,
             )
+        }
+    }
+
+    private fun cacheCurrentChapterForOffline(currentChapter: ReaderChapter) {
+        if (!cacheCurrentChapterWhileReading) return
+        if (currentChapter.pageLoader is DownloadPageLoader) return
+
+        val manga = manga ?: return
+        val chapter = currentChapter.chapter.toDomainChapter() ?: return
+        val chapterId = chapter.id
+        synchronized(currentChapterAutoCacheRequests) {
+            if (!currentChapterAutoCacheRequests.add(chapterId)) return
+        }
+
+        viewModelScope.launchIO {
+            val isDownloaded = downloadManager.isChapterDownloaded(
+                chapter.name,
+                chapter.scanlator,
+                chapter.url,
+                manga.title,
+                manga.source,
+                skipCache = true,
+            )
+            if (isDownloaded || downloadManager.getQueuedDownloadOrNull(chapterId) != null) {
+                return@launchIO
+            }
+
+            downloadManager.cacheChapterPagesForOffline(manga, chapter)
         }
     }
 

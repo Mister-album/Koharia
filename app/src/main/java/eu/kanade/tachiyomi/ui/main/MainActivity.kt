@@ -66,7 +66,6 @@ import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
-import eu.kanade.tachiyomi.extension.api.ExtensionApi
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.deeplink.DeepLinkScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
@@ -300,15 +299,6 @@ class MainActivity : BaseActivity() {
                 }
             }
         }
-
-        // Extensions updates
-        LaunchedEffect(Unit) {
-            try {
-                ExtensionApi().checkForUpdates(context)
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e)
-            }
-        }
     }
 
     @Composable
@@ -386,7 +376,6 @@ class MainActivity : BaseActivity() {
             Constants.SHORTCUT_UPDATES -> HomeScreen.Tab.Updates
             Constants.SHORTCUT_HISTORY -> HomeScreen.Tab.History
             Constants.SHORTCUT_SOURCES -> HomeScreen.Tab.Library()
-            Constants.SHORTCUT_EXTENSIONS -> HomeScreen.Tab.Library()
             Constants.SHORTCUT_DOWNLOADS -> {
                 navigator.popUntilRoot()
                 HomeScreen.Tab.More(toDownloads = true)

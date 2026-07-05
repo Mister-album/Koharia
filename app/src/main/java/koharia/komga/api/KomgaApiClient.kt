@@ -8,6 +8,8 @@ import koharia.komga.api.dto.ClientSettingUpdateDto
 import koharia.komga.api.dto.CollectionDto
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.api.dto.PageWrapperDto
+import koharia.source.komga.KomgaCachePolicy
+import koharia.source.komga.komgaCachePolicy
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -31,7 +33,11 @@ class KomgaApiClient(
     @PublishedApi internal val json: Json,
 ) {
 
-    fun popularRequest(page: Int, defaultLibraries: Set<String>): Request {
+    fun popularRequest(
+        page: Int,
+        defaultLibraries: Set<String>,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
+    ): Request {
         return searchRequest(
             page = page,
             query = "",
@@ -39,10 +45,15 @@ class KomgaApiClient(
             defaultLibraries = defaultLibraries,
             sortIndex = 1,
             sortAscending = true,
+            cachePolicy = cachePolicy,
         )
     }
 
-    fun latestRequest(page: Int, defaultLibraries: Set<String>): Request {
+    fun latestRequest(
+        page: Int,
+        defaultLibraries: Set<String>,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
+    ): Request {
         return searchRequest(
             page = page,
             query = "",
@@ -50,6 +61,7 @@ class KomgaApiClient(
             defaultLibraries = defaultLibraries,
             sortIndex = 3,
             sortAscending = false,
+            cachePolicy = cachePolicy,
         )
     }
 
@@ -69,6 +81,7 @@ class KomgaApiClient(
         publishers: Set<String> = emptySet(),
         authors: List<Pair<String, String>> = emptyList(),
         oneshot: Boolean? = null,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
     ): Request {
         val typePath = when {
             collectionId != null -> "collections/$collectionId/series"
@@ -113,19 +126,37 @@ class KomgaApiClient(
         }
 
         return GET(url.build(), headers)
+            .newBuilder()
+            .komgaCachePolicy(cachePolicy)
+            .build()
     }
 
-    fun detailsRequest(url: String): Request = GET(url, headers)
+    fun detailsRequest(url: String, cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Request =
+        GET(url, headers)
+            .newBuilder()
+            .komgaCachePolicy(cachePolicy)
+            .build()
 
-    fun chapterListRequest(url: String, isBook: Boolean): Request {
-        return if (isBook) {
+    fun chapterListRequest(
+        url: String,
+        isBook: Boolean,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
+    ): Request {
+        val request = if (isBook) {
             GET("$url?unpaged=true&media_status=READY&deleted=false", headers)
         } else {
             GET("$url/books?unpaged=true&media_status=READY&deleted=false", headers)
         }
+        return request.newBuilder()
+            .komgaCachePolicy(cachePolicy)
+            .build()
     }
 
-    fun pageListRequest(url: String): Request = GET("$url/pages", headers)
+    fun pageListRequest(url: String, cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Request =
+        GET("$url/pages", headers)
+            .newBuilder()
+            .komgaCachePolicy(cachePolicy)
+            .build()
 
     fun meRequest(): Request = GET("$baseUrl/api/v1/users/me", headers)
 
@@ -140,8 +171,13 @@ class KomgaApiClient(
         }
     }
 
-    suspend fun getLibraries(): List<LibraryDto> =
-        client.newCall(GET("$baseUrl/api/v1/libraries", headers)).executeAndParse()
+    suspend fun getLibraries(cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): List<LibraryDto> =
+        client.newCall(
+            GET("$baseUrl/api/v1/libraries", headers)
+                .newBuilder()
+                .komgaCachePolicy(cachePolicy)
+                .build(),
+        ).executeAndParse()
 
     suspend fun updateClientSettings(updates: Map<String, ClientSettingUpdateDto>) {
         val payload = json.encodeToString(updates)
@@ -154,8 +190,13 @@ class KomgaApiClient(
         ).awaitSuccess()
     }
 
-    suspend fun getLibraryOrders(): Map<String, Int> {
-        val settings = client.newCall(GET("$baseUrl/api/v1/client-settings/user/list", headers))
+    suspend fun getLibraryOrders(cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Map<String, Int> {
+        val settings = client.newCall(
+            GET("$baseUrl/api/v1/client-settings/user/list", headers)
+                .newBuilder()
+                .komgaCachePolicy(cachePolicy)
+                .build(),
+        )
             .executeAndParse<Map<String, ClientSettingDto>>()
         val librariesValue = settings["webui.libraries"]?.value?.takeIf { it.isNotBlank() } ?: return emptyMap()
         val librariesOrder = json.parseToJsonElement(librariesValue).jsonObject
@@ -167,22 +208,45 @@ class KomgaApiClient(
         }.toMap()
     }
 
-    suspend fun getCollections(): List<CollectionDto> =
+    suspend fun getCollections(cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): List<CollectionDto> =
         client.newCall(
-            GET("$baseUrl/api/v1/collections?unpaged=true", headers),
+            GET("$baseUrl/api/v1/collections?unpaged=true", headers)
+                .newBuilder()
+                .komgaCachePolicy(cachePolicy)
+                .build(),
         ).executeAndParse<PageWrapperDto<CollectionDto>>().content
 
-    suspend fun getGenres(): Set<String> =
-        client.newCall(GET("$baseUrl/api/v1/genres", headers)).executeAndParse()
+    suspend fun getGenres(cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Set<String> =
+        client.newCall(
+            GET("$baseUrl/api/v1/genres", headers)
+                .newBuilder()
+                .komgaCachePolicy(cachePolicy)
+                .build(),
+        ).executeAndParse()
 
-    suspend fun getTags(): Set<String> =
-        client.newCall(GET("$baseUrl/api/v1/tags", headers)).executeAndParse()
+    suspend fun getTags(cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Set<String> =
+        client.newCall(
+            GET("$baseUrl/api/v1/tags", headers)
+                .newBuilder()
+                .komgaCachePolicy(cachePolicy)
+                .build(),
+        ).executeAndParse()
 
-    suspend fun getPublishers(): Set<String> =
-        client.newCall(GET("$baseUrl/api/v1/publishers", headers)).executeAndParse()
+    suspend fun getPublishers(cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Set<String> =
+        client.newCall(
+            GET("$baseUrl/api/v1/publishers", headers)
+                .newBuilder()
+                .komgaCachePolicy(cachePolicy)
+                .build(),
+        ).executeAndParse()
 
-    suspend fun getAuthors(): Map<String, List<AuthorDto>> =
-        client.newCall(GET("$baseUrl/api/v1/authors", headers)).executeAndParse<List<AuthorDto>>().groupBy { it.role }
+    suspend fun getAuthors(cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Map<String, List<AuthorDto>> =
+        client.newCall(
+            GET("$baseUrl/api/v1/authors", headers)
+                .newBuilder()
+                .komgaCachePolicy(cachePolicy)
+                .build(),
+        ).executeAndParse<List<AuthorDto>>().groupBy { it.role }
 
     fun isReadList(url: String): Boolean = url.contains("/api/v1/readlists")
 

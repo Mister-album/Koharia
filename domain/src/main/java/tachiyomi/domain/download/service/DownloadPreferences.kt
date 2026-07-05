@@ -18,6 +18,11 @@ class DownloadPreferences(
 
     val autoDownloadWhileReading: Preference<Int> = preferenceStore.getInt("auto_download_while_reading", 0)
 
+    val cacheCurrentChapterWhileReading: Preference<Boolean> = preferenceStore.getBoolean(
+        "cache_current_chapter_while_reading",
+        false,
+    )
+
     val removeAfterReadSlots: Preference<Int> = preferenceStore.getInt("remove_after_read_slots", -1)
 
     val removeAfterMarkedAsRead: Preference<Boolean> = preferenceStore.getBoolean(

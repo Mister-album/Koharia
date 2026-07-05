@@ -6,6 +6,8 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.Log
 import android.widget.Button
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
@@ -23,8 +25,6 @@ import koharia.komga.api.KomgaApiClient
 import koharia.komga.api.KomgaSseClient
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.domain.repository.KomgaRepository
-import androidx.lifecycle.ProcessLifecycleOwner
-import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,12 +36,14 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 class KomgaSource :
     HttpSource(),
@@ -52,13 +54,7 @@ class KomgaSource :
     private val json: Json by injectLazy()
     private val application: android.app.Application by lazy { Injekt.get() }
     private val komgaSseClient by lazy {
-        KomgaSseClient(
-            context = application,
-            networkHelper = network,
-            komgaProgressSyncService = lazy { Injekt.get() },
-            baseUrlProvider = { baseUrl },
-            headersProvider = { currentHeaders() }
-        )
+        getSseClient(application, network)
     }
 
     init {
@@ -94,6 +90,7 @@ class KomgaSource :
 
     private val repository: KomgaRepository
         get() = KomgaRepository(baseUrl, apiClient)
+    private val forceBrowseRequestsUntil = AtomicLong(0L)
 
     fun currentHeaders(): Headers = headersBuilder().build()
 
@@ -121,33 +118,35 @@ class KomgaSource :
             .dns(Dns.SYSTEM)
             .build()
 
-    override fun popularMangaRequest(page: Int): Request = repository.popularMangaRequest(page, defaultLibraries)
+    override fun popularMangaRequest(page: Int): Request =
+        repository.popularMangaRequest(page, defaultLibraries, consumeBrowseCachePolicy())
 
     override fun popularMangaParse(response: Response) = repository.parseMangasPage(response)
 
-    override fun latestUpdatesRequest(page: Int): Request = repository.latestUpdatesRequest(page, defaultLibraries)
+    override fun latestUpdatesRequest(page: Int): Request =
+        repository.latestUpdatesRequest(page, defaultLibraries, consumeBrowseCachePolicy())
 
     override fun latestUpdatesParse(response: Response) = repository.parseMangasPage(response)
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request =
-        repository.searchMangaRequest(page, query, filters, defaultLibraries)
+        repository.searchMangaRequest(page, query, filters, defaultLibraries, consumeBrowseCachePolicy())
 
     override fun searchMangaParse(response: Response) = repository.parseMangasPage(response)
 
     override fun getMangaUrl(manga: eu.kanade.tachiyomi.source.model.SManga): String = manga.url.replace("/api/v1", "")
 
     override fun mangaDetailsRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request =
-        repository.mangaDetailsRequest(manga)
+        repository.mangaDetailsRequest(manga, KomgaCachePolicy.NetworkFirst)
 
     override fun mangaDetailsParse(response: Response) = repository.mangaDetailsParse(response)
 
     override fun chapterListRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request =
-        repository.chapterListRequest(manga)
+        repository.chapterListRequest(manga, KomgaCachePolicy.NetworkFirst)
 
     override fun chapterListParse(response: Response) = repository.chapterListParse(response, chapterNameTemplate)
 
     override fun pageListRequest(chapter: eu.kanade.tachiyomi.source.model.SChapter): Request =
-        repository.pageListRequest(chapter)
+        repository.pageListRequest(chapter, KomgaCachePolicy.NetworkFirst)
 
     override fun pageListParse(response: Response) = repository.pageListParse(response)
 
@@ -315,14 +314,14 @@ class KomgaSource :
         )
     }
 
-    suspend fun getBrowseLibraries(): List<LibraryDto> {
+    suspend fun getBrowseLibraries(forceRefresh: Boolean = false): List<LibraryDto> {
         if (!hasValidBaseUrl()) {
             fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
             return emptyList()
         }
 
         return try {
-            val options = repository.fetchFilterOptions()
+            val options = repository.fetchFilterOptions(forceRefresh)
             libraries = options.libraries
             collections = options.collections
             genres = options.genres
@@ -347,6 +346,10 @@ class KomgaSource :
         authors = emptyMap()
         fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
         fetchFiltersAttempts = 0
+    }
+
+    fun refreshBrowseRequests() {
+        forceBrowseRequestsUntil.set(System.currentTimeMillis() + BROWSE_REFRESH_WINDOW_MILLIS)
     }
 
     fun registerServerSettingsChangeListener(
@@ -431,6 +434,14 @@ class KomgaSource :
         }
     }
 
+    private fun consumeBrowseCachePolicy(): KomgaCachePolicy {
+        return if (System.currentTimeMillis() <= forceBrowseRequestsUntil.get()) {
+            KomgaCachePolicy.NetworkFirst
+        } else {
+            KomgaCachePolicy.Default
+        }
+    }
+
     override fun chapterPageParse(response: Response) = throw UnsupportedOperationException()
 
     companion object {
@@ -440,6 +451,10 @@ class KomgaSource :
         const val TYPE_SERIES = "Series"
         const val TYPE_READ_LISTS = "Read lists"
         const val TYPE_BOOKS = "Books"
+        private const val BROWSE_REFRESH_WINDOW_MILLIS = 30_000L
+
+        @Volatile
+        private var sseClient: KomgaSseClient? = null
 
         private val SERVER_SETTING_KEYS = setOf(
             PREF_ADDRESS,
@@ -454,6 +469,26 @@ class KomgaSource :
             val key = "${SOURCE_NAME.lowercase()}/$SOURCE_LANG/$SOURCE_VERSION"
             val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
             (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
+        }
+
+        private fun getSseClient(
+            application: android.app.Application,
+            network: eu.kanade.tachiyomi.network.NetworkHelper,
+        ): KomgaSseClient {
+            return sseClient ?: synchronized(this) {
+                sseClient ?: KomgaSseClient(
+                    context = application,
+                    networkHelper = network,
+                    komgaProgressSyncService = lazy { Injekt.get() },
+                    baseUrlProvider = {
+                        (Injekt.get<SourceManager>().get(ID) as? KomgaSource)?.baseUrl.orEmpty()
+                    },
+                    headersProvider = {
+                        (Injekt.get<SourceManager>().get(ID) as? KomgaSource)?.currentHeaders()
+                            ?: Headers.Builder().build()
+                    },
+                ).also { sseClient = it }
+            }
         }
     }
 }

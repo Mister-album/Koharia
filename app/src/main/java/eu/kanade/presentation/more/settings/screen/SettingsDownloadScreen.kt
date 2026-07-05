@@ -47,17 +47,17 @@ object SettingsDownloadScreen : SearchableSettings {
                 preference = downloadPreferences.saveChaptersAsCBZ,
                 title = stringResource(MR.strings.save_chapter_as_cbz),
             ),
-            Preference.PreferenceItem.SwitchPreference(
-                preference = downloadPreferences.splitTallImages,
-                title = stringResource(MR.strings.split_tall_images),
-                subtitle = stringResource(MR.strings.split_tall_images_summary),
-            ),
             Preference.PreferenceItem.SliderPreference(
                 value = parallelPageLimit,
                 valueRange = 1..15,
                 title = stringResource(MR.strings.pref_download_concurrent_pages),
                 subtitle = stringResource(MR.strings.pref_download_concurrent_pages_summary),
                 onValueChanged = { downloadPreferences.parallelPageLimit.set(it) },
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = downloadPreferences.cacheCurrentChapterWhileReading,
+                title = stringResource(MR.strings.pref_cache_current_chapter_while_reading),
+                subtitle = stringResource(MR.strings.pref_cache_current_chapter_while_reading_summary),
             ),
             getDeleteChaptersGroup(
                 downloadPreferences = downloadPreferences,

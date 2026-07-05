@@ -14,7 +14,7 @@ import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import okhttp3.Credentials
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -185,7 +185,13 @@ class KomgaApi(
                     logcat(LogPriority.WARN) { "KomgaApi.search: blank server base URL" }
                     emptyList()
                 } else {
-                    val url = "$baseUrl/api/v1/series".toHttpUrl().newBuilder()
+                    val httpUrl = "$baseUrl/api/v1/series".toHttpUrlOrNull()
+                    if (httpUrl == null) {
+                        logcat(LogPriority.WARN) { "KomgaApi.search: invalid server base URL: $baseUrl" }
+                        return@withIOContext emptyList()
+                    }
+
+                    val url = httpUrl.newBuilder()
                         .addQueryParameter("search", query)
                         .addQueryParameter("deleted", "false")
                         .build()

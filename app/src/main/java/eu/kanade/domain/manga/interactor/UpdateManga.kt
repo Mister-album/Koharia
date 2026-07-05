@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.FetchInterval
@@ -133,7 +134,7 @@ class UpdateManga(
         if (localManga.readingMode != ReadingMode.DEFAULT.flagValue.toLong()) return null
 
         val direction = remoteManga.memo["readingDirection"]
-            ?.jsonPrimitive?.content
+            ?.jsonPrimitive?.contentOrNull
             ?.takeIf { it.isNotBlank() }
             ?: return null
 

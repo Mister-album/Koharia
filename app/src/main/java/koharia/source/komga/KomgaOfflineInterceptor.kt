@@ -16,22 +16,20 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
     private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext)
 
     override fun intercept(chain: Interceptor.Chain): Response {
-        var request = chain.request()
+        val originalRequest = chain.request()
         val isOnline = context.isOnline()
-
-        // 如果没有网络，强制从缓存中读取，允许读取最多 7 天的旧缓存
-        if (!isOnline) {
-            logcat(LogPriority.INFO) { "无网络连接，强制使用本地缓存: ${request.url}" }
-            val cacheControl = CacheControl.Builder()
-                .onlyIfCached()
-                .maxStale(7, TimeUnit.DAYS)
-                .build()
-            request = request.newBuilder()
-                .cacheControl(cacheControl)
-                .build()
+        val request = if (isOnline) {
+            originalRequest
         } else {
-            // 如果有网络，但也尝试使用 ETag/Last-Modified 进行缓存验证
-            // OkHttp 会自动处理，这里可以针对 Komga API 进行策略优化
+            logcat(LogPriority.INFO) { "No network, forcing Komga cache read: ${originalRequest.url}" }
+            originalRequest.newBuilder()
+                .cacheControl(
+                    CacheControl.Builder()
+                        .onlyIfCached()
+                        .maxStale(Int.MAX_VALUE, TimeUnit.SECONDS)
+                        .build(),
+                )
+                .build()
         }
 
         var response: Response? = null
@@ -39,12 +37,11 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
         var retryCount = 0
         val maxRetries = 3
 
-        // 失败重试机制（仅在有网络时进行重试）
         while (retryCount < maxRetries) {
             try {
                 response = chain.proceed(request)
                 if (!isOnline && response.code == 504) {
-                    val fallbackResponse = metadataCacheStore.load(request)
+                    val fallbackResponse = metadataCacheStore.load(originalRequest)
                     if (fallbackResponse != null) {
                         response.close()
                         response = fallbackResponse
@@ -57,40 +54,48 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
                 }
                 if (response.isSuccessful || !isOnline) {
                     break
-                } else if (response.code >= 500) {
-                    // 服务端错误，可以重试
+                }
+                if (response.code >= 500) {
                     response.close()
                     retryCount++
+                    response = if (retryCount >= maxRetries) {
+                        metadataCacheStore.load(originalRequest)
+                    } else {
+                        null
+                    }
+                    if (response != null) break
                     continue
-                } else {
-                    break
                 }
+                break
             } catch (e: IOException) {
                 exception = e
                 if (!isOnline) {
-                    break // 无网络不重试
+                    break
                 }
                 retryCount++
                 if (retryCount >= maxRetries) {
-                    // 网络请求全部失败，尝试从本地缓存降级读取
-                    logcat(LogPriority.INFO) { "网络请求失败，尝试降级读取本地缓存: ${request.url}" }
-                    val fallbackCacheControl = CacheControl.Builder()
-                        .onlyIfCached()
-                        .maxStale(7, TimeUnit.DAYS)
-                        .build()
+                    logcat(LogPriority.INFO) { "Komga network request failed, trying local cache: ${request.url}" }
+                    response = metadataCacheStore.load(originalRequest)
+                    if (response != null) break
+
                     val fallbackRequest = request.newBuilder()
-                        .cacheControl(fallbackCacheControl)
+                        .cacheControl(
+                            CacheControl.Builder()
+                                .onlyIfCached()
+                                .maxStale(Int.MAX_VALUE, TimeUnit.SECONDS)
+                                .build(),
+                        )
                         .build()
                     try {
                         response = chain.proceed(fallbackRequest)
-                    } catch (fallbackEx: IOException) {
-                        // 忽略降级失败，保留原始异常
+                    } catch (_: IOException) {
+                        // Keep the original exception below.
                     }
                     break
                 }
                 try {
-                    Thread.sleep(1000L * retryCount) // 简单退避
-                } catch (ie: InterruptedException) {
+                    Thread.sleep(1000L * retryCount)
+                } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                 }
             }
@@ -100,7 +105,7 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
             if (!isOnline) {
                 throw IOException(context.stringResource(MR.strings.exception_offline))
             }
-            throw exception ?: IOException("请求失败，已重试 $maxRetries 次。")
+            throw exception ?: IOException("Request failed after $maxRetries retries")
         }
 
         return response

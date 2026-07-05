@@ -19,6 +19,7 @@ import koharia.komga.api.dto.toSManga
 import koharia.source.komga.AuthorGroup
 import koharia.source.komga.CollectionSelect
 import koharia.source.komga.InProgressFilter
+import koharia.source.komga.KomgaCachePolicy
 import koharia.source.komga.LibraryFilter
 import koharia.source.komga.OneshotFilter
 import koharia.source.komga.ReadFilter
@@ -36,13 +37,25 @@ class KomgaRepository(
     private val apiClient: KomgaApiClient,
 ) {
 
-    fun popularMangaRequest(page: Int, defaultLibraries: Set<String>) =
-        apiClient.popularRequest(page, defaultLibraries)
+    fun popularMangaRequest(
+        page: Int,
+        defaultLibraries: Set<String>,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
+    ) = apiClient.popularRequest(page, defaultLibraries, cachePolicy)
 
-    fun latestUpdatesRequest(page: Int, defaultLibraries: Set<String>) =
-        apiClient.latestRequest(page, defaultLibraries)
+    fun latestUpdatesRequest(
+        page: Int,
+        defaultLibraries: Set<String>,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
+    ) = apiClient.latestRequest(page, defaultLibraries, cachePolicy)
 
-    fun searchMangaRequest(page: Int, query: String, filters: FilterList, defaultLibraries: Set<String>) =
+    fun searchMangaRequest(
+        page: Int,
+        query: String,
+        filters: FilterList,
+        defaultLibraries: Set<String>,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
+    ) =
         apiClient.searchRequest(
             page = page,
             query = query,
@@ -59,6 +72,7 @@ class KomgaRepository(
             publishers = filters.multiSelectIds("Publishers"),
             authors = filters.selectedAuthors(),
             oneshot = filters.oneshot(),
+            cachePolicy = cachePolicy,
         )
 
     fun parseMangasPage(response: okhttp3.Response): MangasPage {
@@ -84,7 +98,8 @@ class KomgaRepository(
         return MangasPage(mangas, !data.last)
     }
 
-    fun mangaDetailsRequest(manga: SManga) = apiClient.detailsRequest(manga.url)
+    fun mangaDetailsRequest(manga: SManga, cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default) =
+        apiClient.detailsRequest(manga.url, cachePolicy)
 
     fun mangaDetailsParse(response: okhttp3.Response): SManga =
         response.use {
@@ -95,8 +110,8 @@ class KomgaRepository(
             }
         }
 
-    fun chapterListRequest(manga: SManga) =
-        apiClient.chapterListRequest(manga.url, apiClient.isBook(manga.url))
+    fun chapterListRequest(manga: SManga, cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default) =
+        apiClient.chapterListRequest(manga.url, apiClient.isBook(manga.url), cachePolicy)
 
     fun chapterListParse(response: okhttp3.Response, chapterNameTemplate: String): List<SChapter> =
         response.use {
@@ -116,7 +131,8 @@ class KomgaRepository(
                 .sortedByDescending { chapter -> chapter.chapter_number }
         }
 
-    fun pageListRequest(chapter: SChapter) = apiClient.pageListRequest(chapter.url)
+    fun pageListRequest(chapter: SChapter, cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default) =
+        apiClient.pageListRequest(chapter.url, cachePolicy)
 
     fun pageListParse(response: okhttp3.Response): List<Page> =
         response.use {
@@ -127,16 +143,17 @@ class KomgaRepository(
             }
         }
 
-    suspend fun fetchFilterOptions(): KomgaFilterOptions = withIOContext {
-        val libraryOrders = apiClient.getLibraryOrders()
+    suspend fun fetchFilterOptions(forceRefresh: Boolean = false): KomgaFilterOptions = withIOContext {
+        val cachePolicy = if (forceRefresh) KomgaCachePolicy.NetworkFirst else KomgaCachePolicy.Default
+        val libraryOrders = apiClient.getLibraryOrders(cachePolicy)
         KomgaFilterOptions(
-            libraries = apiClient.getLibraries()
+            libraries = apiClient.getLibraries(cachePolicy)
                 .sortedBy { libraryOrders[it.id] ?: Int.MAX_VALUE },
-            collections = apiClient.getCollections(),
-            genres = apiClient.getGenres(),
-            tags = apiClient.getTags(),
-            publishers = apiClient.getPublishers(),
-            authors = apiClient.getAuthors(),
+            collections = apiClient.getCollections(cachePolicy),
+            genres = apiClient.getGenres(cachePolicy),
+            tags = apiClient.getTags(cachePolicy),
+            publishers = apiClient.getPublishers(cachePolicy),
+            authors = apiClient.getAuthors(cachePolicy),
         )
     }
 
