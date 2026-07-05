@@ -89,6 +89,10 @@ import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.system.copyToClipboard
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.findChildOfType
@@ -102,6 +106,7 @@ import tachiyomi.presentation.core.util.clickableNoIndication
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
@@ -333,6 +338,7 @@ private fun MangaAndSourceTitlesLarge(
             isStubSource = isStubSource,
             doSearch = doSearch,
             textAlign = TextAlign.Center,
+            memo = manga.memo,
         )
     }
 }
@@ -375,6 +381,7 @@ private fun MangaAndSourceTitlesSmall(
                 sourceName = sourceName,
                 isStubSource = isStubSource,
                 doSearch = doSearch,
+                memo = manga.memo,
             )
         }
     }
@@ -390,6 +397,7 @@ private fun ColumnScope.MangaContentInfo(
     isStubSource: Boolean,
     doSearch: (query: String, global: Boolean) -> Unit,
     textAlign: TextAlign? = LocalTextStyle.current.textAlign,
+    memo: JsonObject = JsonObject(emptyMap()),
 ) {
     val context = LocalContext.current
     Text(
@@ -522,6 +530,61 @@ private fun ColumnScope.MangaContentInfo(
                     },
                     overflow = TextOverflow.Ellipsis,
                     maxLines = 1,
+                )
+            }
+        }
+    }
+
+    // Komga metadata info row
+    KomgaMetadataRow(memo = memo, textAlign = textAlign)
+}
+
+@Composable
+private fun ColumnScope.KomgaMetadataRow(
+    memo: JsonObject,
+    textAlign: TextAlign?,
+) {
+    if (memo.isEmpty()) return
+
+    val publisher = memo["publisher"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val language = memo["language"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val ageRating = memo["ageRating"]?.jsonPrimitive?.intOrNull
+    val booksCount = memo["booksCount"]?.jsonPrimitive?.intOrNull
+    val totalBookCount = memo["totalBookCount"]?.jsonPrimitive?.intOrNull
+
+    val infoParts = buildList {
+        if (publisher != null) add(publisher)
+        if (language != null) {
+            val locale = Locale.forLanguageTag(language)
+            val displayLang = locale.displayLanguage
+                .takeIf { it.isNotBlank() && it != language } ?: language
+            add(displayLang)
+        }
+        if (ageRating != null) add(stringResource(MR.strings.komga_metadata_age_rating, ageRating))
+        if (booksCount != null && booksCount > 0) {
+            val bookText = if (totalBookCount != null && totalBookCount > 0) {
+                stringResource(MR.strings.komga_metadata_books_count_total, booksCount, totalBookCount)
+            } else {
+                stringResource(MR.strings.komga_metadata_books_count, booksCount)
+            }
+            add(bookText)
+        }
+    }
+
+    if (infoParts.isEmpty()) return
+
+    Row(
+        modifier = Modifier.secondaryItemAlpha(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ProvideTextStyle(MaterialTheme.typography.bodySmall) {
+            infoParts.forEachIndexed { index, part ->
+                if (index > 0) DotSeparatorText()
+                Text(
+                    text = part,
+                    overflow = TextOverflow.Ellipsis,
+                    maxLines = 1,
+                    textAlign = textAlign,
                 )
             }
         }

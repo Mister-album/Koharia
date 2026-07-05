@@ -775,6 +775,9 @@
     <string name="source_not_installed">Source not installed: %1$s</string>
     <string name="snack_add_to_library">Add to library?</string>
     <string name="description_placeholder">No description</string>
+    <string name="komga_metadata_age_rating">%1$d+</string>
+    <string name="komga_metadata_books_count">%1$d</string>
+    <string name="komga_metadata_books_count_total">%1$d / %2$d</string>
 
     <!-- Manga chapters -->
     <string name="display_mode_chapter">Chapter %1$s</string>
