@@ -11,8 +11,6 @@ import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.interactor.GetEnabledSources
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.interactor.GetLanguagesWithSources
-import eu.kanade.domain.source.interactor.GetSourcesWithFavoriteCount
-import eu.kanade.domain.source.interactor.SetMigrateSorting
 import eu.kanade.domain.source.interactor.ToggleIncognito
 import eu.kanade.domain.source.interactor.ToggleLanguage
 import eu.kanade.domain.source.interactor.ToggleSource
@@ -23,7 +21,6 @@ import eu.kanade.domain.track.interactor.SyncChapterProgressWithTrack
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
-import koharia.domain.migration.usecases.MigrateMangaUseCase
 import koharia.domain.upcoming.interactor.GetUpcomingManga
 import tachiyomi.data.category.CategoryRepositoryImpl
 import tachiyomi.data.chapter.ChapterRepositoryImpl
@@ -124,11 +121,6 @@ class DomainModule : InjektModule {
         addFactory { SetMangaCategories(get()) }
         addFactory { GetExcludedScanlators(get()) }
         addFactory { SetExcludedScanlators(get()) }
-        addFactory {
-            MigrateMangaUseCase(
-                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
-            )
-        }
 
         addSingletonFactory<ReleaseService> { ReleaseServiceImpl(get(), get()) }
         addFactory { GetApplicationRelease(get(), get()) }
@@ -172,9 +164,7 @@ class DomainModule : InjektModule {
         addFactory { GetEnabledSources(get(), get()) }
         addFactory { GetLanguagesWithSources(get(), get()) }
         addFactory { GetRemoteManga(get()) }
-        addFactory { GetSourcesWithFavoriteCount(get(), get()) }
         addFactory { GetSourcesWithNonLibraryManga(get()) }
-        addFactory { SetMigrateSorting(get()) }
         addFactory { ToggleLanguage(get()) }
         addFactory { ToggleSource(get()) }
         addFactory { ToggleSourcePin(get()) }

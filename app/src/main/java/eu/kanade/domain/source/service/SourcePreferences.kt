@@ -1,12 +1,8 @@
 package eu.kanade.domain.source.service
 
-import eu.kanade.domain.source.interactor.SetMigrateSorting
 import eu.kanade.tachiyomi.util.system.LocaleHelper
-import koharia.domain.migration.models.MigrationFlag
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
-import tachiyomi.core.common.preference.getEnum
-import tachiyomi.core.common.preference.getLongArray
 import tachiyomi.domain.library.model.LibraryDisplayMode
 
 class SourcePreferences(
@@ -38,16 +34,6 @@ class SourcePreferences(
 
     val showNsfwSource: Preference<Boolean> = preferenceStore.getBoolean("show_nsfw_source", true)
 
-    val migrationSortingMode: Preference<SetMigrateSorting.Mode> = preferenceStore.getEnum(
-        "pref_migration_sorting",
-        SetMigrateSorting.Mode.ALPHABETICAL,
-    )
-
-    val migrationSortingDirection: Preference<SetMigrateSorting.Direction> = preferenceStore.getEnum(
-        "pref_migration_direction",
-        SetMigrateSorting.Direction.ASCENDING,
-    )
-
     val hideInLibraryItems: Preference<Boolean> = preferenceStore.getBoolean("browse_hide_in_library_items", false)
 
     val extensionRepos: Preference<Set<String>> = preferenceStore.getStringSet("extension_repos", emptySet())
@@ -61,29 +47,6 @@ class SourcePreferences(
 
     val globalSearchFilterState: Preference<Boolean> = preferenceStore.getBoolean(
         Preference.appStateKey("has_filters_toggle_state"),
-        false,
-    )
-
-    val migrationSources: Preference<List<Long>> = preferenceStore.getLongArray("migration_sources", emptyList())
-
-    val migrationFlags: Preference<Set<MigrationFlag>> = preferenceStore.getObjectFromInt(
-        key = "migration_flags",
-        defaultValue = MigrationFlag.entries.toSet(),
-        serializer = { MigrationFlag.toBit(it) },
-        deserializer = { value: Int -> MigrationFlag.fromBit(value) },
-    )
-
-    val migrationDeepSearchMode: Preference<Boolean> = preferenceStore.getBoolean("migration_deep_search", false)
-
-    val migrationPrioritizeByChapters: Preference<Boolean> = preferenceStore.getBoolean(
-        "migration_prioritize_by_chapters",
-        false,
-    )
-
-    val migrationHideUnmatched: Preference<Boolean> = preferenceStore.getBoolean("migration_hide_unmatched", false)
-
-    val migrationHideWithoutUpdates: Preference<Boolean> = preferenceStore.getBoolean(
-        "migration_hide_without_updates",
         false,
     )
 }
