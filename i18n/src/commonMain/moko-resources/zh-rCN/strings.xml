@@ -228,6 +228,9 @@
     <string name="copied_to_clipboard">已复制到剪贴板：
 \n「%1$s」</string>
     <string name="source_not_installed">未安装图源：%1$s</string>
+    <string name="komga_metadata_age_rating">%1$d+</string>
+    <string name="komga_metadata_books_count">%1$d</string>
+    <string name="komga_metadata_books_count_total">%1$d / %2$d</string>
     <string name="display_mode_chapter">第 %1$s 章</string>
     <string name="chapter_downloading_progress">正在下载 (%1$d/%2$d)</string>
     <string name="chapter_downloading_file_progress">正在下载 (%1$s/%2$s)</string>

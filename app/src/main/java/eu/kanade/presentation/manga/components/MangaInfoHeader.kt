@@ -90,6 +90,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.intellij.markdown.MarkdownElementTypes
@@ -105,6 +106,7 @@ import tachiyomi.presentation.core.util.clickableNoIndication
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
@@ -544,8 +546,8 @@ private fun ColumnScope.KomgaMetadataRow(
 ) {
     if (memo.isEmpty()) return
 
-    val publisher = memo["publisher"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-    val language = memo["language"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+    val publisher = memo["publisher"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val language = memo["language"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
     val ageRating = memo["ageRating"]?.jsonPrimitive?.intOrNull
     val booksCount = memo["booksCount"]?.jsonPrimitive?.intOrNull
     val totalBookCount = memo["totalBookCount"]?.jsonPrimitive?.intOrNull
@@ -553,19 +555,19 @@ private fun ColumnScope.KomgaMetadataRow(
     val infoParts = buildList {
         if (publisher != null) add(publisher)
         if (language != null) {
-            val locale = java.util.Locale.forLanguageTag(language)
-            val displayLang = locale.getDisplayLanguage(locale)
+            val locale = Locale.forLanguageTag(language)
+            val displayLang = locale.displayLanguage
                 .takeIf { it.isNotBlank() && it != language } ?: language
             add(displayLang)
         }
-        if (ageRating != null) add("$ageRating+")
+        if (ageRating != null) add(stringResource(MR.strings.komga_metadata_age_rating, ageRating))
         if (booksCount != null && booksCount > 0) {
             val bookText = if (totalBookCount != null && totalBookCount > 0) {
-                "$booksCount / $totalBookCount"
+                stringResource(MR.strings.komga_metadata_books_count_total, booksCount, totalBookCount)
             } else {
-                "$booksCount"
+                stringResource(MR.strings.komga_metadata_books_count, booksCount)
             }
-            add("\uD83D\uDCD6 $bookText")
+            add(bookText)
         }
     }
 

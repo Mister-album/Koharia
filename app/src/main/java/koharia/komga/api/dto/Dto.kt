@@ -3,7 +3,8 @@ package koharia.komga.api.dto
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 @Serializable
 data class PageWrapperDto<T>(
@@ -258,28 +259,26 @@ private fun buildMemo(
     metadata: SeriesMetadataDto,
     booksMetadata: BookMetadataAggregationDto = BookMetadataAggregationDto(),
     booksCount: Int = 0,
-): JsonObject {
-    val map = mutableMapOf<String, kotlinx.serialization.json.JsonElement>()
+): JsonObject = buildJsonObject {
     if (metadata.readingDirection.isNotBlank()) {
-        map["readingDirection"] = JsonPrimitive(metadata.readingDirection)
+        put("readingDirection", metadata.readingDirection)
     }
     if (metadata.publisher.isNotBlank()) {
-        map["publisher"] = JsonPrimitive(metadata.publisher)
+        put("publisher", metadata.publisher)
     }
     if (metadata.ageRating != null) {
-        map["ageRating"] = JsonPrimitive(metadata.ageRating)
+        put("ageRating", metadata.ageRating)
     }
     if (metadata.language.isNotBlank()) {
-        map["language"] = JsonPrimitive(metadata.language)
+        put("language", metadata.language)
     }
     if (metadata.totalBookCount != null) {
-        map["totalBookCount"] = JsonPrimitive(metadata.totalBookCount)
+        put("totalBookCount", metadata.totalBookCount)
     }
     if (booksCount > 0) {
-        map["booksCount"] = JsonPrimitive(booksCount)
+        put("booksCount", booksCount)
     }
     if (!booksMetadata.releaseDate.isNullOrBlank()) {
-        map["releaseDate"] = JsonPrimitive(booksMetadata.releaseDate)
+        put("releaseDate", booksMetadata.releaseDate)
     }
-    return JsonObject(map)
 }
