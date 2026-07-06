@@ -264,7 +264,8 @@ private fun MangaScreenSmallImpl(
 ) {
     val chapterListState = rememberLazyListState()
     val chapterGridState = rememberLazyGridState()
-    val useChapterCoverGrid = state.manga.chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
+    val useChapterCoverGrid = state.manga.source == KomgaSource.ID &&
+        state.manga.chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
 
     val (chapters, listItem, isAnySelected) = remember(state) {
         Triple(
@@ -283,7 +284,7 @@ private fun MangaScreenSmallImpl(
             val selectedChapterCount: Int = remember(chapters) {
                 chapters.count { it.selected }
             }
-            val isFirstItemVisible by remember {
+            val isFirstItemVisible by remember(useChapterCoverGrid) {
                 derivedStateOf {
                     if (useChapterCoverGrid) {
                         chapterGridState.firstVisibleItemIndex == 0
@@ -292,7 +293,7 @@ private fun MangaScreenSmallImpl(
                     }
                 }
             }
-            val isFirstItemScrolled by remember {
+            val isFirstItemScrolled by remember(useChapterCoverGrid) {
                 derivedStateOf {
                     if (useChapterCoverGrid) {
                         chapterGridState.firstVisibleItemScrollOffset > 0
@@ -523,7 +524,8 @@ fun MangaScreenLargeImpl(
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val density = LocalDensity.current
-    val useChapterCoverGrid = state.manga.chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
+    val useChapterCoverGrid = state.manga.source == KomgaSource.ID &&
+        state.manga.chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
 
     val (chapters, listItem, isAnySelected) = remember(state) {
         Triple(
@@ -1089,8 +1091,11 @@ private fun LazyGridScope.sharedChapterGridItems(
                             ?.let { "$it/thumbnail" },
                         lastModified = item.chapter.dateUpload,
                     ),
-                    title = chapterTitle(manga, item)
-                        .takeIf { manga.chapterCoverDisplayMode == Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE },
+                    title = if (manga.chapterCoverDisplayMode == Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE) {
+                        chapterTitle(manga, item)
+                    } else {
+                        null
+                    },
                     isSelected = item.selected,
                     coverAlpha = if (item.chapter.read) 0.38f else 1f,
                     onLongClick = {

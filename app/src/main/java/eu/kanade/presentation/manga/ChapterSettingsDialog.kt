@@ -31,6 +31,7 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.manga.model.downloadedFilter
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
+import koharia.source.komga.KomgaSource
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.manga.model.Manga
@@ -61,6 +62,7 @@ fun ChapterSettingsDialog(
     onResetToDefault: () -> Unit,
 ) {
     var showSetAsDefaultDialog by rememberSaveable { mutableStateOf(false) }
+    val supportsChapterCoverDisplay = manga?.source == KomgaSource.ID
     if (showSetAsDefaultDialog) {
         SetAsDefaultDialog(
             onDismissRequest = { showSetAsDefaultDialog = false },
@@ -124,6 +126,7 @@ fun ChapterSettingsDialog(
                 2 -> {
                     DisplayPage(
                         displayMode = manga?.displayMode ?: 0,
+                        supportsChapterCoverDisplay = supportsChapterCoverDisplay,
                         chapterCoverDisplayMode = manga?.chapterCoverDisplayMode ?: 0,
                         onDisplayModeSelected = onDisplayModeChanged,
                         onChapterCoverDisplayModeSelected = onChapterCoverDisplayModeChanged,
@@ -221,26 +224,29 @@ private fun ColumnScope.SortPage(
 @Composable
 private fun ColumnScope.DisplayPage(
     displayMode: Long,
+    supportsChapterCoverDisplay: Boolean,
     chapterCoverDisplayMode: Long,
     onDisplayModeSelected: (Long) -> Unit,
     onChapterCoverDisplayModeSelected: (Long) -> Unit,
 ) {
-    Text(
-        text = stringResource(MR.strings.chapter_cover_display_mode),
-        modifier = Modifier.padding(horizontal = TabbedDialogPaddings.Horizontal, vertical = 8.dp),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-    )
-    listOf(
-        MR.strings.action_display_chapter_text_only to Manga.CHAPTER_COVER_DISPLAY_TEXT,
-        MR.strings.action_display_chapter_cover_only to Manga.CHAPTER_COVER_DISPLAY_COVER,
-        MR.strings.action_display_chapter_cover_and_title to Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE,
-    ).map { (titleRes, mode) ->
-        RadioItem(
-            label = stringResource(titleRes),
-            selected = chapterCoverDisplayMode == mode,
-            onClick = { onChapterCoverDisplayModeSelected(mode) },
+    if (supportsChapterCoverDisplay) {
+        Text(
+            text = stringResource(MR.strings.chapter_cover_display_mode),
+            modifier = Modifier.padding(horizontal = TabbedDialogPaddings.Horizontal, vertical = 8.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
         )
+        listOf(
+            MR.strings.action_display_chapter_text_only to Manga.CHAPTER_COVER_DISPLAY_TEXT,
+            MR.strings.action_display_chapter_cover_only to Manga.CHAPTER_COVER_DISPLAY_COVER,
+            MR.strings.action_display_chapter_cover_and_title to Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE,
+        ).map { (titleRes, mode) ->
+            RadioItem(
+                label = stringResource(titleRes),
+                selected = chapterCoverDisplayMode == mode,
+                onClick = { onChapterCoverDisplayModeSelected(mode) },
+            )
+        }
     }
 
     Text(
