@@ -133,6 +133,7 @@ class KomgaSseClient(
         if (type == null) return
         when (type) {
             "ReadProgressChanged", "ReadProgressDeleted" -> {
+                logcat(LogPriority.DEBUG) { "Komga SSE: received $type, scheduling history sync" }
                 appScope?.launch(Dispatchers.IO) {
                     komgaProgressSyncService.value.syncHistoryFromServer()
                 }
