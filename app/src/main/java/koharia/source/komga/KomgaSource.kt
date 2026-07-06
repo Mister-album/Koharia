@@ -6,11 +6,14 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.Log
 import android.widget.Button
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.AppInfo
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Filter
@@ -19,6 +22,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.komga.api.KomgaApiClient
+import koharia.komga.api.KomgaSseClient
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.domain.repository.KomgaRepository
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +36,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -48,6 +53,13 @@ class KomgaSource :
     private val preferences: SharedPreferences by lazy { sourcePreferences() }
     private val json: Json by injectLazy()
     private val application: android.app.Application by lazy { Injekt.get() }
+    private val komgaSseClient by lazy {
+        getSseClient(application, network)
+    }
+
+    init {
+        komgaSseClient.start(ProcessLifecycleOwner.get().lifecycleScope)
+    }
 
     override val name: String = SOURCE_NAME
     override val lang: String = SOURCE_LANG
@@ -150,6 +162,45 @@ class KomgaSource :
 
     fun hasValidBaseUrl(): Boolean = baseUrl.startsWith("http://") || baseUrl.startsWith("https://")
 
+    suspend fun getMe(): koharia.komga.api.dto.UserDto? {
+        if (!hasValidBaseUrl()) return null
+        return try {
+            client.newCall(apiClient.meRequest())
+                .awaitSuccess()
+                .let { apiClient.parse<koharia.komga.api.dto.UserDto>(it) }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    suspend fun updateMangaViewerFlags(mangaId: String, viewerFlags: Long) {
+        if (!hasValidBaseUrl()) return
+        try {
+            apiClient.updateClientSettings(
+                mapOf(
+                    "koharia.manga.$mangaId.viewerFlags" to
+                        koharia.komga.api.dto.ClientSettingUpdateDto(value = viewerFlags.toString()),
+                ),
+            )
+        } catch (e: Exception) {
+            // Ignore for now
+        }
+    }
+
+    suspend fun getMangaViewerFlags(mangaId: String): Long? {
+        if (!hasValidBaseUrl()) return null
+        return try {
+            val settings = client.newCall(
+                eu.kanade.tachiyomi.network.GET("$baseUrl/api/v1/client-settings/user/list", headers),
+            )
+                .awaitSuccess()
+                .let { apiClient.parse<Map<String, koharia.komga.api.dto.ClientSettingDto>>(it) }
+            settings["koharia.manga.$mangaId.viewerFlags"]?.value?.toLongOrNull()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     override fun getFilterList(): FilterList {
         fetchFilterOptions()
 
@@ -157,6 +208,7 @@ class KomgaSource :
             UnreadFilter(),
             InProgressFilter(),
             ReadFilter(),
+            OneshotFilter(),
             TypeSelect(),
             CollectionSelect(
                 buildList {
@@ -401,6 +453,9 @@ class KomgaSource :
         const val TYPE_BOOKS = "Books"
         private const val BROWSE_REFRESH_WINDOW_MILLIS = 30_000L
 
+        @Volatile
+        private var sseClient: KomgaSseClient? = null
+
         private val SERVER_SETTING_KEYS = setOf(
             PREF_ADDRESS,
             PREF_USERNAME,
@@ -414,6 +469,26 @@ class KomgaSource :
             val key = "${SOURCE_NAME.lowercase()}/$SOURCE_LANG/$SOURCE_VERSION"
             val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
             (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
+        }
+
+        private fun getSseClient(
+            application: android.app.Application,
+            network: eu.kanade.tachiyomi.network.NetworkHelper,
+        ): KomgaSseClient {
+            return sseClient ?: synchronized(this) {
+                sseClient ?: KomgaSseClient(
+                    context = application,
+                    networkHelper = network,
+                    komgaProgressSyncService = lazy { Injekt.get() },
+                    baseUrlProvider = {
+                        (Injekt.get<SourceManager>().get(ID) as? KomgaSource)?.baseUrl.orEmpty()
+                    },
+                    headersProvider = {
+                        (Injekt.get<SourceManager>().get(ID) as? KomgaSource)?.currentHeaders()
+                            ?: Headers.Builder().build()
+                    },
+                ).also { sseClient = it }
+            }
         }
     }
 }

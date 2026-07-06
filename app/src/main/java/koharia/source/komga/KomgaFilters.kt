@@ -27,6 +27,8 @@ class InProgressFilter : Filter.CheckBox("In Progress", false)
 
 class ReadFilter : Filter.CheckBox("Read", false)
 
+class OneshotFilter : Filter.CheckBox("Oneshot", false)
+
 class LibraryFilter(
     libraries: List<LibraryDto>,
     defaultLibraries: Set<String>,

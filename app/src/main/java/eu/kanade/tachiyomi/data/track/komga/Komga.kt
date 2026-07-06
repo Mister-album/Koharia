@@ -71,7 +71,7 @@ class Komga(id: Long) : BaseTracker(id, "Komga"), EnhancedTracker {
     }
 
     override suspend fun search(query: String): List<TrackSearch> {
-        TODO("Not yet implemented: search")
+        return api.search(query)
     }
 
     override suspend fun refresh(track: Track): Track {

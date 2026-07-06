@@ -21,6 +21,7 @@ import koharia.source.komga.CollectionSelect
 import koharia.source.komga.InProgressFilter
 import koharia.source.komga.KomgaCachePolicy
 import koharia.source.komga.LibraryFilter
+import koharia.source.komga.OneshotFilter
 import koharia.source.komga.ReadFilter
 import koharia.source.komga.SeriesSort
 import koharia.source.komga.TypeSelect
@@ -70,6 +71,7 @@ class KomgaRepository(
             tags = filters.multiSelectIds("Tags"),
             publishers = filters.multiSelectIds("Publishers"),
             authors = filters.selectedAuthors(),
+            oneshot = filters.oneshot(),
             cachePolicy = cachePolicy,
         )
 
@@ -236,6 +238,9 @@ private fun FilterList.readStatuses(): Set<String> {
     }
     return statuses
 }
+
+private fun FilterList.oneshot(): Boolean? =
+    filterIsInstance<OneshotFilter>().firstOrNull()?.state?.takeIf { it }
 
 private fun FilterList.selectedLibraries(): Set<String> =
     filterIsInstance<LibraryFilter>().firstOrNull()?.state?.filter { it.state }?.map { it.id }?.toSet().orEmpty()

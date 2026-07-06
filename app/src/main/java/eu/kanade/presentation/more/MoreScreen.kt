@@ -26,6 +26,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
 fun MoreScreen(
+    user: koharia.komga.api.dto.UserDto? = null,
     downloadQueueStateProvider: () -> DownloadQueueState,
     downloadedOnly: Boolean,
     onDownloadedOnlyChange: (Boolean) -> Unit,
@@ -43,6 +44,7 @@ fun MoreScreen(
         ScrollbarLazyColumn(contentPadding = contentPadding) {
             item {
                 LogoHeader(
+                    user = user,
                     iconPadding = PaddingValues(vertical = 32.dp),
                 )
             }

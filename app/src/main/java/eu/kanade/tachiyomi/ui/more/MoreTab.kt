@@ -4,6 +4,7 @@ import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -60,7 +61,12 @@ data object MoreTab : Tab {
         val navigator = LocalNavigator.currentOrThrow
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
+        val user by screenModel.user.collectAsState()
+        LaunchedEffect(Unit) {
+            screenModel.refreshUser()
+        }
         MoreScreen(
+            user = user,
             downloadQueueStateProvider = { downloadQueueState },
             downloadedOnly = screenModel.downloadedOnly,
             onDownloadedOnlyChange = { screenModel.downloadedOnly = it },
@@ -85,6 +91,10 @@ private class MoreScreenModel(
     private var _downloadQueueState: MutableStateFlow<DownloadQueueState> = MutableStateFlow(DownloadQueueState.Stopped)
     val downloadQueueState: StateFlow<DownloadQueueState> = _downloadQueueState.asStateFlow()
 
+    private val sourceManager: tachiyomi.domain.source.service.SourceManager = Injekt.get()
+    private val _user = MutableStateFlow<koharia.komga.api.dto.UserDto?>(null)
+    val user: StateFlow<koharia.komga.api.dto.UserDto?> = _user.asStateFlow()
+
     init {
         // Handle running/paused status change and queue progress updating
         screenModelScope.launchIO {
@@ -100,6 +110,17 @@ private class MoreScreenModel(
                         else -> DownloadQueueState.Downloading(downloadQueueSize)
                     }
                 }
+        }
+
+        refreshUser()
+    }
+
+    fun refreshUser() {
+        screenModelScope.launchIO {
+            val komgaSource = sourceManager.get(
+                koharia.source.komga.KomgaSource.ID,
+            ) as? koharia.source.komga.KomgaSource
+            _user.value = komgaSource?.getMe()
         }
     }
 }
