@@ -253,7 +253,7 @@ class MangaScreenModel(
             // Initial loading finished
             updateSuccessState { it.copy(isRefreshingData = false) }
 
-            syncKomgaProgressInBackground(manga, source)
+            syncKomgaProgressInBackground(source)
         }
     }
 
@@ -266,16 +266,21 @@ class MangaScreenModel(
             )
             fetchFromSourceTasks.awaitAll()
             updateSuccessState { it.copy(isRefreshingData = false) }
-            successState?.let { syncKomgaProgressInBackground(it.manga, it.source) }
+            successState?.let { syncKomgaProgressInBackground(it.source) }
         }
     }
 
-    private fun syncKomgaProgressInBackground(manga: Manga, source: Source) {
+    private fun syncKomgaProgressInBackground(source: Source) {
         if (source.id != KomgaSource.ID) return
 
         screenModelScope.launchIO {
-            addTracks.bindEnhancedTrackers(manga, source)
-            komgaProgressSyncService.syncFromServer(manga)
+            runCatching {
+                val latestManga = getMangaAndChapters.awaitManga(mangaId)
+                addTracks.bindEnhancedTrackers(latestManga, source)
+                komgaProgressSyncService.syncFromServer(latestManga)
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) { "Failed to sync Komga progress in background for mangaId=$mangaId" }
+            }
         }
     }
 
