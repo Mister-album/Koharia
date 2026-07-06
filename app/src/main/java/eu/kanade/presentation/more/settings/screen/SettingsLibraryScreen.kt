@@ -37,6 +37,7 @@ object SettingsLibraryScreen : SearchableSettings {
 
         return listOf(
             getGlobalUpdateGroup(libraryPreferences),
+            getChapterSettingsGroup(libraryPreferences),
             getBehaviorGroup(libraryPreferences),
         )
     }
@@ -109,7 +110,7 @@ object SettingsLibraryScreen : SearchableSettings {
     }
 
     @Composable
-    private fun getBehaviorGroup(
+    private fun getChapterSettingsGroup(
         libraryPreferences: LibraryPreferences,
     ): Preference.PreferenceGroup {
         val displayChapterByNameOrNumberEntries = persistentMapOf(
@@ -128,7 +129,7 @@ object SettingsLibraryScreen : SearchableSettings {
         val chapterCoverGridColumns by chapterCoverGridColumnsPref.collectAsState()
 
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.pref_behavior),
+            title = stringResource(MR.strings.chapter_settings),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.ListPreference(
                     preference = libraryPreferences.displayChapterByNameOrNumber,
@@ -150,6 +151,17 @@ object SettingsLibraryScreen : SearchableSettings {
                     enabled = chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT,
                     onValueChanged = { chapterCoverGridColumnsPref.set(it) },
                 ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getBehaviorGroup(
+        libraryPreferences: LibraryPreferences,
+    ): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_behavior),
+            preferenceItems = persistentListOf(
                 Preference.PreferenceItem.ListPreference(
                     preference = libraryPreferences.swipeToStartAction,
                     entries = persistentMapOf(
