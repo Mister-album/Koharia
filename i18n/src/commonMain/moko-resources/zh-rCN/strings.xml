@@ -238,6 +238,11 @@
     <string name="chapter_paused">已暂停</string>
     <string name="show_title">图源标题</string>
     <string name="show_chapter_number">章节编号</string>
+    <string name="chapter_cover_display_mode">章节列表样式</string>
+    <string name="chapter_title_display_mode">标题文字</string>
+    <string name="action_display_chapter_text_only">文字标题</string>
+    <string name="action_display_chapter_cover_only">预览封面</string>
+    <string name="action_display_chapter_cover_and_title">封面 + 文字标题</string>
     <string name="sort_by_source">按图源</string>
     <string name="sort_by_number">按章节编号</string>
     <string name="manga_download">下载</string>
@@ -767,6 +772,9 @@
     <string name="pref_page_rotate_invert">旋转横向图片时反转方向</string>
     <string name="pref_debug_info">调试信息</string>
     <string name="pref_chapter_swipe_end">向右滑动章节</string>
+    <string name="pref_default_chapter_list_style">默认章节列表样式</string>
+    <string name="pref_chapter_grid_columns">每行章节数量</string>
+    <string name="chapter_grid_columns">每行 %d 个</string>
     <string name="pref_chapter_swipe_start">向左滑动章节</string>
     <string name="pref_double_tap_zoom">双击放大</string>
     <string name="pref_update_only_in_release_period">预测下次更新时间</string>

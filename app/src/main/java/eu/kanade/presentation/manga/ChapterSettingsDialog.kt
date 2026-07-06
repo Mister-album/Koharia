@@ -56,6 +56,7 @@ fun ChapterSettingsDialog(
     onScanlatorFilterClicked: (() -> Unit),
     onSortModeChanged: (Long) -> Unit,
     onDisplayModeChanged: (Long) -> Unit,
+    onChapterCoverDisplayModeChanged: (Long) -> Unit,
     onSetAsDefault: (applyToExistingManga: Boolean) -> Unit,
     onResetToDefault: () -> Unit,
 ) {
@@ -123,7 +124,9 @@ fun ChapterSettingsDialog(
                 2 -> {
                     DisplayPage(
                         displayMode = manga?.displayMode ?: 0,
-                        onItemSelected = onDisplayModeChanged,
+                        chapterCoverDisplayMode = manga?.chapterCoverDisplayMode ?: 0,
+                        onDisplayModeSelected = onDisplayModeChanged,
+                        onChapterCoverDisplayModeSelected = onChapterCoverDisplayModeChanged,
                     )
                 }
             }
@@ -218,8 +221,34 @@ private fun ColumnScope.SortPage(
 @Composable
 private fun ColumnScope.DisplayPage(
     displayMode: Long,
-    onItemSelected: (Long) -> Unit,
+    chapterCoverDisplayMode: Long,
+    onDisplayModeSelected: (Long) -> Unit,
+    onChapterCoverDisplayModeSelected: (Long) -> Unit,
 ) {
+    Text(
+        text = stringResource(MR.strings.chapter_cover_display_mode),
+        modifier = Modifier.padding(horizontal = TabbedDialogPaddings.Horizontal, vertical = 8.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+    )
+    listOf(
+        MR.strings.action_display_chapter_text_only to Manga.CHAPTER_COVER_DISPLAY_TEXT,
+        MR.strings.action_display_chapter_cover_only to Manga.CHAPTER_COVER_DISPLAY_COVER,
+        MR.strings.action_display_chapter_cover_and_title to Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE,
+    ).map { (titleRes, mode) ->
+        RadioItem(
+            label = stringResource(titleRes),
+            selected = chapterCoverDisplayMode == mode,
+            onClick = { onChapterCoverDisplayModeSelected(mode) },
+        )
+    }
+
+    Text(
+        text = stringResource(MR.strings.chapter_title_display_mode),
+        modifier = Modifier.padding(horizontal = TabbedDialogPaddings.Horizontal, vertical = 8.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+    )
     listOf(
         MR.strings.show_title to Manga.CHAPTER_DISPLAY_NAME,
         MR.strings.show_chapter_number to Manga.CHAPTER_DISPLAY_NUMBER,
@@ -227,7 +256,7 @@ private fun ColumnScope.DisplayPage(
         RadioItem(
             label = stringResource(titleRes),
             selected = displayMode == mode,
-            onClick = { onItemSelected(mode) },
+            onClick = { onDisplayModeSelected(mode) },
         )
     }
 }

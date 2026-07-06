@@ -49,6 +49,9 @@ data class Manga(
     val displayMode: Long
         get() = chapterFlags and CHAPTER_DISPLAY_MASK
 
+    val chapterCoverDisplayMode: Long
+        get() = chapterFlags and CHAPTER_COVER_DISPLAY_MASK
+
     val unreadFilterRaw: Long
         get() = chapterFlags and CHAPTER_UNREAD_MASK
 
@@ -105,6 +108,11 @@ data class Manga(
         const val CHAPTER_DISPLAY_NAME = 0x00000000L
         const val CHAPTER_DISPLAY_NUMBER = 0x00100000L
         const val CHAPTER_DISPLAY_MASK = 0x00100000L
+
+        const val CHAPTER_COVER_DISPLAY_TEXT = 0x00000000L
+        const val CHAPTER_COVER_DISPLAY_COVER = 0x00200000L
+        const val CHAPTER_COVER_DISPLAY_COVER_AND_TITLE = 0x00400000L
+        const val CHAPTER_COVER_DISPLAY_MASK = 0x00600000L
 
         fun create() = Manga(
             id = -1L,

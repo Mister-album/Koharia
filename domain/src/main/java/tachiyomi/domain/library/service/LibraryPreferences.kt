@@ -172,6 +172,16 @@ class LibraryPreferences(
         Manga.CHAPTER_DISPLAY_NAME,
     )
 
+    val chapterCoverDisplayMode: Preference<Long> = preferenceStore.getLong(
+        "default_chapter_cover_display_mode",
+        Manga.CHAPTER_COVER_DISPLAY_TEXT,
+    )
+
+    val chapterCoverGridColumns: Preference<Int> = preferenceStore.getInt(
+        "default_chapter_cover_grid_columns",
+        3,
+    )
+
     val sortChapterByAscendingOrDescending: Preference<Long> = preferenceStore.getLong(
         "default_chapter_sort_by_ascending_or_descending",
         Manga.CHAPTER_SORT_DESC,
@@ -183,6 +193,7 @@ class LibraryPreferences(
         filterChapterByBookmarked.set(manga.bookmarkedFilterRaw)
         sortChapterBySourceOrNumber.set(manga.sorting)
         displayChapterByNameOrNumber.set(manga.displayMode)
+        chapterCoverDisplayMode.set(manga.chapterCoverDisplayMode)
         sortChapterByAscendingOrDescending.set(
             if (manga.sortDescending()) Manga.CHAPTER_SORT_DESC else Manga.CHAPTER_SORT_ASC,
         )

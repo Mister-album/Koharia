@@ -18,6 +18,7 @@ import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_HAS_UNREAD
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_COMPLETED
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_READ
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
@@ -111,9 +112,33 @@ object SettingsLibraryScreen : SearchableSettings {
     private fun getBehaviorGroup(
         libraryPreferences: LibraryPreferences,
     ): Preference.PreferenceGroup {
+        val chapterCoverDisplayModeEntries = persistentMapOf(
+            Manga.CHAPTER_COVER_DISPLAY_TEXT to stringResource(MR.strings.action_display_chapter_text_only),
+            Manga.CHAPTER_COVER_DISPLAY_COVER to stringResource(MR.strings.action_display_chapter_cover_only),
+            Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE to
+                stringResource(MR.strings.action_display_chapter_cover_and_title),
+        )
+        val chapterCoverDisplayMode by libraryPreferences.chapterCoverDisplayMode.collectAsState()
+        val chapterCoverGridColumnsPref = libraryPreferences.chapterCoverGridColumns
+        val chapterCoverGridColumns by chapterCoverGridColumnsPref.collectAsState()
+
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_behavior),
             preferenceItems = persistentListOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = libraryPreferences.chapterCoverDisplayMode,
+                    entries = chapterCoverDisplayModeEntries,
+                    title = stringResource(MR.strings.pref_default_chapter_list_style),
+                    subtitle = chapterCoverDisplayModeEntries[chapterCoverDisplayMode],
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = chapterCoverGridColumns,
+                    title = stringResource(MR.strings.pref_chapter_grid_columns),
+                    valueString = stringResource(MR.strings.chapter_grid_columns, chapterCoverGridColumns),
+                    valueRange = 2..6,
+                    enabled = chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT,
+                    onValueChanged = { chapterCoverGridColumnsPref.set(it) },
+                ),
                 Preference.PreferenceItem.ListPreference(
                     preference = libraryPreferences.swipeToStartAction,
                     entries = persistentMapOf(
