@@ -112,6 +112,11 @@ object SettingsLibraryScreen : SearchableSettings {
     private fun getBehaviorGroup(
         libraryPreferences: LibraryPreferences,
     ): Preference.PreferenceGroup {
+        val displayChapterByNameOrNumberEntries = persistentMapOf(
+            Manga.CHAPTER_DISPLAY_NAME to stringResource(MR.strings.show_title),
+            Manga.CHAPTER_DISPLAY_NUMBER to stringResource(MR.strings.show_chapter_number),
+        )
+        val displayChapterByNameOrNumber by libraryPreferences.displayChapterByNameOrNumber.collectAsState()
         val chapterCoverDisplayModeEntries = persistentMapOf(
             Manga.CHAPTER_COVER_DISPLAY_TEXT to stringResource(MR.strings.action_display_chapter_text_only),
             Manga.CHAPTER_COVER_DISPLAY_COVER to stringResource(MR.strings.action_display_chapter_cover_only),
@@ -125,6 +130,12 @@ object SettingsLibraryScreen : SearchableSettings {
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_behavior),
             preferenceItems = persistentListOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = libraryPreferences.displayChapterByNameOrNumber,
+                    entries = displayChapterByNameOrNumberEntries,
+                    title = stringResource(MR.strings.chapter_title_display_mode),
+                    subtitle = displayChapterByNameOrNumberEntries[displayChapterByNameOrNumber],
+                ),
                 Preference.PreferenceItem.ListPreference(
                     preference = libraryPreferences.chapterCoverDisplayMode,
                     entries = chapterCoverDisplayModeEntries,
