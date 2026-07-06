@@ -339,6 +339,9 @@
     <string name="exclude">Exclude: %s</string>
 
     <string name="pref_behavior">Behavior</string>
+    <string name="pref_default_chapter_list_style">Default chapter list style</string>
+    <string name="pref_chapter_grid_columns">Chapters per row</string>
+    <string name="chapter_grid_columns">%d per row</string>
     <!-- This should be to the left for RTL locales -->
     <string name="pref_chapter_swipe_end">Chapter on swipe to right</string>
     <!-- This should be to the right for RTL locales -->
@@ -794,6 +797,11 @@
     <string name="chapter_paused">Paused</string>
     <string name="show_title">Source title</string>
     <string name="show_chapter_number">Chapter number</string>
+    <string name="chapter_cover_display_mode">Chapter list style</string>
+    <string name="chapter_title_display_mode">Title text</string>
+    <string name="action_display_chapter_text_only">Text title</string>
+    <string name="action_display_chapter_cover_only">Preview cover</string>
+    <string name="action_display_chapter_cover_and_title">Cover + text title</string>
     <string name="sort_by_source">By source</string>
     <string name="sort_by_number">By chapter number</string>
     <string name="sort_by_upload_date">By upload date</string>

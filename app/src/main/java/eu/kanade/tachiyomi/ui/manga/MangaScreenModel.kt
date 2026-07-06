@@ -145,6 +145,7 @@ class MangaScreenModel(
 
     val chapterSwipeStartAction = libraryPreferences.swipeToEndAction.get()
     val chapterSwipeEndAction = libraryPreferences.swipeToStartAction.get()
+    val chapterCoverGridColumns = libraryPreferences.chapterCoverGridColumns.asState(screenModelScope)
     var autoTrackState = trackPreferences.autoUpdateTrackOnMarkRead.get()
 
     private val skipFiltered by readerPreferences.skipFiltered.asState(screenModelScope)
@@ -943,6 +944,14 @@ class MangaScreenModel(
 
         screenModelScope.launchNonCancellable {
             setMangaChapterFlags.awaitSetDisplayMode(manga, mode)
+        }
+    }
+
+    fun setChapterCoverDisplayMode(mode: Long) {
+        val manga = successState?.manga ?: return
+
+        screenModelScope.launchNonCancellable {
+            setMangaChapterFlags.awaitSetChapterCoverDisplayMode(manga, mode)
         }
     }
 

@@ -84,6 +84,7 @@ class MangaScreen(
         }
 
         val state by screenModel.state.collectAsStateWithLifecycle()
+        val chapterCoverGridColumns by screenModel.chapterCoverGridColumns
 
         if (state is MangaScreenModel.State.Loading) {
             LoadingScreen()
@@ -99,6 +100,7 @@ class MangaScreen(
             isTabletUi = isTabletUi(),
             chapterSwipeStartAction = screenModel.chapterSwipeStartAction,
             chapterSwipeEndAction = screenModel.chapterSwipeEndAction,
+            chapterCoverGridColumns = chapterCoverGridColumns,
             navigateUp = navigator::pop,
             onChapterClicked = { openChapter(context, it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
@@ -184,6 +186,7 @@ class MangaScreen(
                 onBookmarkedFilterChanged = screenModel::setBookmarkedFilter,
                 onSortModeChanged = screenModel::setSorting,
                 onDisplayModeChanged = screenModel::setDisplayMode,
+                onChapterCoverDisplayModeChanged = screenModel::setChapterCoverDisplayMode,
                 onSetAsDefault = screenModel::setCurrentSettingsAsDefault,
                 onResetToDefault = screenModel::resetToDefaultSettings,
                 scanlatorFilterActive = successState.scanlatorFilterActive,
