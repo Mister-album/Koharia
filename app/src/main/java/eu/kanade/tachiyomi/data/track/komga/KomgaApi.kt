@@ -144,6 +144,7 @@ class KomgaApi(
                     .content
                     .map { book ->
                         SeriesBookProgress(
+                            seriesUrl = url,
                             url = "$baseUrl/api/v1/books/${book.id}",
                             readProgress = book.readProgress,
                         )

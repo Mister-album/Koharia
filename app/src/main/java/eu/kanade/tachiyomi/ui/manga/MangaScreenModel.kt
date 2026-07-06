@@ -250,13 +250,10 @@ class MangaScreenModel(
                 fetchFromSourceTasks.awaitAll()
             }
 
-            if (source.id == KomgaSource.ID) {
-                addTracks.bindEnhancedTrackers(manga, source)
-                komgaProgressSyncService.syncFromServer(manga)
-            }
-
             // Initial loading finished
             updateSuccessState { it.copy(isRefreshingData = false) }
+
+            syncKomgaProgressInBackground(manga, source)
         }
     }
 
@@ -269,6 +266,16 @@ class MangaScreenModel(
             )
             fetchFromSourceTasks.awaitAll()
             updateSuccessState { it.copy(isRefreshingData = false) }
+            successState?.let { syncKomgaProgressInBackground(it.manga, it.source) }
+        }
+    }
+
+    private fun syncKomgaProgressInBackground(manga: Manga, source: Source) {
+        if (source.id != KomgaSource.ID) return
+
+        screenModelScope.launchIO {
+            addTracks.bindEnhancedTrackers(manga, source)
+            komgaProgressSyncService.syncFromServer(manga)
         }
     }
 
@@ -587,10 +594,6 @@ class MangaScreenModel(
 
                 if (manualFetch) {
                     downloadNewChapters(newChapters)
-                }
-
-                if (state.source.id == KomgaSource.ID) {
-                    komgaProgressSyncService.syncFromServer(state.manga)
                 }
             }
         } catch (e: Throwable) {

@@ -33,8 +33,10 @@ class KomgaProgressSyncService(
         if (!manga.isKomgaSeries()) return
 
         runCatching {
+            val remoteBooks = trackerManager.komga.api.getSeriesBookProgress(manga.url)
             applyRemoteProgress(
-                remoteBooks = trackerManager.komga.api.getSeriesBookProgress(manga.url),
+                syncName = "series sync",
+                remoteBooks = remoteBooks,
                 localMangaBySeriesUrl = mapOf(manga.url to manga),
             )
         }.onFailure { error ->
@@ -48,16 +50,21 @@ class KomgaProgressSyncService(
             if (remoteBooks.isEmpty()) {
                 return
             }
-
-            val localMangaBySeriesUrl = remoteBooks
+            val remoteSeriesUrls = remoteBooks
                 .mapNotNull { it.seriesUrl }
                 .distinct()
+
+            val localMangaBySeriesUrl = remoteSeriesUrls
                 .mapNotNull { seriesUrl ->
                     mangaRepository.getMangaByUrlAndSourceId(seriesUrl, KomgaSource.ID)?.let { seriesUrl to it }
                 }
                 .toMap()
 
-            applyRemoteProgress(remoteBooks, localMangaBySeriesUrl)
+            applyRemoteProgress(
+                syncName = "history sync",
+                remoteBooks = remoteBooks,
+                localMangaBySeriesUrl = localMangaBySeriesUrl,
+            )
         }.onFailure { error ->
             logcat(LogPriority.WARN, error) { "Failed to sync Komga continue reading from server" }
         }
@@ -90,12 +97,15 @@ class KomgaProgressSyncService(
     }
 
     private suspend fun applyRemoteProgress(
+        syncName: String,
         remoteBooks: List<KomgaApi.SeriesBookProgress>,
         localMangaBySeriesUrl: Map<String, Manga>,
     ) {
         val localChaptersByMangaId = mutableMapOf<Long, Map<String, Chapter>>()
         val historyUpdates = mutableListOf<HistoryUpdate>()
         val chapterUpdates = mutableListOf<ChapterUpdate>()
+        val missingSeriesSamples = mutableListOf<String>()
+        val missingChapterSamples = mutableListOf<String>()
         var matchedSeriesCount = 0
         var matchedChapterCount = 0
         var missingSeriesCount = 0
@@ -107,11 +117,13 @@ class KomgaProgressSyncService(
             val seriesUrl = remote.seriesUrl
             if (seriesUrl == null) {
                 missingSeriesCount++
+                missingSeriesSamples.addSample(remote.url)
                 return@forEach
             }
             val localManga = localMangaBySeriesUrl[seriesUrl]
             if (localManga == null) {
                 missingSeriesCount++
+                missingSeriesSamples.addSample(seriesUrl)
                 return@forEach
             }
             matchedSeriesCount++
@@ -121,6 +133,7 @@ class KomgaProgressSyncService(
             val localChapter = localChapters[remote.url]
             if (localChapter == null) {
                 missingChapterCount++
+                missingChapterSamples.addSample(remote.url)
                 return@forEach
             }
             matchedChapterCount++
@@ -155,12 +168,22 @@ class KomgaProgressSyncService(
             refreshedChapterSets > 0
         ) {
             logcat(LogPriority.INFO) {
-                "Komga history sync result: remoteBooks=${remoteBooks.size}, matchedSeries=$matchedSeriesCount, matchedChapters=$matchedChapterCount, missingSeries=$missingSeriesCount, missingChapters=$missingChapterCount, refreshedChapterSets=$refreshedChapterSets, chapterUpdates=${chapterUpdates.size}, historyUpdates=${historyUpdates.size}"
+                "Komga $syncName result: remoteBooks=${remoteBooks.size}, matchedSeries=$matchedSeriesCount, matchedChapters=$matchedChapterCount, missingSeries=$missingSeriesCount, missingChapters=$missingChapterCount, refreshedChapterSets=$refreshedChapterSets, chapterUpdates=${chapterUpdates.size}, historyUpdates=${historyUpdates.size}"
             }
         }
-        if (historyUpdates.isEmpty()) {
+        if (missingSeriesSamples.isNotEmpty()) {
+            logcat(LogPriority.INFO) {
+                "Komga $syncName: missing series samples=${missingSeriesSamples.joinToString()}"
+            }
+        }
+        if (missingChapterSamples.isNotEmpty()) {
+            logcat(LogPriority.INFO) {
+                "Komga $syncName: missing chapter samples=${missingChapterSamples.joinToString()}"
+            }
+        }
+        if (matchedChapterCount > 0 && historyUpdates.isEmpty()) {
             logcat(LogPriority.WARN) {
-                "Komga history sync: remote in-progress books were returned, but no local history rows were written"
+                "Komga $syncName: remote books were returned, but no local history rows were written"
             }
         }
     }
@@ -202,4 +225,10 @@ class KomgaProgressSyncService(
         val chapters: Map<String, Chapter>,
         val refreshed: Boolean,
     )
+}
+
+private fun MutableList<String>.addSample(value: String) {
+    if (size < 3) {
+        add(value)
+    }
 }
