@@ -1,13 +1,10 @@
 package koharia.komga.ui.library
 
 import android.content.SharedPreferences
-import android.content.res.Configuration
 import android.util.Log
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.unit.dp
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
@@ -131,16 +128,6 @@ class KomgaLibraryScreenModel(
         }
     }
         .cachedIn(ioCoroutineScope)
-
-    fun getColumnsPreference(orientation: Int): GridCells {
-        val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
-        val columns = if (isLandscape) {
-            libraryPreferences.landscapeColumns
-        } else {
-            libraryPreferences.portraitColumns
-        }.get()
-        return if (columns == 0) GridCells.Adaptive(128.dp) else GridCells.Fixed(columns)
-    }
 
     fun resetFilters() {
         if (source !is CatalogueSource) return

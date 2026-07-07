@@ -135,6 +135,7 @@ fun BrowseSourceContent(
                 mangaList = mangaList,
                 columns = columns,
                 contentPadding = contentPadding,
+                showTitle = displayMode is LibraryDisplayMode.CompactGrid,
                 showLibraryBadges = showLibraryBadges,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
