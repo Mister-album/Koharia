@@ -36,9 +36,34 @@ object SettingsLibraryScreen : SearchableSettings {
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
 
         return listOf(
+            getDisplayGroup(libraryPreferences),
             getGlobalUpdateGroup(libraryPreferences),
             getChapterSettingsGroup(libraryPreferences),
             getBehaviorGroup(libraryPreferences),
+        )
+    }
+
+    @Composable
+    private fun getDisplayGroup(
+        libraryPreferences: LibraryPreferences,
+    ): Preference.PreferenceGroup {
+        val columnsPref = libraryPreferences.portraitColumns
+        val columns by columnsPref.collectAsState()
+
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_category_display),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SliderPreference(
+                    value = columns.coerceIn(LibraryColumnsRange),
+                    title = stringResource(MR.strings.pref_library_columns),
+                    valueString = libraryColumnsValueString(columns),
+                    valueRange = LibraryColumnsRange,
+                    onValueChanged = {
+                        columnsPref.set(it)
+                        libraryPreferences.landscapeColumns.set(it)
+                    },
+                ),
+            ),
         )
     }
 
@@ -192,5 +217,16 @@ object SettingsLibraryScreen : SearchableSettings {
                 ),
             ),
         )
+    }
+}
+
+private val LibraryColumnsRange = 0..10
+
+@Composable
+private fun libraryColumnsValueString(columns: Int): String {
+    return if (columns > 0) {
+        columns.toString()
+    } else {
+        stringResource(MR.strings.label_auto)
     }
 }

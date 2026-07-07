@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
@@ -73,6 +74,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.math.roundToInt
@@ -119,6 +121,7 @@ data class KomgaLibraryScreen(
             )
         }
         val state by screenModel.state.collectAsState()
+        val columns by libraryPreferences.portraitColumns.collectAsState()
 
         val navigator = LocalNavigator.currentOrThrow
         val navigateUp: () -> Unit = {
@@ -247,7 +250,7 @@ data class KomgaLibraryScreen(
                 BrowseSourceContent(
                     source = screenModel.source,
                     mangaList = mangaList,
-                    columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
+                    columns = libraryGridCellsForColumns(columns),
                     displayMode = screenModel.displayMode,
                     snackbarHostState = snackbarHostState,
                     contentPadding = paddingValues,
@@ -314,5 +317,14 @@ data class KomgaLibraryScreen(
     sealed class SearchType(val txt: String) {
         class Text(txt: String) : SearchType(txt)
         class Genre(txt: String) : SearchType(txt)
+    }
+}
+
+private fun libraryGridCellsForColumns(columns: Int): GridCells {
+    val coercedColumns = columns.coerceIn(0, 10)
+    return if (coercedColumns == 0) {
+        GridCells.Adaptive(128.dp)
+    } else {
+        GridCells.Fixed(coercedColumns)
     }
 }
