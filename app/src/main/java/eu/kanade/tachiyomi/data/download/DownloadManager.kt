@@ -4,6 +4,8 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
+import koharia.source.komga.DownloadDirectoryMode
+import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
@@ -41,6 +43,7 @@ class DownloadManager(
     private val getCategories: GetCategories = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
+    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
 ) {
 
     /**
@@ -377,6 +380,14 @@ class DownloadManager(
      * @param newSource the new source.
      */
     fun renameSource(oldSource: Source, newSource: Source) {
+        if (
+            oldSource is KomgaSource &&
+            newSource is KomgaSource &&
+            komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
+        ) {
+            return
+        }
+
         val oldFolder = provider.findSourceDir(oldSource) ?: return
         val newName = provider.getSourceDirName(newSource)
 

@@ -29,12 +29,15 @@ fun MoreScreen(
     user: koharia.komga.api.dto.UserDto? = null,
     downloadQueueStateProvider: () -> DownloadQueueState,
     downloadedOnly: Boolean,
+    downloadedOnlyEnabled: Boolean,
+    settingsEnabled: Boolean,
+    scopedSettingsBlockedReason: String?,
     onDownloadedOnlyChange: (Boolean) -> Unit,
     onClickDownloadQueue: () -> Unit,
     onClickStats: () -> Unit,
     onClickDataAndStorage: () -> Unit,
     onClickSettings: () -> Unit,
-    onClickKomgaSettings: () -> Unit,
+    onClickServerManagement: () -> Unit,
     onClickSupport: () -> Unit,
     onClickAbout: () -> Unit,
 ) {
@@ -51,9 +54,10 @@ fun MoreScreen(
             item {
                 SwitchPreferenceWidget(
                     title = stringResource(MR.strings.komga_label_cached_only),
-                    subtitle = stringResource(MR.strings.komga_cached_only_summary),
+                    subtitle = scopedSettingsBlockedReason ?: stringResource(MR.strings.komga_cached_only_summary),
                     icon = Icons.Outlined.CloudOff,
                     checked = downloadedOnly,
+                    enabled = downloadedOnlyEnabled,
                     onCheckedChanged = onDownloadedOnlyChange,
                 )
             }
@@ -108,16 +112,18 @@ fun MoreScreen(
 
             item {
                 TextPreferenceWidget(
-                    title = stringResource(MR.strings.pref_komga_server),
+                    title = stringResource(MR.strings.pref_server_management),
                     icon = Icons.Outlined.Router,
-                    onPreferenceClick = onClickKomgaSettings,
+                    onPreferenceClick = onClickServerManagement,
                 )
             }
             item {
                 TextPreferenceWidget(
                     title = stringResource(MR.strings.label_settings),
                     icon = Icons.Outlined.Settings,
-                    onPreferenceClick = onClickSettings,
+                    subtitle = scopedSettingsBlockedReason,
+                    enabled = settingsEnabled,
+                    onPreferenceClick = onClickSettings.takeIf { settingsEnabled },
                 )
             }
             item {

@@ -67,10 +67,10 @@ import eu.kanade.presentation.manga.components.MissingChapterCountListItem
 import eu.kanade.presentation.util.formatChapterNumber
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
+import eu.kanade.tachiyomi.source.isKomgaSource
 import eu.kanade.tachiyomi.ui.manga.ChapterList
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel
 import eu.kanade.tachiyomi.util.system.copyToClipboard
-import koharia.source.komga.KomgaSource
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.missingChaptersCount
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -134,7 +134,7 @@ fun MangaScreen(
     onInvertSelection: () -> Unit,
 ) {
     val context = LocalContext.current
-    val isKomgaCacheMode = state.source.id == KomgaSource.ID
+    val isKomgaCacheMode = state.source.isKomgaSource()
     val onCopyTagToClipboard: (tag: String) -> Unit = {
         if (it.isNotEmpty()) {
             context.copyToClipboard(it, it)
@@ -264,7 +264,7 @@ private fun MangaScreenSmallImpl(
 ) {
     val chapterListState = rememberLazyListState()
     val chapterGridState = rememberLazyGridState()
-    val useChapterCoverGrid = state.manga.source == KomgaSource.ID &&
+    val useChapterCoverGrid = state.source.isKomgaSource() &&
         state.manga.chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
 
     val (chapters, listItem, isAnySelected) = remember(state) {
@@ -417,6 +417,7 @@ private fun MangaScreenSmallImpl(
                     )
                     sharedChapterGridItems(
                         manga = state.manga,
+                        isKomgaSource = state.source.isKomgaSource(),
                         chapters = listItem,
                         isAnyChapterSelected = chapters.fastAny { it.selected },
                         onChapterClicked = onChapterClicked,
@@ -524,7 +525,7 @@ fun MangaScreenLargeImpl(
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val density = LocalDensity.current
-    val useChapterCoverGrid = state.manga.source == KomgaSource.ID &&
+    val useChapterCoverGrid = state.source.isKomgaSource() &&
         state.manga.chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
 
     val (chapters, listItem, isAnySelected) = remember(state) {
@@ -649,7 +650,7 @@ fun MangaScreenLargeImpl(
                             appBarPadding = contentPadding.calculateTopPadding(),
                             manga = state.manga,
                             sourceName = remember {
-                                if (state.source.id == KomgaSource.ID) "" else state.source.getNameForMangaInfo()
+                                if (state.source.isKomgaSource()) "" else state.source.getNameForMangaInfo()
                             },
                             isStubSource = remember { state.source is StubSource },
                             onCoverClick = onCoverClicked,
@@ -696,6 +697,7 @@ fun MangaScreenLargeImpl(
                             )
                             sharedChapterGridItems(
                                 manga = state.manga,
+                                isKomgaSource = state.source.isKomgaSource(),
                                 chapters = listItem,
                                 isAnyChapterSelected = chapters.fastAny { it.selected },
                                 onChapterClicked = onChapterClicked,
@@ -894,7 +896,7 @@ private fun LazyListScope.sharedMangaDetailHeaderListItems(
             appBarPadding = topPadding,
             manga = state.manga,
             sourceName = remember {
-                if (state.source.id == KomgaSource.ID) "" else state.source.getNameForMangaInfo()
+                if (state.source.isKomgaSource()) "" else state.source.getNameForMangaInfo()
             },
             isStubSource = remember { state.source is StubSource },
             onCoverClick = onCoverClicked,
@@ -963,7 +965,7 @@ private fun LazyGridScope.sharedMangaDetailHeaderGridItems(
             appBarPadding = topPadding,
             manga = state.manga,
             sourceName = remember {
-                if (state.source.id == KomgaSource.ID) "" else state.source.getNameForMangaInfo()
+                if (state.source.isKomgaSource()) "" else state.source.getNameForMangaInfo()
             },
             isStubSource = remember { state.source is StubSource },
             onCoverClick = onCoverClicked,
@@ -1053,6 +1055,7 @@ private fun LazyGridScope.chapterHeaderGridItem(
 
 private fun LazyGridScope.sharedChapterGridItems(
     manga: Manga,
+    isKomgaSource: Boolean,
     chapters: List<ChapterList>,
     isAnyChapterSelected: Boolean,
     onChapterClicked: (Chapter) -> Unit,
@@ -1087,7 +1090,7 @@ private fun LazyGridScope.sharedChapterGridItems(
                         sourceId = manga.source,
                         isMangaFavorite = false,
                         url = item.chapter.url
-                            .takeIf { manga.source == KomgaSource.ID }
+                            .takeIf { isKomgaSource }
                             ?.let { "$it/thumbnail" },
                         lastModified = item.chapter.dateUpload,
                     ),

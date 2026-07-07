@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import cafe.adriel.voyager.core.model.ScreenModel
 import cafe.adriel.voyager.core.model.rememberScreenModel
@@ -26,7 +27,9 @@ import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
 import koharia.feature.support.SupportUsScreen
-import koharia.source.komga.KomgaServerSettingsScreen
+import koharia.source.komga.KomgaLocalConfigManager
+import koharia.source.komga.KomgaServerPreferences
+import koharia.source.komga.KomgaServerProfilesScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +65,11 @@ data object MoreTab : Tab {
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
         val user by screenModel.user.collectAsState()
+        val scopedSettingsBlockedReason = if (screenModel.scopedSettingsEnabled) {
+            null
+        } else {
+            stringResource(MR.strings.komga_scoped_settings_disabled_summary)
+        }
         LaunchedEffect(Unit) {
             screenModel.refreshUser()
         }
@@ -69,12 +77,15 @@ data object MoreTab : Tab {
             user = user,
             downloadQueueStateProvider = { downloadQueueState },
             downloadedOnly = screenModel.downloadedOnly,
+            downloadedOnlyEnabled = screenModel.scopedSettingsEnabled,
+            settingsEnabled = screenModel.scopedSettingsEnabled,
+            scopedSettingsBlockedReason = scopedSettingsBlockedReason,
             onDownloadedOnlyChange = { screenModel.downloadedOnly = it },
             onClickDownloadQueue = { navigator.push(DownloadQueueScreen) },
             onClickStats = { navigator.push(StatsScreen()) },
             onClickDataAndStorage = { navigator.push(SettingsScreen(SettingsScreen.Destination.DataAndStorage)) },
             onClickSettings = { navigator.push(SettingsScreen()) },
-            onClickKomgaSettings = { navigator.push(KomgaServerSettingsScreen()) },
+            onClickServerManagement = { navigator.push(KomgaServerProfilesScreen()) },
             onClickSupport = { navigator.push(SupportUsScreen()) },
             onClickAbout = { navigator.push(SettingsScreen(SettingsScreen.Destination.About)) },
         )
@@ -92,8 +103,11 @@ private class MoreScreenModel(
     val downloadQueueState: StateFlow<DownloadQueueState> = _downloadQueueState.asStateFlow()
 
     private val sourceManager: tachiyomi.domain.source.service.SourceManager = Injekt.get()
+    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get()
+    private val localConfigManager: KomgaLocalConfigManager = Injekt.get()
     private val _user = MutableStateFlow<koharia.komga.api.dto.UserDto?>(null)
     val user: StateFlow<koharia.komga.api.dto.UserDto?> = _user.asStateFlow()
+    var scopedSettingsEnabled by mutableStateOf(localConfigManager.canEditScopedPreferences())
 
     init {
         // Handle running/paused status change and queue progress updating
@@ -112,14 +126,25 @@ private class MoreScreenModel(
                 }
         }
 
+        screenModelScope.launchIO {
+            localConfigManager.canEditScopedPreferences.collectLatest { canEdit ->
+                scopedSettingsEnabled = canEdit
+            }
+        }
+
+        screenModelScope.launchIO {
+            komgaServerPreferences.activeServerId.changes().collectLatest {
+                refreshUser()
+            }
+        }
+
         refreshUser()
     }
 
     fun refreshUser() {
         screenModelScope.launchIO {
-            val komgaSource = sourceManager.get(
-                koharia.source.komga.KomgaSource.ID,
-            ) as? koharia.source.komga.KomgaSource
+            val activeServerId = komgaServerPreferences.activeServerId.get()
+            val komgaSource = sourceManager.get(activeServerId) as? koharia.source.komga.KomgaSource
             _user.value = komgaSource?.getMe()
         }
     }

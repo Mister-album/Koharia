@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.source
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.online.HttpSource
+import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +26,7 @@ class AndroidSourceManager(
     @Suppress("UNUSED_PARAMETER")
     context: Context,
     private val sourceRepository: StubSourceRepository,
+    private val komgaServerPreferences: KomgaServerPreferences,
 ) : SourceManager {
 
     private val _isInitialized = MutableStateFlow(false)
@@ -43,10 +45,13 @@ class AndroidSourceManager(
     }
 
     init {
-        val komgaSource = KomgaSource()
-        sourcesMapFlow.value = ConcurrentHashMap(mapOf(KomgaSource.ID to komgaSource))
-        registerStubSource(StubSource.from(komgaSource))
+        refreshSources(komgaServerPreferences.getProfiles())
         _isInitialized.value = true
+
+        scope.launch {
+            komgaServerPreferences.profilesChanges()
+                .collectLatest(::refreshSources)
+        }
 
         scope.launch {
             sourceRepository.subscribeAll()
@@ -55,6 +60,8 @@ class AndroidSourceManager(
                     sources.forEach {
                         mutableMap[it.id] = it
                     }
+                    stubSourcesMap.clear()
+                    stubSourcesMap.putAll(mutableMap)
                 }
         }
     }
@@ -94,5 +101,18 @@ class AndroidSourceManager(
             return it
         }
         return StubSource(id = id, lang = "", name = "")
+    }
+
+    private fun refreshSources(profiles: List<koharia.source.komga.KomgaServerProfile>) {
+        val sources = profiles.map { profile ->
+            KomgaSource(
+                id = profile.id,
+                customName = profile.name,
+            )
+        }
+        sourcesMapFlow.value = ConcurrentHashMap(sources.associateBy(Source::id))
+        sources.forEach { source ->
+            registerStubSource(StubSource.from(source))
+        }
     }
 }

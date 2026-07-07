@@ -50,6 +50,8 @@ import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notify
 import koharia.core.migration.Migrator
 import koharia.core.migration.migrations.migrations
+import koharia.source.komga.KomgaLocalConfigManager
+import koharia.source.komga.KomgaServerPreferences
 import koharia.telemetry.TelemetryConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
@@ -156,7 +158,43 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             .onEach { ImageUtil.hardwareBitmapThreshold = it }
             .launchIn(scope)
 
-        setAppCompatDelegateThemeMode(Injekt.get<UiPreferences>().themeMode.get())
+        val uiPreferences = Injekt.get<UiPreferences>()
+        val komgaServerPreferences = Injekt.get<KomgaServerPreferences>()
+        val localConfigManager = Injekt.get<KomgaLocalConfigManager>()
+
+        uiPreferences.themeMode.changes()
+            .onEach { themeMode ->
+                logcat(LogPriority.DEBUG) {
+                    "Applying scoped theme mode: themeMode=$themeMode, " +
+                        "localConfigMode=${komgaServerPreferences.localConfigMode.get()}, " +
+                        "activeServerId=${komgaServerPreferences.activeServerId.get()}, " +
+                        "scope=${localConfigManager.currentScope().prefix}"
+                }
+                setAppCompatDelegateThemeMode(themeMode)
+            }
+            .launchIn(scope)
+
+        uiPreferences.appTheme.changes()
+            .onEach { appTheme ->
+                logcat(LogPriority.DEBUG) {
+                    "Scoped app theme changed: appTheme=$appTheme, " +
+                        "localConfigMode=${komgaServerPreferences.localConfigMode.get()}, " +
+                        "activeServerId=${komgaServerPreferences.activeServerId.get()}, " +
+                        "scope=${localConfigManager.currentScope().prefix}"
+                }
+            }
+            .launchIn(scope)
+
+        uiPreferences.themeDarkAmoled.changes()
+            .onEach { isAmoled ->
+                logcat(LogPriority.DEBUG) {
+                    "Scoped AMOLED preference changed: isAmoled=$isAmoled, " +
+                        "localConfigMode=${komgaServerPreferences.localConfigMode.get()}, " +
+                        "activeServerId=${komgaServerPreferences.activeServerId.get()}, " +
+                        "scope=${localConfigManager.currentScope().prefix}"
+                }
+            }
+            .launchIn(scope)
 
         // Updates widget update
         WidgetManager(Injekt.get(), Injekt.get()).apply { init(scope) }

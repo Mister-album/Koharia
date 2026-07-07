@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.source
 
 import eu.kanade.domain.source.service.SourcePreferences
+import koharia.source.komga.KomgaSource
 import tachiyomi.domain.source.model.StubSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -21,3 +22,5 @@ fun Source.getNameForMangaInfo(): String {
 }
 
 fun Source.isLocalOrStub(): Boolean = this is StubSource
+
+fun Source.isKomgaSource(): Boolean = this is KomgaSource

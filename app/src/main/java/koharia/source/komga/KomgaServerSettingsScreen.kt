@@ -6,13 +6,16 @@ import eu.kanade.tachiyomi.ui.source.SourcePreferencesScreen
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
-class KomgaServerSettingsScreen : Screen() {
+class KomgaServerSettingsScreen(
+    private val sourceId: Long,
+    private val titleOverride: String? = null,
+) : Screen() {
 
     @Composable
     override fun Content() {
         SourcePreferencesScreen(
-            sourceId = KomgaSource.ID,
-            titleOverride = stringResource(MR.strings.pref_komga_server),
+            sourceId = sourceId,
+            titleOverride = titleOverride ?: stringResource(MR.strings.pref_komga_server),
         ).Content()
     }
 }

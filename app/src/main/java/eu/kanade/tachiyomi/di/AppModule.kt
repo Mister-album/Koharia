@@ -20,11 +20,15 @@ import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
+import koharia.komga.api.KomgaActiveServerSseManager
+import koharia.source.komga.KomgaLocalConfigManager
+import koharia.source.komga.KomgaServerPreferences
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
 import nl.adaptivity.xmlutil.XmlDeclMode
 import nl.adaptivity.xmlutil.core.XmlVersion
 import nl.adaptivity.xmlutil.serialization.XML
+import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.storage.AndroidStorageFolderProvider
 import tachiyomi.data.Chapters
 import tachiyomi.data.Database
@@ -91,6 +95,12 @@ class AppModule(val app: Application) : InjektModule {
             }
         }
         addSingletonFactory {
+            KomgaServerPreferences(
+                preferenceStore = get<PreferenceStore>(),
+                json = get<Json>(),
+            ).also(KomgaServerPreferences::ensureProfilesInitialized)
+        }
+        addSingletonFactory {
             XML {
                 defaultPolicy {
                     ignoreUnknownChildren()
@@ -112,7 +122,8 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { NetworkHelper(app, get()) }
         addSingletonFactory { JavaScriptEngine(app) }
 
-        addSingletonFactory<SourceManager> { AndroidSourceManager(app, get()) }
+        addSingletonFactory<SourceManager> { AndroidSourceManager(app, get(), get()) }
+        addSingletonFactory { KomgaActiveServerSseManager(app, get(), get(), get(), lazy { get() }) }
 
         addSingletonFactory { DownloadProvider(app) }
         addSingletonFactory { DownloadManager(app) }
@@ -130,7 +141,11 @@ class AppModule(val app: Application) : InjektModule {
         ContextCompat.getMainExecutor(app).execute {
             get<NetworkHelper>()
 
+            get<KomgaServerPreferences>()
+            get<KomgaLocalConfigManager>()
+
             get<SourceManager>()
+            get<KomgaActiveServerSseManager>()
 
             get<Database>()
 

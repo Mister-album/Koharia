@@ -2,6 +2,7 @@ package eu.kanade.domain.manga.interactor
 
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import koharia.source.komga.KomgaSource
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
@@ -37,12 +38,9 @@ class SetMangaViewerFlags(
     }
 
     private suspend fun syncToKomga(sourceId: Long, mangaUrl: String, flags: Long) {
-        if (sourceId != koharia.source.komga.KomgaSource.ID) return
-
         try {
             val sourceManager: SourceManager = Injekt.get()
-            val komgaSource =
-                sourceManager.get(koharia.source.komga.KomgaSource.ID) as? koharia.source.komga.KomgaSource ?: return
+            val komgaSource = sourceManager.get(sourceId) as? KomgaSource ?: return
             val seriesId = mangaUrl.substringAfterLast("/")
             if (seriesId.isNotBlank()) {
                 komgaSource.updateMangaViewerFlags(seriesId, flags)

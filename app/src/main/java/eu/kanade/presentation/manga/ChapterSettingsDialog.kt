@@ -31,7 +31,7 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.manga.model.downloadedFilter
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
-import koharia.source.komga.KomgaSource
+import eu.kanade.tachiyomi.source.isKomgaSource
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.manga.model.Manga
@@ -62,7 +62,10 @@ fun ChapterSettingsDialog(
     onResetToDefault: () -> Unit,
 ) {
     var showSetAsDefaultDialog by rememberSaveable { mutableStateOf(false) }
-    val supportsChapterCoverDisplay = manga?.source == KomgaSource.ID
+    val sourceManager = remember { Injekt.get<tachiyomi.domain.source.service.SourceManager>() }
+    val supportsChapterCoverDisplay = remember(manga) {
+        manga?.let { sourceManager.get(it.source)?.isKomgaSource() } == true
+    }
     if (showSetAsDefaultDialog) {
         SetAsDefaultDialog(
             onDismissRequest = { showSetAsDefaultDialog = false },

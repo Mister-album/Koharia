@@ -5,6 +5,9 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.util.lang.Hash.md5
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import koharia.source.komga.DownloadDirectoryMode
+import koharia.source.komga.KomgaServerPreferences
+import koharia.source.komga.KomgaSource
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
@@ -28,7 +31,10 @@ class DownloadProvider(
     private val context: Context,
     private val storageManager: StorageManager = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
 ) {
+    private val disallowNonAsciiFilenames: Boolean
+        get() = libraryPreferences.disallowNonAsciiFilenames.get()
 
     private val downloadsDir: UniFile?
         get() = storageManager.getDownloadsDirectory()
@@ -49,7 +55,7 @@ class DownloadProvider(
         }
 
         val sourceDirName = getSourceDirName(source)
-        val sourceDir = downloadsDir.createDirectory(sourceDirName)
+        val sourceDir = resolveSourceDir(downloadsDir, source, sourceDirName)
         if (sourceDir == null) {
             val displayablePath = downloadsDir.displayablePath + "/$sourceDirName"
             logcat(LogPriority.ERROR) { "Failed to create source download directory: $displayablePath" }
@@ -77,7 +83,11 @@ class DownloadProvider(
      * @param source the source to query.
      */
     fun findSourceDir(source: Source): UniFile? {
-        return downloadsDir?.findFile(getSourceDirName(source))
+        val downloadsDir = downloadsDir ?: return null
+        return getSourceDirNames(source)
+            .asSequence()
+            .mapNotNull(downloadsDir::findFile)
+            .firstOrNull()
     }
 
     /**
@@ -87,8 +97,11 @@ class DownloadProvider(
      * @param source the source of the manga.
      */
     fun findMangaDir(mangaTitle: String, source: Source): UniFile? {
-        val sourceDir = findSourceDir(source)
-        return sourceDir?.findFile(getMangaDirName(mangaTitle))
+        val mangaDirName = getMangaDirName(mangaTitle)
+        return findSourceDirs(source)
+            .asSequence()
+            .mapNotNull { it.findFile(mangaDirName) }
+            .firstOrNull()
     }
 
     /**
@@ -153,10 +166,33 @@ class DownloadProvider(
      * @param source the source to query.
      */
     fun getSourceDirName(source: Source): String {
+        val sourceName = when {
+            source is KomgaSource &&
+                komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared -> {
+                KomgaSource.SOURCE_NAME
+            }
+            else -> source.toString()
+        }
         return DiskUtil.buildValidFilename(
-            source.toString(),
-            disallowNonAscii = libraryPreferences.disallowNonAsciiFilenames.get(),
+            sourceName,
+            disallowNonAscii = disallowNonAsciiFilenames,
         )
+    }
+
+    fun getSourceDirNames(source: Source): List<String> {
+        val primaryName = getSourceDirName(source)
+        if (
+            source !is KomgaSource ||
+            komgaServerPreferences.downloadDirectoryMode.get() != DownloadDirectoryMode.Shared
+        ) {
+            return listOf(primaryName)
+        }
+
+        return buildList {
+            add(primaryName)
+            addAll(legacyKomgaSharedSourceDirNames())
+            add(legacyKomgaSourceDirName(source.name))
+        }.distinct()
     }
 
     /**
@@ -167,7 +203,7 @@ class DownloadProvider(
     fun getMangaDirName(mangaTitle: String): String {
         return DiskUtil.buildValidFilename(
             mangaTitle,
-            disallowNonAscii = libraryPreferences.disallowNonAsciiFilenames.get(),
+            disallowNonAscii = disallowNonAsciiFilenames,
         )
     }
 
@@ -220,13 +256,12 @@ class DownloadProvider(
         // using the other value for the disallow non-ASCII
         // filenames setting. This ensures that chapters downloaded
         // before the user changed the setting can still be found.
-        val otherChapterDirName =
-            getChapterDirName(
-                chapterName,
-                chapterScanlator,
-                chapterUrl,
-                !libraryPreferences.disallowNonAsciiFilenames.get(),
-            )
+        val otherChapterDirName = getChapterDirName(
+            chapterName,
+            chapterScanlator,
+            chapterUrl,
+            !disallowNonAsciiFilenames,
+        )
 
         return buildList(2) {
             // Chapter name without hash (unable to handle duplicate
@@ -286,5 +321,61 @@ class DownloadProvider(
         fun isSupportedChapterFileExtension(extension: String?): Boolean {
             return extension?.lowercase() in SUPPORTED_CHAPTER_FILE_EXTENSIONS
         }
+    }
+
+    private fun findSourceDirs(source: Source): List<UniFile> {
+        val downloadsDir = downloadsDir ?: return emptyList()
+        return getSourceDirNames(source)
+            .mapNotNull(downloadsDir::findFile)
+            .distinctBy { it.uri.toString() }
+    }
+
+    private fun resolveSourceDir(downloadsDir: UniFile, source: Source, sourceDirName: String): UniFile? {
+        downloadsDir.findFile(sourceDirName)?.let { return it }
+
+        val legacyDir = when {
+            source is KomgaSource &&
+                komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared -> {
+                val legacyDirs = legacyKomgaSharedSourceDirNames()
+                    .mapNotNull(downloadsDir::findFile)
+                    .distinctBy { it.uri.toString() }
+                legacyDirs.singleOrNull()
+            }
+            else -> null
+        }
+
+        if (legacyDir != null) {
+            if (legacyDir.name != sourceDirName && legacyDir.renameTo(sourceDirName)) {
+                downloadsDir.findFile(sourceDirName)?.let { migratedDir ->
+                    logcat(LogPriority.INFO) {
+                        "Migrated legacy Komga download directory from ${legacyDir.name} to $sourceDirName"
+                    }
+                    return migratedDir
+                }
+            }
+
+            logcat(LogPriority.INFO) {
+                "Using legacy Komga download directory ${legacyDir.name} for source ${source.name}"
+            }
+            return legacyDir
+        }
+
+        return downloadsDir.createDirectory(sourceDirName)
+    }
+
+    private fun legacyKomgaSharedSourceDirNames(): List<String> {
+        return buildList {
+            add(legacyKomgaSourceDirName(KomgaSource.SOURCE_NAME))
+            komgaServerPreferences.getProfiles().forEach { profile ->
+                add(legacyKomgaSourceDirName(profile.name))
+            }
+        }.distinct()
+    }
+
+    private fun legacyKomgaSourceDirName(sourceName: String): String {
+        return DiskUtil.buildValidFilename(
+            "$sourceName (${KomgaSource.SOURCE_LANG.uppercase()})",
+            disallowNonAscii = disallowNonAsciiFilenames,
+        )
     }
 }

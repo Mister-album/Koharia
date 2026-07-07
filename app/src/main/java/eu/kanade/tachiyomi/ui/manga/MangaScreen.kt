@@ -40,6 +40,7 @@ import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.isKomgaSource
 import eu.kanade.tachiyomi.source.isLocalOrStub
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
@@ -51,7 +52,6 @@ import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.komga.ui.library.KomgaLibraryScreen
-import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withIOContext
@@ -107,7 +107,7 @@ class MangaScreen(
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            }.takeIf { successState.source.id != KomgaSource.ID },
+            }.takeIf { !successState.source.isKomgaSource() },
             onWebViewClicked = null,
             onWebViewLongClicked = null,
             onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
@@ -119,7 +119,7 @@ class MangaScreen(
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
             onDownloadActionClicked = screenModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
             onEditCategoryClicked = screenModel::showChangeCategoryDialog.takeIf {
-                successState.manga.favorite && successState.source.id != KomgaSource.ID
+                successState.manga.favorite && !successState.source.isKomgaSource()
             },
             onMigrateClicked = null,
             onEditNotesClicked = { navigator.push(MangaNotesScreen(manga = successState.manga)) },
@@ -139,7 +139,7 @@ class MangaScreen(
         when (val dialog = successState.dialog) {
             null -> {}
             is MangaScreenModel.Dialog.ChangeCategory -> {
-                if (successState.source.id != KomgaSource.ID) {
+                if (!successState.source.isKomgaSource()) {
                     ChangeCategoryDialog(
                         initialSelection = dialog.initialSelection,
                         onDismissRequest = onDismissRequest,
@@ -163,7 +163,7 @@ class MangaScreen(
             }
 
             is MangaScreenModel.Dialog.DuplicateManga -> {
-                if (successState.source.id != KomgaSource.ID) {
+                if (!successState.source.isKomgaSource()) {
                     DuplicateMangaDialog(
                         duplicates = dialog.duplicates,
                         onDismissRequest = onDismissRequest,
@@ -180,7 +180,7 @@ class MangaScreen(
             MangaScreenModel.Dialog.SettingsSheet -> ChapterSettingsDialog(
                 onDismissRequest = onDismissRequest,
                 manga = successState.manga,
-                isKomgaCacheMode = successState.source.id == koharia.source.komga.KomgaSource.ID,
+                isKomgaCacheMode = successState.source.isKomgaSource(),
                 onDownloadFilterChanged = screenModel::setDownloadedFilter,
                 onUnreadFilterChanged = screenModel::setUnreadFilter,
                 onBookmarkedFilterChanged = screenModel::setBookmarkedFilter,
@@ -324,7 +324,7 @@ class MangaScreen(
                 "sourceType=${source::class.qualifiedName} previous=${previousController::class.qualifiedName}"
         }
 
-        if (source.id == KomgaSource.ID) {
+        if (source.isKomgaSource()) {
             when (previousController) {
                 is HomeScreen -> {
                     navigator.pop()

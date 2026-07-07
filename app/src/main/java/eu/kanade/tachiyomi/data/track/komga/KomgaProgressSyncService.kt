@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.track.komga
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.track.TrackerManager
+import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -27,6 +28,7 @@ class KomgaProgressSyncService(
     private val mangaRepository: MangaRepository,
     private val syncChaptersWithSource: SyncChaptersWithSource,
     private val sourceManager: SourceManager,
+    private val komgaServerPreferences: KomgaServerPreferences,
 ) {
 
     suspend fun syncFromServer(manga: Manga) {
@@ -46,7 +48,10 @@ class KomgaProgressSyncService(
 
     suspend fun syncHistoryFromServer() {
         runCatching {
-            val remoteBooks = trackerManager.komga.api.getInProgressBookProgress()
+            val activeServerId = komgaServerPreferences.activeServerId.get()
+            if (activeServerId == KomgaServerPreferences.NO_ACTIVE_SERVER) return
+
+            val remoteBooks = trackerManager.komga.api.getInProgressBookProgress(activeServerId)
             if (remoteBooks.isEmpty()) {
                 return
             }
@@ -56,7 +61,7 @@ class KomgaProgressSyncService(
 
             val localMangaBySeriesUrl = remoteSeriesUrls
                 .mapNotNull { seriesUrl ->
-                    mangaRepository.getMangaByUrlAndSourceId(seriesUrl, KomgaSource.ID)?.let { seriesUrl to it }
+                    mangaRepository.getMangaByUrlAndSourceId(seriesUrl, activeServerId)?.let { seriesUrl to it }
                 }
                 .toMap()
 
@@ -76,7 +81,7 @@ class KomgaProgressSyncService(
         pageIndex: Int,
         totalPages: Int,
     ) {
-        if (sourceId != KomgaSource.ID || !chapterUrl.contains("/api/v1/books/")) return
+        if (sourceManager.get(sourceId) !is KomgaSource || !chapterUrl.contains("/api/v1/books/")) return
         if (totalPages <= 0) return
 
         runCatching {
@@ -93,7 +98,7 @@ class KomgaProgressSyncService(
     }
 
     private fun Manga.isKomgaSeries(): Boolean {
-        return source == KomgaSource.ID && url.contains("/api/v1/series/")
+        return sourceManager.get(source) is KomgaSource && url.contains("/api/v1/series/")
     }
 
     private suspend fun applyRemoteProgress(

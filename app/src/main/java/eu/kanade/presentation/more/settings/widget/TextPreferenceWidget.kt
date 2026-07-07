@@ -23,12 +23,14 @@ fun TextPreferenceWidget(
     subtitle: String? = null,
     icon: ImageVector? = null,
     iconTint: Color = MaterialTheme.colorScheme.primary,
+    enabled: Boolean = true,
     widget: @Composable (() -> Unit)? = null,
     onPreferenceClick: (() -> Unit)? = null,
 ) {
     BasePreferenceWidget(
         modifier = modifier,
         title = title,
+        enabled = enabled,
         subcomponent = if (!subtitle.isNullOrBlank()) {
             {
                 Text(

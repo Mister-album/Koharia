@@ -14,7 +14,6 @@ import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.source.sourcePreferences
-import koharia.source.komga.KomgaSource
 import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.plusAssign
@@ -46,7 +45,7 @@ class PreferenceRestorer(
 
     suspend fun restoreSource(preferences: List<BackupSourcePreferences>) {
         preferences.forEach {
-            if (!it.sourceKey.startsWith("source_${KomgaSource.ID}")) return@forEach
+            if (!it.sourceKey.startsWith("source_")) return@forEach
             val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(it.sourceKey))
             restorePreferences(it.prefs, sourcePrefs)
         }
@@ -63,12 +62,15 @@ class PreferenceRestorer(
         val prefs = preferenceStore.getAll()
         toRestore.forEach { (key, value) ->
             try {
+                val normalizedKey = key.withoutScopePrefix()
+                val existingValue = prefs[key]
                 when (value) {
                     is IntPreferenceValue -> {
-                        if (prefs[key] is Int?) {
-                            val newValue = if (key == LibraryPreferences.DEFAULT_CATEGORY_PREF_KEY) {
-                                backupCategoriesById[value.value.toString()]
-                                    ?.let { categoriesByName[it.name]?.id?.toInt() }
+                        if (existingValue == null || existingValue is Int) {
+                            val newValue = if (normalizedKey == LibraryPreferences.DEFAULT_CATEGORY_PREF_KEY) {
+                                backupCategoriesById[value.value.toString()]?.let {
+                                    categoriesByName[it.name]?.id?.toInt()
+                                }
                             } else {
                                 value.value
                             }
@@ -77,31 +79,32 @@ class PreferenceRestorer(
                         }
                     }
                     is LongPreferenceValue -> {
-                        if (prefs[key] is Long?) {
+                        if (existingValue == null || existingValue is Long) {
                             preferenceStore.getLong(key).set(value.value)
                         }
                     }
                     is FloatPreferenceValue -> {
-                        if (prefs[key] is Float?) {
+                        if (existingValue == null || existingValue is Float) {
                             preferenceStore.getFloat(key).set(value.value)
                         }
                     }
                     is StringPreferenceValue -> {
-                        if (prefs[key] is String?) {
+                        if (existingValue == null || existingValue is String) {
                             preferenceStore.getString(key).set(value.value)
                         }
                     }
                     is BooleanPreferenceValue -> {
-                        if (prefs[key] is Boolean?) {
+                        if (existingValue == null || existingValue is Boolean) {
                             preferenceStore.getBoolean(key).set(value.value)
                         }
                     }
                     is StringSetPreferenceValue -> {
-                        if (prefs[key] is Set<*>?) {
+                        if (existingValue == null || existingValue is Set<*>?) {
                             val restored = restoreCategoriesPreference(
-                                key,
+                                normalizedKey,
                                 value.value,
                                 preferenceStore,
+                                key,
                                 backupCategoriesById,
                                 categoriesByName,
                             )
@@ -116,14 +119,15 @@ class PreferenceRestorer(
     }
 
     private fun restoreCategoriesPreference(
-        key: String,
+        normalizedKey: String,
         value: Set<String>,
         preferenceStore: PreferenceStore,
+        targetKey: String,
         backupCategoriesById: Map<String, BackupCategory>,
         categoriesByName: Map<String, Category>,
     ): Boolean {
         val categoryPreferences = LibraryPreferences.categoryPreferenceKeys + DownloadPreferences.categoryPreferenceKeys
-        if (key !in categoryPreferences) return false
+        if (normalizedKey !in categoryPreferences) return false
 
         val ids = value.mapNotNull {
             backupCategoriesById[it]?.name?.let { name ->
@@ -132,8 +136,12 @@ class PreferenceRestorer(
         }
 
         if (ids.isNotEmpty()) {
-            preferenceStore.getStringSet(key) += ids
+            preferenceStore.getStringSet(targetKey) += ids
         }
         return true
     }
+}
+
+private fun String.withoutScopePrefix(): String {
+    return substringAfterLast("::", this)
 }
