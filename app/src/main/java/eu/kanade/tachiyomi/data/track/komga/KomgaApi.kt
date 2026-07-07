@@ -1,18 +1,15 @@
 package eu.kanade.tachiyomi.data.track.komga
 
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
-import eu.kanade.tachiyomi.source.ConfigurableSource
-import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
-import okhttp3.Credentials
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -34,59 +31,29 @@ class KomgaApi(
 ) {
 
     private val sourceManager: SourceManager by lazy { Injekt.get<SourceManager>() }
-    private val sourcePreferences by lazy {
-        (sourceManager.get(KomgaSource.ID) as? ConfigurableSource)?.sourcePreferences()
-    }
-
-    private val headers: Headers
-        get() {
-            return Headers.Builder().apply {
-                val apiKey = sourcePreferences?.getString("API key", "").orEmpty()
-                if (apiKey.isNotBlank()) {
-                    add("X-API-Key", apiKey)
-                }
-            }
-                .add("User-Agent", "Koharia v${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
-                .build()
-        }
-
+    private val serverPreferences: KomgaServerPreferences by lazy { Injekt.get<KomgaServerPreferences>() }
     private val json: Json by injectLazy()
-    private val requestClient: OkHttpClient
-        get() {
-            val username = sourcePreferences?.getString("Username", "").orEmpty()
-            val password = sourcePreferences?.getString("Password", "").orEmpty()
-            val apiKey = sourcePreferences?.getString("API key", "").orEmpty()
-            return client.newBuilder()
-                .authenticator { _, response ->
-                    if (apiKey.isNotBlank() || response.request.header("Authorization") != null || username.isBlank()) {
-                        null
-                    } else {
-                        response.request.newBuilder()
-                            .addHeader("Authorization", Credentials.basic(username, password))
-                            .build()
-                    }
-                }
-                .build()
-        }
 
     suspend fun getTrackSearch(url: String): TrackSearch =
         withIOContext {
+            val source = resolveSourceForUrl(url) ?: error("No Komga source found for $url")
+            val headers = source.currentHeaders()
             try {
                 val track = with(json) {
                     if (url.contains(READLIST_API)) {
-                        requestClient.newCall(GET(url, headers))
+                        source.client.newCall(GET(url, headers))
                             .awaitSuccess()
                             .parseAs<ReadListDto>()
                             .toTrack()
                     } else {
-                        requestClient.newCall(GET(url, headers))
+                        source.client.newCall(GET(url, headers))
                             .awaitSuccess()
                             .parseAs<SeriesDto>()
                             .toTrack()
                     }
                 }
 
-                val progress = requestClient
+                val progress = source.client
                     .newCall(
                         GET("${url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi", headers),
                     )
@@ -118,15 +85,16 @@ class KomgaApi(
         }
 
     suspend fun updateProgress(track: Track): Track {
+        val source = resolveSourceForUrl(track.tracking_url) ?: error("No Komga source found for ${track.tracking_url}")
         val payload = if (track.tracking_url.contains("/api/v1/series/")) {
             json.encodeToString(ReadProgressUpdateV2Dto(track.last_chapter_read))
         } else {
             json.encodeToString(ReadProgressUpdateDto(track.last_chapter_read.toInt()))
         }
-        requestClient.newCall(
+        source.client.newCall(
             Request.Builder()
                 .url("${track.tracking_url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi")
-                .headers(headers)
+                .headers(source.currentHeaders())
                 .put(payload.toRequestBody("application/json".toMediaType()))
                 .build(),
         )
@@ -136,9 +104,12 @@ class KomgaApi(
 
     suspend fun getSeriesBookProgress(url: String): List<SeriesBookProgress> =
         withIOContext {
+            val source = resolveSourceForUrl(url) ?: return@withIOContext emptyList()
             with(json) {
                 val baseUrl = url.substringBefore("/api/v1/series/")
-                requestClient.newCall(GET("$url/books?unpaged=true&media_status=READY&deleted=false", headers))
+                source.client.newCall(
+                    GET("$url/books?unpaged=true&media_status=READY&deleted=false", source.currentHeaders()),
+                )
                     .awaitSuccess()
                     .parseAs<PageWrapperDto<BookDto>>()
                     .content
@@ -152,17 +123,21 @@ class KomgaApi(
             }
         }
 
-    suspend fun getInProgressBookProgress(): List<SeriesBookProgress> =
+    suspend fun getInProgressBookProgress(sourceId: Long? = null): List<SeriesBookProgress> =
         withIOContext {
+            val source = resolveSource(sourceId) ?: return@withIOContext emptyList()
             with(json) {
-                val baseUrl = (sourceManager.get(KomgaSource.ID) as? KomgaSource)?.baseUrl?.trimEnd('/').orEmpty()
+                val baseUrl = source.baseUrl.trimEnd('/')
                 if (baseUrl.isBlank()) {
                     logcat(LogPriority.WARN) { "KomgaApi.getInProgressBookProgress: blank server base URL" }
                     emptyList()
                 } else {
-                    requestClient
+                    source.client
                         .newCall(
-                            GET("$baseUrl/api/v1/books?unpaged=true&read_status=IN_PROGRESS&deleted=false", headers),
+                            GET(
+                                "$baseUrl/api/v1/books?unpaged=true&read_status=IN_PROGRESS&deleted=false",
+                                source.currentHeaders(),
+                            ),
                         )
                         .awaitSuccess()
                         .parseAs<PageWrapperDto<BookDto>>()
@@ -178,10 +153,11 @@ class KomgaApi(
             }
         }
 
-    suspend fun search(query: String): List<TrackSearch> =
+    suspend fun search(query: String, sourceId: Long? = null): List<TrackSearch> =
         withIOContext {
+            val source = resolveSource(sourceId) ?: return@withIOContext emptyList()
             with(json) {
-                val baseUrl = (sourceManager.get(KomgaSource.ID) as? KomgaSource)?.baseUrl?.trimEnd('/').orEmpty()
+                val baseUrl = source.baseUrl.trimEnd('/')
                 if (baseUrl.isBlank()) {
                     logcat(LogPriority.WARN) { "KomgaApi.search: blank server base URL" }
                     emptyList()
@@ -197,8 +173,8 @@ class KomgaApi(
                         .addQueryParameter("deleted", "false")
                         .build()
 
-                    requestClient
-                        .newCall(GET(url, headers))
+                    source.client
+                        .newCall(GET(url, source.currentHeaders()))
                         .awaitSuccess()
                         .parseAs<PageWrapperDto<SeriesDto>>()
                         .content
@@ -212,6 +188,7 @@ class KomgaApi(
         page: Int,
         completed: Boolean,
     ) {
+        val source = resolveSourceForUrl(bookUrl) ?: return
         val payload = json.encodeToString(
             if (completed) {
                 BookReadProgressUpdateDto(completed = true, page = page)
@@ -220,13 +197,27 @@ class KomgaApi(
             },
         )
 
-        requestClient.newCall(
+        source.client.newCall(
             Request.Builder()
                 .url("$bookUrl/read-progress")
-                .headers(headers)
+                .headers(source.currentHeaders())
                 .patch(payload.toRequestBody("application/json".toMediaType()))
                 .build(),
         ).awaitSuccess()
+    }
+
+    private fun resolveSource(sourceId: Long?): KomgaSource? {
+        val targetSourceId = sourceId ?: serverPreferences.activeServerId.get()
+        return sourceManager.get(targetSourceId) as? KomgaSource
+    }
+
+    private fun resolveSourceForUrl(url: String): KomgaSource? {
+        val targetBaseUrl = url.substringBefore("/api/v1/").trimEnd('/')
+        return sourceManager.getOnlineSources()
+            .filterIsInstance<KomgaSource>()
+            .firstOrNull { it.baseUrl.trimEnd('/') == targetBaseUrl }
+            ?: resolveSource(null)
+                ?.takeIf { url.startsWith(it.baseUrl.trimEnd('/')) }
     }
 
     private fun SeriesDto.toTrack(): TrackSearch = TrackSearch.create(trackId).also {

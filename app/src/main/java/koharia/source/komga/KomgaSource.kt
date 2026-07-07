@@ -6,8 +6,6 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.Log
 import android.widget.Button
-import androidx.lifecycle.ProcessLifecycleOwner
-import androidx.lifecycle.lifecycleScope
 import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
@@ -22,7 +20,6 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.komga.api.KomgaApiClient
-import koharia.komga.api.KomgaSseClient
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.domain.repository.KomgaRepository
 import kotlinx.coroutines.CoroutineScope
@@ -48,7 +45,10 @@ import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
-class KomgaSource :
+class KomgaSource(
+    override val id: Long = ID,
+    private val customName: String = SOURCE_NAME,
+) :
     HttpSource(),
     ConfigurableSource,
     UnmeteredSource {
@@ -56,17 +56,9 @@ class KomgaSource :
     private val preferences: SharedPreferences by lazy { sourcePreferences() }
     private val json: Json by injectLazy()
     private val application: android.app.Application by lazy { Injekt.get() }
-    private val komgaSseClient by lazy {
-        getSseClient(application, network)
-    }
 
-    init {
-        komgaSseClient.start(ProcessLifecycleOwner.get().lifecycleScope)
-    }
-
-    override val name: String = SOURCE_NAME
+    override val name: String = customName
     override val lang: String = SOURCE_LANG
-    override val id: Long = ID
     override val supportsLatest: Boolean = true
     override val versionId: Int = SOURCE_VERSION
 
@@ -528,9 +520,6 @@ class KomgaSource :
         const val TYPE_BOOKS = "Books"
         private const val BROWSE_REFRESH_WINDOW_MILLIS = 30_000L
 
-        @Volatile
-        private var sseClient: KomgaSseClient? = null
-
         private val SERVER_SETTING_KEYS = setOf(
             PREF_ADDRESS,
             PREF_USERNAME,
@@ -544,26 +533,6 @@ class KomgaSource :
             val key = "${SOURCE_NAME.lowercase()}/$SOURCE_LANG/$SOURCE_VERSION"
             val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
             (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
-        }
-
-        private fun getSseClient(
-            application: android.app.Application,
-            network: eu.kanade.tachiyomi.network.NetworkHelper,
-        ): KomgaSseClient {
-            return sseClient ?: synchronized(this) {
-                sseClient ?: KomgaSseClient(
-                    context = application,
-                    networkHelper = network,
-                    komgaProgressSyncService = lazy { Injekt.get() },
-                    baseUrlProvider = {
-                        (Injekt.get<SourceManager>().get(ID) as? KomgaSource)?.baseUrl.orEmpty()
-                    },
-                    headersProvider = {
-                        (Injekt.get<SourceManager>().get(ID) as? KomgaSource)?.currentHeaders()
-                            ?: Headers.Builder().build()
-                    },
-                ).also { sseClient = it }
-            }
         }
     }
 }

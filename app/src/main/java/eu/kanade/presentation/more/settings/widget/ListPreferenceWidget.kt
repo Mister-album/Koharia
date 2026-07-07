@@ -34,6 +34,7 @@ fun <T> ListPreferenceWidget(
     subtitle: String?,
     icon: ImageVector?,
     entries: Map<out T, String>,
+    enabled: Boolean = true,
     onValueChange: (T) -> Unit,
 ) {
     var isDialogShown by remember { mutableStateOf(false) }
@@ -42,7 +43,8 @@ fun <T> ListPreferenceWidget(
         title = title,
         subtitle = subtitle,
         icon = icon,
-        onPreferenceClick = { isDialogShown = true },
+        enabled = enabled,
+        onPreferenceClick = { if (enabled) isDialogShown = true },
     )
 
     if (isDialogShown) {

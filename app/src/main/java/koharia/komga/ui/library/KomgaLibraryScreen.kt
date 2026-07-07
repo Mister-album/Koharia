@@ -53,6 +53,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
+import koharia.source.komga.KomgaServerPreferences
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -94,6 +95,7 @@ data class KomgaLibraryScreen(
         val sourcePreferences: SourcePreferences = Injekt.get()
         val basePreferences: BasePreferences = Injekt.get()
         val libraryPreferences: LibraryPreferences = Injekt.get()
+        val komgaServerPreferences: KomgaServerPreferences = Injekt.get()
         val downloadManager: DownloadManager = Injekt.get()
         val getRemoteManga: GetRemoteManga = Injekt.get()
         val getManga: GetManga = Injekt.get()
@@ -115,6 +117,9 @@ data class KomgaLibraryScreen(
         }
         val state by screenModel.state.collectAsState()
         val columns by libraryPreferences.portraitColumns.collectAsState()
+        val serverProfiles by remember(komgaServerPreferences) {
+            komgaServerPreferences.profilesChanges()
+        }.collectAsState(initial = komgaServerPreferences.getProfiles())
 
         val navigator = LocalNavigator.currentOrThrow
         val navigateUp: () -> Unit = {
@@ -178,6 +183,13 @@ data class KomgaLibraryScreen(
                         onSearchQueryChange = screenModel::setToolbarQuery,
                         displayMode = screenModel.displayMode,
                         onDisplayModeChange = { screenModel.displayMode = it },
+                        serverProfiles = serverProfiles,
+                        activeServerId = sourceId,
+                        onServerSelect = { serverId ->
+                            if (serverId != sourceId) {
+                                komgaServerPreferences.activeServerId.set(serverId)
+                            }
+                        },
                         showFilterAction = state.filters.isNotEmpty(),
                         onFilterClick = screenModel::openFilterSheet,
                         navigateUp = navigateUp.takeIf { showNavigationUp },

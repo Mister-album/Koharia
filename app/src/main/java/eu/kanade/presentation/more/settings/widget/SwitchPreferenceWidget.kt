@@ -19,6 +19,7 @@ fun SwitchPreferenceWidget(
     subtitle: String? = null,
     icon: ImageVector? = null,
     checked: Boolean = false,
+    enabled: Boolean = true,
     onCheckedChanged: (Boolean) -> Unit,
 ) {
     TextPreferenceWidget(
@@ -26,14 +27,16 @@ fun SwitchPreferenceWidget(
         title = title,
         subtitle = subtitle,
         icon = icon,
+        enabled = enabled,
         widget = {
             Switch(
                 checked = checked,
                 onCheckedChange = null,
+                enabled = enabled,
                 modifier = Modifier.padding(start = TrailingWidgetBuffer),
             )
         },
-        onPreferenceClick = { onCheckedChanged(!checked) },
+        onPreferenceClick = { if (enabled) onCheckedChanged(!checked) },
     )
 }
 

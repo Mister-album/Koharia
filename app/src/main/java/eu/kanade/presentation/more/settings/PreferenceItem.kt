@@ -72,6 +72,7 @@ internal fun PreferenceItem(
                     subtitle = item.subtitle,
                     icon = item.icon,
                     checked = value,
+                    enabled = item.enabled,
                     onCheckedChanged = { newValue ->
                         scope.launch {
                             if (item.onValueChanged(newValue)) {
@@ -109,6 +110,7 @@ internal fun PreferenceItem(
                     subtitle = item.internalSubtitleProvider(value, item.entries),
                     icon = item.icon,
                     entries = item.entries,
+                    enabled = item.enabled,
                     onValueChange = { newValue ->
                         scope.launch {
                             if (item.internalOnValueChanged(newValue!!)) {
@@ -125,6 +127,7 @@ internal fun PreferenceItem(
                     subtitle = item.subtitleProvider(item.value, item.entries),
                     icon = item.icon,
                     entries = item.entries,
+                    enabled = item.enabled,
                     onValueChange = { scope.launch { item.onValueChanged(it) } },
                 )
             }
@@ -147,6 +150,7 @@ internal fun PreferenceItem(
                     title = item.title,
                     subtitle = item.subtitle,
                     icon = item.icon,
+                    enabled = item.enabled,
                     widget = item.widget,
                     onPreferenceClick = item.onClick,
                 )

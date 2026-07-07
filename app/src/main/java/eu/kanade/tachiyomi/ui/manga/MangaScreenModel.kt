@@ -39,12 +39,12 @@ import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.isKomgaSource
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
-import koharia.source.komga.KomgaSource
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
@@ -220,7 +220,7 @@ class MangaScreenModel(
                 setMangaDefaultChapterFlags.await(manga)
             }
 
-            val shouldRefreshKomga = source.id == KomgaSource.ID
+            val shouldRefreshKomga = source.isKomgaSource()
             val needRefreshInfo = !manga.initialized || shouldRefreshKomga
             val needRefreshChapter = chapters.isEmpty() || shouldRefreshKomga
 
@@ -272,7 +272,7 @@ class MangaScreenModel(
     }
 
     private fun syncKomgaProgressInBackground(source: Source) {
-        if (source.id != KomgaSource.ID) return
+        if (!source.isKomgaSource()) return
 
         screenModelScope.launchIO {
             runCatching {
@@ -350,7 +350,7 @@ class MangaScreenModel(
         checkDuplicate: Boolean = true,
     ) {
         val state = successState ?: return
-        if (state.source.id == KomgaSource.ID) return
+        if (state.source.isKomgaSource()) return
         screenModelScope.launchIO {
             val manga = state.manga
 
@@ -406,7 +406,7 @@ class MangaScreenModel(
 
     fun showChangeCategoryDialog() {
         val manga = successState?.manga ?: return
-        if (successState?.source?.id == KomgaSource.ID) return
+        if (successState?.source?.isKomgaSource() == true) return
         screenModelScope.launch {
             val categories = getCategories()
             val selection = getMangaCategoryIds(manga)
@@ -423,7 +423,7 @@ class MangaScreenModel(
 
     fun showSetFetchIntervalDialog() {
         val manga = successState?.manga ?: return
-        if (successState?.source?.id == KomgaSource.ID) return
+        if (successState?.source?.isKomgaSource() == true) return
         updateSuccessState {
             it.copy(dialog = Dialog.SetFetchInterval(manga))
         }

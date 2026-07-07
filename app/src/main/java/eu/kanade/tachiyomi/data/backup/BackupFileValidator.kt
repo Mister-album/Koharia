@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.data.backup
 import android.content.Context
 import android.net.Uri
 import eu.kanade.tachiyomi.data.track.TrackerManager
-import koharia.source.komga.KomgaSource
 import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -29,7 +28,6 @@ class BackupFileValidator(
 
         val sources = backup.backupSources.associate { it.sourceId to it.name }
         val missingSources = sources
-            .filterKeys { it == KomgaSource.ID }
             .filter { sourceManager.get(it.key) == null }
             .values.map {
                 val id = it.toLongOrNull()

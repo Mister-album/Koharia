@@ -10,8 +10,11 @@ import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
+import koharia.source.komga.KomgaLocalConfigManager
+import koharia.source.komga.KomgaServerPreferences
 import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.preference.ScopedPreferenceStore
 import tachiyomi.core.common.storage.AndroidStorageFolderProvider
 import tachiyomi.domain.backup.service.BackupPreferences
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -30,49 +33,65 @@ class PreferenceModule(val app: Application) : InjektModule {
             AndroidPreferenceStore(app)
         }
         addSingletonFactory {
+            KomgaLocalConfigManager(
+                preferenceStore = get<PreferenceStore>(),
+                serverPreferences = get<KomgaServerPreferences>(),
+                scopedPreferenceKeys = KomgaLocalConfigManager.buildScopedPreferenceKeys(
+                    app = app,
+                    verboseLoggingDefault = isDebugBuildType,
+                ),
+            )
+        }
+        addSingletonFactory {
+            ScopedPreferenceStore(
+                preferenceStore = get<PreferenceStore>(),
+                scopeProvider = get<KomgaLocalConfigManager>(),
+            )
+        }
+        addSingletonFactory {
             NetworkPreferences(
-                preferenceStore = get(),
+                preferenceStore = get<ScopedPreferenceStore>(),
                 verboseLoggingDefault = isDebugBuildType,
             )
         }
         addSingletonFactory {
-            SourcePreferences(get())
+            SourcePreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
-            SecurityPreferences(get())
+            SecurityPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
-            PrivacyPreferences(get())
+            PrivacyPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
-            LibraryPreferences(get())
+            LibraryPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
             UpdatesPreferences(get())
         }
         addSingletonFactory {
-            ReaderPreferences(get())
+            ReaderPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
-            TrackPreferences(get())
+            TrackPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
-            DownloadPreferences(get())
+            DownloadPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
-            BackupPreferences(get())
+            BackupPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
             StoragePreferences(
                 folderProvider = get<AndroidStorageFolderProvider>(),
-                preferenceStore = get(),
+                preferenceStore = get<ScopedPreferenceStore>(),
             )
         }
         addSingletonFactory {
-            UiPreferences(get())
+            UiPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
-            BasePreferences(app, get())
+            BasePreferences(app, get<ScopedPreferenceStore>())
         }
     }
 }

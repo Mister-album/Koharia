@@ -11,7 +11,7 @@ object LocalTempCacheDirectoryProvider {
     private const val NETWORK_CACHE_DIR = "network_cache"
     private const val CHAPTER_CACHE_DIR = "chapter_disk_cache"
     private const val METADATA_CACHE_DIR = "komga_metadata_cache"
-    private const val DOWNLOAD_INDEX_FILE = "dl_index_cache_v3"
+    private const val DOWNLOAD_INDEX_FILE = "dl_index_cache_v4"
     private const val COIL_DISK_CACHE_DIR = "coil3_disk_cache"
     private const val SHARED_IMAGE_DIR = "shared_image"
 

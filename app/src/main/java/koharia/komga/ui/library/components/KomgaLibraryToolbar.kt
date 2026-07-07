@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
@@ -17,6 +18,7 @@ import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
+import koharia.source.komga.KomgaServerProfile
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.i18n.MR
@@ -28,6 +30,9 @@ fun KomgaLibraryToolbar(
     onSearchQueryChange: (String?) -> Unit,
     displayMode: LibraryDisplayMode,
     onDisplayModeChange: (LibraryDisplayMode) -> Unit,
+    serverProfiles: List<KomgaServerProfile>,
+    activeServerId: Long,
+    onServerSelect: (Long) -> Unit,
     showFilterAction: Boolean,
     onFilterClick: () -> Unit,
     navigateUp: (() -> Unit)?,
@@ -35,6 +40,7 @@ fun KomgaLibraryToolbar(
     scrollBehavior: TopAppBarScrollBehavior? = null,
 ) {
     var selectingDisplayMode by remember { mutableStateOf(false) }
+    var selectingServer by remember { mutableStateOf(false) }
 
     SearchToolbar(
         navigateUp = navigateUp,
@@ -58,6 +64,13 @@ fun KomgaLibraryToolbar(
                                 onClick = { selectingDisplayMode = true },
                             ),
                         )
+                        add(
+                            AppBar.Action(
+                                title = stringResource(MR.strings.pref_komga_server),
+                                icon = Icons.Outlined.Storage,
+                                onClick = { selectingServer = true },
+                            ),
+                        )
                         if (showFilterAction) {
                             add(
                                 AppBar.Action(
@@ -70,6 +83,21 @@ fun KomgaLibraryToolbar(
                     }
                     .build(),
             )
+
+            DropdownMenu(
+                expanded = selectingServer,
+                onDismissRequest = { selectingServer = false },
+            ) {
+                serverProfiles.forEach { profile ->
+                    RadioMenuItem(
+                        text = { Text(text = profile.name) },
+                        isChecked = activeServerId == profile.id,
+                    ) {
+                        selectingServer = false
+                        onServerSelect(profile.id)
+                    }
+                }
+            }
 
             DropdownMenu(
                 expanded = selectingDisplayMode,

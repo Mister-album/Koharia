@@ -36,6 +36,7 @@ class KomgaSseClient(
     private var isWifi = false
     private var isConnecting = false
     private var isStarted = false
+    private var lastSkippedReason: String? = null
 
     fun start(scope: CoroutineScope) {
         if (isStarted) return
@@ -58,14 +59,29 @@ class KomgaSseClient(
 
     override fun onStop(owner: LifecycleOwner) {
         isForeground = false
-        disconnect()
+        disconnect(reason = "app moved to background")
+    }
+
+    fun reconnect() {
+        disconnect(reason = "reconnect")
+        checkAndReconnect()
     }
 
     private fun checkAndReconnect() {
         if (isForeground && isWifi) {
+            lastSkippedReason = null
             connect()
         } else {
             disconnect()
+            val reason = when {
+                !isForeground -> "app not in foreground"
+                !isWifi -> "network is not validated Wi-Fi"
+                else -> "connection requirements not met"
+            }
+            if (lastSkippedReason != reason) {
+                logcat(LogPriority.DEBUG) { "Komga SSE not connecting: $reason" }
+                lastSkippedReason = reason
+            }
         }
     }
 
@@ -122,11 +138,22 @@ class KomgaSseClient(
         )
     }
 
-    private fun disconnect() {
+    private fun disconnect(reason: String? = null) {
+        val hadActiveConnection = eventSource != null || isConnecting
         eventSource?.cancel()
         eventSource = null
         isConnecting = false
-        logcat(LogPriority.INFO) { "Komga SSE disconnected" }
+        if (hadActiveConnection) {
+            logcat(LogPriority.INFO) {
+                buildString {
+                    append("Komga SSE disconnected")
+                    reason?.let {
+                        append(": ")
+                        append(it)
+                    }
+                }
+            }
+        }
     }
 
     private fun handleEvent(type: String?, data: String) {
