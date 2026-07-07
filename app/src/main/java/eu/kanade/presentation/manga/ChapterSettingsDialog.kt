@@ -62,9 +62,10 @@ fun ChapterSettingsDialog(
     onResetToDefault: () -> Unit,
 ) {
     var showSetAsDefaultDialog by rememberSaveable { mutableStateOf(false) }
-    val supportsChapterCoverDisplay =
-        manga?.let { Injekt.get<tachiyomi.domain.source.service.SourceManager>().get(it.source)?.isKomgaSource() } ==
-            true
+    val sourceManager = remember { Injekt.get<tachiyomi.domain.source.service.SourceManager>() }
+    val supportsChapterCoverDisplay = remember(manga) {
+        manga?.let { sourceManager.get(it.source)?.isKomgaSource() } == true
+    }
     if (showSetAsDefaultDialog) {
         SetAsDefaultDialog(
             onDismissRequest = { showSetAsDefaultDialog = false },

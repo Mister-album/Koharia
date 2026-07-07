@@ -212,7 +212,7 @@ class KomgaApi(
     }
 
     private fun resolveSourceForUrl(url: String): KomgaSource? {
-        val targetBaseUrl = url.substringBefore("/api/v1/").trimEnd('/')
+        val targetBaseUrl = url.substringBefore("/api/").trimEnd('/')
         return sourceManager.getOnlineSources()
             .filterIsInstance<KomgaSource>()
             .firstOrNull { it.baseUrl.trimEnd('/') == targetBaseUrl }

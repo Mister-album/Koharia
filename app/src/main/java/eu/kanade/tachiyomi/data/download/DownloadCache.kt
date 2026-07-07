@@ -381,12 +381,15 @@ class DownloadCache(
             rootDownloadsDirMutex.withLock {
                 val updatedRootDir = RootDirectory(storageManager.getDownloadsDirectory())
 
+                val sourceDirsByUri = mutableMapOf<String, SourceDirectory>()
                 updatedRootDir.sourceDirs = sources.mapNotNull { source ->
-                    provider.findSourceDir(source)?.let { source.id to SourceDirectory(it) }
+                    val dir = provider.findSourceDir(source) ?: return@mapNotNull null
+                    val uriStr = dir.uri.toString()
+                    val sourceDir = sourceDirsByUri.getOrPut(uriStr) { SourceDirectory(dir) }
+                    source.id to sourceDir
                 }.toMap()
 
-                updatedRootDir.sourceDirs.values
-                    .distinctBy { it.dir?.uri.toString() }
+                sourceDirsByUri.values
                     .map { sourceDir ->
                         async {
                             sourceDir.mangaDirs = sourceDir.dir?.listFiles().orEmpty()

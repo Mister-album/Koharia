@@ -89,10 +89,19 @@ class ScopedPreferenceStore(
     }
 
     override fun getAll(): Map<String, *> {
-        val prefix = scopeProvider.currentScope().prefix
-        return preferenceStore.getAll()
+        val scope = scopeProvider.currentScope()
+        val prefix = scope.prefix
+        val allPrefs = preferenceStore.getAll()
+        if (!scope.allowLegacyFallback) {
+            return allPrefs
+                .filterKeys { it.startsWith(prefix) }
+                .mapKeys { (key, _) -> key.removePrefix(prefix) }
+        }
+        val legacyPrefs = allPrefs.filterKeys { !it.contains("::") }
+        val scopedPrefs = allPrefs
             .filterKeys { it.startsWith(prefix) }
             .mapKeys { (key, _) -> key.removePrefix(prefix) }
+        return legacyPrefs + scopedPrefs
     }
 
     private class ScopedPreference<T>(
