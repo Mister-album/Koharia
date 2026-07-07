@@ -34,9 +34,11 @@ import tachiyomi.presentation.core.i18n.stringResource
 fun KomgaFilterDialog(
     onDismissRequest: () -> Unit,
     filters: FilterList,
+    persistentFilteringEnabled: Boolean,
     onReset: () -> Unit,
     onFilter: () -> Unit,
     onUpdate: (FilterList) -> Unit,
+    onPersistentFilteringChange: (Boolean) -> Unit,
 ) {
     val updateFilters = { onUpdate(filters) }
 
@@ -72,6 +74,16 @@ fun KomgaFilterDialog(
             items(filters) {
                 FilterItem(it, updateFilters)
             }
+
+            item {
+                HorizontalDivider()
+                CheckboxItem(
+                    label = stringResource(MR.strings.komga_filter_persist),
+                    checked = persistentFilteringEnabled,
+                ) {
+                    onPersistentFilteringChange(!persistentFilteringEnabled)
+                }
+            }
         }
     }
 }
@@ -80,14 +92,14 @@ fun KomgaFilterDialog(
 private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
     when (filter) {
         is Filter.Header -> {
-            HeadingItem(filter.name)
+            HeadingItem(komgaFilterLabel(filter.name))
         }
         is Filter.Separator -> {
             HorizontalDivider()
         }
         is Filter.CheckBox -> {
             CheckboxItem(
-                label = filter.name,
+                label = komgaFilterLabel(filter.name),
                 checked = filter.state,
             ) {
                 filter.state = !filter.state
@@ -96,7 +108,7 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
         }
         is Filter.TriState -> {
             TriStateItem(
-                label = filter.name,
+                label = komgaFilterLabel(filter.name),
                 state = filter.state.toTriStateFilter(),
             ) {
                 filter.state = filter.state.toTriStateFilter().next().toTriStateInt()
@@ -105,7 +117,7 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
         }
         is Filter.Text -> {
             TextItem(
-                label = filter.name,
+                label = komgaFilterLabel(filter.name),
                 value = filter.state,
             ) {
                 filter.state = it
@@ -114,8 +126,8 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
         }
         is Filter.Select<*> -> {
             SelectItem(
-                label = filter.name,
-                options = filter.values,
+                label = komgaFilterLabel(filter.name),
+                options = filter.values.map { komgaFilterLabel(it.toString()) }.toTypedArray(),
                 selectedIndex = filter.state,
             ) {
                 filter.state = it
@@ -124,15 +136,15 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
         }
         is Filter.Sort -> {
             CollapsibleBox(
-                heading = filter.name,
+                heading = komgaFilterLabel(filter.name),
             ) {
                 Column {
                     filter.values.mapIndexed { index, item ->
                         val sortAscending = filter.state?.ascending
                             ?.takeIf { index == filter.state?.index }
                         SortItem(
-                            label = item,
-                            sortDescending = if (sortAscending != null) !sortAscending else null,
+                            label = komgaFilterLabel(item),
+                            sortDescending = sortAscending?.not(),
                             onClick = {
                                 val ascending = if (index == filter.state?.index) {
                                     !filter.state!!.ascending
@@ -152,7 +164,7 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
         }
         is Filter.Group<*> -> {
             CollapsibleBox(
-                heading = filter.name,
+                heading = komgaFilterLabel(filter.name),
             ) {
                 Column {
                     filter.state
@@ -161,6 +173,47 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun komgaFilterLabel(label: String): String {
+    return when (label) {
+        "Search for" -> stringResource(MR.strings.komga_filter_search_for)
+        "Series" -> stringResource(MR.strings.komga_filter_series)
+        "Read lists" -> stringResource(MR.strings.komga_filter_read_lists)
+        "Books" -> stringResource(MR.strings.komga_filter_books)
+        "Sort" -> stringResource(MR.strings.action_sort)
+        "Relevance" -> stringResource(MR.strings.komga_filter_sort_relevance)
+        "Alphabetically" -> stringResource(MR.strings.komga_filter_sort_alphabetically)
+        "Date added" -> stringResource(MR.strings.komga_filter_sort_date_added)
+        "Date updated" -> stringResource(MR.strings.komga_filter_sort_date_updated)
+        "Random" -> stringResource(MR.strings.action_sort_random)
+        "Unread" -> stringResource(MR.strings.unread)
+        "In Progress" -> stringResource(MR.strings.komga_filter_in_progress)
+        "Read" -> stringResource(MR.strings.komga_filter_read)
+        "Oneshot" -> stringResource(MR.strings.komga_filter_oneshot)
+        "Libraries" -> stringResource(MR.strings.komga_filter_libraries)
+        "Collection" -> stringResource(MR.strings.komga_filter_collection)
+        "None" -> stringResource(MR.strings.none)
+        "Status" -> stringResource(MR.strings.status)
+        "Ongoing" -> stringResource(MR.strings.ongoing)
+        "Ended" -> stringResource(MR.strings.komga_filter_status_ended)
+        "Abandoned" -> stringResource(MR.strings.komga_filter_status_abandoned)
+        "Hiatus" -> stringResource(MR.strings.on_hiatus)
+        "Genres" -> stringResource(MR.strings.komga_filter_genres)
+        "Tags" -> stringResource(MR.strings.komga_filter_tags)
+        "Publishers" -> stringResource(MR.strings.komga_filter_publishers)
+        "Writer" -> stringResource(MR.strings.komga_filter_author_writer)
+        "Penciller" -> stringResource(MR.strings.komga_filter_author_penciller)
+        "Inker" -> stringResource(MR.strings.komga_filter_author_inker)
+        "Colorist" -> stringResource(MR.strings.komga_filter_author_colorist)
+        "Letterer" -> stringResource(MR.strings.komga_filter_author_letterer)
+        "Cover" -> stringResource(MR.strings.komga_filter_author_cover)
+        "Editor" -> stringResource(MR.strings.komga_filter_author_editor)
+        "Translator" -> stringResource(MR.strings.komga_filter_author_translator)
+        "Conceptor" -> stringResource(MR.strings.komga_filter_author_conceptor)
+        else -> label
     }
 }
 

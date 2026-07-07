@@ -81,6 +81,7 @@ class KomgaLibraryScreenModel(
                     listing = listing,
                     filters = source.getFilterList(),
                     toolbarQuery = query,
+                    persistentFilteringEnabled = (source as? KomgaSource)?.isPersistentFilteringEnabled() == true,
                 )
             }
         }
@@ -132,7 +133,9 @@ class KomgaLibraryScreenModel(
     fun resetFilters() {
         if (source !is CatalogueSource) return
 
-        mutableState.update { it.copy(filters = source.getFilterList()) }
+        (source as? KomgaSource)?.resetPersistentFilters()
+        val filters = source.getFilterList()
+        mutableState.update { it.copy(filters = filters) }
     }
 
     fun setListing(listing: Listing) {
@@ -155,15 +158,24 @@ class KomgaLibraryScreenModel(
         val input = state.value.listing as? Listing.Search
             ?: Listing.Search(query = null, filters = source.getFilterList())
 
+        val nextFilters = filters ?: input.filters
+        (source as? KomgaSource)?.savePersistentFilterState(nextFilters)
+
         mutableState.update {
             it.copy(
                 listing = input.copy(
                     query = query ?: input.query,
-                    filters = filters ?: input.filters,
+                    filters = nextFilters,
                 ),
                 toolbarQuery = query ?: input.query,
             )
         }
+    }
+
+    fun setPersistentFilteringEnabled(enabled: Boolean) {
+        val komgaSource = source as? KomgaSource ?: return
+        komgaSource.setPersistentFilteringEnabled(enabled, state.value.filters)
+        mutableState.update { it.copy(persistentFilteringEnabled = enabled) }
     }
 
     fun searchGenre(genreName: String) {
@@ -289,6 +301,7 @@ class KomgaLibraryScreenModel(
                     komgaLibraries = persistentListOf(),
                     selectedKomgaLibraryId = null,
                     isRefreshing = false,
+                    persistentFilteringEnabled = komgaSource.isPersistentFilteringEnabled(),
                 )
             }
             refreshSignal.value += 1
@@ -303,7 +316,10 @@ class KomgaLibraryScreenModel(
                 state.value.selectedKomgaLibraryId
                     ?.takeIf { selectedId -> libraries.any { it.id == selectedId } }
             }
-            val filters = komgaSource.buildFilterListForLibrary(selectedLibraryId)
+            val filters = komgaSource.buildFilterListForLibrary(
+                libraryId = selectedLibraryId,
+                preservePersistentFilters = selectedLibraryId == null,
+            )
 
             mutableState.update {
                 it.copy(
@@ -312,6 +328,7 @@ class KomgaLibraryScreenModel(
                     komgaLibraries = libraries.toImmutableList(),
                     selectedKomgaLibraryId = selectedLibraryId,
                     toolbarQuery = null,
+                    persistentFilteringEnabled = komgaSource.isPersistentFilteringEnabled(),
                 )
             }
             if (forceRefresh) {
@@ -327,6 +344,7 @@ class KomgaLibraryScreenModel(
                         komgaLibraries = persistentListOf(),
                         selectedKomgaLibraryId = null,
                         toolbarQuery = null,
+                        persistentFilteringEnabled = komgaSource.isPersistentFilteringEnabled(),
                     )
                 }
             }
@@ -377,6 +395,7 @@ class KomgaLibraryScreenModel(
         val komgaLibraries: ImmutableList<LibraryDto> = persistentListOf(),
         val selectedKomgaLibraryId: String? = null,
         val isRefreshing: Boolean = false,
+        val persistentFilteringEnabled: Boolean = false,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }
