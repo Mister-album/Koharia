@@ -273,6 +273,12 @@ class KomgaSource :
         }
     }
 
+    fun resetPersistentFilters() {
+        preferences.edit()
+            .remove(PREF_PERSISTENT_FILTERS_STATE)
+            .apply()
+    }
+
     fun savePersistentFilterState(filters: FilterList) {
         if (!isPersistentFilteringEnabled()) return
 

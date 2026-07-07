@@ -23,8 +23,8 @@ import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.CollapsibleBox
 import tachiyomi.presentation.core.components.HeadingItem
-import tachiyomi.presentation.core.components.RadioItem
 import tachiyomi.presentation.core.components.SelectItem
+import tachiyomi.presentation.core.components.SortItem
 import tachiyomi.presentation.core.components.TextItem
 import tachiyomi.presentation.core.components.TriStateItem
 import tachiyomi.presentation.core.components.material.Button
@@ -140,13 +140,20 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
             ) {
                 Column {
                     filter.values.mapIndexed { index, item ->
-                        RadioItem(
+                        val sortAscending = filter.state?.ascending
+                            ?.takeIf { index == filter.state?.index }
+                        SortItem(
                             label = komgaFilterLabel(item),
-                            selected = filter.state?.index == index,
+                            sortDescending = sortAscending?.not(),
                             onClick = {
+                                val ascending = if (index == filter.state?.index) {
+                                    !filter.state!!.ascending
+                                } else {
+                                    filter.state?.ascending ?: true
+                                }
                                 filter.state = Filter.Sort.Selection(
                                     index = index,
-                                    ascending = true,
+                                    ascending = ascending,
                                 )
                                 onUpdate()
                             },

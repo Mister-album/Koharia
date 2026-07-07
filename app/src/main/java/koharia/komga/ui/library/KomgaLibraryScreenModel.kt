@@ -133,8 +133,8 @@ class KomgaLibraryScreenModel(
     fun resetFilters() {
         if (source !is CatalogueSource) return
 
+        (source as? KomgaSource)?.resetPersistentFilters()
         val filters = source.getFilterList()
-        (source as? KomgaSource)?.savePersistentFilterState(filters)
         mutableState.update { it.copy(filters = filters) }
     }
 
