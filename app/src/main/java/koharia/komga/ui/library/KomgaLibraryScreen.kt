@@ -9,19 +9,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.ExperimentalMaterialApi
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -35,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.IntOffset
@@ -57,7 +51,6 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import eu.kanade.tachiyomi.ui.source.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
 import kotlinx.coroutines.channels.Channel
@@ -183,12 +176,11 @@ data class KomgaLibraryScreen(
                     KomgaLibraryToolbar(
                         searchQuery = state.toolbarQuery,
                         onSearchQueryChange = screenModel::setToolbarQuery,
-                        source = screenModel.source,
                         displayMode = screenModel.displayMode,
                         onDisplayModeChange = { screenModel.displayMode = it },
+                        showFilterAction = state.filters.isNotEmpty(),
+                        onFilterClick = screenModel::openFilterSheet,
                         navigateUp = navigateUp.takeIf { showNavigationUp },
-                        onHelpClick = onHelpClick,
-                        onSettingsClick = { navigator.push(SourcePreferencesScreen(sourceId)) },
                         onSearch = screenModel::search,
                     )
 
@@ -218,23 +210,6 @@ data class KomgaLibraryScreen(
                                 )
                             }
                         }
-                        if (state.filters.isNotEmpty()) {
-                            FilterChip(
-                                selected = state.listing is KomgaLibraryScreenModel.Listing.Search,
-                                onClick = screenModel::openFilterSheet,
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Outlined.FilterList,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .size(FilterChipDefaults.IconSize),
-                                    )
-                                },
-                                label = {
-                                    Text(text = stringResource(MR.strings.action_filter))
-                                },
-                            )
-                        }
                     }
 
                     HorizontalDivider()
@@ -256,7 +231,7 @@ data class KomgaLibraryScreen(
                     contentPadding = paddingValues,
                     showLibraryBadges = false,
                     onWebViewClick = onWebViewClick,
-                    onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
+                    onHelpClick = onHelpClick,
                     onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
                     onMangaLongClick = {},
                     modifier = Modifier.offset { IntOffset(x = 0, y = pullOffsetPx.roundToInt()) },
@@ -280,9 +255,11 @@ data class KomgaLibraryScreen(
                 KomgaFilterDialog(
                     onDismissRequest = onDismissRequest,
                     filters = state.filters,
+                    persistentFilteringEnabled = state.persistentFilteringEnabled,
                     onReset = screenModel::resetFilters,
                     onFilter = { screenModel.search(filters = state.filters) },
                     onUpdate = screenModel::setFilters,
+                    onPersistentFilteringChange = screenModel::setPersistentFilteringEnabled,
                 )
             }
             else -> {}

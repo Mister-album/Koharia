@@ -3,6 +3,7 @@ package koharia.komga.ui.library.components
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
@@ -16,8 +17,6 @@ import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
-import eu.kanade.tachiyomi.source.ConfigurableSource
-import eu.kanade.tachiyomi.source.Source
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.i18n.MR
@@ -27,17 +26,14 @@ import tachiyomi.presentation.core.i18n.stringResource
 fun KomgaLibraryToolbar(
     searchQuery: String?,
     onSearchQueryChange: (String?) -> Unit,
-    source: Source?,
     displayMode: LibraryDisplayMode,
     onDisplayModeChange: (LibraryDisplayMode) -> Unit,
+    showFilterAction: Boolean,
+    onFilterClick: () -> Unit,
     navigateUp: (() -> Unit)?,
-    onHelpClick: () -> Unit,
-    onSettingsClick: () -> Unit,
     onSearch: (String) -> Unit,
     scrollBehavior: TopAppBarScrollBehavior? = null,
 ) {
-    val isConfigurableSource = source is ConfigurableSource
-
     var selectingDisplayMode by remember { mutableStateOf(false) }
 
     SearchToolbar(
@@ -62,11 +58,12 @@ fun KomgaLibraryToolbar(
                                 onClick = { selectingDisplayMode = true },
                             ),
                         )
-                        if (isConfigurableSource) {
+                        if (showFilterAction) {
                             add(
-                                AppBar.OverflowAction(
-                                    title = stringResource(MR.strings.action_settings),
-                                    onClick = onSettingsClick,
+                                AppBar.Action(
+                                    title = stringResource(MR.strings.action_filter),
+                                    icon = Icons.Outlined.FilterList,
+                                    onClick = onFilterClick,
                                 ),
                             )
                         }

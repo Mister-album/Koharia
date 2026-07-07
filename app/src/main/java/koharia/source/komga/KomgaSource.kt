@@ -28,6 +28,9 @@ import koharia.komga.domain.repository.KomgaRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.Credentials
 import okhttp3.Dns
@@ -229,20 +232,82 @@ class KomgaSource :
         ).apply {
             if (fetchFilterStatus != FetchFilterStatus.FETCHED) {
                 val message = if (fetchFilterStatus == FetchFilterStatus.NOT_FETCHED && fetchFiltersAttempts >= 3) {
-                    "Failed to fetch filtering options from the server"
+                    application.stringResource(MR.strings.komga_filter_fetch_failed)
                 } else {
-                    "Press \"Reset\" to show filtering options"
+                    application.stringResource(MR.strings.komga_filter_fetch_hint)
                 }
 
                 add(0, Filter.Header(message))
                 add(1, Filter.Separator())
             }
 
-            addAll(authors.map { (role, items) -> AuthorGroup(role, items.map { AuthorFilter(it) }) })
+            if (authors.isNotEmpty()) {
+                add(Filter.Header(application.stringResource(MR.strings.author)))
+                addAll(authors.map { (role, items) -> AuthorGroup(role, items.map { AuthorFilter(it) }) })
+            }
             add(SeriesSort())
         }
 
-        return FilterList(filters)
+        return FilterList(filters).also {
+            if (isPersistentFilteringEnabled()) {
+                applyPersistentFilterState(it)
+            }
+        }
+    }
+
+    fun isPersistentFilteringEnabled(): Boolean {
+        return preferences.getBoolean(PREF_PERSISTENT_FILTERS_ENABLED, false)
+    }
+
+    fun setPersistentFilteringEnabled(enabled: Boolean, filters: FilterList) {
+        preferences.edit()
+            .putBoolean(PREF_PERSISTENT_FILTERS_ENABLED, enabled)
+            .apply()
+
+        if (enabled) {
+            savePersistentFilterState(filters)
+        } else {
+            preferences.edit()
+                .remove(PREF_PERSISTENT_FILTERS_STATE)
+                .apply()
+        }
+    }
+
+    fun savePersistentFilterState(filters: FilterList) {
+        if (!isPersistentFilteringEnabled()) return
+
+        preferences.edit()
+            .putString(PREF_PERSISTENT_FILTERS_STATE, json.encodeToString(filters.toPersistentFilterState()))
+            .apply()
+    }
+
+    private fun applyPersistentFilterState(filters: FilterList) {
+        val saved = preferences.getString(PREF_PERSISTENT_FILTERS_STATE, null)
+            ?.let { runCatching { json.decodeFromString<PersistentFilterState>(it) }.getOrNull() }
+            ?: return
+
+        filters.forEach { filter ->
+            when (filter) {
+                is Filter.CheckBox -> saved.checkBoxes[filter.name]?.let { filter.state = it }
+                is Filter.Select<*> -> saved.selects[filter.name]?.let { index ->
+                    if (index in filter.values.indices) {
+                        filter.state = index
+                    }
+                }
+                is Filter.Sort -> saved.sorts[filter.name]?.let { sort ->
+                    if (sort.index in filter.values.indices) {
+                        filter.state = Filter.Sort.Selection(sort.index, sort.ascending)
+                    }
+                }
+                is Filter.Group<*> -> {
+                    val selected = saved.groups[filter.name] ?: return@forEach
+                    filter.state
+                        .filterIsInstance<Filter.CheckBox>()
+                        .forEach { it.state = it.persistentOptionKey() in selected }
+                }
+                else -> {}
+            }
+        }
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
@@ -369,8 +434,12 @@ class KomgaSource :
         preferences.unregisterOnSharedPreferenceChangeListener(listener)
     }
 
-    fun buildFilterListForLibrary(libraryId: String?): FilterList {
+    fun buildFilterListForLibrary(libraryId: String?, preservePersistentFilters: Boolean = false): FilterList {
         val filters = getFilterList()
+        if (libraryId == null && preservePersistentFilters && isPersistentFilteringEnabled()) {
+            return filters
+        }
+
         filters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.forEach { option ->
             option.state = if (libraryId == null) {
                 true
@@ -493,6 +562,20 @@ class KomgaSource :
     }
 }
 
+@Serializable
+private data class PersistentFilterState(
+    val checkBoxes: Map<String, Boolean> = emptyMap(),
+    val selects: Map<String, Int> = emptyMap(),
+    val sorts: Map<String, PersistentSortState> = emptyMap(),
+    val groups: Map<String, Set<String>> = emptyMap(),
+)
+
+@Serializable
+private data class PersistentSortState(
+    val index: Int,
+    val ascending: Boolean,
+)
+
 private enum class FetchFilterStatus {
     NOT_FETCHED,
     FETCHING,
@@ -537,6 +620,46 @@ private fun FilterList.withSelectedMultiOption(groupName: String, optionId: Stri
     )
 }
 
+private fun FilterList.toPersistentFilterState(): PersistentFilterState {
+    val checkBoxes = mutableMapOf<String, Boolean>()
+    val selects = mutableMapOf<String, Int>()
+    val sorts = mutableMapOf<String, PersistentSortState>()
+    val groups = mutableMapOf<String, Set<String>>()
+
+    forEach { filter ->
+        when (filter) {
+            is Filter.CheckBox -> checkBoxes[filter.name] = filter.state
+            is Filter.Select<*> -> selects[filter.name] = filter.state
+            is Filter.Sort -> {
+                filter.state?.let { sorts[filter.name] = PersistentSortState(it.index, it.ascending) }
+            }
+            is Filter.Group<*> -> {
+                groups[filter.name] = filter.state
+                    .filterIsInstance<Filter.CheckBox>()
+                    .filter { it.state }
+                    .map { it.persistentOptionKey() }
+                    .toSet()
+            }
+            else -> {}
+        }
+    }
+
+    return PersistentFilterState(
+        checkBoxes = checkBoxes,
+        selects = selects,
+        sorts = sorts,
+        groups = groups,
+    )
+}
+
+private fun Filter.CheckBox.persistentOptionKey(): String {
+    return when (this) {
+        is UriMultiSelectOption -> id
+        is AuthorFilter -> "${author.name}\u001F${author.role}"
+        else -> name
+    }
+}
+
 private const val PREF_ADDRESS = "Address"
 private const val PREF_USERNAME = "Username"
 private const val PREF_PASSWORD = "Password"
@@ -544,6 +667,8 @@ private const val PREF_API_KEY = "API key"
 private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
 private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({size})"
+private const val PREF_PERSISTENT_FILTERS_ENABLED = "Persistent filters enabled"
+private const val PREF_PERSISTENT_FILTERS_STATE = "Persistent filters state"
 
 private fun PreferenceScreen.addEditTextPreference(
     title: String,
