@@ -395,7 +395,8 @@ class DownloadProvider(
     }
 
     private fun shouldIncludeLegacySharedDirsInLookup(source: Source): Boolean {
-        return false
+        return source is KomgaSource &&
+            komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
     }
 
     private fun buildSourceDirsCacheKey(downloadsDir: UniFile, source: Source): String {

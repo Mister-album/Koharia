@@ -142,6 +142,22 @@ class KomgaSharedDownloadIndexManager(
         repository.deleteByServerId(serverId)
     }
 
+    suspend fun deleteMangaIndexedDownloads(mangaId: Long, sourceId: Long) {
+        val relativePaths = repository.getChapterSeedsByMangaId(mangaId, sourceId)
+            .mapNotNull { seed ->
+                val fingerprint = KomgaChapterMemo.readFingerprint(seed.memo) ?: return@mapNotNull null
+                repository.findByServerIdAndBookUrl(sourceId, fingerprint.bookUrl)
+            }
+            .map(KomgaSharedDownloadMatch::localRelativePath)
+            .distinct()
+
+        relativePaths.forEach { relativePath ->
+            deleteLocalRelativePath(relativePath)
+            repository.deleteByLocalRelativePath(relativePath)
+        }
+        invalidateLocalLookupCaches()
+    }
+
     suspend fun cleanupServerDownloads(
         serverId: Long,
         cleanupMode: koharia.source.komga.DownloadCleanupMode,

@@ -165,6 +165,12 @@ class KomgaSharedDownloadRepository(
             .awaitAsList()
     }
 
+    suspend fun getChapterSeedsByMangaId(mangaId: Long, sourceId: Long): List<KomgaChapterSeed> {
+        return database.komga_shared_download_matchesQueries
+            .getKomgaChapterSeedsByMangaId(mangaId, sourceId, ::mapChapterSeed)
+            .awaitAsList()
+    }
+
     suspend fun updateChapterMemo(chapterId: Long, memo: JsonObject) {
         database.komga_shared_download_matchesQueries.updateChapterMemoOnly(
             memo = memo,

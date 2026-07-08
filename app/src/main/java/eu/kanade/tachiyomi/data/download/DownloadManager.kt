@@ -327,6 +327,12 @@ class DownloadManager(
             if (removeQueued) {
                 downloader.removeFromQueue(manga)
             }
+            if (
+                source is KomgaSource &&
+                komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
+            ) {
+                komgaSharedDownloadIndexManager.deleteMangaIndexedDownloads(manga.id, source.id)
+            }
             provider.findMangaDir(manga.title, source)?.let { mangaDir ->
                 komgaSharedDownloadIndexManager.relativePathOf(mangaDir)?.let {
                     komgaSharedDownloadIndexManager.deleteIndexedPathPrefix(it)

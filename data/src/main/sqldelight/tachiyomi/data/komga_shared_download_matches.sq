@@ -191,6 +191,22 @@ ON M._id = C.manga_id
 WHERE M.source = :sourceId
 ORDER BY C._id ASC;
 
+getKomgaChapterSeedsByMangaId:
+SELECT
+    C._id,
+    C.url,
+    C.name,
+    C.scanlator,
+    C.memo,
+    M.title,
+    M.source
+FROM chapters C
+INNER JOIN mangas M
+ON M._id = C.manga_id
+WHERE C.manga_id = :mangaId
+AND M.source = :sourceId
+ORDER BY C._id ASC;
+
 updateChapterMemoOnly:
 UPDATE chapters
 SET memo = :memo
