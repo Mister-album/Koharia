@@ -1,0 +1,197 @@
+import kotlinx.serialization.json.JsonObject;
+
+CREATE TABLE komga_shared_download_matches(
+    server_id INTEGER NOT NULL,
+    book_url TEXT NOT NULL,
+    series_url TEXT NOT NULL DEFAULT '',
+    file_hash TEXT NOT NULL DEFAULT '',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    isbn TEXT NOT NULL DEFAULT '',
+    series_title TEXT NOT NULL DEFAULT '',
+    book_title TEXT NOT NULL DEFAULT '',
+    number_sort REAL NOT NULL DEFAULT 0,
+    local_relative_path TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_kind TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_verified_at INTEGER NOT NULL,
+    PRIMARY KEY(server_id, book_url)
+);
+
+CREATE INDEX idx_komga_shared_download_matches_book_url
+ON komga_shared_download_matches(book_url);
+
+CREATE INDEX idx_komga_shared_download_matches_file_hash
+ON komga_shared_download_matches(file_hash);
+
+CREATE INDEX idx_komga_shared_download_matches_local_relative_path
+ON komga_shared_download_matches(local_relative_path);
+
+findByServerIdAndBookUrl:
+SELECT *
+FROM komga_shared_download_matches
+WHERE server_id = :serverId
+AND book_url = :bookUrl;
+
+findByServerId:
+SELECT *
+FROM komga_shared_download_matches
+WHERE server_id = :serverId;
+
+findByFileHash:
+SELECT *
+FROM komga_shared_download_matches
+WHERE file_hash = :fileHash
+AND file_hash != ''
+ORDER BY last_verified_at DESC, created_at DESC;
+
+findByIsbn:
+SELECT *
+FROM komga_shared_download_matches
+WHERE lower(isbn) = lower(:isbn)
+AND isbn != ''
+ORDER BY last_verified_at DESC, created_at DESC;
+
+findBySeriesNumberSize:
+SELECT *
+FROM komga_shared_download_matches
+WHERE lower(series_title) = lower(:seriesTitle)
+AND number_sort = :numberSort
+AND size_bytes = :sizeBytes
+AND series_title != ''
+ORDER BY last_verified_at DESC, created_at DESC;
+
+findByBookTitleSize:
+SELECT *
+FROM komga_shared_download_matches
+WHERE lower(book_title) = lower(:bookTitle)
+AND size_bytes = :sizeBytes
+AND book_title != ''
+ORDER BY last_verified_at DESC, created_at DESC;
+
+findByLocalRelativePath:
+SELECT *
+FROM komga_shared_download_matches
+WHERE local_relative_path = :localRelativePath;
+
+findByLocalRelativePathPrefix:
+SELECT *
+FROM komga_shared_download_matches
+WHERE local_relative_path = :localRelativePathPrefix
+OR local_relative_path LIKE :localRelativePathPrefix || '/%';
+
+countByLocalRelativePath:
+SELECT count(*)
+FROM komga_shared_download_matches
+WHERE local_relative_path = :localRelativePath;
+
+upsert:
+INSERT INTO komga_shared_download_matches(
+    server_id,
+    book_url,
+    series_url,
+    file_hash,
+    size_bytes,
+    isbn,
+    series_title,
+    book_title,
+    number_sort,
+    local_relative_path,
+    file_name,
+    file_kind,
+    created_at,
+    last_verified_at
+)
+VALUES (
+    :serverId,
+    :bookUrl,
+    :seriesUrl,
+    :fileHash,
+    :sizeBytes,
+    :isbn,
+    :seriesTitle,
+    :bookTitle,
+    :numberSort,
+    :localRelativePath,
+    :fileName,
+    :fileKind,
+    :createdAt,
+    :lastVerifiedAt
+)
+ON CONFLICT(server_id, book_url)
+DO UPDATE
+SET
+    series_url = :seriesUrl,
+    file_hash = :fileHash,
+    size_bytes = :sizeBytes,
+    isbn = :isbn,
+    series_title = :seriesTitle,
+    book_title = :bookTitle,
+    number_sort = :numberSort,
+    local_relative_path = :localRelativePath,
+    file_name = :fileName,
+    file_kind = :fileKind,
+    last_verified_at = :lastVerifiedAt;
+
+deleteByServerId:
+DELETE FROM komga_shared_download_matches
+WHERE server_id = :serverId;
+
+deleteByServerIdAndBookUrl:
+DELETE FROM komga_shared_download_matches
+WHERE server_id = :serverId
+AND book_url = :bookUrl;
+
+deleteByLocalRelativePath:
+DELETE FROM komga_shared_download_matches
+WHERE local_relative_path = :localRelativePath;
+
+updateLocalRelativePath:
+UPDATE komga_shared_download_matches
+SET
+    local_relative_path = :newLocalRelativePath,
+    file_name = :newFileName,
+    last_verified_at = :lastVerifiedAt
+WHERE local_relative_path = :oldLocalRelativePath;
+
+updateLocalRelativePathPrefix:
+UPDATE komga_shared_download_matches
+SET
+    local_relative_path = replace(local_relative_path, :oldPrefix, :newPrefix),
+    last_verified_at = :lastVerifiedAt
+WHERE local_relative_path = :oldPrefix
+OR local_relative_path LIKE :oldPrefix || '/%';
+
+getKomgaChapterSeedByUrl:
+SELECT
+    C._id,
+    C.url,
+    C.name,
+    C.scanlator,
+    C.memo,
+    M.title,
+    M.source
+FROM chapters C
+INNER JOIN mangas M
+ON M._id = C.manga_id
+WHERE C.url = :chapterUrl
+LIMIT 1;
+
+getKomgaChapterSeedsBySourceId:
+SELECT
+    C._id,
+    C.url,
+    C.name,
+    C.scanlator,
+    C.memo,
+    M.title
+FROM chapters C
+INNER JOIN mangas M
+ON M._id = C.manga_id
+WHERE M.source = :sourceId
+ORDER BY C._id ASC;
+
+updateChapterMemoOnly:
+UPDATE chapters
+SET memo = :memo
+WHERE _id = :chapterId;

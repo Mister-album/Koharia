@@ -62,6 +62,7 @@ class KomgaServerProfilesScreen : Screen() {
         val navigator = LocalNavigator.currentOrThrow
         val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
         val localConfigManager = remember { Injekt.get<KomgaLocalConfigManager>() }
+        val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
         val profiles by serverPreferences.profilesChanges().collectAsState(initial = serverPreferences.getProfiles())
         val activeServerId by serverPreferences.activeServerId.collectAsState()
         val localConfigMode by serverPreferences.localConfigMode.collectAsState()
@@ -71,6 +72,8 @@ class KomgaServerProfilesScreen : Screen() {
         var showModeHelpDialog by rememberSaveable { mutableStateOf(false) }
         var pendingServerName by rememberSaveable { mutableStateOf<String?>(null) }
         var profileToDelete by remember { mutableStateOf<KomgaServerProfile?>(null) }
+        val addServerTitle = stringResource(MR.strings.komga_server_settings_add_title)
+        val editServerTitle = stringResource(MR.strings.komga_server_settings_edit_title)
 
         fun createServer(name: String) {
             val newProfile = KomgaServerProfile(
@@ -83,7 +86,8 @@ class KomgaServerProfilesScreen : Screen() {
             navigator.push(
                 KomgaServerSettingsScreen(
                     sourceId = newProfile.id,
-                    titleOverride = newProfile.name,
+                    titleOverride = addServerTitle,
+                    isNew = true,
                 ),
             )
         }
@@ -178,19 +182,11 @@ class KomgaServerProfilesScreen : Screen() {
                             profile = profile,
                             isActive = activeServerId == profile.id,
                             onSelect = { serverPreferences.activeServerId.set(profile.id) },
-                            onOpen = {
-                                navigator.push(
-                                    KomgaServerSettingsScreen(
-                                        sourceId = profile.id,
-                                        titleOverride = profile.name,
-                                    ),
-                                )
-                            },
                             onEdit = {
                                 navigator.push(
                                     KomgaServerSettingsScreen(
                                         sourceId = profile.id,
-                                        titleOverride = profile.name,
+                                        titleOverride = editServerTitle,
                                     ),
                                 )
                             },
@@ -241,14 +237,7 @@ class KomgaServerProfilesScreen : Screen() {
                 serverName = profile.name,
                 onDismissRequest = { profileToDelete = null },
                 onDelete = {
-                    val remainingProfiles = profiles.filterNot { it.id == profile.id }
-                    serverPreferences.setProfiles(remainingProfiles)
-                    when {
-                        remainingProfiles.isEmpty() ->
-                            serverPreferences.activeServerId.set(KomgaServerPreferences.NO_ACTIVE_SERVER)
-                        activeServerId == profile.id ->
-                            serverPreferences.activeServerId.set(remainingProfiles.first().id)
-                    }
+                    serverRemovalManager.removeServer(profile.id)
                     profileToDelete = null
                 },
             )
@@ -296,7 +285,6 @@ private fun ServerRow(
     profile: KomgaServerProfile,
     isActive: Boolean,
     onSelect: () -> Unit,
-    onOpen: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -321,7 +309,7 @@ private fun ServerRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onOpen)
+                .clickable(onClick = onSelect)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),

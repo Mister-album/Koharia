@@ -40,6 +40,7 @@ class DownloadManager(
     private val context: Context,
     private val provider: DownloadProvider = Injekt.get(),
     private val cache: DownloadCache = Injekt.get(),
+    private val komgaSharedDownloadIndexManager: KomgaSharedDownloadIndexManager = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
@@ -297,7 +298,10 @@ class DownloadManager(
             removeFromDownloadQueue(filteredChapters)
 
             val (mangaDir, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
-            chapterDirs.forEach { it.delete() }
+            chapterDirs.distinctBy { it.uri.toString() }.forEach {
+                komgaSharedDownloadIndexManager.deleteIndexedPath(it)
+                it.delete()
+            }
             cache.removeChapters(filteredChapters, manga)
 
             // Delete manga directory if empty
@@ -323,7 +327,12 @@ class DownloadManager(
             if (removeQueued) {
                 downloader.removeFromQueue(manga)
             }
-            provider.findMangaDir(manga.title, source)?.delete()
+            provider.findMangaDir(manga.title, source)?.let { mangaDir ->
+                komgaSharedDownloadIndexManager.relativePathOf(mangaDir)?.let {
+                    komgaSharedDownloadIndexManager.deleteIndexedPathPrefix(it)
+                }
+                mangaDir.delete()
+            }
             cache.removeManga(manga)
 
             // Delete source directory if empty
@@ -424,6 +433,7 @@ class DownloadManager(
         downloader.removeFromQueue(manga)
 
         val capitalizationChanged = oldFolder.name.equals(newName, ignoreCase = true)
+        val oldRelativePathPrefix = komgaSharedDownloadIndexManager.relativePathOf(oldFolder)
         if (capitalizationChanged) {
             val tempName = newName + Downloader.TMP_DIR_SUFFIX
             if (!oldFolder.renameTo(tempName)) {
@@ -433,7 +443,13 @@ class DownloadManager(
         }
 
         if (oldFolder.renameTo(newName)) {
-            cache.renameManga(manga, oldFolder, newTitle)
+            val renamedFolder = provider.findMangaDir(newTitle, source) ?: oldFolder
+            oldRelativePathPrefix?.let { oldPrefix ->
+                komgaSharedDownloadIndexManager.relativePathOf(renamedFolder)?.let { newPrefix ->
+                    komgaSharedDownloadIndexManager.updateIndexedPathPrefix(oldPrefix, newPrefix)
+                }
+            }
+            cache.renameManga(manga, renamedFolder, newTitle)
         } else {
             logcat(LogPriority.ERROR) { "Failed to rename manga download folder: ${oldFolder.name}" }
         }
@@ -466,9 +482,15 @@ class DownloadManager(
 
         if (oldDownload.name == newName) return
 
+        val oldRelativePath = komgaSharedDownloadIndexManager.relativePathOf(oldDownload)
         if (oldDownload.renameTo(newName)) {
             cache.removeChapter(oldChapter, manga)
             cache.addChapter(newName, mangaDir, manga)
+            oldRelativePath?.let { oldPath ->
+                mangaDir.findFile(newName)?.let { renamedFile ->
+                    komgaSharedDownloadIndexManager.updateIndexedPath(oldPath, renamedFile)
+                }
+            }
         } else {
             logcat(LogPriority.ERROR) { "Could not rename downloaded chapter: ${oldNames.joinToString()}" }
         }

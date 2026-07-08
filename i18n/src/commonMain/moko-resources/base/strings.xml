@@ -1209,4 +1209,14 @@
     <string name="donationCampaign.paragraph3">Regardless, Koharia will continue to be maintained by me and the volunteers, and it will stay open source.</string>
     <string name="donationCampaign.contactPlatform">Discord</string>
     <string name="donationCampaign.dismiss">Dismiss</string>
+    <string name="komga_unsaved_changes_title">Unsaved changes</string>
+    <string name="komga_unsaved_changes_message">You have unsaved changes. Are you sure you want to discard them?</string>
+    <string name="komga_action_discard">Discard</string>
+    <string name="komga_server_settings_add_title">Add Server</string>
+    <string name="komga_server_settings_edit_title">Edit Server</string>
+    <string name="komga_pref_auth_mode_title">Authentication Mode</string>
+    <string name="komga_pref_auth_mode_api_key">API Key</string>
+    <string name="komga_pref_auth_mode_credentials">Username and Password</string>
+    <string name="komga_server_settings_help_title">Server Configuration Guide</string>
+    <string name="komga_server_settings_help_content">Configure your server address and authentication method here. Use the API Key mode for a streamlined setup, or Username/Password if preferred.</string>
 </resources>

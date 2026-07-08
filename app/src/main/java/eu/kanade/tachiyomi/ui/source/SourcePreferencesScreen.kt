@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.util.TypedValue
 import android.view.View
 import androidx.appcompat.view.ContextThemeWrapper
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -44,9 +45,15 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
+object DataStoreHolder {
+    var dataStore: androidx.preference.PreferenceDataStore? = null
+}
+
 class SourcePreferencesScreen(
     val sourceId: Long,
     private val titleOverride: String? = null,
+    private val actions: @Composable RowScope.() -> Unit = {},
+    private val navigateUpOverride: (() -> Unit)? = null,
 ) : Screen() {
 
     @Composable
@@ -63,8 +70,11 @@ class SourcePreferencesScreen(
             topBar = {
                 AppBar(
                     title = titleOverride ?: Injekt.get<SourceManager>().getOrStub(sourceId).toString(),
-                    navigateUp = navigator::pop,
+                    navigateUp = {
+                        if (navigateUpOverride != null) navigateUpOverride.invoke() else navigator.pop()
+                    },
                     scrollBehavior = it,
+                    actions = actions,
                 )
             },
         ) { contentPadding ->
@@ -139,7 +149,7 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
         val sourceScreen = preferenceManager.createPreferenceScreen(requireContext())
 
         if (source is ConfigurableSource) {
-            val dataStore = SharedPreferencesDataStore(source.sourcePreferences())
+            val dataStore = DataStoreHolder.dataStore ?: SharedPreferencesDataStore(source.sourcePreferences())
             preferenceManager.preferenceDataStore = dataStore
 
             source.setupPreferenceScreen(sourceScreen)

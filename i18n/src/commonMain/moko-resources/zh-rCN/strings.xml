@@ -1069,4 +1069,14 @@
     <string name="komga_download_directory_mode_per_server_explanation">按服务器分开：每台服务器都会把下载内容保存到自己的源目录中。</string>
     <string name="komga_download_directory_mode_shared_explanation">共用目录：多个 Komga 服务器会共用同一个下载源目录。</string>
     <string name="komga_server_management_delete_hint">删除服务器的方法：在服务器列表中将对应服务器向左滑动，出现删除按钮后，再确认删除。</string>
+    <string name="komga_unsaved_changes_title">未保存的更改</string>
+    <string name="komga_unsaved_changes_message">您有未保存的更改。确定要放弃它们吗？</string>
+    <string name="komga_action_discard">放弃</string>
+    <string name="komga_server_settings_add_title">添加服务器</string>
+    <string name="komga_server_settings_edit_title">修改服务器</string>
+    <string name="komga_pref_auth_mode_title">验证模式</string>
+    <string name="komga_pref_auth_mode_api_key">API Key</string>
+    <string name="komga_pref_auth_mode_credentials">用户名和密码</string>
+    <string name="komga_server_settings_help_title">服务器配置说明</string>
+    <string name="komga_server_settings_help_content">配置服务器地址及验证模式。切换API Key或者用户名密码登录。</string>
 </resources>

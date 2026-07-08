@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS komga_shared_download_matches(
+    server_id INTEGER NOT NULL,
+    book_url TEXT NOT NULL,
+    series_url TEXT NOT NULL DEFAULT '',
+    file_hash TEXT NOT NULL DEFAULT '',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    isbn TEXT NOT NULL DEFAULT '',
+    series_title TEXT NOT NULL DEFAULT '',
+    book_title TEXT NOT NULL DEFAULT '',
+    number_sort REAL NOT NULL DEFAULT 0,
+    local_relative_path TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_kind TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_verified_at INTEGER NOT NULL,
+    PRIMARY KEY(server_id, book_url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_komga_shared_download_matches_book_url
+ON komga_shared_download_matches(book_url);
+
+CREATE INDEX IF NOT EXISTS idx_komga_shared_download_matches_file_hash
+ON komga_shared_download_matches(file_hash);
+
+CREATE INDEX IF NOT EXISTS idx_komga_shared_download_matches_local_relative_path
+ON komga_shared_download_matches(local_relative_path);
