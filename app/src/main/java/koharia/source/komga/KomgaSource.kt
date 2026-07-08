@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.komga.api.KomgaApiClient
+import koharia.komga.api.dto.BookDto
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.domain.repository.KomgaRepository
 import kotlinx.coroutines.CoroutineScope
@@ -71,8 +72,12 @@ class KomgaSource(
     private val password: String
         get() = preferences.getString(PREF_PASSWORD, "")!!
 
+    private val authMode: String
+        get() = preferences.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
+
     private val apiKey: String
-        get() = preferences.getString(PREF_API_KEY, "")!!
+        get() = preferences.getString(PREF_API_KEY, null)
+            ?: preferences.getString(PREF_API_KEY_WRONG_CASE, "")!!
 
     private val defaultLibraries: Set<String>
         get() = preferences.getStringSet(PREF_DEFAULT_LIBRARIES, emptySet()) ?: emptySet()
@@ -97,21 +102,22 @@ class KomgaSource(
             }
         }
 
-    override val client: OkHttpClient
-        get() = network.client.newBuilder()
-            .addInterceptor(KomgaOfflineInterceptor(application))
-            .addNetworkInterceptor(KomgaCacheControlInterceptor(application))
-            .authenticator { _, response ->
-                if (apiKey.isNotBlank() || response.request.header("Authorization") != null) {
-                    null
-                } else {
-                    response.request.newBuilder()
-                        .addHeader("Authorization", Credentials.basic(username, password))
-                        .build()
-                }
+    override val client = super.client.newBuilder()
+        .addInterceptor(KomgaOfflineInterceptor(application))
+        .addNetworkInterceptor(KomgaCacheControlInterceptor(application))
+        .addInterceptor { chain ->
+            val original = chain.request()
+            val newBuilder = original.newBuilder()
+
+            if (authMode == AUTH_MODE_API_KEY && apiKey.isNotBlank()) {
+                newBuilder.addHeader("X-Komga-Api-Key", apiKey)
+            } else if (authMode == AUTH_MODE_CREDENTIALS && username.isNotBlank() && password.isNotBlank()) {
+                newBuilder.addHeader("Authorization", Credentials.basic(username, password))
             }
-            .dns(Dns.SYSTEM)
-            .build()
+            chain.proceed(newBuilder.build())
+        }
+        .dns(Dns.SYSTEM)
+        .build()
 
     override fun popularMangaRequest(page: Int): Request =
         repository.popularMangaRequest(page, defaultLibraries, consumeBrowseCachePolicy())
@@ -164,6 +170,17 @@ class KomgaSource(
                 .awaitSuccess()
                 .let { apiClient.parse<koharia.komga.api.dto.UserDto>(it) }
         } catch (e: Exception) {
+            null
+        }
+    }
+
+    suspend fun getBookDetails(bookUrl: String): BookDto? {
+        if (!hasValidBaseUrl()) return null
+        return try {
+            client.newCall(apiClient.detailsRequest(bookUrl, KomgaCachePolicy.NetworkFirst))
+                .awaitSuccess()
+                .let { apiClient.parse<BookDto>(it) }
+        } catch (_: Exception) {
             null
         }
     }
@@ -321,7 +338,36 @@ class KomgaSource(
             validationMessage = screen.context.stringResource(MR.strings.komga_pref_address_validation),
             key = PREF_ADDRESS,
         )
-        screen.addEditTextPreference(
+        val authModePref = androidx.preference.ListPreference(screen.context).apply {
+            key = PREF_AUTH_MODE
+            title = screen.context.stringResource(MR.strings.komga_pref_auth_mode_title)
+            entries = arrayOf(
+                screen.context.stringResource(MR.strings.komga_pref_auth_mode_credentials),
+                screen.context.stringResource(MR.strings.komga_pref_auth_mode_api_key),
+            )
+            entryValues = arrayOf(AUTH_MODE_CREDENTIALS, AUTH_MODE_API_KEY)
+            setDefaultValue(defaultAuthMode())
+            summary = "%s"
+        }.also(screen::addPreference)
+
+        val usernamePref = screen.addEditTextPreference(
+            title = screen.context.stringResource(MR.strings.komga_pref_username_title),
+            default = "",
+            summary = username.ifBlank { screen.context.stringResource(MR.strings.komga_pref_username_summary) },
+            key = PREF_USERNAME,
+        )
+        val passwordPref = screen.addEditTextPreference(
+            title = screen.context.stringResource(MR.strings.komga_pref_password_title),
+            default = "",
+            summary = if (password.isBlank()) {
+                screen.context.stringResource(MR.strings.komga_pref_password_summary)
+            } else {
+                "*".repeat(password.length)
+            },
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+            key = PREF_PASSWORD,
+        )
+        val apiKeyPref = screen.addEditTextPreference(
             title = screen.context.stringResource(MR.strings.komga_pref_api_key_title),
             default = "",
             summary = if (apiKey.isBlank()) {
@@ -332,39 +378,101 @@ class KomgaSource(
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
             key = PREF_API_KEY,
         )
-        if (apiKey.isBlank()) {
-            screen.addEditTextPreference(
-                title = screen.context.stringResource(MR.strings.komga_pref_username_title),
-                default = "",
-                summary = username.ifBlank { screen.context.stringResource(MR.strings.komga_pref_username_summary) },
-                key = PREF_USERNAME,
-            )
-            screen.addEditTextPreference(
-                title = screen.context.stringResource(MR.strings.komga_pref_password_title),
-                default = "",
-                summary = if (password.isBlank()) {
-                    screen.context.stringResource(MR.strings.komga_pref_password_summary)
-                } else {
-                    "*".repeat(password.length)
-                },
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
-                key = PREF_PASSWORD,
-            )
+
+        fun updateAuthFieldsVisibility(mode: String) {
+            val isCredentials = mode == AUTH_MODE_CREDENTIALS
+            usernamePref.isVisible = isCredentials
+            passwordPref.isVisible = isCredentials
+            apiKeyPref.isVisible = !isCredentials
         }
 
-        MultiSelectListPreference(screen.context).apply {
+        authModePref.setOnPreferenceChangeListener { _, newValue ->
+            updateAuthFieldsVisibility(newValue as String)
+            true
+        }
+
+        val initialAuthMode = screen.preferenceManager.preferenceDataStore
+            ?.getString(PREF_AUTH_MODE, null)
+            ?: preferences.getString(PREF_AUTH_MODE, null)
+            ?: defaultAuthMode()
+        updateAuthFieldsVisibility(initialAuthMode)
+
+        androidx.preference.Preference(screen.context).apply {
             key = PREF_DEFAULT_LIBRARIES
             title = screen.context.stringResource(MR.strings.komga_pref_default_libraries_title)
-            summary = buildString {
-                append(screen.context.stringResource(MR.strings.komga_pref_default_libraries_summary))
-                if (libraries.isEmpty()) {
-                    append(' ')
-                    append(screen.context.stringResource(MR.strings.komga_pref_default_libraries_reload_hint))
-                }
-            }
-            entries = libraries.map { it.name }.toTypedArray()
-            entryValues = libraries.map { it.id }.toTypedArray()
+            summary = screen.context.stringResource(MR.strings.komga_pref_default_libraries_summary)
             setDefaultValue(emptySet<String>())
+
+            var isFetching = false
+
+            setOnPreferenceClickListener { pref ->
+                if (isFetching) return@setOnPreferenceClickListener true
+                isFetching = true
+
+                val dataStore = pref.preferenceManager.preferenceDataStore
+                val currentAddress = (dataStore?.getString(PREF_ADDRESS, "") ?: "").removeSuffix("/")
+                val currentAuthMode =
+                    dataStore?.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
+                val currentUsername = dataStore?.getString(PREF_USERNAME, "") ?: ""
+                val currentPassword = dataStore?.getString(PREF_PASSWORD, "") ?: ""
+                val currentApiKey = dataStore?.getString(PREF_API_KEY, null)
+                    ?: dataStore?.getString(PREF_API_KEY_WRONG_CASE, null)
+                    ?: ""
+
+                val currentSelection = dataStore?.getStringSet(PREF_DEFAULT_LIBRARIES, emptySet()) ?: emptySet()
+
+                scope.launch(Dispatchers.Main) {
+                    val fetchedLibraries = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        try {
+                            if (currentAddress.isBlank()) return@withContext emptyList<LibraryDto>()
+
+                            val tempHeaders = Headers.Builder().apply {
+                                if (currentAuthMode == AUTH_MODE_API_KEY && currentApiKey.isNotBlank()) {
+                                    add("X-Komga-Api-Key", currentApiKey)
+                                } else if (currentAuthMode == AUTH_MODE_CREDENTIALS && currentUsername.isNotBlank() &&
+                                    currentPassword.isNotBlank()
+                                ) {
+                                    add("Authorization", Credentials.basic(currentUsername, currentPassword))
+                                }
+                            }.build()
+
+                            val cleanClient = Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>().client
+                            val tempApiClient = KomgaApiClient(currentAddress, tempHeaders, cleanClient, json)
+                            val tempRepo = KomgaRepository(currentAddress, tempApiClient)
+                            tempRepo.fetchFilterOptions(forceRefresh = true).libraries
+                        } catch (e: Exception) {
+                            emptyList<LibraryDto>()
+                        }
+                    }
+
+                    if (fetchedLibraries.isEmpty()) {
+                        isFetching = false
+                        return@launch
+                    }
+
+                    val names = fetchedLibraries.map { it.name }.toTypedArray<CharSequence>()
+                    val checkedItems = fetchedLibraries.map { it.id in currentSelection }.toBooleanArray()
+                    val newSelection = currentSelection.toMutableSet()
+
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(screen.context)
+                        .setTitle(screen.context.stringResource(MR.strings.komga_pref_default_libraries_title))
+                        .setMultiChoiceItems(names, checkedItems) { _, which, isChecked ->
+                            val id = fetchedLibraries[which].id
+                            if (isChecked) newSelection.add(id) else newSelection.remove(id)
+                        }
+                        .setPositiveButton(android.R.string.ok) { _, _ ->
+                            if (newSelection != currentSelection) {
+                                if (callChangeListener(newSelection)) {
+                                    dataStore?.putStringSet(PREF_DEFAULT_LIBRARIES, newSelection)
+                                }
+                            }
+                        }
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setOnDismissListener { isFetching = false }
+                        .show()
+                }
+                true
+            }
         }.also(screen::addPreference)
 
         screen.addEditTextPreference(
@@ -525,6 +633,8 @@ class KomgaSource(
             PREF_USERNAME,
             PREF_PASSWORD,
             PREF_API_KEY,
+            PREF_API_KEY_WRONG_CASE,
+            PREF_AUTH_MODE,
             PREF_DEFAULT_LIBRARIES,
             PREF_CHAPTER_NAME_TEMPLATE,
         )
@@ -534,6 +644,10 @@ class KomgaSource(
             val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
             (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
         }
+    }
+
+    private fun defaultAuthMode(): String {
+        return if (apiKey.isNotBlank()) AUTH_MODE_API_KEY else AUTH_MODE_CREDENTIALS
     }
 }
 
@@ -639,6 +753,11 @@ private const val PREF_ADDRESS = "Address"
 private const val PREF_USERNAME = "Username"
 private const val PREF_PASSWORD = "Password"
 private const val PREF_API_KEY = "API key"
+private const val PREF_API_KEY_WRONG_CASE = "Api key"
+
+private const val PREF_AUTH_MODE = "AuthMode"
+private const val AUTH_MODE_CREDENTIALS = "Credentials"
+private const val AUTH_MODE_API_KEY = "ApiKey"
 private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
 private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({size})"
@@ -654,8 +773,8 @@ private fun PreferenceScreen.addEditTextPreference(
     validate: ((String) -> Boolean)? = null,
     validationMessage: String? = null,
     key: String = title,
-) {
-    EditTextPreference(context).apply {
+): EditTextPreference {
+    return EditTextPreference(context).apply {
         this.key = key
         this.title = title
         this.summary = summary

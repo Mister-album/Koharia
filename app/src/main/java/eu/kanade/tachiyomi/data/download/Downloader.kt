@@ -76,6 +76,7 @@ class Downloader(
     private val context: Context,
     private val provider: DownloadProvider,
     private val cache: DownloadCache,
+    private val komgaSharedDownloadIndexManager: KomgaSharedDownloadIndexManager = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val chapterCache: ChapterCache = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
@@ -542,6 +543,16 @@ class Downloader(
             }
             cache.addChapter(chapterDirname, mangaDir, download.manga)
 
+            val indexedFile = if (downloadPreferences.saveChaptersAsCBZ.get()) {
+                mangaDir.findFile("$chapterDirname.cbz")
+            } else {
+                mangaDir.findFile(chapterDirname)
+            }
+            val komgaSource = download.source as? KomgaSource
+            if (komgaSource != null && indexedFile != null) {
+                komgaSharedDownloadIndexManager.indexDownloadedChapter(download.chapter, komgaSource, indexedFile)
+            }
+
             DiskUtil.createNoMediaFile(tmpDir, context)
 
             download.status = Download.State.DOWNLOADED
@@ -684,6 +695,15 @@ class Downloader(
                     }
 
                     cache.addChapter(resolvedFinalFileName, mangaDir, download.manga)
+                    (download.source as? KomgaSource)?.let { komgaSource ->
+                        mangaDir.findFile(resolvedFinalFileName)?.let { finalizedFile ->
+                            komgaSharedDownloadIndexManager.indexDownloadedChapter(
+                                download.chapter,
+                                komgaSource,
+                                finalizedFile,
+                            )
+                        }
+                    }
                     DiskUtil.createNoMediaFile(mangaDir, context)
                     download.status = Download.State.DOWNLOADED
 

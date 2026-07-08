@@ -27,6 +27,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,6 +45,7 @@ import eu.kanade.presentation.more.settings.widget.PreferenceGroupHeader
 import eu.kanade.presentation.util.Screen
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import me.saket.swipe.SwipeAction
 import me.saket.swipe.SwipeableActionsBox
 import tachiyomi.i18n.MR
@@ -62,15 +64,19 @@ class KomgaServerProfilesScreen : Screen() {
         val navigator = LocalNavigator.currentOrThrow
         val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
         val localConfigManager = remember { Injekt.get<KomgaLocalConfigManager>() }
+        val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
         val profiles by serverPreferences.profilesChanges().collectAsState(initial = serverPreferences.getProfiles())
         val activeServerId by serverPreferences.activeServerId.collectAsState()
         val localConfigMode by serverPreferences.localConfigMode.collectAsState()
         val downloadDirectoryMode by serverPreferences.downloadDirectoryMode.collectAsState()
+        val scope = rememberCoroutineScope()
 
         var showAddDialog by rememberSaveable { mutableStateOf(false) }
         var showModeHelpDialog by rememberSaveable { mutableStateOf(false) }
         var pendingServerName by rememberSaveable { mutableStateOf<String?>(null) }
         var profileToDelete by remember { mutableStateOf<KomgaServerProfile?>(null) }
+        val addServerTitle = stringResource(MR.strings.komga_server_settings_add_title)
+        val editServerTitle = stringResource(MR.strings.komga_server_settings_edit_title)
 
         fun createServer(name: String) {
             val newProfile = KomgaServerProfile(
@@ -83,7 +89,8 @@ class KomgaServerProfilesScreen : Screen() {
             navigator.push(
                 KomgaServerSettingsScreen(
                     sourceId = newProfile.id,
-                    titleOverride = newProfile.name,
+                    titleOverride = addServerTitle,
+                    isNew = true,
                 ),
             )
         }
@@ -178,19 +185,11 @@ class KomgaServerProfilesScreen : Screen() {
                             profile = profile,
                             isActive = activeServerId == profile.id,
                             onSelect = { serverPreferences.activeServerId.set(profile.id) },
-                            onOpen = {
-                                navigator.push(
-                                    KomgaServerSettingsScreen(
-                                        sourceId = profile.id,
-                                        titleOverride = profile.name,
-                                    ),
-                                )
-                            },
                             onEdit = {
                                 navigator.push(
                                     KomgaServerSettingsScreen(
                                         sourceId = profile.id,
-                                        titleOverride = profile.name,
+                                        titleOverride = editServerTitle,
                                     ),
                                 )
                             },
@@ -241,15 +240,10 @@ class KomgaServerProfilesScreen : Screen() {
                 serverName = profile.name,
                 onDismissRequest = { profileToDelete = null },
                 onDelete = {
-                    val remainingProfiles = profiles.filterNot { it.id == profile.id }
-                    serverPreferences.setProfiles(remainingProfiles)
-                    when {
-                        remainingProfiles.isEmpty() ->
-                            serverPreferences.activeServerId.set(KomgaServerPreferences.NO_ACTIVE_SERVER)
-                        activeServerId == profile.id ->
-                            serverPreferences.activeServerId.set(remainingProfiles.first().id)
+                    scope.launch {
+                        serverRemovalManager.removeServer(profile.id)
+                        profileToDelete = null
                     }
-                    profileToDelete = null
                 },
             )
         }
@@ -296,7 +290,6 @@ private fun ServerRow(
     profile: KomgaServerProfile,
     isActive: Boolean,
     onSelect: () -> Unit,
-    onOpen: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -321,7 +314,7 @@ private fun ServerRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onOpen)
+                .clickable(onClick = onSelect)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),

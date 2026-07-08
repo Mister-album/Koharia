@@ -119,6 +119,24 @@ class KomgaLocalConfigManager(
         )
     }
 
+    fun clearScopeForServer(serverId: Long) {
+        if (serverPreferences.localConfigMode.get() != LocalConfigMode.Separate) {
+            logcat(LogPriority.DEBUG) {
+                "Skipping scoped config cleanup for serverId=$serverId because local config mode is shared"
+            }
+            return
+        }
+
+        val targetPrefix = serverScopePrefix(serverId)
+        val keysToDelete = preferenceStore.getAll().keys.filter { it.startsWith(targetPrefix) }
+        if (keysToDelete.isEmpty()) return
+
+        logcat(LogPriority.DEBUG) {
+            "Clearing ${keysToDelete.size} scoped preference entries for serverId=$serverId in scope $targetPrefix"
+        }
+        keysToDelete.forEach { preferenceStore.getString(it).delete() }
+    }
+
     private fun cloneSharedScopeToProfiles(profiles: List<KomgaServerProfile>) {
         if (profiles.isEmpty()) return
 

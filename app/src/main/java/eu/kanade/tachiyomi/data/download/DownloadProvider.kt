@@ -32,7 +32,10 @@ class DownloadProvider(
     private val storageManager: StorageManager = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
     private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
+    private val komgaSharedDownloadIndexManager: KomgaSharedDownloadIndexManager = Injekt.get(),
 ) {
+    private val sourceDirsCache = mutableMapOf<String, CacheEntry<List<UniFile>>>()
+
     private val disallowNonAsciiFilenames: Boolean
         get() = libraryPreferences.disallowNonAsciiFilenames.get()
 
@@ -83,10 +86,7 @@ class DownloadProvider(
      * @param source the source to query.
      */
     fun findSourceDir(source: Source): UniFile? {
-        val downloadsDir = downloadsDir ?: return null
-        return getSourceDirNames(source)
-            .asSequence()
-            .mapNotNull(downloadsDir::findFile)
+        return findSourceDirs(source)
             .firstOrNull()
     }
 
@@ -121,9 +121,16 @@ class DownloadProvider(
     ): UniFile? {
         val mangaDir = findMangaDir(mangaTitle, source)
         val validNames = getValidChapterDirNames(chapterName, chapterScanlator, chapterUrl)
-        val result = validNames.asSequence()
+        val directResult = validNames.asSequence()
             .mapNotNull { mangaDir?.findFile(it) }
             .firstOrNull()
+        val result = directResult ?: when {
+            source is KomgaSource &&
+                komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared -> {
+                komgaSharedDownloadIndexManager.findSharedChapterDir(chapterUrl, mangaTitle, source)
+            }
+            else -> null
+        }
 
         logcat {
             buildString {
@@ -132,8 +139,9 @@ class DownloadProvider(
                 append("mangaTitle=$mangaTitle ")
                 append("chapterName=$chapterName ")
                 append("chapterUrl=$chapterUrl ")
-                append("mangaDir=${mangaDir?.displayablePath ?: "<missing>"} ")
+                append("mangaDirName=${mangaDir?.name ?: "<missing>"} ")
                 append("hit=${result?.name ?: "<none>"} ")
+                append("directHit=${directResult?.name ?: "<none>"} ")
                 append("candidates=${validNames.joinToString(limit = 8, truncated = "...")}")
                 if (result == null) {
                     append(" hasMangaDir=${mangaDir != null}")
@@ -152,11 +160,9 @@ class DownloadProvider(
      * @param source the source of the chapter.
      */
     fun findChapterDirs(chapters: List<Chapter>, manga: Manga, source: Source): Pair<UniFile?, List<UniFile>> {
-        val mangaDir = findMangaDir(manga.title, source) ?: return null to emptyList()
+        val mangaDir = findMangaDir(manga.title, source)
         return mangaDir to chapters.mapNotNull { chapter ->
-            getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url).asSequence()
-                .mapNotNull { mangaDir.findFile(it) }
-                .firstOrNull()
+            findChapterDir(chapter.name, chapter.scanlator, chapter.url, manga.title, source)
         }
     }
 
@@ -181,10 +187,7 @@ class DownloadProvider(
 
     fun getSourceDirNames(source: Source): List<String> {
         val primaryName = getSourceDirName(source)
-        if (
-            source !is KomgaSource ||
-            komgaServerPreferences.downloadDirectoryMode.get() != DownloadDirectoryMode.Shared
-        ) {
+        if (!shouldIncludeLegacySharedDirsInLookup(source)) {
             return listOf(primaryName)
         }
 
@@ -318,6 +321,8 @@ class DownloadProvider(
         val SUPPORTED_CHAPTER_FILE_EXTENSIONS =
             setOf("cbz", "zip", "rar", "cbr", "7z", "cb7", "tar", "cbt", "epub", "pdf")
 
+        private const val CACHE_TTL_MS = 10_000L
+
         fun isSupportedChapterFileExtension(extension: String?): Boolean {
             return extension?.lowercase() in SUPPORTED_CHAPTER_FILE_EXTENSIONS
         }
@@ -325,9 +330,18 @@ class DownloadProvider(
 
     private fun findSourceDirs(source: Source): List<UniFile> {
         val downloadsDir = downloadsDir ?: return emptyList()
-        return getSourceDirNames(source)
-            .mapNotNull(downloadsDir::findFile)
-            .distinctBy { it.uri.toString() }
+        val cacheKey = buildSourceDirsCacheKey(downloadsDir, source)
+        return synchronized(sourceDirsCache) {
+            sourceDirsCache[cacheKey]
+                ?.takeUnless { it.isExpired() }
+                ?.value
+                ?: getSourceDirNames(source)
+                    .mapNotNull(downloadsDir::findFile)
+                    .distinctBy { it.uri.toString() }
+                    .also { dirs ->
+                        sourceDirsCache[cacheKey] = CacheEntry(dirs)
+                    }
+        }
     }
 
     private fun resolveSourceDir(downloadsDir: UniFile, source: Source, sourceDirName: String): UniFile? {
@@ -361,6 +375,7 @@ class DownloadProvider(
         }
 
         return downloadsDir.createDirectory(sourceDirName)
+            ?.also { invalidateSourceDirCache() }
     }
 
     private fun legacyKomgaSharedSourceDirNames(): List<String> {
@@ -377,5 +392,29 @@ class DownloadProvider(
             "$sourceName (${KomgaSource.SOURCE_LANG.uppercase()})",
             disallowNonAscii = disallowNonAsciiFilenames,
         )
+    }
+
+    private fun shouldIncludeLegacySharedDirsInLookup(source: Source): Boolean {
+        return source is KomgaSource &&
+            komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
+    }
+
+    private fun buildSourceDirsCacheKey(downloadsDir: UniFile, source: Source): String {
+        return "${downloadsDir.uri}|${getSourceDirNames(source).joinToString(separator = "|")}"
+    }
+
+    private fun invalidateSourceDirCache() {
+        synchronized(sourceDirsCache) {
+            sourceDirsCache.clear()
+        }
+    }
+
+    private data class CacheEntry<T>(
+        val value: T,
+        val cachedAt: Long = System.currentTimeMillis(),
+    ) {
+        fun isExpired(): Boolean {
+            return System.currentTimeMillis() - cachedAt >= CACHE_TTL_MS
+        }
     }
 }

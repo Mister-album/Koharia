@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
+import koharia.source.komga.KomgaServerRemovalManager
 import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.ScopedPreferenceStore
@@ -46,6 +47,15 @@ class PreferenceModule(val app: Application) : InjektModule {
             ScopedPreferenceStore(
                 preferenceStore = get<PreferenceStore>(),
                 scopeProvider = get<KomgaLocalConfigManager>(),
+            )
+        }
+        addSingletonFactory {
+            KomgaServerRemovalManager(
+                serverPreferences = get<KomgaServerPreferences>(),
+                localConfigManager = get<KomgaLocalConfigManager>(),
+                downloadProvider = get(),
+                downloadCache = get(),
+                komgaSharedDownloadIndexManager = get(),
             )
         }
         addSingletonFactory {

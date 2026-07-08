@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.core.net.toUri
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
+import koharia.source.komga.DownloadDirectoryMode
 import koharia.source.komga.KomgaServerPreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -171,6 +172,12 @@ class DownloadCache(
                 ).any { it in mangaDir.chapterDirs }
             }
         }
+
+        if (komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared) {
+            val source = sourceManager.getOrStub(sourceId)
+            return provider.findChapterDir(chapterName, chapterScanlator, chapterUrl, mangaTitle, source) != null
+        }
+
         return false
     }
 

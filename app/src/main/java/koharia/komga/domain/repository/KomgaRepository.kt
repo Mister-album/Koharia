@@ -15,6 +15,7 @@ import koharia.komga.api.dto.PageDto
 import koharia.komga.api.dto.ReadListDto
 import koharia.komga.api.dto.SeriesDto
 import koharia.komga.api.dto.formatChapterName
+import koharia.komga.api.dto.toChapterMemo
 import koharia.komga.api.dto.toSManga
 import koharia.source.komga.AuthorGroup
 import koharia.source.komga.CollectionSelect
@@ -168,6 +169,7 @@ class KomgaRepository(
             url = "$baseUrl/api/v1/books/$id"
             name = formatChapterName(chapterNameTemplate, isFromReadList)
             scanlator = metadata.authors.filter { it.role == "translator" }.joinToString { it.name }
+            memo = toChapterMemo(baseUrl)
             date_upload = when {
                 metadata.releaseDate != null -> parseDate(metadata.releaseDate)
                 created != null -> parseDateTime(created)

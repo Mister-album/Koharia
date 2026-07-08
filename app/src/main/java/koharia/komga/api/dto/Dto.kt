@@ -1,6 +1,7 @@
 package koharia.komga.api.dto
 
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.komga.download.KomgaChapterMemo
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -165,6 +166,7 @@ data class BookDto(
     val created: String? = null,
     val lastModified: String? = null,
     val fileLastModified: String,
+    val fileHash: String? = null,
     val sizeBytes: Long = 0,
     val size: String = "",
     val media: MediaDto = MediaDto(),
@@ -222,6 +224,8 @@ fun BookDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
     author = metadata.authors.joinToString { it.name }
     artist = author
 }
+
+fun BookDto.toChapterMemo(baseUrl: String): JsonObject = KomgaChapterMemo.buildMemo(baseUrl, this)
 
 fun ReadListDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
     title = name

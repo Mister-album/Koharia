@@ -15,6 +15,8 @@ import eu.kanade.tachiyomi.data.cache.LocalCacheCleaner
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
+import eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager
+import eu.kanade.tachiyomi.data.download.KomgaSharedDownloadRepository
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.JavaScriptEngine
@@ -128,6 +130,8 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { DownloadProvider(app) }
         addSingletonFactory { DownloadManager(app) }
         addSingletonFactory { DownloadCache(app) }
+        addSingletonFactory { KomgaSharedDownloadRepository(get()) }
+        addSingletonFactory { KomgaSharedDownloadIndexManager(get(), get(), get(), get()) }
 
         addSingletonFactory { TrackerManager() }
         addSingletonFactory { DelayedTrackingStore(app) }
