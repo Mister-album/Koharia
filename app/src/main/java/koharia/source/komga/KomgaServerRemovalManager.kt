@@ -4,7 +4,8 @@ import androidx.core.content.edit
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -16,18 +17,18 @@ class KomgaServerRemovalManager(
     private val komgaSharedDownloadIndexManager: KomgaSharedDownloadIndexManager,
 ) {
 
-    fun removeServer(
+    suspend fun removeServer(
         serverId: Long,
         options: DownloadCleanupMode = DownloadCleanupMode.Preserve,
     ) {
         val currentProfiles = serverPreferences.getProfiles()
         val profile = currentProfiles.find { it.id == serverId } ?: return
 
-        clearServerSettingsIfNeeded(serverId)
-        runBlocking {
+        withContext(Dispatchers.IO) {
+            clearServerSettingsIfNeeded(serverId)
             cleanupDownloads(profile, options)
+            localConfigManager.clearScopeForServer(serverId)
         }
-        localConfigManager.clearScopeForServer(serverId)
         serverPreferences.setProfiles(currentProfiles - profile)
 
         logcat(LogPriority.DEBUG) {

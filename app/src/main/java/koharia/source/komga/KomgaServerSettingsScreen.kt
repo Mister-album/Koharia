@@ -14,6 +14,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -23,6 +24,7 @@ import eu.kanade.tachiyomi.data.preference.DeferredSharedPreferencesDataStore
 import eu.kanade.tachiyomi.source.sourcePreferences
 import eu.kanade.tachiyomi.ui.source.DataStoreHolder
 import eu.kanade.tachiyomi.ui.source.SourcePreferencesScreen
+import kotlinx.coroutines.launch
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -41,6 +43,7 @@ class KomgaServerSettingsScreen(
         var showUnsavedDialog by rememberSaveable { mutableStateOf(false) }
         val navigator = LocalNavigator.currentOrThrow
         val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
+        val scope = rememberCoroutineScope()
 
         val komgaSource = remember(sourceId) {
             Injekt.get<SourceManager>().getOrStub(sourceId) as? KomgaSource
@@ -58,14 +61,20 @@ class KomgaServerSettingsScreen(
             }
         }
 
-        fun onCancel() {
-            if (deferredDataStore?.hasUnsavedChanges == true) {
-                showUnsavedDialog = true
-            } else {
+        fun discardAndPop() {
+            scope.launch {
                 if (isNew) {
                     serverRemovalManager.removeServer(sourceId)
                 }
                 navigator.pop()
+            }
+        }
+
+        fun onCancel() {
+            if (deferredDataStore?.hasUnsavedChanges == true) {
+                showUnsavedDialog = true
+            } else {
+                discardAndPop()
             }
         }
 
@@ -104,10 +113,7 @@ class KomgaServerSettingsScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         showUnsavedDialog = false
-                        if (isNew) {
-                            serverRemovalManager.removeServer(sourceId)
-                        }
-                        navigator.pop()
+                        discardAndPop()
                     }) {
                         Text(text = stringResource(MR.strings.komga_action_discard))
                     }

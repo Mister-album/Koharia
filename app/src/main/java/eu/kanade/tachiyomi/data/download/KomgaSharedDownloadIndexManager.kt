@@ -183,31 +183,29 @@ class KomgaSharedDownloadIndexManager(
     private fun relativePathFromDocumentIds(root: UniFile, item: UniFile): String? {
         val rootDocumentId = root.documentIdOrNull() ?: return null
         val itemDocumentId = item.documentIdOrNull() ?: return null
-        if (!itemDocumentId.startsWith(rootDocumentId)) return null
-        return itemDocumentId.removePrefix(rootDocumentId)
-            .trimStart('/', '\\')
-            .replace('\\', '/')
-            .takeIf { it.isNotBlank() }
+        return relativePathAfterPrefix(rootDocumentId, itemDocumentId)
     }
 
     private fun relativePathFromUriPath(root: UniFile, item: UniFile): String? {
         val rootPath = root.uri.path?.trimEnd('/', '\\') ?: return null
         val itemPath = item.uri.path ?: return null
-        if (!itemPath.startsWith(rootPath)) return null
-        return itemPath.removePrefix(rootPath)
-            .trimStart('/', '\\')
-            .replace('\\', '/')
-            .takeIf { it.isNotBlank() }
+        return relativePathAfterPrefix(rootPath, itemPath)
     }
 
     private fun relativePathFromFilePath(root: UniFile, item: UniFile): String? {
         val rootPath = root.filePath?.trimEnd('/', '\\') ?: return null
         val itemPath = item.filePath ?: return null
+        return relativePathAfterPrefix(rootPath, itemPath)
+    }
+
+    private fun relativePathAfterPrefix(rootPath: String, itemPath: String): String? {
+        if (itemPath == rootPath) return null
         if (!itemPath.startsWith(rootPath)) return null
         return itemPath.removePrefix(rootPath)
-            .trimStart('/', '\\')
-            .replace('\\', '/')
-            .takeIf { it.isNotBlank() }
+            .takeIf { it.startsWith('/') || it.startsWith('\\') }
+            ?.trimStart('/', '\\')
+            ?.replace('\\', '/')
+            ?.takeIf { it.isNotBlank() }
     }
 
     private suspend fun findSharedChapterDir(
@@ -399,14 +397,7 @@ class KomgaSharedDownloadIndexManager(
         val localDownloadsByName = buildLocalDownloadsByName(mangaTitle)
 
         seeds.forEach { seed ->
-            val fingerprint = KomgaChapterMemo.readFingerprint(seed.memo)
-                ?: resolveFingerprintForIndexing(
-                    chapterUrl = seed.chapterUrl,
-                    source = source,
-                    chapterId = seed.chapterId,
-                    existingMemo = seed.memo,
-                )
-                ?: return@forEach
+            val fingerprint = KomgaChapterMemo.readFingerprint(seed.memo) ?: return@forEach
 
             if (repository.findByServerIdAndBookUrl(source.id, fingerprint.bookUrl) != null) {
                 return@forEach

@@ -73,10 +73,11 @@ class KomgaSource(
         get() = preferences.getString(PREF_PASSWORD, "")!!
 
     private val authMode: String
-        get() = preferences.getString(PREF_AUTH_MODE, AUTH_MODE_CREDENTIALS)!!
+        get() = preferences.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
 
     private val apiKey: String
-        get() = preferences.getString(PREF_API_KEY, "")!!
+        get() = preferences.getString(PREF_API_KEY, null)
+            ?: preferences.getString(PREF_API_KEY_WRONG_CASE, "")!!
 
     private val defaultLibraries: Set<String>
         get() = preferences.getStringSet(PREF_DEFAULT_LIBRARIES, emptySet()) ?: emptySet()
@@ -345,7 +346,7 @@ class KomgaSource(
                 screen.context.stringResource(MR.strings.komga_pref_auth_mode_api_key),
             )
             entryValues = arrayOf(AUTH_MODE_CREDENTIALS, AUTH_MODE_API_KEY)
-            setDefaultValue(AUTH_MODE_CREDENTIALS)
+            setDefaultValue(defaultAuthMode())
             summary = "%s"
         }.also(screen::addPreference)
 
@@ -391,9 +392,9 @@ class KomgaSource(
         }
 
         val initialAuthMode = screen.preferenceManager.preferenceDataStore
-            ?.getString(PREF_AUTH_MODE, AUTH_MODE_CREDENTIALS)
-            ?: preferences.getString(PREF_AUTH_MODE, AUTH_MODE_CREDENTIALS)
-            ?: AUTH_MODE_CREDENTIALS
+            ?.getString(PREF_AUTH_MODE, null)
+            ?: preferences.getString(PREF_AUTH_MODE, null)
+            ?: defaultAuthMode()
         updateAuthFieldsVisibility(initialAuthMode)
 
         androidx.preference.Preference(screen.context).apply {
@@ -411,14 +412,16 @@ class KomgaSource(
                 val dataStore = pref.preferenceManager.preferenceDataStore
                 val currentAddress = (dataStore?.getString(PREF_ADDRESS, "") ?: "").removeSuffix("/")
                 val currentAuthMode =
-                    dataStore?.getString(PREF_AUTH_MODE, AUTH_MODE_CREDENTIALS) ?: AUTH_MODE_CREDENTIALS
+                    dataStore?.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
                 val currentUsername = dataStore?.getString(PREF_USERNAME, "") ?: ""
                 val currentPassword = dataStore?.getString(PREF_PASSWORD, "") ?: ""
-                val currentApiKey = dataStore?.getString(PREF_API_KEY, "") ?: ""
+                val currentApiKey = dataStore?.getString(PREF_API_KEY, null)
+                    ?: dataStore?.getString(PREF_API_KEY_WRONG_CASE, null)
+                    ?: ""
 
                 val currentSelection = dataStore?.getStringSet(PREF_DEFAULT_LIBRARIES, emptySet()) ?: emptySet()
 
-                CoroutineScope(Dispatchers.Main).launch {
+                scope.launch(Dispatchers.Main) {
                     val fetchedLibraries = kotlinx.coroutines.withContext(Dispatchers.IO) {
                         try {
                             if (currentAddress.isBlank()) return@withContext emptyList<LibraryDto>()
@@ -630,6 +633,8 @@ class KomgaSource(
             PREF_USERNAME,
             PREF_PASSWORD,
             PREF_API_KEY,
+            PREF_API_KEY_WRONG_CASE,
+            PREF_AUTH_MODE,
             PREF_DEFAULT_LIBRARIES,
             PREF_CHAPTER_NAME_TEMPLATE,
         )
@@ -639,6 +644,10 @@ class KomgaSource(
             val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
             (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
         }
+    }
+
+    private fun defaultAuthMode(): String {
+        return if (apiKey.isNotBlank()) AUTH_MODE_API_KEY else AUTH_MODE_CREDENTIALS
     }
 }
 
@@ -743,7 +752,8 @@ private fun Filter.CheckBox.persistentOptionKey(): String {
 private const val PREF_ADDRESS = "Address"
 private const val PREF_USERNAME = "Username"
 private const val PREF_PASSWORD = "Password"
-private const val PREF_API_KEY = "Api key"
+private const val PREF_API_KEY = "API key"
+private const val PREF_API_KEY_WRONG_CASE = "Api key"
 
 private const val PREF_AUTH_MODE = "AuthMode"
 private const val AUTH_MODE_CREDENTIALS = "Credentials"

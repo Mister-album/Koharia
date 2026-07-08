@@ -27,6 +27,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,6 +45,7 @@ import eu.kanade.presentation.more.settings.widget.PreferenceGroupHeader
 import eu.kanade.presentation.util.Screen
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import me.saket.swipe.SwipeAction
 import me.saket.swipe.SwipeableActionsBox
 import tachiyomi.i18n.MR
@@ -67,6 +69,7 @@ class KomgaServerProfilesScreen : Screen() {
         val activeServerId by serverPreferences.activeServerId.collectAsState()
         val localConfigMode by serverPreferences.localConfigMode.collectAsState()
         val downloadDirectoryMode by serverPreferences.downloadDirectoryMode.collectAsState()
+        val scope = rememberCoroutineScope()
 
         var showAddDialog by rememberSaveable { mutableStateOf(false) }
         var showModeHelpDialog by rememberSaveable { mutableStateOf(false) }
@@ -237,8 +240,10 @@ class KomgaServerProfilesScreen : Screen() {
                 serverName = profile.name,
                 onDismissRequest = { profileToDelete = null },
                 onDelete = {
-                    serverRemovalManager.removeServer(profile.id)
-                    profileToDelete = null
+                    scope.launch {
+                        serverRemovalManager.removeServer(profile.id)
+                        profileToDelete = null
+                    }
                 },
             )
         }

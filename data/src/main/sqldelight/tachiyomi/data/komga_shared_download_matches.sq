@@ -157,7 +157,7 @@ WHERE local_relative_path = :oldLocalRelativePath;
 updateLocalRelativePathPrefix:
 UPDATE komga_shared_download_matches
 SET
-    local_relative_path = replace(local_relative_path, :oldPrefix, :newPrefix),
+    local_relative_path = :newPrefix || substr(local_relative_path, :oldPrefixLength + 1),
     last_verified_at = :lastVerifiedAt
 WHERE local_relative_path = :oldPrefix
 OR local_relative_path LIKE :oldPrefix || '/%';
