@@ -20,7 +20,11 @@ import eu.kanade.domain.track.interactor.RefreshTracks
 import eu.kanade.domain.track.interactor.SyncChapterProgressWithTrack
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
+import koharia.data.epub.EpubProgressRepositoryImpl
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
+import koharia.domain.epub.interactor.GetEpubProgress
+import koharia.domain.epub.interactor.UpsertEpubProgress
+import koharia.domain.epub.repository.EpubProgressRepository
 import koharia.domain.upcoming.interactor.GetUpcomingManga
 import tachiyomi.data.category.CategoryRepositoryImpl
 import tachiyomi.data.chapter.ChapterRepositoryImpl
@@ -153,6 +157,9 @@ class DomainModule : InjektModule {
         addFactory { UpsertHistory(get()) }
         addFactory { RemoveHistory(get()) }
         addFactory { GetTotalReadDuration(get()) }
+        addSingletonFactory<EpubProgressRepository> { EpubProgressRepositoryImpl(get()) }
+        addFactory { GetEpubProgress(get()) }
+        addFactory { UpsertEpubProgress(get()) }
 
         addFactory { DeleteDownload(get(), get()) }
 

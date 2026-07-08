@@ -1,0 +1,69 @@
+import java.util.Date;
+
+CREATE TABLE epub_progress(
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    book_url TEXT,
+    locator_json TEXT NOT NULL,
+    progression REAL,
+    position_index INTEGER,
+    updated_at INTEGER AS Date NOT NULL,
+    last_synced_at INTEGER AS Date,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX epub_progress_manga_id_index ON epub_progress(manga_id);
+CREATE INDEX epub_progress_updated_at_index ON epub_progress(updated_at);
+
+getByChapterId:
+SELECT
+chapter_id,
+manga_id,
+book_url,
+locator_json,
+progression,
+position_index,
+updated_at,
+last_synced_at
+FROM epub_progress
+WHERE chapter_id = :chapterId;
+
+upsert:
+INSERT INTO epub_progress(
+    chapter_id,
+    manga_id,
+    book_url,
+    locator_json,
+    progression,
+    position_index,
+    updated_at,
+    last_synced_at
+)
+VALUES (
+    :chapterId,
+    :mangaId,
+    :bookUrl,
+    :locatorJson,
+    :progression,
+    :positionIndex,
+    :updatedAt,
+    :lastSyncedAt
+)
+ON CONFLICT(chapter_id)
+DO UPDATE
+SET
+    manga_id = :mangaId,
+    book_url = :bookUrl,
+    locator_json = :locatorJson,
+    progression = :progression,
+    position_index = :positionIndex,
+    updated_at = :updatedAt,
+    last_synced_at = :lastSyncedAt
+WHERE chapter_id = :chapterId;
+
+deleteByChapterId:
+DELETE FROM epub_progress
+WHERE chapter_id = :chapterId;

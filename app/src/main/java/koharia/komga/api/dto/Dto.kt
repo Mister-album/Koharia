@@ -173,6 +173,15 @@ data class BookDto(
     val metadata: BookMetadataDto,
 )
 
+val MediaDto.isEpub: Boolean
+    get() = mediaProfile == "EPUB"
+
+val MediaDto.isDivinaCompatibleEpub: Boolean
+    get() = isEpub && epubDivinaCompatible
+
+val BookDto.isEpub: Boolean
+    get() = media.isEpub
+
 @Serializable
 data class PageDto(
     val number: Int,

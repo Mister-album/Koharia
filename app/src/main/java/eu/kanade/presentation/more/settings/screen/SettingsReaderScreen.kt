@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
+import koharia.epub.settings.EpubReaderPreferences
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableMap
@@ -30,6 +31,7 @@ object SettingsReaderScreen : SearchableSettings {
     @Composable
     override fun getPreferences(): List<Preference> {
         val readerPref = remember { Injekt.get<ReaderPreferences>() }
+        val epubReaderPref = remember { Injekt.get<EpubReaderPreferences>() }
 
         return listOf(
             Preference.PreferenceItem.ListPreference(
@@ -69,6 +71,7 @@ object SettingsReaderScreen : SearchableSettings {
             getWebtoonGroup(readerPreferences = readerPref),
             getNavigationGroup(readerPreferences = readerPref),
             getActionsGroup(readerPreferences = readerPref),
+            getEpubGroup(epubReaderPreferences = epubReaderPref),
         )
     }
 
@@ -419,6 +422,30 @@ object SettingsReaderScreen : SearchableSettings {
                     preference = readerPreferences.folderPerManga,
                     title = stringResource(MR.strings.pref_create_folder_per_manga),
                     subtitle = stringResource(MR.strings.pref_create_folder_per_manga_summary),
+                ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getEpubGroup(epubReaderPreferences: EpubReaderPreferences): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_category_epub_reader),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = epubReaderPreferences.enableNativeReader,
+                    title = stringResource(MR.strings.pref_enable_native_epub_reader),
+                    subtitle = stringResource(MR.strings.pref_enable_native_epub_reader_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = epubReaderPreferences.preferLocalFile,
+                    title = stringResource(MR.strings.pref_prefer_local_epub_file),
+                    subtitle = stringResource(MR.strings.pref_prefer_local_epub_file_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = epubReaderPreferences.syncProgressionToKomga,
+                    title = stringResource(MR.strings.pref_sync_epub_progression_komga),
+                    subtitle = stringResource(MR.strings.pref_sync_epub_progression_komga_summary),
                 ),
             ),
         )

@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
+import koharia.epub.settings.EpubReaderPreferences
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaServerRemovalManager
@@ -81,6 +82,9 @@ class PreferenceModule(val app: Application) : InjektModule {
         }
         addSingletonFactory {
             ReaderPreferences(get<ScopedPreferenceStore>())
+        }
+        addSingletonFactory {
+            EpubReaderPreferences(get<ScopedPreferenceStore>())
         }
         addSingletonFactory {
             TrackPreferences(get<ScopedPreferenceStore>())

@@ -1,0 +1,17 @@
+CREATE TABLE epub_progress(
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    book_url TEXT,
+    locator_json TEXT NOT NULL,
+    progression REAL,
+    position_index INTEGER,
+    updated_at INTEGER NOT NULL,
+    last_synced_at INTEGER,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX epub_progress_manga_id_index ON epub_progress(manga_id);
+CREATE INDEX epub_progress_updated_at_index ON epub_progress(updated_at);

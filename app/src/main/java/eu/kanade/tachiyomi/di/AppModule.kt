@@ -22,6 +22,12 @@ import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
+import koharia.epub.progress.KomgaEpubProgressSyncService
+import koharia.epub.service.EpubPublicationResolver
+import koharia.epub.service.KomgaEpubPublicationService
+import koharia.epub.service.KomgaReadiumHttpClient
+import koharia.epub.service.LocalEpubPublicationService
+import koharia.epub.session.EpubReaderSessionRepository
 import koharia.komga.api.KomgaActiveServerSseManager
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
@@ -35,6 +41,7 @@ import tachiyomi.core.common.storage.AndroidStorageFolderProvider
 import tachiyomi.data.Chapters
 import tachiyomi.data.Database
 import tachiyomi.data.DateColumnAdapter
+import tachiyomi.data.Epub_progress
 import tachiyomi.data.History
 import tachiyomi.data.Mangas
 import tachiyomi.data.MemoColumnAdapter
@@ -78,6 +85,10 @@ class AppModule(val app: Application) : InjektModule {
                 driver = get(),
                 historyAdapter = History.Adapter(
                     last_readAdapter = DateColumnAdapter,
+                ),
+                epub_progressAdapter = Epub_progress.Adapter(
+                    updated_atAdapter = DateColumnAdapter,
+                    last_synced_atAdapter = DateColumnAdapter,
                 ),
                 mangasAdapter = Mangas.Adapter(
                     genreAdapter = StringListColumnAdapter,
@@ -140,6 +151,12 @@ class AppModule(val app: Application) : InjektModule {
 
         addSingletonFactory { AndroidStorageFolderProvider(app) }
         addSingletonFactory { StorageManager(app, get()) }
+        addSingletonFactory { EpubReaderSessionRepository() }
+        addSingletonFactory { KomgaReadiumHttpClient() }
+        addSingletonFactory { LocalEpubPublicationService() }
+        addSingletonFactory { KomgaEpubPublicationService() }
+        addSingletonFactory { EpubPublicationResolver() }
+        addSingletonFactory { KomgaEpubProgressSyncService(get(), get()) }
 
         // Asynchronously init expensive components for a faster cold start
         ContextCompat.getMainExecutor(app).execute {
