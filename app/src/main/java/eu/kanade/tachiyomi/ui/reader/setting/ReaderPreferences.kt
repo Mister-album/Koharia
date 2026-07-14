@@ -150,7 +150,7 @@ class ReaderPreferences(
 
     val readWithLongTap: Preference<Boolean> = preferenceStore.getBoolean("reader_long_tap", true)
 
-    val readWithVolumeKeys: Preference<Boolean> = preferenceStore.getBoolean("reader_volume_keys", false)
+    val readWithVolumeKeys: Preference<Boolean> = preferenceStore.getBoolean("reader_volume_keys", true)
 
     val readWithVolumeKeysInverted: Preference<Boolean> = preferenceStore.getBoolean(
         "reader_volume_keys_inverted",

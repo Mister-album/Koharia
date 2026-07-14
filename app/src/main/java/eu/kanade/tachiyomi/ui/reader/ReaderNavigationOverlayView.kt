@@ -16,7 +16,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.navigation.DisabledNavigation
 import tachiyomi.core.common.i18n.stringResource
 import kotlin.math.abs
 
-class ReaderNavigationOverlayView(context: Context, attributeSet: AttributeSet) : View(context, attributeSet) {
+class ReaderNavigationOverlayView(context: Context, attributeSet: AttributeSet?) : View(context, attributeSet) {
 
     private var viewPropertyAnimator: ViewPropertyAnimator? = null
 

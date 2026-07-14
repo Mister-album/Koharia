@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,16 +72,70 @@ fun ChapterNavigator(
     currentPage: Int,
     totalPages: Int,
     onPageIndexChange: (Int) -> Unit,
+    onPageIndexChangeFinished: ((Int) -> Unit)? = null,
+    displayCurrentPage: Int = currentPage,
+    displayTotalPages: Int = totalPages,
+    sliderProgress: Float? = null,
+    onProgressChangeFinished: ((Float) -> Unit)? = null,
+    displayCurrentText: String? = null,
+    displayTotalText: String? = null,
 ) {
     val haptic = LocalHapticFeedback.current
 
-    val state = rememberSliderState(
-        value = currentPage.toFloat(),
-        steps = totalPages - 2,
-        valueRange = 1f..totalPages.toFloat(),
-    )
-    state.value = currentPage.toFloat()
-    state.onValueChange = { onPageIndexChange(it.roundToInt() - 1) }
+    val usesProgress = sliderProgress != null
+    val sliderMax = totalPages.coerceAtLeast(2)
+    val state = key(usesProgress, sliderMax) {
+        if (usesProgress) {
+            rememberSliderState(
+                value = sliderProgress.coerceIn(0f, 1f),
+                valueRange = 0f..1f,
+            )
+        } else {
+            rememberSliderState(
+                value = currentPage.coerceIn(1, sliderMax).toFloat(),
+                steps = sliderMax - 2,
+                valueRange = 1f..sliderMax.toFloat(),
+            )
+        }
+    }
+    if (!state.isDragging) {
+        state.value = if (usesProgress) {
+            sliderProgress.coerceIn(0f, 1f)
+        } else {
+            currentPage.coerceIn(1, sliderMax).toFloat()
+        }
+    }
+    state.onValueChange = { value ->
+        if (usesProgress) {
+            state.value = value
+        } else if (onPageIndexChangeFinished == null) {
+            onPageIndexChange(value.roundToInt() - 1)
+        } else {
+            state.value = value
+        }
+    }
+    state.onValueChangeFinished = if (usesProgress) {
+        onProgressChangeFinished?.let { onFinished ->
+            { onFinished(state.value.coerceIn(0f, 1f)) }
+        }
+    } else {
+        onPageIndexChangeFinished?.let { onFinished ->
+            { onFinished(state.value.roundToInt() - 1) }
+        }
+    }
+
+    val displayedCurrentText = when {
+        usesProgress && state.isDragging -> "${(state.value * 100).roundToInt()}%"
+        displayCurrentText != null -> displayCurrentText
+        state.isDragging -> state.value.roundToInt().toString()
+        else -> displayCurrentPage.toString()
+    }
+    val displayedTotalText = when {
+        usesProgress && state.isDragging -> ""
+        displayTotalText != null -> displayTotalText
+        state.isDragging -> totalPages.toString()
+        else -> displayTotalPages.toString()
+    }
 
     val interactionSource = remember { MutableInteractionSource() }
     val sliderDragged by interactionSource.collectIsDraggedAsState()
@@ -110,8 +165,9 @@ fun ChapterNavigator(
             enabledNext = enabledNext,
             onPreviousChapter = onPreviousChapter,
             enabledPrevious = enabledPrevious,
-            currentPage = currentPage,
-            totalPages = totalPages,
+            currentPage = displayedCurrentText,
+            totalPages = displayedTotalText,
+            sliderTotalPages = if (usesProgress) 2 else totalPages,
             interactionSource = interactionSource,
             mainAxisPadding = mainAxisPadding,
             backgroundColor = backgroundColor,
@@ -124,8 +180,9 @@ fun ChapterNavigator(
             enabledNext = enabledNext,
             onPreviousChapter = onPreviousChapter,
             enabledPrevious = enabledPrevious,
-            currentPage = currentPage,
-            totalPages = totalPages,
+            currentPage = displayedCurrentText,
+            totalPages = displayedTotalText,
+            sliderTotalPages = if (usesProgress) 2 else totalPages,
             interactionSource = interactionSource,
             mainAxisPadding = mainAxisPadding,
             backgroundColor = backgroundColor,
@@ -142,8 +199,9 @@ fun ChapterNavigator(
     enabledNext: Boolean,
     onPreviousChapter: () -> Unit,
     enabledPrevious: Boolean,
-    currentPage: Int,
-    totalPages: Int,
+    currentPage: String,
+    totalPages: String,
+    sliderTotalPages: Int,
     interactionSource: MutableInteractionSource,
     mainAxisPadding: Dp,
     backgroundColor: Color,
@@ -172,7 +230,7 @@ fun ChapterNavigator(
                 )
             }
 
-            if (totalPages > 1) {
+            if (sliderTotalPages > 1) {
                 CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
                     Row(
                         modifier = Modifier
@@ -183,9 +241,9 @@ fun ChapterNavigator(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(contentAlignment = Alignment.CenterEnd) {
-                            Text(text = currentPage.toString())
+                            Text(text = currentPage)
                             // Taking up full length so the slider doesn't shift when 'currentPage' length changes
-                            Text(text = totalPages.toString(), color = Color.Transparent)
+                            Text(text = totalPages, color = Color.Transparent)
                         }
 
                         Slider(
@@ -196,7 +254,7 @@ fun ChapterNavigator(
                             interactionSource = interactionSource,
                         )
 
-                        Text(text = totalPages.toString())
+                        Text(text = totalPages)
                     }
                 }
             } else {
@@ -226,8 +284,9 @@ fun VerticalChapterNavigator(
     enabledNext: Boolean,
     onPreviousChapter: () -> Unit,
     enabledPrevious: Boolean,
-    currentPage: Int,
-    totalPages: Int,
+    currentPage: String,
+    totalPages: String,
+    sliderTotalPages: Int,
     interactionSource: MutableInteractionSource,
     mainAxisPadding: Dp,
     backgroundColor: Color,
@@ -251,7 +310,7 @@ fun VerticalChapterNavigator(
             )
         }
 
-        if (totalPages > 1) {
+        if (sliderTotalPages > 1) {
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -260,7 +319,7 @@ fun VerticalChapterNavigator(
                     .padding(vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(text = currentPage.toString())
+                Text(text = currentPage)
 
                 VerticalSlider(
                     state = state,
@@ -270,7 +329,7 @@ fun VerticalChapterNavigator(
                     interactionSource = interactionSource,
                 )
 
-                Text(text = totalPages.toString())
+                Text(text = totalPages)
             }
         } else {
             Spacer(Modifier.weight(1f))
