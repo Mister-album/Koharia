@@ -42,6 +42,7 @@ import tachiyomi.core.common.storage.AndroidStorageFolderProvider
 import tachiyomi.data.Chapters
 import tachiyomi.data.Database
 import tachiyomi.data.DateColumnAdapter
+import tachiyomi.data.Epub_bookmark
 import tachiyomi.data.Epub_progress
 import tachiyomi.data.History
 import tachiyomi.data.Mangas
@@ -90,6 +91,9 @@ class AppModule(val app: Application) : InjektModule {
                 epub_progressAdapter = Epub_progress.Adapter(
                     updated_atAdapter = DateColumnAdapter,
                     last_synced_atAdapter = DateColumnAdapter,
+                ),
+                epub_bookmarkAdapter = Epub_bookmark.Adapter(
+                    created_atAdapter = DateColumnAdapter,
                 ),
                 mangasAdapter = Mangas.Adapter(
                     genreAdapter = StringListColumnAdapter,
