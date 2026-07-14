@@ -1,5 +1,6 @@
 package koharia.epub.service
 
+import koharia.epub.locator.toNavigatorLocator
 import koharia.epub.model.EpubOpenRequest
 import koharia.epub.model.EpubOpenRequest.OpenSource
 import koharia.epub.session.EpubReaderSession
@@ -37,7 +38,11 @@ class EpubPublicationResolver(
                     OpenSource.REMOTE -> komgaService.open(request, initialLocator)
                 }
             }
-                .onSuccess { return it }
+                .onSuccess { session ->
+                    return session.copy(
+                        initialLocator = initialLocator?.let(session.publication::toNavigatorLocator),
+                    )
+                }
                 .onFailure { lastError = it }
         }
 
