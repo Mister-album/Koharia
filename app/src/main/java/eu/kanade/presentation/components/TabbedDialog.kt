@@ -2,6 +2,7 @@ package eu.kanade.presentation.components
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -45,6 +46,7 @@ fun TabbedDialog(
     modifier: Modifier = Modifier,
     tabOverflowMenuContent: (@Composable ColumnScope.(() -> Unit) -> Unit)? = null,
     pagerState: PagerState = rememberPagerState { tabTitles.size },
+    contentOverlay: @Composable BoxScope.() -> Unit = {},
     content: @Composable (Int) -> Unit,
 ) {
     AdaptiveSheet(
@@ -53,34 +55,37 @@ fun TabbedDialog(
     ) {
         val scope = rememberCoroutineScope()
 
-        Column {
-            Row {
-                PrimaryTabRow(
-                    modifier = Modifier.weight(1f),
-                    selectedTabIndex = pagerState.currentPage,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    divider = {},
-                ) {
-                    tabTitles.fastForEachIndexed { index, tab ->
-                        Tab(
-                            selected = pagerState.currentPage == index,
-                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                            text = { TabText(text = tab) },
-                            unselectedContentColor = MaterialTheme.colorScheme.onSurface,
-                        )
+        Box {
+            Column {
+                Row {
+                    PrimaryTabRow(
+                        modifier = Modifier.weight(1f),
+                        selectedTabIndex = pagerState.currentPage,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        divider = {},
+                    ) {
+                        tabTitles.fastForEachIndexed { index, tab ->
+                            Tab(
+                                selected = pagerState.currentPage == index,
+                                onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                                text = { TabText(text = tab) },
+                                unselectedContentColor = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
+
+                    tabOverflowMenuContent?.let { MoreMenu(it) }
                 }
+                HorizontalDivider()
 
-                tabOverflowMenuContent?.let { MoreMenu(it) }
+                HorizontalPager(
+                    modifier = Modifier.animateContentSize(),
+                    state = pagerState,
+                    verticalAlignment = Alignment.Top,
+                    pageContent = { page -> content(page) },
+                )
             }
-            HorizontalDivider()
-
-            HorizontalPager(
-                modifier = Modifier.animateContentSize(),
-                state = pagerState,
-                verticalAlignment = Alignment.Top,
-                pageContent = { page -> content(page) },
-            )
+            contentOverlay()
         }
     }
 }

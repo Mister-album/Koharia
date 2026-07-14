@@ -14,4 +14,7 @@ class EpubReaderPreferences(
 
     val completionThresholdPercent: Preference<Int> =
         preferenceStore.getInt("epub_reader_completion_threshold_percent", 98)
+
+    val persistReaderSettingsChanges: Preference<Boolean> =
+        preferenceStore.getBoolean("epub_reader_persist_settings_changes", false)
 }
