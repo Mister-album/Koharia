@@ -70,10 +70,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     companion object {
         private const val READER_FRAGMENT_TAG = "epub_reader_fragment"
 
-        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
+        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?, sourceId: Long? = null): Intent {
             return Intent(context, EpubReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
+                sourceId?.let { putExtra("source", it) }
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }

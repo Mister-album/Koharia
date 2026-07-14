@@ -24,6 +24,7 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
 import koharia.epub.progress.KomgaEpubProgressSyncService
 import koharia.epub.service.EpubPublicationResolver
+import koharia.epub.service.EpubReaderSupportResolver
 import koharia.epub.service.KomgaEpubPublicationService
 import koharia.epub.service.KomgaReadiumHttpClient
 import koharia.epub.service.LocalEpubPublicationService
@@ -156,6 +157,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { LocalEpubPublicationService() }
         addSingletonFactory { KomgaEpubPublicationService() }
         addSingletonFactory { EpubPublicationResolver() }
+        addSingletonFactory { EpubReaderSupportResolver() }
         addSingletonFactory { KomgaEpubProgressSyncService(get(), get()) }
 
         // Asynchronously init expensive components for a faster cold start

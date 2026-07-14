@@ -7,8 +7,6 @@ class EpubReaderPreferences(
     preferenceStore: PreferenceStore,
 ) {
 
-    val enableNativeReader: Preference<Boolean> = preferenceStore.getBoolean("epub_reader_enabled", true)
-
     val preferLocalFile: Preference<Boolean> = preferenceStore.getBoolean("epub_reader_prefer_local_file", true)
 
     val syncProgressionToKomga: Preference<Boolean> =
