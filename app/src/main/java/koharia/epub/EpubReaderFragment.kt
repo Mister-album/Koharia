@@ -3,6 +3,7 @@ package koharia.epub
 import android.content.Context
 import android.os.Bundle
 import android.view.View
+import android.webkit.WebView
 import android.widget.FrameLayout
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentContainerView
@@ -10,6 +11,7 @@ import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import koharia.epub.locator.toNavigatorLocator
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
@@ -38,6 +40,16 @@ class EpubReaderFragment : Fragment() {
 
         fun onLocatorChanged(locator: Locator)
 
+        fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator)
+
+        fun onBookPaginationChanged(
+            generation: Long,
+            pageCounts: Map<String, Int>,
+            isComplete: Boolean,
+        )
+
+        fun onPaginationViewportChanged(viewport: EpubPaginationViewport)
+
         fun onExternalLinkActivated(url: AbsoluteUrl)
 
         fun onNavigatorReady()
@@ -61,6 +73,7 @@ class EpubReaderFragment : Fragment() {
     }
     private var host: Host? = null
     private var containerId: Int = View.NO_ID
+    private var scannerContainerId: Int = View.NO_ID
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
 
@@ -80,6 +93,7 @@ class EpubReaderFragment : Fragment() {
     @Suppress("DEPRECATION")
     private val paginationListener = object : EpubNavigatorFragment.PaginationListener {
         override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+            host?.onPageChanged(pageIndex, totalPages, locator)
             applyParagraphIndentOverride()
         }
     }
@@ -122,6 +136,18 @@ class EpubReaderFragment : Fragment() {
                     FrameLayout.LayoutParams.MATCH_PARENT,
                 ),
             )
+            addView(
+                FragmentContainerView(requireContext()).apply {
+                    id = View.generateViewId()
+                    scannerContainerId = id
+                    visibility = View.INVISIBLE
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                },
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
         }
     }
 
@@ -149,6 +175,25 @@ class EpubReaderFragment : Fragment() {
         if (navigatorFragment() != null) {
             host?.onNavigatorReady()
         }
+        view.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            val width = right - left
+            val height = bottom - top
+            if (width <= 0 || height <= 0 ||
+                (width == oldRight - oldLeft && height == oldBottom - oldTop)
+            ) {
+                return@addOnLayoutChangeListener
+            }
+            val configuration = resources.configuration
+            host?.onPaginationViewportChanged(
+                EpubPaginationViewport(
+                    widthPx = width,
+                    heightPx = height,
+                    densityDpi = configuration.densityDpi,
+                    fontScale = configuration.fontScale,
+                    webViewVersion = WebView.getCurrentWebViewPackage()?.versionName.orEmpty(),
+                ),
+            )
+        }
     }
 
     override fun onDetach() {
@@ -163,7 +208,8 @@ class EpubReaderFragment : Fragment() {
 
     fun goTo(locator: Locator): Boolean {
         val navigator = navigatorFragment() ?: return false
-        return navigator.go(locator)
+        val publication = sessionRepository.get(chapterId)?.publication ?: return false
+        return navigator.go(publication.toNavigatorLocator(locator))
     }
 
     fun goForward(): Boolean {
@@ -216,6 +262,43 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
+    internal fun startPagination(request: EpubPaginationRequest) {
+        val existing = paginationScannerFragment()
+        if (!request.shouldScan) {
+            if (existing != null) {
+                childFragmentManager.commitNow { remove(existing) }
+            }
+            return
+        }
+        childFragmentManager.commitNow {
+            setReorderingAllowed(true)
+            replace(
+                scannerContainerId,
+                EpubPaginationScannerFragment.newInstance(chapterId, sourceId, request),
+                PAGINATION_SCANNER_TAG,
+            )
+        }
+    }
+
+    fun stopPagination() {
+        paginationScannerFragment()?.let { scanner ->
+            if (!childFragmentManager.isStateSaved) {
+                childFragmentManager.commitNow { remove(scanner) }
+            }
+        }
+    }
+
+    internal fun onBookPaginationCalculated(
+        generation: Long,
+        pageCounts: Map<String, Int>,
+        isComplete: Boolean,
+    ) {
+        host?.onBookPaginationChanged(generation, pageCounts, isComplete)
+        if (isComplete) {
+            view?.post(::stopPagination)
+        }
+    }
+
     private fun observeNavigator() {
         val navigator = navigatorFragment() ?: return
         logcat(LogPriority.DEBUG) {
@@ -247,10 +330,14 @@ class EpubReaderFragment : Fragment() {
     private fun navigatorFragment(): EpubNavigatorFragment? =
         childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
 
+    private fun paginationScannerFragment(): EpubPaginationScannerFragment? =
+        childFragmentManager.findFragmentByTag(PAGINATION_SCANNER_TAG) as? EpubPaginationScannerFragment
+
     companion object {
         private const val ARG_CHAPTER_ID = "chapter_id"
         private const val ARG_SOURCE_ID = "source_id"
         private const val NAVIGATOR_TAG = "epub_navigator"
+        private const val PAGINATION_SCANNER_TAG = "epub_pagination_scanner"
         private const val PARAGRAPH_INDENT_DEBUG_DELAY_MS = 600L
         private val PARAGRAPH_INDENT_DEBUG_SCRIPT =
             """
