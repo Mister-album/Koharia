@@ -3,17 +3,21 @@ package koharia.epub.progress
 import android.os.Build
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.network.await
 import koharia.source.komga.KomgaSource
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import org.readium.r2.shared.publication.Locator
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.source.service.SourceManager
 import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Date
 
 class KomgaEpubProgressSyncService(
@@ -24,27 +28,33 @@ class KomgaEpubProgressSyncService(
     suspend fun pullProgression(
         sourceId: Long,
         bookUrl: String,
-    ): RemoteProgression? = withIOContext {
-        val source = sourceManager.get(sourceId) as? KomgaSource ?: return@withIOContext null
+    ): PullResult = withIOContext {
+        val source = sourceManager.get(sourceId) as? KomgaSource ?: return@withIOContext PullResult()
         val normalizedBookUrl = normalizeBookUrl(bookUrl)
         source.client.newCall(GET("$normalizedBookUrl/progression", source.currentReadiumHeaders()))
-            .awaitSuccess()
+            .await()
             .use { response ->
+                response.requireSuccess("pull")
+                val serverDate = response.header("Date")?.let(::parseHttpDate)
                 val body = response.body.string().trim()
                 if (body.isBlank() || body == "\"\"") {
-                    return@withIOContext null
+                    return@withIOContext PullResult(serverDate = serverDate)
                 }
 
                 val json = JSONObject(body)
-                val locator = json.optJSONObject("locator")?.let(Locator::fromJSON) ?: return@withIOContext null
+                val locator = json.optJSONObject("locator")?.let(Locator::fromJSON)
                 val modifiedAt = json.optString("modified")
                     .takeIf(String::isNotBlank)
                     ?.let(::parseDate)
-                    ?: return@withIOContext null
+                val progression = if (locator != null && modifiedAt != null) {
+                    RemoteProgression(locator = locator, modifiedAt = modifiedAt)
+                } else {
+                    null
+                }
 
-                RemoteProgression(
-                    locator = locator,
-                    modifiedAt = modifiedAt,
+                PullResult(
+                    progression = progression,
+                    serverDate = serverDate,
                 )
             }
     }
@@ -65,7 +75,7 @@ class KomgaEpubProgressSyncService(
                     put("name", buildDeviceName())
                 },
             )
-            put("locator", locator.toJSON())
+            put("locator", locator.toKomgaJSON())
             put("modified", modifiedAt.toInstant().toString())
         }
         val request = Request.Builder()
@@ -74,7 +84,9 @@ class KomgaEpubProgressSyncService(
             .put(payload.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        source.client.newCall(request).awaitSuccess().close()
+        source.client.newCall(request).await().use { response ->
+            response.requireSuccess("push")
+        }
     }
 
     private fun normalizeBookUrl(bookUrl: String): String = bookUrl.substringBefore('#').removeSuffix("/")
@@ -85,6 +97,12 @@ class KomgaEpubProgressSyncService(
             .getOrNull()
     }
 
+    private fun parseHttpDate(value: String): Date? {
+        return runCatching {
+            Date.from(ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant())
+        }.getOrNull()
+    }
+
     private fun buildDeviceName(): String {
         return listOfNotNull(
             Build.MANUFACTURER?.trim().takeIf { !it.isNullOrBlank() },
@@ -92,8 +110,47 @@ class KomgaEpubProgressSyncService(
         ).joinToString(" ").ifBlank { "Android" }
     }
 
+    private fun Locator.toKomgaJSON(): JSONObject = toJSON().apply {
+        val locations = optJSONObject("locations") ?: return@apply
+        if (!locations.has("fragments")) {
+            locations.put("fragments", JSONArray())
+        }
+    }
+
+    private fun Response.requireSuccess(operation: String) {
+        if (isSuccessful) return
+
+        val details = body.string()
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(MAX_ERROR_BODY_LENGTH)
+            .takeIf(String::isNotBlank)
+        throw IllegalStateException(
+            buildString {
+                append("Komga progression ")
+                append(operation)
+                append(" failed (HTTP ")
+                append(code)
+                append(')')
+                if (details != null) {
+                    append(": ")
+                    append(details)
+                }
+            },
+        )
+    }
+
+    data class PullResult(
+        val progression: RemoteProgression? = null,
+        val serverDate: Date? = null,
+    )
+
     data class RemoteProgression(
         val locator: Locator,
         val modifiedAt: Date,
     )
+
+    private companion object {
+        const val MAX_ERROR_BODY_LENGTH = 512
+    }
 }

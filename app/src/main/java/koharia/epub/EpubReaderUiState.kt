@@ -25,6 +25,8 @@ data class EpubReaderUiState(
     val totalPositions: Int = 1,
     val currentVisualPage: Int? = null,
     val totalVisualPages: Int? = null,
+    val paginationPhase: EpubPaginationPhase = EpubPaginationPhase.CALCULATING,
+    val paginationGeneration: Long = 0,
     val sessionToken: Long = 0,
     val isLoading: Boolean = false,
     val isReady: Boolean = false,
