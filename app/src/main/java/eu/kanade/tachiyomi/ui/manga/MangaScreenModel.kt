@@ -45,6 +45,8 @@ import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
+import koharia.domain.epub.interactor.GetEpubProgress
+import koharia.domain.epub.model.EpubProgress
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
@@ -91,6 +93,7 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 class MangaScreenModel(
     private val context: Context,
@@ -122,6 +125,7 @@ class MangaScreenModel(
     private val mangaRepository: MangaRepository = Injekt.get(),
     private val filterChaptersForDownload: FilterChaptersForDownload = Injekt.get(),
     private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
+    private val getEpubProgress: GetEpubProgress = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -172,15 +176,19 @@ class MangaScreenModel(
         screenModelScope.launchIO {
             combine(
                 getMangaAndChapters.subscribe(mangaId, applyScanlatorFilter = true).distinctUntilChanged(),
+                getEpubProgress.subscribeByMangaId(mangaId),
                 downloadCache.changes,
                 downloadManager.queueState,
-            ) { mangaAndChapters, _, _ -> mangaAndChapters }
+            ) { mangaAndChapters, epubProgresses, _, _ ->
+                mangaAndChapters to epubProgresses
+            }
                 .flowWithLifecycle(lifecycle)
-                .collectLatest { (manga, chapters) ->
+                .collectLatest { (mangaAndChapters, epubProgresses) ->
+                    val (manga, chapters) = mangaAndChapters
                     updateSuccessState {
                         it.copy(
                             manga = manga,
-                            chapters = chapters.toChapterListItems(manga),
+                            chapters = chapters.toChapterListItems(manga, epubProgresses.associateBy { it.chapterId }),
                         )
                     }
                 }
@@ -212,8 +220,10 @@ class MangaScreenModel(
 
         screenModelScope.launchIO {
             val manga = getMangaAndChapters.awaitManga(mangaId)
+            val epubProgresses = getEpubProgress.awaitByMangaId(mangaId)
+                .associateBy { it.chapterId }
             val chapters = getMangaAndChapters.awaitChapters(mangaId, applyScanlatorFilter = true)
-                .toChapterListItems(manga)
+                .toChapterListItems(manga, epubProgresses)
             val source = Injekt.get<SourceManager>().getOrStub(manga.source)
 
             if (!manga.favorite) {
@@ -557,7 +567,10 @@ class MangaScreenModel(
         }
     }
 
-    private fun List<Chapter>.toChapterListItems(manga: Manga): List<ChapterList.Item> {
+    private fun List<Chapter>.toChapterListItems(
+        manga: Manga,
+        epubProgresses: Map<Long, EpubProgress> = emptyMap(),
+    ): List<ChapterList.Item> {
         return map { chapter ->
             val activeDownload = downloadManager.getQueuedDownloadOrNull(chapter.id)
             val downloaded = downloadManager.isChapterDownloaded(
@@ -577,6 +590,13 @@ class MangaScreenModel(
                 chapter = chapter,
                 downloadState = downloadState,
                 downloadProgress = activeDownload?.progress ?: 0,
+                epubProgressPercent = epubProgresses[chapter.id]
+                    ?.progression
+                    ?.let { progression ->
+                        (progression.coerceIn(0.0, 1.0) * 100)
+                            .roundToInt()
+                            .coerceAtMost(if (chapter.read) 100 else 99)
+                    },
                 selected = chapter.id in selectedChapterIds,
             )
         }
@@ -1245,6 +1265,7 @@ sealed class ChapterList {
         val chapter: Chapter,
         val downloadState: Download.State,
         val downloadProgress: Int,
+        val epubProgressPercent: Int? = null,
         val selected: Boolean = false,
     ) : ChapterList() {
         val id = chapter.id

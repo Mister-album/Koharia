@@ -1,11 +1,14 @@
 package koharia.data.epub
 
+import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import koharia.domain.epub.model.EpubProgress
 import koharia.domain.epub.repository.EpubProgressRepository
+import kotlinx.coroutines.flow.Flow
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
+import tachiyomi.data.subscribeToList
 import java.util.Date
 
 class EpubProgressRepositoryImpl(
@@ -16,6 +19,18 @@ class EpubProgressRepositoryImpl(
         return database.epub_progressQueries
             .getByChapterId(chapterId, ::mapEpubProgress)
             .awaitAsOneOrNull()
+    }
+
+    override suspend fun getProgressesByMangaId(mangaId: Long): List<EpubProgress> {
+        return database.epub_progressQueries
+            .getByMangaId(mangaId, ::mapEpubProgress)
+            .awaitAsList()
+    }
+
+    override fun subscribeProgressesByMangaId(mangaId: Long): Flow<List<EpubProgress>> {
+        return database.epub_progressQueries
+            .getByMangaId(mangaId, ::mapEpubProgress)
+            .subscribeToList()
     }
 
     override suspend fun upsertProgress(progress: EpubProgress) {
