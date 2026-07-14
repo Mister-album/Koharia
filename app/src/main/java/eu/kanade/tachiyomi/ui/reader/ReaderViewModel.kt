@@ -12,7 +12,6 @@ import eu.kanade.domain.chapter.model.toDbChapter
 import eu.kanade.domain.manga.interactor.SetMangaViewerFlags
 import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
-import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
@@ -41,6 +40,7 @@ import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -88,10 +88,10 @@ class ReaderViewModel @JvmOverloads constructor(
     private val downloadManager: DownloadManager = Injekt.get(),
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val imageSaver: ImageSaver = Injekt.get(),
-    val readerPreferences: ReaderPreferences = Injekt.get(),
-    private val basePreferences: BasePreferences = Injekt.get(),
-    private val downloadPreferences: DownloadPreferences = Injekt.get(),
-    private val trackPreferences: TrackPreferences = Injekt.get(),
+    globalReaderPreferences: ReaderPreferences = Injekt.get(),
+    globalBasePreferences: BasePreferences = Injekt.get(),
+    globalDownloadPreferences: DownloadPreferences = Injekt.get(),
+    globalTrackPreferences: TrackPreferences = Injekt.get(),
     private val trackChapter: TrackChapter = Injekt.get(),
     private val getManga: GetManga = Injekt.get(),
     private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
@@ -99,10 +99,21 @@ class ReaderViewModel @JvmOverloads constructor(
     private val upsertHistory: UpsertHistory = Injekt.get(),
     private val updateChapter: UpdateChapter = Injekt.get(),
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
-    private val getIncognitoState: GetIncognitoState = Injekt.get(),
-    private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    globalLibraryPreferences: LibraryPreferences = Injekt.get(),
     private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
+    scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
 ) : ViewModel() {
+
+    val readerPreferences: ReaderPreferences =
+        scopedPreferenceStoreFactory.readerPreferencesForSavedSource(savedState) ?: globalReaderPreferences
+    private val basePreferences: BasePreferences =
+        scopedPreferenceStoreFactory.basePreferencesForSavedSource(savedState) ?: globalBasePreferences
+    private val downloadPreferences: DownloadPreferences =
+        scopedPreferenceStoreFactory.downloadPreferencesForSavedSource(savedState) ?: globalDownloadPreferences
+    private val trackPreferences: TrackPreferences =
+        scopedPreferenceStoreFactory.trackPreferencesForSavedSource(savedState) ?: globalTrackPreferences
+    private val libraryPreferences: LibraryPreferences =
+        scopedPreferenceStoreFactory.libraryPreferencesForSavedSource(savedState) ?: globalLibraryPreferences
 
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
@@ -227,7 +238,7 @@ class ReaderViewModel @JvmOverloads constructor(
             .map(::ReaderChapter)
     }
 
-    private val incognitoMode: Boolean by lazy { getIncognitoState.await(manga?.source) }
+    private val incognitoMode: Boolean by lazy { basePreferences.incognitoMode.get() }
     private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading.get()
     private val cacheCurrentChapterWhileReading = downloadPreferences.cacheCurrentChapterWhileReading.get()
 
@@ -284,6 +295,7 @@ class ReaderViewModel @JvmOverloads constructor(
             try {
                 val manga = getManga.await(mangaId)
                 if (manga != null) {
+                    savedState["source_id"] = manga.source
                     komgaProgressSyncService.syncFromServer(manga)
                     sourceManager.isInitialized.first { it }
                     mutableState.update { it.copy(manga = manga) }

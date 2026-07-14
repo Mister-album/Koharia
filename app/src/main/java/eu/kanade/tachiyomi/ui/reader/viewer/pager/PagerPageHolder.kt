@@ -37,7 +37,11 @@ class PagerPageHolder(
     readerThemedContext: Context,
     val viewer: PagerViewer,
     val page: ReaderPage,
-) : ReaderPageImageView(readerThemedContext), ViewPagerAdapter.PositionableView {
+) : ReaderPageImageView(
+    context = readerThemedContext,
+    basePreferences = viewer.activity.basePreferences,
+),
+    ViewPagerAdapter.PositionableView {
 
     /**
      * Item that identifies this view. Needed by the adapter to not recreate views.

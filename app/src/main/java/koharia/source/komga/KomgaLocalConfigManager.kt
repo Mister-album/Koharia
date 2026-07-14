@@ -9,6 +9,8 @@ import eu.kanade.tachiyomi.core.security.PrivacyPreferences
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import koharia.epub.settings.EpubLayoutPreferences
+import koharia.epub.settings.EpubReaderPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -61,9 +63,9 @@ class KomgaLocalConfigManager(
     }
 
     override fun currentScope(): PreferenceScope {
-        return resolveScope(
+        return scopeForServer(
             mode = serverPreferences.localConfigMode.get(),
-            activeServerId = serverPreferences.activeServerId.get(),
+            serverId = serverPreferences.activeServerId.get(),
         )
     }
 
@@ -71,7 +73,7 @@ class KomgaLocalConfigManager(
         return combine(
             serverPreferences.localConfigMode.changes(),
             serverPreferences.activeServerId.changes(),
-            ::resolveScope,
+            ::scopeForServer,
         ).distinctUntilChanged()
     }
 
@@ -210,14 +212,7 @@ class KomgaLocalConfigManager(
         mode: LocalConfigMode,
         activeServerId: Long,
     ): PreferenceScope {
-        return when {
-            mode == LocalConfigMode.Separate && activeServerId != KomgaServerPreferences.NO_ACTIVE_SERVER ->
-                PreferenceScope(
-                    prefix = serverScopePrefix(activeServerId),
-                    allowLegacyFallback = false,
-                )
-            else -> sharedScope
-        }
+        return scopeForServer(mode, activeServerId)
     }
 
     companion object {
@@ -238,6 +233,8 @@ class KomgaLocalConfigManager(
             SourcePreferences(recorder)
             LibraryPreferences(recorder)
             ReaderPreferences(recorder)
+            EpubReaderPreferences(recorder)
+            EpubLayoutPreferences(recorder)
             DownloadPreferences(recorder)
             NetworkPreferences(recorder, verboseLoggingDefault)
             SecurityPreferences(recorder)
@@ -251,6 +248,20 @@ class KomgaLocalConfigManager(
         }
 
         fun serverScopeName(serverId: Long): String = "komga_local_server_$serverId"
+
+        fun scopeForServer(
+            mode: LocalConfigMode,
+            serverId: Long,
+        ): PreferenceScope {
+            return when {
+                mode == LocalConfigMode.Separate && serverId != KomgaServerPreferences.NO_ACTIVE_SERVER ->
+                    PreferenceScope(
+                        prefix = serverScopePrefix(serverId),
+                        allowLegacyFallback = false,
+                    )
+                else -> sharedScope
+            }
+        }
 
         private fun serverScopePrefix(serverId: Long): String = "${serverScopeName(serverId)}::"
 

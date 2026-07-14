@@ -84,6 +84,7 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -109,17 +110,33 @@ import java.io.ByteArrayOutputStream
 class ReaderActivity : BaseActivity() {
 
     companion object {
-        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
+        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?, sourceId: Long? = null): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
+                sourceId?.let { putExtra("source", it) }
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
     }
 
-    private val readerPreferences = Injekt.get<ReaderPreferences>()
-    private val preferences = Injekt.get<BasePreferences>()
+    private val scopedPreferenceStoreFactory = Injekt.get<KomgaScopedPreferenceStoreFactory>()
+    val readerPreferences: ReaderPreferences by lazy {
+        val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
+        if (sourceId > 0L) {
+            scopedPreferenceStoreFactory.readerPreferences(sourceId)
+        } else {
+            Injekt.get<ReaderPreferences>()
+        }
+    }
+    val basePreferences: BasePreferences by lazy {
+        val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
+        if (sourceId > 0L) {
+            scopedPreferenceStoreFactory.basePreferences(sourceId)
+        } else {
+            Injekt.get<BasePreferences>()
+        }
+    }
 
     lateinit var binding: ReaderActivityBinding
 
@@ -133,7 +150,7 @@ class ReaderActivity : BaseActivity() {
 
     private var menuToggleToast: Toast? = null
     private var readingModeToast: Toast? = null
-    private val displayRefreshHost = DisplayRefreshHost()
+    private val displayRefreshHost by lazy { DisplayRefreshHost(readerPreferences) }
 
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
 
@@ -194,7 +211,7 @@ class ReaderActivity : BaseActivity() {
         setMenuVisibility(viewModel.state.value.menuVisible)
 
         // Finish when incognito mode is disabled
-        preferences.incognitoMode.changes()
+        basePreferences.incognitoMode.changes()
             .drop(1)
             .onEach { if (!it) finish() }
             .launchIn(lifecycleScope)
@@ -256,6 +273,7 @@ class ReaderActivity : BaseActivity() {
                 readerState = viewModel.state,
                 onChangeReadingMode = viewModel::setMangaReadingMode,
                 onChangeOrientation = viewModel::setMangaOrientationType,
+                preferences = readerPreferences,
             )
         }
 
@@ -869,7 +887,7 @@ class ReaderActivity : BaseActivity() {
                 }
                 .launchIn(lifecycleScope)
 
-            preferences.displayProfile.changes()
+            basePreferences.displayProfile.changes()
                 .onEach { setDisplayProfile(it) }
                 .launchIn(lifecycleScope)
 
