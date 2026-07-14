@@ -21,15 +21,19 @@ import eu.kanade.domain.track.interactor.SyncChapterProgressWithTrack
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import koharia.data.epub.EpubBookmarkRepositoryImpl
+import koharia.data.epub.EpubPaginationCacheRepositoryImpl
 import koharia.data.epub.EpubProgressRepositoryImpl
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
 import koharia.domain.epub.interactor.AddEpubBookmark
 import koharia.domain.epub.interactor.DeleteEpubBookmark
 import koharia.domain.epub.interactor.GetEpubBookmarks
+import koharia.domain.epub.interactor.GetEpubPaginationCache
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.domain.epub.interactor.UpdateEpubBookmarkNote
 import koharia.domain.epub.interactor.UpsertEpubProgress
+import koharia.domain.epub.interactor.UpsertEpubPaginationCache
 import koharia.domain.epub.repository.EpubBookmarkRepository
+import koharia.domain.epub.repository.EpubPaginationCacheRepository
 import koharia.domain.epub.repository.EpubProgressRepository
 import koharia.domain.upcoming.interactor.GetUpcomingManga
 import tachiyomi.data.category.CategoryRepositoryImpl
@@ -166,6 +170,9 @@ class DomainModule : InjektModule {
         addSingletonFactory<EpubProgressRepository> { EpubProgressRepositoryImpl(get()) }
         addFactory { GetEpubProgress(get()) }
         addFactory { UpsertEpubProgress(get()) }
+        addSingletonFactory<EpubPaginationCacheRepository> { EpubPaginationCacheRepositoryImpl(get()) }
+        addFactory { GetEpubPaginationCache(get()) }
+        addFactory { UpsertEpubPaginationCache(get()) }
         addSingletonFactory<EpubBookmarkRepository> { EpubBookmarkRepositoryImpl(get()) }
         addFactory { GetEpubBookmarks(get()) }
         addFactory { AddEpubBookmark(get()) }
