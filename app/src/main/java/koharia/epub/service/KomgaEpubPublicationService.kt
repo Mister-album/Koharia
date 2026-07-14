@@ -43,7 +43,7 @@ class KomgaEpubPublicationService(
         logcat(LogPriority.DEBUG) {
             "EPUB remote open start chapterId=${request.chapterId} manifestUrl=$manifestUrl"
         }
-        val httpClient = httpClientFactory.create(request.sourceId)
+        val httpClient = httpClientFactory.create(request.sourceId, request.publisherStylesOverride)
         val assetRetriever = AssetRetriever(application.contentResolver, httpClient)
         val publicationOpener = PublicationOpener(
             DefaultPublicationParser(application, httpClient, assetRetriever, null),

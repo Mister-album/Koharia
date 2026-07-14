@@ -8,6 +8,7 @@ data class EpubOpenRequest(
     val bookUrl: String?,
     val localUri: String?,
     val openSource: OpenSource,
+    val publisherStylesOverride: Boolean? = null,
 ) {
     enum class OpenSource {
         LOCAL,
