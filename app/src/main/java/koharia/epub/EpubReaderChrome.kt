@@ -29,12 +29,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreHoriz
-import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -194,7 +194,7 @@ internal fun EpubReaderBottomArea(
                     sliderProgress = progression.toFloat().coerceIn(0f, 1f),
                     onProgressChangeFinished = { onProgressionChange(it.toDouble()) },
                     displayCurrentText = visualPagePair?.first?.toString()
-                        ?: "${(progression * 100).toInt().coerceIn(0, 100)}%",
+                        ?: "${(progression * 100).roundToInt().coerceIn(0, 100)}%",
                     displayTotalText = visualPagePair?.second?.toString().orEmpty(),
                 )
                 AnimatedVisibility(
@@ -344,7 +344,7 @@ internal fun EpubReaderMorePanel(
             onClick = onReload,
         )
         MoreActionRow(
-            icon = Icons.Outlined.OpenInNew,
+            icon = Icons.AutoMirrored.Outlined.OpenInNew,
             title = stringResource(MR.strings.epub_reader_open_in_external_app),
             subtitle = stringResource(MR.strings.epub_reader_external_app_requires_download)
                 .takeIf { state.localEpubUri == null },

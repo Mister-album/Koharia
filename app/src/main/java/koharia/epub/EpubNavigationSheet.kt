@@ -217,6 +217,7 @@ private fun BookmarkTab(
             Column {
                 SwipeToDismissBox(
                     state = dismissState,
+                    enableDismissFromStartToEnd = false,
                     backgroundContent = {
                         Row(
                             modifier = Modifier

@@ -30,7 +30,6 @@ data class EpubReaderUiState(
     val isReady: Boolean = false,
     val menuVisible: Boolean = true,
     val errorMessage: String? = null,
-    val serverTimeOffsetMinutes: Long? = null,
     val isIncognito: Boolean = false,
     val bookmarks: List<EpubBookmark> = emptyList(),
     val currentBookmarkId: Long? = null,

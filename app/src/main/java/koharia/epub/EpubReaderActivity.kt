@@ -196,8 +196,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             val state by viewModel.state.collectAsState()
             val tocEntries =
                 remember(state.chapterId, state.sessionToken, state.isReady) { viewModel.tableOfContents() }
-            val adjacentTocEntries = remember(tocEntries, state.currentPosition) {
-                viewModel.adjacentTocEntries(tocEntries, state.currentPosition)
+            val adjacentTocEntries = remember(tocEntries, state.currentPosition, state.currentHref) {
+                viewModel.adjacentTocEntries(tocEntries, state.currentPosition, state.currentHref)
             }
             val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
             val scope = rememberCoroutineScope()
@@ -449,7 +449,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                                     this@EpubReaderActivity,
                                                     state.mangaId,
                                                     state.chapterId,
-                                                    intent.extras?.getLong("source", -1L),
+                                                    sourceId,
                                                 ),
                                             )
                                             finish()
@@ -555,7 +555,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                                     this@EpubReaderActivity,
                                                     state.mangaId,
                                                     state.chapterId,
-                                                    intent.extras?.getLong("source", -1L),
+                                                    sourceId,
                                                 ),
                                             )
                                             finish()
@@ -586,26 +586,6 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     brightness = brightnessState.overlayValue,
                     color = null,
                     colorBlendMode = null,
-                )
-            }
-
-            state.serverTimeOffsetMinutes?.let { offsetMinutes ->
-                AlertDialog(
-                    onDismissRequest = viewModel::dismissServerTimeWarning,
-                    title = { Text(stringResource(MR.strings.epub_reader_server_time_warning_title)) },
-                    text = {
-                        Text(
-                            stringResource(
-                                MR.strings.epub_reader_server_time_warning_message,
-                                offsetMinutes,
-                            ),
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = viewModel::dismissServerTimeWarning) {
-                            Text(stringResource(MR.strings.action_ok))
-                        }
-                    },
                 )
             }
 
@@ -759,7 +739,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
             event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
-        if (!isVolumeKey || !epubLayoutPreferences.readWithVolumeKeys.get() || viewModel.state.value.menuVisible) {
+        val state = viewModel.state.value
+        if (!isVolumeKey || !epubLayoutPreferences.readWithVolumeKeys.get() ||
+            state.menuVisible || state.isSearchActive
+        ) {
             return super.dispatchKeyEvent(event)
         }
 

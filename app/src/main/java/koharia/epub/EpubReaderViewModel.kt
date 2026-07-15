@@ -73,8 +73,6 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-private const val SERVER_TIME_WARNING_THRESHOLD_MS = 5 * 60 * 1_000L
-
 @OptIn(ExperimentalReadiumApi::class)
 class EpubReaderViewModel @JvmOverloads constructor(
     private val savedState: SavedStateHandle,
@@ -387,7 +385,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         previousBookChapterId = previousBookChapterId,
                         nextBookChapterId = nextBookChapterId,
                         currentSectionTitle = initialLocator?.title,
-                        currentHref = initialLocator?.href?.toString(),
+                        currentHref = initialLocator?.navigationHref(),
                         progression = initialProgression,
                         progressionPercent = initialLocator?.progressionPercent(),
                         currentPosition = initialPosition,
@@ -474,7 +472,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         mutableState.update {
             it.copy(
                 currentSectionTitle = locator.title ?: it.currentSectionTitle,
-                currentHref = locator.href.toString(),
+                currentHref = locator.navigationHref(),
                 progression = locator.totalProgressionValue()
                     ?: locator.positionIn(publicationPositions).toProgression(publicationPositions.size),
                 progressionPercent = locator.progressionPercent(),
@@ -485,10 +483,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
         if (!isIncognito()) {
             locatorUpdates.tryEmit(locator)
         }
-    }
-
-    fun dismissServerTimeWarning() {
-        mutableState.update { it.copy(serverTimeOffsetMinutes = null) }
     }
 
     fun locatorAtPosition(index: Int): Locator? = publicationPositions.getOrNull(index)
@@ -540,6 +534,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     fun adjacentTocEntries(
         entries: List<EpubTocEntry>,
         currentPosition: Int,
+        currentHref: String?,
     ): Pair<EpubTocEntry?, EpubTocEntry?> {
         val positionedEntries = entries
             .mapNotNull { entry ->
@@ -547,10 +542,23 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     .firstNotNullOfOrNull(publicationPositionByHref::get)
                     ?.let { position -> entry to position }
             }
-            .distinctBy { (_, position) -> position }
             .sortedBy { (_, position) -> position }
 
-        val currentIndex = positionedEntries.indexOfLast { (_, position) -> position <= currentPosition }
+        val normalizedCurrentHref = currentHref?.normalizedNavigationHref()
+        val exactCurrentIndex = positionedEntries.indexOfLast { (entry, _) ->
+            normalizedCurrentHref != null &&
+                entry.link.href.toString().normalizedNavigationHref() == normalizedCurrentHref
+        }
+        val currentSectionPosition = positionedEntries
+            .asSequence()
+            .map { (_, position) -> position }
+            .filter { position -> position <= currentPosition }
+            .maxOrNull()
+        val currentIndex = exactCurrentIndex.takeIf { it >= 0 }
+            ?: currentSectionPosition?.let { position ->
+                positionedEntries.indexOfFirst { (_, candidate) -> candidate == position }
+            }
+            ?: -1
         if (currentIndex < 0) {
             return null to positionedEntries.firstOrNull()?.first
         }
@@ -971,6 +979,16 @@ class EpubReaderViewModel @JvmOverloads constructor(
         return (locations.position as? Number)?.toLong()
     }
 
+    private fun Locator.navigationHref(): String {
+        val rawHref = href.toString()
+        if ('#' in rawHref) return rawHref.normalizedNavigationHref()
+        val fragment = locations.fragments.firstOrNull()
+            ?.removePrefix("#")
+            ?.takeIf(String::isNotBlank)
+        val resourceHref = rawHref.normalizedResourceHref()
+        return fragment?.let { "$resourceHref#$it" } ?: resourceHref
+    }
+
     private fun Locator?.positionIn(positions: List<Locator>): Int {
         val totalPositions = positions.size.coerceAtLeast(1)
         val explicitPosition = this?.positionIndex()?.toInt()
@@ -985,12 +1003,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private fun Int.toProgression(totalPositions: Int): Double {
         if (totalPositions <= 1) return 0.0
         return ((this - 1).toDouble() / (totalPositions - 1)).coerceIn(0.0, 1.0)
-    }
-
-    private fun Date.serverTimeOffsetMinutes(): Long? {
-        val offsetMillis = time - System.currentTimeMillis()
-        if (abs(offsetMillis) < SERVER_TIME_WARNING_THRESHOLD_MS) return null
-        return (abs(offsetMillis) / 60_000.0).roundToLong().coerceAtLeast(1L)
     }
 
     private fun Locator?.debugProgress(): String {
@@ -1010,6 +1022,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
         substringBefore('#')
             .substringBefore('?')
             .trimStart('/')
+
+    private fun String.normalizedNavigationHref(): String {
+        val resourceHref = normalizedResourceHref()
+        val fragment = substringAfter('#', "")
+            .removePrefix("#")
+            .takeIf(String::isNotBlank)
+        return fragment?.let { "$resourceHref#$it" } ?: resourceHref
+    }
 
     private fun String.hrefCandidates(): List<String> {
         val normalized = normalizedResourceHref()
