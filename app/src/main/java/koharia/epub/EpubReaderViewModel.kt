@@ -564,6 +564,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
         lastVisualHref = null
         lastVisualPageIndex = null
         lastVisualTotalPages = null
+        paginationLayoutKey = null
+        paginationLayoutJson = null
         mutableState.update {
             it.copy(
                 currentVisualPage = null,
