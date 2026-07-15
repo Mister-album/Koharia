@@ -94,6 +94,21 @@ class KomgaSource(
 
     fun currentHeaders(): Headers = headersBuilder().build()
 
+    fun currentReadiumHeaders(): Headers = currentHeaders().newBuilder()
+        .also { builder ->
+            builder.removeAll("X-API-Key")
+            builder.removeAll("Authorization")
+            when (authMode) {
+                AUTH_MODE_API_KEY -> if (apiKey.isNotBlank()) {
+                    builder.set("X-API-Key", apiKey)
+                }
+                AUTH_MODE_CREDENTIALS -> if (username.isNotBlank() && password.isNotBlank()) {
+                    builder.set("Authorization", Credentials.basic(username, password))
+                }
+            }
+        }
+        .build()
+
     override fun headersBuilder() = super.headersBuilder()
         .set("User-Agent", "KohariaKomga/${AppInfo.getVersionName()}")
         .also { builder ->

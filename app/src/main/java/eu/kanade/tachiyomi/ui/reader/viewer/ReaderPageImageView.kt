@@ -58,10 +58,11 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @AttrRes defStyleAttrs: Int = 0,
     @StyleRes defStyleRes: Int = 0,
     private val isWebtoon: Boolean = false,
+    private val basePreferences: BasePreferences = Injekt.get(),
 ) : FrameLayout(context, attrs, defStyleAttrs, defStyleRes) {
 
     private val alwaysDecodeLongStripWithSSIV by lazy {
-        Injekt.get<BasePreferences>().alwaysDecodeLongStripWithSSIV.get()
+        basePreferences.alwaysDecodeLongStripWithSSIV.get()
     }
 
     private var pageView: View? = null

@@ -132,6 +132,10 @@
         </activity>
 
         <activity
+            android:name="koharia.epub.EpubReaderActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.security.UnlockActivity"
             android:exported="false"
             android:theme="@style/Theme.Tachiyomi" />

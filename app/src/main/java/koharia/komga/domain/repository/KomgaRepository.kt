@@ -124,7 +124,6 @@ class KomgaRepository(
             val books = apiClient.parsePageWrapper<BookDto>(it).content
             val isFromReadList = apiClient.isReadList(it.request.url.toString())
             books
-                .filter { book -> book.media.mediaProfile != "EPUB" || book.media.epubDivinaCompatible }
                 .mapIndexed { index, book ->
                     val number = if (isFromReadList) index + 1F else book.metadata.numberSort
                     book.toChapter(baseUrl, chapterNameTemplate, isFromReadList, number)

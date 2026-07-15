@@ -102,7 +102,11 @@ class WebtoonAdapter(val viewer: WebtoonViewer) : RecyclerView.Adapter<RecyclerV
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         return when (viewType) {
             PAGE_VIEW -> {
-                val view = ReaderPageImageView(readerThemedContext, isWebtoon = true)
+                val view = ReaderPageImageView(
+                    context = readerThemedContext,
+                    isWebtoon = true,
+                    basePreferences = viewer.activity.basePreferences,
+                )
                 WebtoonPageHolder(view, viewer)
             }
             TRANSITION_VIEW -> {
