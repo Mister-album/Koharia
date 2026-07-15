@@ -4,6 +4,7 @@ import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import koharia.domain.epub.model.EpubPaginationCache
 import koharia.domain.epub.repository.EpubPaginationCacheRepository
 import logcat.LogPriority
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
 import java.util.Date
@@ -23,29 +24,33 @@ class EpubPaginationCacheRepositoryImpl(
     }
 
     override suspend fun upsertCache(cache: EpubPaginationCache) {
-        try {
-            database.epub_pagination_cacheQueries.upsert(
-                chapterId = cache.chapterId,
-                publicationKey = cache.publicationKey,
-                layoutKey = cache.layoutKey,
-                layoutSnapshotJson = cache.layoutSnapshotJson,
-                resourcePageCountsJson = cache.resourcePageCountsJson,
-                currentLocatorJson = cache.currentLocatorJson,
-                currentVisualPage = cache.currentVisualPage,
-                totalVisualPages = cache.totalVisualPages,
-                isComplete = cache.isComplete,
-                measuredResourceCount = cache.measuredResourceCount,
-                updatedAt = cache.updatedAt,
-            )
-        } catch (error: Exception) {
-            logcat(LogPriority.ERROR, error) {
-                "Failed to upsert EPUB pagination cache for chapterId=${cache.chapterId}"
+        withIOContext {
+            try {
+                database.epub_pagination_cacheQueries.upsert(
+                    chapterId = cache.chapterId,
+                    publicationKey = cache.publicationKey,
+                    layoutKey = cache.layoutKey,
+                    layoutSnapshotJson = cache.layoutSnapshotJson,
+                    resourcePageCountsJson = cache.resourcePageCountsJson,
+                    currentLocatorJson = cache.currentLocatorJson,
+                    currentVisualPage = cache.currentVisualPage,
+                    totalVisualPages = cache.totalVisualPages,
+                    isComplete = cache.isComplete,
+                    measuredResourceCount = cache.measuredResourceCount,
+                    updatedAt = cache.updatedAt,
+                )
+            } catch (error: Exception) {
+                logcat(LogPriority.ERROR, error) {
+                    "Failed to upsert EPUB pagination cache for chapterId=${cache.chapterId}"
+                }
             }
         }
     }
 
     override suspend fun trimCaches(chapterId: Long, keepCount: Long) {
-        database.epub_pagination_cacheQueries.deleteOlderThanLatest(chapterId, keepCount)
+        withIOContext {
+            database.epub_pagination_cacheQueries.deleteOlderThanLatest(chapterId, keepCount)
+        }
     }
 
     private fun mapCache(

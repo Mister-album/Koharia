@@ -725,7 +725,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
         if (latestLocator != null) {
             viewModelScope.launch {
                 persistPaginationCache(isComplete = true)
-                updateChapterPageProgress()
             }
         }
     }
@@ -1175,7 +1174,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 EpubPaginationPhase.READY,
             ),
         )
-        updateChapterPageProgress()
         markChapterCompletedIfNeeded(locator)
 
         val bookUrl = progress.bookUrl
@@ -1192,17 +1190,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 }
             }
         }
-    }
-
-    private suspend fun updateChapterPageProgress() {
-        if (currentChapterRead) return
-        val currentPage = mutableState.value.currentVisualPage ?: return
-        updateChapter.await(
-            ChapterUpdate(
-                id = chapterId,
-                lastPageRead = (currentPage - 1).toLong(),
-            ),
-        )
     }
 
     private suspend fun markChapterCompletedIfNeeded(locator: Locator) {
