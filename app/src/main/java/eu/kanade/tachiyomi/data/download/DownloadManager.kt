@@ -117,7 +117,9 @@ class DownloadManager(
      * Tells the downloader to resume a specific download.
      */
     fun resumeDownload(download: Download) {
-        downloader.resume(download)
+        if (downloader.resume(download)) {
+            startQueuedDownloadsOnly()
+        }
     }
 
     /**
