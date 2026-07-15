@@ -820,23 +820,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
     }
 
-    fun locatorAtPosition(index: Int): Locator? = publicationPositions.getOrNull(index)
-
-    fun locatorAtProgression(progression: Double): Locator? {
-        if (publicationPositions.isEmpty()) return null
-        val index = (progression.coerceIn(0.0, 1.0) * (publicationPositions.size - 1))
-            .roundToInt()
-        return publicationPositions.getOrNull(index)
-    }
-
-    fun currentLocator(): Locator? = latestLocator
-
-    suspend fun saveCurrentProgress() {
-        if (!isIncognito()) {
-            latestLocator?.let { persistLocator(it) }
-        }
-    }
-
     fun tableOfContents(): List<EpubTocEntry> {
         val session = sessionRepository.get(chapterId) ?: return emptyList()
         return flattenLinks(session.publication.tableOfContents)
@@ -1057,106 +1040,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
             }
         }
         publicationPositions = emptyList()
-        resetVisualPagination()
-    }
-
-    override fun onCleared() {
-        searchIterator?.close()
-        searchIterator = null
-        super.onCleared()
-    }
-
-    private suspend fun refreshBookmarks() {
-        val chapterId = chapterId.takeIf { it > 0 } ?: return
-        val bookmarks = getEpubBookmarks.await(chapterId)
-        val currentBookmarkId = findBookmarkForLocator(bookmarks, latestLocator)?.id
-        mutableState.update {
-            it.copy(
-                bookmarks = bookmarks,
-                currentBookmarkId = currentBookmarkId,
-            )
-        }
-    }
-
-    private suspend fun performSearch(query: String) {
-        searchIterator?.close()
-        searchIterator = null
-        if (query.isBlank()) {
-            mutableState.update {
-                it.copy(
-                    searchResults = emptyList(),
-                    isSearchLoading = false,
-                    searchErrorMessage = null,
-                )
-            }
-            return
-        }
-
-        val session = sessionRepository.get(chapterId)
-        if (session == null || !session.publication.isSearchable) {
-            mutableState.update {
-                it.copy(
-                    searchResults = emptyList(),
-                    isSearchLoading = false,
-                    searchErrorMessage = application.stringResource(MR.strings.epub_reader_search_not_supported),
-                )
-            }
-            return
-        }
-
-        mutableState.update {
-            it.copy(
-                isSearchLoading = true,
-                searchErrorMessage = null,
-            )
-        }
-
-        runCatching {
-            val iterator = session.publication.search(query)
-                ?: error(application.stringResource(MR.strings.epub_reader_search_not_supported))
-            searchIterator = iterator
-            val results = buildList {
-                while (true) {
-                    val collection = iterator.next().getOrElse { error ->
-                        throw IllegalStateException(error.message)
-                    } ?: break
-                    collection.locators.forEach { locator ->
-                        add(
-                            EpubSearchResult(
-                                locator = locator,
-                                title = locator.title,
-                                before = locator.text.before,
-                                highlight = locator.text.highlight,
-                                after = locator.text.after,
-                            ),
-                        )
-                    }
-                }
-            }
-            results
-        }.onSuccess { results ->
-            mutableState.update {
-                it.copy(
-                    searchResults = results,
-                    isSearchLoading = false,
-                    searchErrorMessage = null,
-                )
-            }
-        }.onFailure { error ->
-            logcat(LogPriority.WARN, error) {
-                "EPUB search failed chapterId=$chapterId query=$query"
-            }
-            mutableState.update {
-                it.copy(
-                    searchResults = emptyList(),
-                    isSearchLoading = false,
-                    searchErrorMessage = error.message
-                        ?: application.stringResource(MR.strings.epub_reader_search_error),
-                )
-            }
-        }
-        publicationPositions = emptyList()
         publicationPositionByHref = emptyMap()
+        resetVisualPagination()
     }
 
     override fun onCleared() {
