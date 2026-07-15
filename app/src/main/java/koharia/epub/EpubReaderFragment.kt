@@ -3,6 +3,7 @@ package koharia.epub
 import android.content.Context
 import android.os.Bundle
 import android.view.View
+import android.widget.FrameLayout
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentContainerView
 import androidx.fragment.app.commitNow
@@ -10,13 +11,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import koharia.epub.session.EpubReaderSessionRepository
+import koharia.epub.settings.EpubLayoutPreferences
+import koharia.epub.settings.EpubPreferencesBridge
+import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import org.readium.r2.navigator.HyperlinkNavigator
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
+import org.readium.r2.navigator.epub.EpubPreferences
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
-import org.readium.r2.navigator.util.DirectionalNavigationAdapter
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
@@ -29,19 +34,35 @@ import uy.kohesive.injekt.api.get
 class EpubReaderFragment : Fragment() {
 
     interface Host {
-        fun onCenterTap()
+        fun onTap(positionX: Float, positionY: Float): Boolean
 
         fun onLocatorChanged(locator: Locator)
 
         fun onExternalLinkActivated(url: AbsoluteUrl)
+
+        fun onNavigatorReady()
+
+        fun onSessionMissing(chapterId: Long)
     }
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
+    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
+    private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
         get() = requireArguments().getLong(ARG_CHAPTER_ID)
-
+    private val sourceId: Long
+        get() = requireArguments().getLong(ARG_SOURCE_ID, -1L)
+    private val epubLayoutPreferences by lazy {
+        (activity as? EpubReaderActivity)?.sessionEpubLayoutPreferences() ?: if (sourceId > 0L) {
+            scopedPreferenceStoreFactory.epubLayoutPreferences(sourceId)
+        } else {
+            Injekt.get<EpubLayoutPreferences>()
+        }
+    }
     private var host: Host? = null
     private var containerId: Int = View.NO_ID
+    private var paragraphIndentDebugGeneration = 0L
+    private var paragraphIndentOverrideEnabled = false
 
     private val navigatorListener = object : EpubNavigatorFragment.Listener {
         override fun onExternalLinkActivated(url: AbsoluteUrl) {
@@ -53,6 +74,13 @@ class EpubReaderFragment : Fragment() {
             context: HyperlinkNavigator.LinkContext?,
         ): Boolean {
             return true
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private val paginationListener = object : EpubNavigatorFragment.PaginationListener {
+        override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+            applyParagraphIndentOverride()
         }
     }
 
@@ -68,8 +96,9 @@ class EpubReaderFragment : Fragment() {
         }
         childFragmentManager.fragmentFactory = session?.navigatorFactory?.createFragmentFactory(
             initialLocator = session.initialLocator,
-            readingOrder = session.publication.readingOrder,
+            initialPreferences = epubPreferencesBridge.toReadiumPreferences(epubLayoutPreferences),
             listener = navigatorListener,
+            paginationListener = paginationListener,
             configuration = EpubNavigatorFragment.Configuration(
                 shouldApplyInsetsPadding = false,
             ),
@@ -82,15 +111,28 @@ class EpubReaderFragment : Fragment() {
         container: android.view.ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        return FragmentContainerView(requireContext()).apply {
-            id = View.generateViewId()
-            containerId = id
+        return FrameLayout(requireContext()).apply {
+            addView(
+                FragmentContainerView(requireContext()).apply {
+                    id = View.generateViewId()
+                    containerId = id
+                },
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
         }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        if (childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) == null && sessionRepository.get(chapterId) != null) {
+        val session = sessionRepository.get(chapterId)
+        if (session == null) {
+            host?.onSessionMissing(chapterId)
+            return
+        }
+        if (childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) == null) {
             logcat(LogPriority.DEBUG) {
                 "EPUB fragment create navigator chapterId=$chapterId containerId=$containerId"
             }
@@ -104,6 +146,9 @@ class EpubReaderFragment : Fragment() {
             }
         }
         observeNavigator()
+        if (navigatorFragment() != null) {
+            host?.onNavigatorReady()
+        }
     }
 
     override fun onDetach() {
@@ -116,27 +161,75 @@ class EpubReaderFragment : Fragment() {
         return navigator.go(link)
     }
 
+    fun goTo(locator: Locator): Boolean {
+        val navigator = navigatorFragment() ?: return false
+        return navigator.go(locator)
+    }
+
+    fun goForward(): Boolean {
+        val navigator = navigatorFragment() ?: return false
+        return navigator.goForward()
+    }
+
+    fun goBackward(): Boolean {
+        val navigator = navigatorFragment() ?: return false
+        return navigator.goBackward()
+    }
+
+    fun submitPreferences(preferences: EpubPreferences) {
+        paragraphIndentOverrideEnabled = preferences.publisherStyles == false
+        navigatorFragment()?.submitPreferences(preferences)
+        applyParagraphIndentOverride()
+        logcat(LogPriority.DEBUG) {
+            "EPUB paragraph indent submitted chapterId=$chapterId " +
+                "publisherStyles=${preferences.publisherStyles} " +
+                "paragraphIndent=${preferences.paragraphIndent} " +
+                "paragraphSpacing=${preferences.paragraphSpacing} lineHeight=${preferences.lineHeight}"
+        }
+        logComputedParagraphIndent()
+    }
+
+    private fun applyParagraphIndentOverride() {
+        if (!isAdded || view == null) return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val navigator = navigatorFragment() ?: return@launch
+            navigator.evaluateJavascript(
+                if (paragraphIndentOverrideEnabled) {
+                    APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
+                } else {
+                    REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT
+                },
+            )
+        }
+    }
+
+    private fun logComputedParagraphIndent() {
+        if (!isAdded || view == null) return
+        val debugGeneration = ++paragraphIndentDebugGeneration
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(PARAGRAPH_INDENT_DEBUG_DELAY_MS)
+            if (debugGeneration != paragraphIndentDebugGeneration || !isAdded || view == null) return@launch
+            val result = navigatorFragment()?.evaluateJavascript(PARAGRAPH_INDENT_DEBUG_SCRIPT) ?: return@launch
+            logcat(LogPriority.DEBUG) {
+                "EPUB paragraph indent computed chapterId=$chapterId result=$result"
+            }
+        }
+    }
+
     private fun observeNavigator() {
         val navigator = navigatorFragment() ?: return
         logcat(LogPriority.DEBUG) {
             "EPUB fragment observe navigator chapterId=$chapterId"
         }
         navigator.addInputListener(
-            DirectionalNavigationAdapter(
-                navigator = navigator,
-                handleTapsWhileScrolling = true,
-            ),
-        )
-        navigator.addInputListener(
             object : InputListener {
                 override fun onTap(event: TapEvent): Boolean {
-                    val width = navigator.publicationView.width.toFloat()
-                    val edgeSize = width * 0.3f
-                    if (event.point.x > edgeSize && event.point.x < width - edgeSize) {
-                        host?.onCenterTap()
-                        return true
-                    }
-                    return false
+                    val width = navigator.publicationView.width.toFloat().takeIf { it > 0f } ?: return false
+                    val height = navigator.publicationView.height.toFloat().takeIf { it > 0f } ?: return false
+                    return host?.onTap(
+                        positionX = event.point.x / width,
+                        positionY = event.point.y / height,
+                    ) ?: false
                 }
             },
         )
@@ -145,6 +238,7 @@ class EpubReaderFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 navigator.currentLocator.collect { locator ->
                     host?.onLocatorChanged(locator)
+                    applyParagraphIndentOverride()
                 }
             }
         }
@@ -155,13 +249,48 @@ class EpubReaderFragment : Fragment() {
 
     companion object {
         private const val ARG_CHAPTER_ID = "chapter_id"
+        private const val ARG_SOURCE_ID = "source_id"
         private const val NAVIGATOR_TAG = "epub_navigator"
-        fun createArguments(chapterId: Long): Bundle {
-            return Bundle().apply { putLong(ARG_CHAPTER_ID, chapterId) }
+        private const val PARAGRAPH_INDENT_DEBUG_DELAY_MS = 600L
+        private val PARAGRAPH_INDENT_DEBUG_SCRIPT =
+            """
+            (function() {
+                var root = document.documentElement;
+                var rootStyle = window.getComputedStyle(root);
+                function describe(element) {
+                    var style = window.getComputedStyle(element);
+                    return {
+                        tag: element.tagName,
+                        className: String(element.className || ''),
+                        inlineStyle: element.getAttribute('style') || '',
+                        textIndent: style.textIndent,
+                        display: style.display,
+                        firstChildTag: element.firstElementChild ? element.firstElementChild.tagName : '',
+                        text: String(element.textContent || '').trim().slice(0, 24)
+                    };
+                }
+                var paragraphs = Array.from(document.querySelectorAll('p'));
+                return JSON.stringify({
+                    href: location.href,
+                    rootInlineStyle: root.getAttribute('style') || '',
+                    advancedSettings: rootStyle.getPropertyValue('--USER__advancedSettings').trim(),
+                    paragraphIndentVariable: rootStyle.getPropertyValue('--USER__paraIndent').trim(),
+                    paragraphCount: paragraphs.length,
+                    paragraphs: paragraphs.slice(0, 8).map(describe),
+                    bodyBlocks: Array.from(document.body ? document.body.children : []).slice(0, 8).map(describe)
+                });
+            })()
+            """.trimIndent()
+
+        fun createArguments(chapterId: Long, sourceId: Long): Bundle {
+            return Bundle().apply {
+                putLong(ARG_CHAPTER_ID, chapterId)
+                putLong(ARG_SOURCE_ID, sourceId)
+            }
         }
 
-        fun newInstance(chapterId: Long): EpubReaderFragment {
-            return EpubReaderFragment().apply { arguments = createArguments(chapterId) }
+        fun newInstance(chapterId: Long, sourceId: Long): EpubReaderFragment {
+            return EpubReaderFragment().apply { arguments = createArguments(chapterId, sourceId) }
         }
     }
 }

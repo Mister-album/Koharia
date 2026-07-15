@@ -9,6 +9,7 @@ object Constants {
     const val URL_DISCORD = "https://discord.gg/mihon"
 
     const val MANGA_EXTRA = "manga"
+    const val FROM_SOURCE_EXTRA = "from_source"
 
     const val MAIN_ACTIVITY = "eu.kanade.tachiyomi.ui.main.MainActivity"
 

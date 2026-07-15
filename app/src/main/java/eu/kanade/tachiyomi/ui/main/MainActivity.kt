@@ -370,8 +370,9 @@ class MainActivity : BaseActivity() {
             Constants.SHORTCUT_LIBRARY -> HomeScreen.Tab.Library()
             Constants.SHORTCUT_MANGA -> {
                 val idToOpen = intent.extras?.getLong(Constants.MANGA_EXTRA) ?: return false
+                val fromSource = intent.extras?.getBoolean(Constants.FROM_SOURCE_EXTRA, false) ?: false
                 navigator.popUntilRoot()
-                HomeScreen.Tab.Library(idToOpen)
+                HomeScreen.Tab.Library(idToOpen, fromSource)
             }
             Constants.SHORTCUT_UPDATES -> HomeScreen.Tab.Updates
             Constants.SHORTCUT_HISTORY -> HomeScreen.Tab.History
