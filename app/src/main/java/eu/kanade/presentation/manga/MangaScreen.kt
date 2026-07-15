@@ -829,14 +829,15 @@ private fun LazyListScope.sharedChapterItems(
                     date = relativeDateText(item.chapter.dateUpload),
                     readProgress = when {
                         item.chapter.read -> null
-                        item.epubProgressPercent != null -> item.epubProgressPercent
-                            .takeIf { it > 0 }
-                            ?.let {
-                                stringResource(
-                                    MR.strings.epub_chapter_progress,
-                                    it,
-                                )
-                            }
+                        item.epubProgressPercent != null ->
+                            item.epubProgressPercent
+                                .takeIf { it > 0 }
+                                ?.let {
+                                    stringResource(
+                                        MR.strings.epub_chapter_progress,
+                                        it,
+                                    )
+                                }
                         item.chapter.lastPageRead > 0L -> {
                             stringResource(
                                 MR.strings.chapter_progress,

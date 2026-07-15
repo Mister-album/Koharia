@@ -47,8 +47,8 @@ import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import org.json.JSONObject
 import org.readium.r2.shared.ExperimentalReadiumApi
-import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Layout
+import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.publication.services.search.SearchIterator
@@ -305,7 +305,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 currentPublicationKey = when {
                     !bookDetails?.fileHash.isNullOrBlank() -> "komga:${bookDetails.fileHash}"
                     bookDetails != null -> "komga:${bookDetails.fileLastModified}:${bookDetails.sizeBytes}"
-                    localFile != null -> "local:${localUri}:${localFile.lastModified()}:${localFile.length()}"
+                    localFile != null -> "local:$localUri:${localFile.lastModified()}:${localFile.length()}"
                     else -> "book:${chapter.id}:${chapter.url}"
                 }
 
@@ -1053,7 +1053,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         logcat(LogPriority.ERROR, error) {
                             "Failed to persist final EPUB locator for chapterId=$chapterId"
                         }
-                }
+                    }
             }
         }
         publicationPositions = emptyList()

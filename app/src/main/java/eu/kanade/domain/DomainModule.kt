@@ -30,8 +30,8 @@ import koharia.domain.epub.interactor.GetEpubBookmarks
 import koharia.domain.epub.interactor.GetEpubPaginationCache
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.domain.epub.interactor.UpdateEpubBookmarkNote
-import koharia.domain.epub.interactor.UpsertEpubProgress
 import koharia.domain.epub.interactor.UpsertEpubPaginationCache
+import koharia.domain.epub.interactor.UpsertEpubProgress
 import koharia.domain.epub.repository.EpubBookmarkRepository
 import koharia.domain.epub.repository.EpubPaginationCacheRepository
 import koharia.domain.epub.repository.EpubProgressRepository
