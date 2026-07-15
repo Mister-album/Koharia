@@ -175,7 +175,8 @@ class EpubReaderFragment : Fragment() {
         if (navigatorFragment() != null) {
             host?.onNavigatorReady()
         }
-        view.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+        val viewportView = view.findViewById<View>(containerId) ?: view
+        viewportView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
             val width = right - left
             val height = bottom - top
             if (width <= 0 || height <= 0 ||

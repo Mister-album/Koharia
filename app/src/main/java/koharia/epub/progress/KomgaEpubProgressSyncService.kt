@@ -120,11 +120,11 @@ class KomgaEpubProgressSyncService(
     private fun Response.requireSuccess(operation: String) {
         if (isSuccessful) return
 
-        val details = body.string()
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(MAX_ERROR_BODY_LENGTH)
-            .takeIf(String::isNotBlank)
+        val details = runCatching { peekBody(MAX_ERROR_BODY_LENGTH.toLong()).string() }
+            .getOrNull()
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
         throw IllegalStateException(
             buildString {
                 append("Komga progression ")
