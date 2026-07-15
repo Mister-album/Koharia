@@ -786,7 +786,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         paginationViewportJob?.cancel()
         if (state.isReady) {
             paginationJob?.cancel()
-            viewModel.invalidatePaginationCalculation()
+            viewModel.invalidatePaginationDisplay()
             epubReaderFragment()?.stopPagination()
             paginationViewportJob = lifecycleScope.launch {
                 kotlinx.coroutines.delay(PAGINATION_VIEWPORT_DEBOUNCE_MS)

@@ -148,10 +148,12 @@ internal class EpubPaginationScannerFragment : Fragment() {
     }
 
     private suspend fun awaitStableLayout(): Boolean {
-        val navigator = navigatorFragment() ?: return false
         val loaded = withTimeoutOrNull(RESOURCE_READY_TIMEOUT_MS) {
             while (true) {
-                val result = navigator.evaluateJavascript(RESOURCE_READY_SCRIPT)
+                val navigator = navigatorFragment() ?: return@withTimeoutOrNull false
+                val result = runCatching {
+                    navigator.evaluateJavascript(RESOURCE_READY_SCRIPT)
+                }.getOrNull() ?: return@withTimeoutOrNull false
                 if (result == "true") break
                 delay(RESOURCE_READY_POLL_MS)
             }

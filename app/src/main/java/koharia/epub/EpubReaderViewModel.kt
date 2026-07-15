@@ -553,7 +553,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     paginationPhase = EpubPaginationPhase.READY,
                 )
             }
-            viewModelScope.launch { persistPaginationCache(isComplete = true) }
             return
         }
     }
@@ -572,13 +571,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 paginationPhase = EpubPaginationPhase.CALCULATING,
                 paginationGeneration = paginationGeneration,
             )
-        }
-    }
-
-    fun invalidatePaginationCalculation() {
-        paginationGeneration += 1
-        mutableState.update {
-            it.copy(paginationGeneration = paginationGeneration)
         }
     }
 
