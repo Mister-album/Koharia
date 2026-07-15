@@ -224,6 +224,12 @@ class Downloader(
             .filter { it.status == Download.State.DOWNLOADING }
             .forEach { it.status = Download.State.ERROR }
 
+        logcat(LogPriority.INFO) {
+            "Downloader.stop(): reason=${reason ?: "<none>"}, " +
+                "isPaused=$isPaused, queueSize=${queueState.value.size}, " +
+                "statusSummary=${queueState.value.statusSummary()}"
+        }
+
         if (reason != null) {
             notifier.onWarning(reason)
             return
@@ -264,7 +270,7 @@ class Downloader(
     /**
      * Resumes a specific download
      */
-    fun resume(download: Download) {
+    fun resume(download: Download): Boolean {
         if (
             download.status == Download.State.PAUSED ||
             download.status == Download.State.ERROR ||
@@ -273,12 +279,10 @@ class Downloader(
             if (download.status != Download.State.QUEUE) {
                 download.status = Download.State.QUEUE
             }
-            if (isRunning) {
-                notifyQueueChanged()
-            } else {
-                start()
-            }
+            notifyQueueChanged()
+            return true
         }
+        return false
     }
 
     fun resumeAllPaused() {
@@ -291,6 +295,10 @@ class Downloader(
      * Removes everything from the queue.
      */
     fun clearQueue() {
+        logcat(LogPriority.INFO) {
+            "Downloader.clearQueue(): queueSize=${queueState.value.size}, " +
+                "statusSummary=${queueState.value.statusSummary()}"
+        }
         cancelDownloaderJob()
 
         internalClearQueue()
@@ -1055,6 +1063,10 @@ class Downloader(
 
     private fun removeFromQueue(download: Download) {
         _queueState.update {
+            logcat(LogPriority.INFO) {
+                "Downloader.removeFromQueue(): chapterId=${download.chapter.id}, " +
+                    "status=${download.status}"
+            }
             store.remove(download)
             if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
                 download.status = Download.State.NOT_DOWNLOADED
@@ -1066,6 +1078,12 @@ class Downloader(
     private inline fun removeFromQueueIf(predicate: (Download) -> Boolean) {
         _queueState.update { queue ->
             val downloads = queue.filter { predicate(it) }
+            if (downloads.isNotEmpty()) {
+                logcat(LogPriority.INFO) {
+                    "Downloader.removeFromQueueIf(): chapterIds=${downloads.map { it.chapter.id }}, " +
+                        "statusSummary=${downloads.statusSummary()}"
+                }
+            }
             store.removeAll(downloads)
             downloads.forEach { download ->
                 if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
@@ -1098,14 +1116,20 @@ class Downloader(
     }
 
     fun updateQueue(downloads: List<Download>) {
-        val wasRunning = isRunning
-        val previousStatuses = queueState.value.associate { it.chapter.id to it.status }
-
-        if (downloads.isEmpty()) {
-            clearQueue()
-            stop()
+        val currentQueue = queueState.value
+        val currentChapterIds = currentQueue.map { it.chapter.id }
+        val reorderedChapterIds = downloads.map { it.chapter.id }
+        if (!isValidDownloadQueueReorder(currentChapterIds, reorderedChapterIds)) {
+            logcat(LogPriority.WARN) {
+                "Downloader.updateQueue(): ignoring incomplete reorder, " +
+                    "currentChapterIds=$currentChapterIds, reorderedChapterIds=$reorderedChapterIds"
+            }
             return
         }
+        if (downloads.isEmpty()) return
+
+        val wasRunning = isRunning
+        val previousStatuses = currentQueue.associate { it.chapter.id to it.status }
 
         pause()
         internalClearQueue()
