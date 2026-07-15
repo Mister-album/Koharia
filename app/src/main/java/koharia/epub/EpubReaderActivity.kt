@@ -802,9 +802,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         openInBrowser(url.toUri(), forceDefaultBrowser = false)
     }
 
-    override fun onNavigatorReady() {
+    override fun onNavigatorReady(fragment: EpubReaderFragment) {
+        readerFragment = fragment
         if (paginationViewportJob?.isActive != true) {
-            applyCurrentReadiumPreferences()
+            applyCurrentReadiumPreferences(fragment)
         }
     }
 
@@ -936,11 +937,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             .launchIn(lifecycleScope)
     }
 
-    private fun applyCurrentReadiumPreferences() {
-        val fragment = epubReaderFragment() ?: return
+    private fun applyCurrentReadiumPreferences(fragment: EpubReaderFragment? = epubReaderFragment()) {
+        val activeFragment = fragment?.takeIf { it.isAdded && it.view != null } ?: return
         val viewport = paginationViewport ?: return
         val preferences = epubPreferencesBridge.toReadiumPreferences(epubLayoutPreferences)
-        fragment.submitPreferences(preferences)
+        activeFragment.submitPreferences(preferences)
         paginationJob?.cancel()
         paginationJob = lifecycleScope.launch {
             val snapshot = EpubPaginationLayoutSnapshot.from(epubLayoutPreferences, viewport)
@@ -958,12 +959,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     "phase=${stateAfter.paginationPhase} " +
                     "pages=${stateAfter.currentVisualPage}/${stateAfter.totalVisualPages}"
             }
-            if (request.generation == viewModel.state.value.paginationGeneration) {
-                fragment.startPagination(request)
+            if (request.generation == viewModel.state.value.paginationGeneration &&
+                activeFragment.isAdded && activeFragment.view != null && readerFragment === activeFragment
+            ) {
+                activeFragment.startPagination(request)
                 if (!request.shouldScan &&
                     viewModel.state.value.paginationPhase != EpubPaginationPhase.UNAVAILABLE
                 ) {
-                    viewModel.currentLocator()?.let(fragment::goTo)
+                    viewModel.currentLocator()?.let(activeFragment::goTo)
                 }
             }
         }
@@ -1017,7 +1020,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     private fun epubReaderFragment(): EpubReaderFragment? {
-        return readerFragment
+        return readerFragment?.takeIf { it.isAdded && it.view != null }
     }
 
     private fun openAdjacentBook(chapterId: Long) {
