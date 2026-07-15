@@ -1,0 +1,22 @@
+import java.util.Date;
+import kotlin.Boolean;
+
+CREATE TABLE epub_pagination_cache(
+    chapter_id INTEGER NOT NULL,
+    publication_key TEXT NOT NULL,
+    layout_key TEXT NOT NULL,
+    layout_snapshot_json TEXT NOT NULL,
+    resource_page_counts_json TEXT NOT NULL,
+    current_locator_json TEXT,
+    current_visual_page INTEGER,
+    total_visual_pages INTEGER,
+    is_complete INTEGER AS Boolean NOT NULL DEFAULT 0,
+    measured_resource_count INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER AS Date NOT NULL,
+    PRIMARY KEY(chapter_id, publication_key, layout_key),
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX epub_pagination_cache_chapter_id_index
+ON epub_pagination_cache(chapter_id);

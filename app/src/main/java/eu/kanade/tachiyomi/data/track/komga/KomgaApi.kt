@@ -118,6 +118,7 @@ class KomgaApi(
                             seriesUrl = url,
                             url = "$baseUrl/api/v1/books/${book.id}",
                             readProgress = book.readProgress,
+                            isEpub = book.media?.mediaProfile == "EPUB",
                         )
                     }
             }
@@ -147,6 +148,7 @@ class KomgaApi(
                                 seriesUrl = "$baseUrl/api/v1/series/${book.seriesId}",
                                 url = "$baseUrl/api/v1/books/${book.id}",
                                 readProgress = book.readProgress,
+                                isEpub = book.media?.mediaProfile == "EPUB",
                             )
                         }
                 }
@@ -234,5 +236,6 @@ class KomgaApi(
         val seriesUrl: String? = null,
         val url: String,
         val readProgress: BookReadProgressDto?,
+        val isEpub: Boolean = false,
     )
 }

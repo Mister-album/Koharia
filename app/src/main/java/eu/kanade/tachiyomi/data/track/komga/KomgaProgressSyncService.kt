@@ -155,11 +155,14 @@ class KomgaProgressSyncService(
                     )
                 }
 
-            if (newRead != localChapter.read || newLastPageRead != localChapter.lastPageRead) {
+            val shouldUpdatePage = !remote.isEpub &&
+                newLastPageRead != localChapter.lastPageRead
+
+            if (newRead != localChapter.read || shouldUpdatePage) {
                 chapterUpdates += ChapterUpdate(
                     id = localChapter.id,
                     read = newRead,
-                    lastPageRead = newLastPageRead,
+                    lastPageRead = newLastPageRead.takeUnless { remote.isEpub },
                 )
             }
         }

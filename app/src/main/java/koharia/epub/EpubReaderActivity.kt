@@ -80,6 +80,7 @@ import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -113,7 +114,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     companion object {
         private const val READER_EDGE_PADDING_DP = 8
-        private const val LAYOUT_SETTINGS_DEBOUNCE_MS = 250L
+        private const val PAGINATION_SETTINGS_DEBOUNCE_MS = 250L
+        private const val PAGINATION_VIEWPORT_DEBOUNCE_MS = 250L
 
         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?, sourceId: Long? = null): Intent {
             return Intent(context, EpubReaderActivity::class.java).apply {
@@ -164,6 +166,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private val epubReaderLauncher by lazy { EpubReaderLauncher() }
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
     private var isReaderResumed = false
+    private var paginationViewport: EpubPaginationViewport? = null
+    private var paginationViewportJob: Job? = null
+    private var paginationJob: Job? = null
     private var currentPublisherStyles: Boolean? = null
     private var readerFragment: EpubReaderFragment? = null
 
@@ -589,6 +594,26 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 )
             }
 
+            state.serverTimeOffsetMinutes?.let { offsetMinutes ->
+                AlertDialog(
+                    onDismissRequest = viewModel::dismissServerTimeWarning,
+                    title = { Text(stringResource(MR.strings.epub_reader_server_time_warning_title)) },
+                    text = {
+                        Text(
+                            stringResource(
+                                MR.strings.epub_reader_server_time_warning_message,
+                                offsetMinutes,
+                            ),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = viewModel::dismissServerTimeWarning) {
+                            Text(stringResource(MR.strings.action_ok))
+                        }
+                    },
+                )
+            }
+
             if (showBookInfoDialog) {
                 EpubBookInfoDialog(
                     state = state,
@@ -643,6 +668,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     override fun onPause() {
         isReaderResumed = false
+        paginationViewportJob?.cancel()
+        paginationJob?.cancel()
+        epubReaderFragment()?.stopPagination()
         lifecycleScope.launchNonCancellable {
             viewModel.saveCurrentProgress()
             viewModel.updateHistory()
@@ -657,12 +685,16 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         isReaderResumed = true
         applyCurrentEpubBrightness()
         updateSystemBars(viewModel.state.value.menuVisible)
-        if (viewModel.state.value.isReady) {
+        if (viewModel.state.value.isReady &&
+            paginationViewport != null &&
+            paginationViewportJob?.isActive != true
+        ) {
             applyCurrentReadiumPreferences()
         }
     }
 
     override fun onLowMemory() {
+        epubReaderFragment()?.stopPagination()
         lifecycleScope.launchNonCancellable { viewModel.saveCurrentProgress() }
         super.onLowMemory()
     }
@@ -724,12 +756,56 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         viewModel.updateLocator(locator)
     }
 
+    override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+        viewModel.updateVisualPage(pageIndex, totalPages, locator)
+    }
+
+    override fun onBookPaginationChanged(
+        generation: Long,
+        pageCounts: Map<String, Int>,
+        isComplete: Boolean,
+    ) {
+        viewModel.updateBookPagination(generation, pageCounts, isComplete)
+        if (isComplete && generation == viewModel.state.value.paginationGeneration) {
+            viewModel.currentLocator()?.let { locator ->
+                epubReaderFragment()?.goTo(locator)
+            }
+        }
+    }
+
+    override fun onPaginationViewportChanged(viewport: EpubPaginationViewport) {
+        val previousViewport = paginationViewport
+        if (viewport == previousViewport) return
+        val state = viewModel.state.value
+        logcat(LogPriority.DEBUG) {
+            "EPUB pagination viewport changed old=$previousViewport new=$viewport " +
+                "ready=${state.isReady} phase=${state.paginationPhase} " +
+                "pages=${state.currentVisualPage}/${state.totalVisualPages}"
+        }
+        paginationViewport = viewport
+        paginationViewportJob?.cancel()
+        if (state.isReady) {
+            paginationJob?.cancel()
+            viewModel.invalidatePaginationDisplay()
+            epubReaderFragment()?.stopPagination()
+            paginationViewportJob = lifecycleScope.launch {
+                kotlinx.coroutines.delay(PAGINATION_VIEWPORT_DEBOUNCE_MS)
+                if (paginationViewport == viewport && viewModel.state.value.isReady) {
+                    logcat(LogPriority.DEBUG) { "EPUB pagination viewport settled viewport=$viewport" }
+                    applyCurrentReadiumPreferences()
+                }
+            }
+        }
+    }
+
     override fun onExternalLinkActivated(url: AbsoluteUrl) {
         openInBrowser(url.toUri(), forceDefaultBrowser = false)
     }
 
     override fun onNavigatorReady() {
-        applyCurrentReadiumPreferences()
+        if (paginationViewportJob?.isActive != true) {
+            applyCurrentReadiumPreferences()
+        }
     }
 
     override fun onSessionMissing(chapterId: Long) {
@@ -821,7 +897,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             }
             .launchIn(lifecycleScope)
 
-        val layoutAffectingChanges = listOf(
+        val paginationAffectingChanges = listOf(
             epubLayoutPreferences.readingMode.changes().map { it as Any },
             epubLayoutPreferences.pageDirection.changes().map { it as Any },
             epubLayoutPreferences.fontSize.changes().map { it as Any },
@@ -833,10 +909,20 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             epubLayoutPreferences.fontFamily.changes().map { it as Any },
             epubLayoutPreferences.publisherStyles.changes().map { it as Any },
         )
-        combine(layoutAffectingChanges) { values -> values.toList() }
+        combine(paginationAffectingChanges) { values -> values.toList() }
             .distinctUntilChanged()
             .drop(1)
-            .debounce(LAYOUT_SETTINGS_DEBOUNCE_MS)
+            .onEach { values ->
+                val state = viewModel.state.value
+                logcat(LogPriority.DEBUG) {
+                    "EPUB pagination settings changed values=$values phase=${state.paginationPhase} " +
+                        "pages=${state.currentVisualPage}/${state.totalVisualPages}"
+                }
+                paginationJob?.cancel()
+                viewModel.invalidatePaginationDisplay()
+                epubReaderFragment()?.stopPagination()
+            }
+            .debounce(PAGINATION_SETTINGS_DEBOUNCE_MS)
             .onEach { values ->
                 val publisherStyles = values.last() as Boolean
                 val shouldReload = publisherStyles != currentPublisherStyles
@@ -852,7 +938,35 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     private fun applyCurrentReadiumPreferences() {
         val fragment = epubReaderFragment() ?: return
-        fragment.submitPreferences(epubPreferencesBridge.toReadiumPreferences(epubLayoutPreferences))
+        val viewport = paginationViewport ?: return
+        val preferences = epubPreferencesBridge.toReadiumPreferences(epubLayoutPreferences)
+        fragment.submitPreferences(preferences)
+        paginationJob?.cancel()
+        paginationJob = lifecycleScope.launch {
+            val snapshot = EpubPaginationLayoutSnapshot.from(epubLayoutPreferences, viewport)
+            val stateBefore = viewModel.state.value
+            logcat(LogPriority.DEBUG) {
+                "EPUB pagination prepare requested key=${snapshot.key.take(12)} viewport=$viewport " +
+                    "phase=${stateBefore.paginationPhase} " +
+                    "pages=${stateBefore.currentVisualPage}/${stateBefore.totalVisualPages}"
+            }
+            val request = viewModel.preparePagination(snapshot)
+            val stateAfter = viewModel.state.value
+            logcat(LogPriority.DEBUG) {
+                "EPUB pagination prepare completed key=${snapshot.key.take(12)} " +
+                    "generation=${request.generation} shouldScan=${request.shouldScan} " +
+                    "phase=${stateAfter.paginationPhase} " +
+                    "pages=${stateAfter.currentVisualPage}/${stateAfter.totalVisualPages}"
+            }
+            if (request.generation == viewModel.state.value.paginationGeneration) {
+                fragment.startPagination(request)
+                if (!request.shouldScan &&
+                    viewModel.state.value.paginationPhase != EpubPaginationPhase.UNAVAILABLE
+                ) {
+                    viewModel.currentLocator()?.let(fragment::goTo)
+                }
+            }
+        }
     }
 
     private fun reloadEpubSessionForPublisherStyles(enabled: Boolean) {

@@ -1,11 +1,13 @@
 package koharia.epub.service
 
 import android.app.Application
+import android.os.SystemClock
 import koharia.epub.model.EpubOpenRequest
 import koharia.epub.session.EpubReaderSession
 import logcat.LogPriority
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.shared.publication.Locator
+import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.FileExtension
 import org.readium.r2.shared.util.asset.AssetRetriever
@@ -76,6 +78,17 @@ class KomgaEpubPublicationService(
             }
         logcat(LogPriority.DEBUG) {
             "EPUB remote open success chapterId=${request.chapterId} readingOrder=${publication.readingOrder.size} toc=${publication.tableOfContents.size}"
+        }
+
+        // Readium 3.3.0's EPUB navigator reads positions through runBlocking on the main thread
+        // when it publishes the first location. Remote EPUB positions can require fetching every
+        // reading-order resource, so populate the service cache while this open coroutine is still
+        // showing the reader loading state.
+        val positionsStartedAt = SystemClock.elapsedRealtime()
+        val positions = publication.positions()
+        logcat(LogPriority.DEBUG) {
+            "EPUB positions ready chapterId=${request.chapterId} count=${positions.size} " +
+                "durationMs=${SystemClock.elapsedRealtime() - positionsStartedAt}"
         }
 
         return EpubReaderSession(
