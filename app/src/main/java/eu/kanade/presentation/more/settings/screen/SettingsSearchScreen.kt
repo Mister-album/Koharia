@@ -288,7 +288,8 @@ private fun getLocalizedBreadcrumb(path: String, node: String?, isLtr: Boolean):
 private val settingScreens = listOf(
     SettingsAppearanceScreen,
     SettingsLibraryScreen,
-    SettingsReaderScreen,
+    SettingsComicReaderScreen,
+    SettingsBookReaderScreen,
     SettingsDownloadScreen,
     SettingsDataScreen,
     SettingsSecurityScreen,

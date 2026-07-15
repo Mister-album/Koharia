@@ -54,6 +54,12 @@ class EpubLayoutPreferences(
     val publisherStyles: Preference<Boolean> =
         preferenceStore.getBoolean("epub_layout_publisher_styles", true)
 
+    val readWithVolumeKeys: Preference<Boolean> =
+        preferenceStore.getBoolean("epub_layout_volume_keys", true)
+
+    val readWithVolumeKeysInverted: Preference<Boolean> =
+        preferenceStore.getBoolean("epub_layout_volume_keys_inverted", false)
+
     enum class ReadingMode {
         PAGINATED,
         SCROLL,

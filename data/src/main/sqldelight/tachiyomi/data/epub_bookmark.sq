@@ -1,0 +1,76 @@
+import java.util.Date;
+
+CREATE TABLE epub_bookmark(
+    _id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    chapter_id INTEGER NOT NULL,
+    manga_id INTEGER NOT NULL,
+    locator_json TEXT NOT NULL,
+    section_title TEXT,
+    progression REAL,
+    note TEXT,
+    created_at INTEGER AS Date NOT NULL,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX epub_bookmark_chapter_id_index ON epub_bookmark(chapter_id);
+CREATE INDEX epub_bookmark_manga_id_index ON epub_bookmark(manga_id);
+
+getByChapterId:
+SELECT
+_id,
+chapter_id,
+manga_id,
+locator_json,
+section_title,
+progression,
+note,
+created_at
+FROM epub_bookmark
+WHERE chapter_id = :chapterId
+ORDER BY progression IS NULL, progression ASC, created_at ASC;
+
+getByMangaId:
+SELECT
+_id,
+chapter_id,
+manga_id,
+locator_json,
+section_title,
+progression,
+note,
+created_at
+FROM epub_bookmark
+WHERE manga_id = :mangaId
+ORDER BY created_at DESC;
+
+insert:
+INSERT INTO epub_bookmark(
+    chapter_id,
+    manga_id,
+    locator_json,
+    section_title,
+    progression,
+    note,
+    created_at
+)
+VALUES (
+    :chapterId,
+    :mangaId,
+    :locatorJson,
+    :sectionTitle,
+    :progression,
+    :note,
+    :createdAt
+);
+
+deleteById:
+DELETE FROM epub_bookmark
+WHERE _id = :id;
+
+updateNote:
+UPDATE epub_bookmark
+SET note = :note
+WHERE _id = :id;

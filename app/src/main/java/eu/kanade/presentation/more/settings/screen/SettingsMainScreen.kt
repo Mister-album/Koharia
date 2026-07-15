@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ChromeReaderMode
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.Explore
@@ -184,10 +185,16 @@ object SettingsMainScreen : Screen() {
             screen = SettingsLibraryScreen,
         ),
         Item(
-            titleRes = MR.strings.pref_category_reader,
-            subtitleRes = MR.strings.pref_reader_summary,
+            titleRes = MR.strings.pref_category_comic_reader,
+            subtitleRes = MR.strings.pref_comic_reader_summary,
             icon = Icons.AutoMirrored.Outlined.ChromeReaderMode,
-            screen = SettingsReaderScreen,
+            screen = SettingsComicReaderScreen,
+        ),
+        Item(
+            titleRes = MR.strings.pref_category_book_reader,
+            subtitleRes = MR.strings.pref_book_reader_summary,
+            icon = Icons.AutoMirrored.Outlined.MenuBook,
+            screen = SettingsBookReaderScreen,
         ),
         Item(
             titleRes = MR.strings.pref_category_downloads,
