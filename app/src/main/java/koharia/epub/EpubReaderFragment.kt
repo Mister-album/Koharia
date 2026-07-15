@@ -11,6 +11,7 @@ import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import eu.kanade.tachiyomi.R
 import koharia.epub.locator.toNavigatorLocator
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
@@ -128,7 +129,7 @@ class EpubReaderFragment : Fragment() {
         return FrameLayout(requireContext()).apply {
             addView(
                 FragmentContainerView(requireContext()).apply {
-                    id = View.generateViewId()
+                    id = R.id.epub_reader_navigator_container
                     containerId = id
                 },
                 FrameLayout.LayoutParams(
@@ -138,7 +139,7 @@ class EpubReaderFragment : Fragment() {
             )
             addView(
                 FragmentContainerView(requireContext()).apply {
-                    id = View.generateViewId()
+                    id = R.id.epub_reader_pagination_scanner_container
                     scannerContainerId = id
                     visibility = View.INVISIBLE
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
