@@ -1,6 +1,5 @@
 package koharia.epub.settings
 
-import android.graphics.Color as AndroidColor
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -99,6 +98,7 @@ import tachiyomi.presentation.core.components.HeadingItem
 import tachiyomi.presentation.core.components.SliderItem
 import tachiyomi.presentation.core.i18n.stringResource
 import kotlin.math.roundToInt
+import android.graphics.Color as AndroidColor
 
 private enum class EpubSettingsDialog {
     READING_MODE,

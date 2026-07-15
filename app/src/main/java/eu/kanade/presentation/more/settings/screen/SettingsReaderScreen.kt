@@ -10,9 +10,9 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
+import koharia.epub.settings.EpubBackgroundSettingsPreference
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
-import koharia.epub.settings.EpubBackgroundSettingsPreference
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.LocalConfigMode
 import kotlinx.collections.immutable.persistentListOf
@@ -895,5 +895,4 @@ object SettingsReaderScreen : SearchableSettings {
             ),
         )
     }
-
 }

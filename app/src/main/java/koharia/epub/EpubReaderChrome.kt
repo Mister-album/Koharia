@@ -129,7 +129,11 @@ internal fun EpubReaderTopBar(
                             Icons.Outlined.BookmarkBorder
                         },
                         contentDescription = stringResource(
-                            if (isBookmarked) MR.strings.epub_reader_remove_bookmark else MR.strings.epub_reader_add_bookmark,
+                            if (isBookmarked) {
+                                MR.strings.epub_reader_remove_bookmark
+                            } else {
+                                MR.strings.epub_reader_add_bookmark
+                            },
                         ),
                     )
                 }
