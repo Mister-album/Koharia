@@ -251,6 +251,7 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.constraintLayout)
     implementation(libs.androidx.core)
+    implementation(libs.androidx.fragment.compose)
     implementation(libs.androidx.coreSplashScreen)
     implementation(libs.androidx.recyclerView)
     implementation(libs.androidx.viewPager)
@@ -295,7 +296,6 @@ dependencies {
     // UI libraries
     implementation(libs.material)
     implementation(libs.flexibleAdapter)
-    implementation(libs.photoView)
     implementation(libs.directionalViewPager) {
         exclude(group = "androidx.viewpager", module = "viewpager")
     }

@@ -17,9 +17,11 @@ import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.epub.EpubReaderLauncher
-import kotlinx.coroutines.runBlocking
+import logcat.LogPriority
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
@@ -78,11 +80,21 @@ class NotificationReceiver : BroadcastReceiver() {
             ACTION_CANCEL_APP_UPDATE_DOWNLOAD -> cancelDownloadAppUpdate(context)
             // Open reader activity
             ACTION_OPEN_CHAPTER -> {
-                openChapter(
-                    context,
-                    intent.getLongExtra(EXTRA_MANGA_ID, -1),
-                    intent.getLongExtra(EXTRA_CHAPTER_ID, -1),
-                )
+                val pendingResult = goAsync()
+                launchIO {
+                    try {
+                        openChapter(
+                            context,
+                            intent.getLongExtra(EXTRA_MANGA_ID, -1),
+                            intent.getLongExtra(EXTRA_CHAPTER_ID, -1),
+                        )
+                    } catch (error: Exception) {
+                        logcat(LogPriority.ERROR, error) { "Failed to open EPUB chapter from notification" }
+                        withUIContext { context.toast(MR.strings.chapter_error) }
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
             }
             // Mark updated manga chapters as read
             ACTION_MARK_AS_READ -> {
@@ -147,18 +159,16 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param mangaId id of manga
      * @param chapterId id of chapter
      */
-    private fun openChapter(context: Context, mangaId: Long, chapterId: Long) {
-        val manga = runBlocking { getManga.await(mangaId) }
-        val chapter = runBlocking { getChapter.await(chapterId) }
+    private suspend fun openChapter(context: Context, mangaId: Long, chapterId: Long) {
+        val manga = getManga.await(mangaId)
+        val chapter = getChapter.await(chapterId)
         if (manga != null && chapter != null) {
-            val intent = runBlocking {
-                EpubReaderLauncher().resolveIntent(context, manga.id, chapter.id)
-            }.apply {
+            val intent = EpubReaderLauncher().resolveIntent(context, manga.id, chapter.id).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
-            context.startActivity(intent)
+            withUIContext { context.startActivity(intent) }
         } else {
-            context.toast(MR.strings.chapter_error)
+            withUIContext { context.toast(MR.strings.chapter_error) }
         }
     }
 

@@ -433,11 +433,6 @@ object SettingsReaderScreen : SearchableSettings {
             title = stringResource(MR.strings.pref_category_epub_reader),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = epubReaderPreferences.enableNativeReader,
-                    title = stringResource(MR.strings.pref_enable_native_epub_reader),
-                    subtitle = stringResource(MR.strings.pref_enable_native_epub_reader_summary),
-                ),
-                Preference.PreferenceItem.SwitchPreference(
                     preference = epubReaderPreferences.preferLocalFile,
                     title = stringResource(MR.strings.pref_prefer_local_epub_file),
                     subtitle = stringResource(MR.strings.pref_prefer_local_epub_file_summary),

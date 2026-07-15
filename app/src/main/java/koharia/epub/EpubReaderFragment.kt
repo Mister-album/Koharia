@@ -156,13 +156,12 @@ class EpubReaderFragment : Fragment() {
     companion object {
         private const val ARG_CHAPTER_ID = "chapter_id"
         private const val NAVIGATOR_TAG = "epub_navigator"
+        fun createArguments(chapterId: Long): Bundle {
+            return Bundle().apply { putLong(ARG_CHAPTER_ID, chapterId) }
+        }
 
         fun newInstance(chapterId: Long): EpubReaderFragment {
-            return EpubReaderFragment().apply {
-                arguments = Bundle().apply {
-                    putLong(ARG_CHAPTER_ID, chapterId)
-                }
-            }
+            return EpubReaderFragment().apply { arguments = createArguments(chapterId) }
         }
     }
 }

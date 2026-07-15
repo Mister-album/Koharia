@@ -16,15 +16,21 @@ import koharia.epub.service.EpubPublicationResolver
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.komga.api.dto.isEpub
+import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import org.json.JSONObject
 import org.readium.r2.shared.publication.Link
@@ -34,6 +40,10 @@ import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChapter
+import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.model.ChapterUpdate
+import tachiyomi.domain.history.interactor.UpsertHistory
+import tachiyomi.domain.history.model.HistoryUpdate
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
@@ -53,9 +63,21 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
     private val upsertEpubProgress: UpsertEpubProgress = Injekt.get(),
     private val komgaEpubProgressSyncService: KomgaEpubProgressSyncService = Injekt.get(),
-    private val epubReaderPreferences: EpubReaderPreferences = Injekt.get(),
-    private val basePreferences: BasePreferences = Injekt.get(),
+    private val updateChapter: UpdateChapter = Injekt.get(),
+    private val upsertHistory: UpsertHistory = Injekt.get(),
+    globalEpubReaderPreferences: EpubReaderPreferences = Injekt.get(),
+    globalBasePreferences: BasePreferences = Injekt.get(),
+    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
 ) : ViewModel() {
+
+    private var epubReaderPreferences =
+        scopedPreferenceStoreFactory.epubReaderPreferencesForSavedSource(savedState) ?: globalEpubReaderPreferences
+    private var basePreferences =
+        scopedPreferenceStoreFactory.basePreferencesForSavedSource(savedState) ?: globalBasePreferences
+
+    private companion object {
+        val sessionReleaseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
 
     private val mutableState = MutableStateFlow(EpubReaderUiState())
     val state = mutableState.asStateFlow()
@@ -64,6 +86,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
+    private val progressPersistenceMutex = Mutex()
     private var mangaId = savedState.get<Long>("manga_id") ?: -1L
         set(value) {
             savedState["manga_id"] = value
@@ -87,12 +110,13 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var currentProgress: EpubProgress? = null
     private var latestLocator: Locator? = null
 
-    init {
-        viewModelScope.launch {
-            locatorUpdates
-                .debounce(750L)
-                .collectLatest(::persistLocator)
-        }
+    private var currentChapterRead = false
+    private var historyReadStartTime: Long? = null
+    private var completionMarkedThisSession = false
+    private val locatorPersistenceJob = viewModelScope.launch {
+        locatorUpdates
+            .debounce(750L)
+            .collect(::persistLocator)
     }
 
     fun needsInit(): Boolean = !state.value.isLoading && !state.value.isReady
@@ -120,6 +144,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 val source = sourceManager.get(manga.source) as? KomgaSource
                     ?: error(application.stringResource(MR.strings.source_unsupported))
                 currentSourceId = source.id
+                savedState["source_id"] = source.id
+                epubReaderPreferences = scopedPreferenceStoreFactory.epubReaderPreferences(source.id)
+                basePreferences = scopedPreferenceStoreFactory.basePreferences(source.id)
+                currentChapterRead = chapter.read
+                completionMarkedThisSession = chapter.read
+                historyReadStartTime = if (isIncognito()) null else System.currentTimeMillis()
 
                 val localFile = downloadProvider.findChapterDir(
                     chapterName = chapter.name,
@@ -289,15 +319,43 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun isIncognito(): Boolean = basePreferences.incognitoMode.get()
 
+    fun restartReadTimer() {
+        historyReadStartTime = if (isIncognito()) null else System.currentTimeMillis()
+    }
+
+    suspend fun updateHistory() {
+        if (isIncognito()) return
+
+        val chapterId = chapterId.takeIf { it > 0 } ?: return
+        val endTime = Date()
+        val sessionReadDuration = historyReadStartTime
+            ?.let { startTime -> (endTime.time - startTime).coerceAtLeast(0L) }
+            ?: 0L
+        upsertHistory.await(
+            HistoryUpdate(
+                chapterId = chapterId,
+                readAt = endTime,
+                sessionReadDuration = sessionReadDuration,
+            ),
+        )
+        historyReadStartTime = null
+    }
+
     fun releaseSession() {
-        latestLocator?.let { locator ->
-            if (!isIncognito()) {
-                viewModelScope.launch {
-                    persistLocator(locator)
-                }
+        locatorPersistenceJob.cancel()
+        sessionRepository.remove(chapterId)?.close()
+
+        val locator = latestLocator
+        if (locator != null && !isIncognito()) {
+            sessionReleaseScope.launch {
+                runCatching { persistLocator(locator) }
+                    .onFailure { error ->
+                        logcat(LogPriority.ERROR, error) {
+                            "Failed to persist final EPUB locator for chapterId=$chapterId"
+                        }
+                    }
             }
         }
-        sessionRepository.remove(chapterId)?.close()
     }
 
     private fun restoreLocator(): Locator? =
@@ -323,9 +381,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
     }
 
-    private suspend fun persistLocator(locator: Locator) {
-        val chapterId = chapterId.takeIf { it > 0 } ?: return
-        val mangaId = mangaId.takeIf { it > 0 } ?: return
+    private suspend fun persistLocator(locator: Locator) = progressPersistenceMutex.withLock {
+        val chapterId = chapterId.takeIf { it > 0 } ?: return@withLock
+        mangaId.takeIf { it > 0 } ?: return@withLock
         val now = Date()
         val progress = buildProgress(
             locator = locator,
@@ -334,6 +392,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
         )
         upsertEpubProgress.await(progress)
         currentProgress = progress
+
+        markChapterCompletedIfNeeded(locator)
 
         val bookUrl = progress.bookUrl
         val sourceId = currentSourceId.takeIf { it > 0 }
@@ -349,6 +409,24 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+    private suspend fun markChapterCompletedIfNeeded(locator: Locator) {
+        if (completionMarkedThisSession || currentChapterRead) return
+
+        val totalProgression = (locator.locations.totalProgression as? Number)?.toDouble() ?: return
+        val threshold = epubReaderPreferences.completionThresholdPercent.get().coerceIn(0, 100) / 100.0
+        if (totalProgression < threshold) return
+
+        updateChapter.await(
+            ChapterUpdate(
+                id = chapterId,
+                read = true,
+                lastPageRead = 0,
+            ),
+        )
+        currentChapterRead = true
+        completionMarkedThisSession = true
     }
 
     private fun buildProgress(

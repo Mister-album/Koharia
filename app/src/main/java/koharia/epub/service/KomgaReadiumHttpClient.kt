@@ -1,12 +1,12 @@
 package koharia.epub.service
 
 import koharia.epub.injectEpubParagraphIndentStyle
-import koharia.source.komga.KomgaSource
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import koharia.source.komga.KomgaSource
 import logcat.LogPriority
-import org.readium.r2.shared.util.http.HttpClient
 import org.readium.r2.shared.util.Try
 import org.readium.r2.shared.util.http.DefaultHttpClient
+import org.readium.r2.shared.util.http.HttpClient
 import org.readium.r2.shared.util.http.HttpRequest
 import org.readium.r2.shared.util.http.HttpStreamResponse
 import tachiyomi.core.common.util.system.logcat
@@ -48,8 +48,10 @@ class KomgaReadiumHttpClient(
             )
         }
         return ParagraphIndentNormalizingHttpClient(client) {
-            !(publisherStylesOverride
-                ?: scopedPreferenceStoreFactory.epubLayoutPreferences(sourceId).publisherStyles.get())
+            !(
+                publisherStylesOverride
+                    ?: scopedPreferenceStoreFactory.epubLayoutPreferences(sourceId).publisherStyles.get()
+                )
         }
     }
 }
@@ -61,7 +63,9 @@ private class ParagraphIndentNormalizingHttpClient(
 
     override suspend fun stream(request: HttpRequest): org.readium.r2.shared.util.http.HttpTry<HttpStreamResponse> {
         return delegate.stream(request).map { streamResponse ->
-            if (!request.url.toString().substringBefore('?').endsWith(".xhtml") || !shouldNormalize()) {
+            val path = request.url.toString().substringBefore('?')
+            val isHtml = htmlExtensions.any { path.endsWith(it, ignoreCase = true) }
+            if (!isHtml || !shouldNormalize()) {
                 return@map streamResponse
             }
 
@@ -88,6 +92,7 @@ private class ParagraphIndentNormalizingHttpClient(
 
     private companion object {
         val leadingParagraphIndent = Regex("""(<p\b[^>]*>)\u3000+""", RegexOption.IGNORE_CASE)
+        val htmlExtensions = listOf(".xhtml", ".html", ".htm")
         val paragraphTag = Regex("""<p\b""", RegexOption.IGNORE_CASE)
         val declaredTextIndent = Regex("""text-indent\s*:""", RegexOption.IGNORE_CASE)
     }

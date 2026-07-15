@@ -11,9 +11,12 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -31,13 +34,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.Insets
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.fragment.app.FragmentContainerView
-import androidx.fragment.app.FragmentManager
-import androidx.fragment.app.commit
+import androidx.fragment.compose.AndroidFragment
 import androidx.lifecycle.lifecycleScope
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -46,6 +45,7 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.epub.model.EpubTocEntry
 import koharia.epub.settings.EpubReaderPreferences
+import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -68,8 +68,6 @@ import uy.kohesive.injekt.api.get
 class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     companion object {
-        private const val READER_FRAGMENT_TAG = "epub_reader_fragment"
-
         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?, sourceId: Long? = null): Intent {
             return Intent(context, EpubReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
@@ -81,8 +79,21 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     private val viewModel by viewModels<EpubReaderViewModel>()
-    private val epubReaderPreferences = Injekt.get<EpubReaderPreferences>()
-    private val readerPreferences = Injekt.get<ReaderPreferences>()
+    private val scopedPreferenceStoreFactory = Injekt.get<KomgaScopedPreferenceStoreFactory>()
+    private val sourceId by lazy { intent.extras?.getLong("source", -1L) ?: -1L }
+    private val epubReaderPreferences by lazy {
+        sourceId
+            .takeIf { it > 0L }
+            ?.let(scopedPreferenceStoreFactory::epubReaderPreferences)
+            ?: Injekt.get<EpubReaderPreferences>()
+    }
+    private val readerPreferences by lazy {
+        sourceId
+            .takeIf { it > 0L }
+            ?.let(scopedPreferenceStoreFactory::readerPreferences)
+            ?: Injekt.get<ReaderPreferences>()
+    }
+    private var readerFragment: EpubReaderFragment? = null
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -131,8 +142,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (state.isReady && state.chapterId > 0) {
                         ReaderFragmentContainer(
-                            fragmentManager = supportFragmentManager,
                             chapterId = state.chapterId,
+                            menuVisible = state.menuVisible,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(if (state.menuVisible) contentPadding else PaddingValues(0.dp)),
@@ -163,8 +174,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                         entries = tocEntries,
                         onDismissRequest = { showToc = false },
                         onSelect = { entry ->
-                            (supportFragmentManager.findFragmentByTag(READER_FRAGMENT_TAG) as? EpubReaderFragment)
-                                ?.goTo(entry.link)
+                            readerFragment?.goTo(entry.link)
                             showToc = false
                         },
                     )
@@ -188,12 +198,6 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             }
         }
 
-        epubReaderPreferences.enableNativeReader.changes()
-            .onEach {
-                if (!it) finish()
-            }
-            .launchIn(lifecycleScope)
-
         setKeepScreenOn(readerPreferences.keepScreenOn.get())
         readerPreferences.keepScreenOn.changes()
             .onEach(::setKeepScreenOn)
@@ -210,8 +214,16 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             .launchIn(lifecycleScope)
     }
 
+    override fun onPause() {
+        lifecycleScope.launchNonCancellable {
+            viewModel.updateHistory()
+        }
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        viewModel.restartReadTimer()
         updateSystemBars(viewModel.state.value.menuVisible)
     }
 
@@ -267,30 +279,22 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     @Composable
     private fun ReaderFragmentContainer(
-        fragmentManager: FragmentManager,
         chapterId: Long,
+        menuVisible: Boolean,
         modifier: Modifier = Modifier,
     ) {
-        val initialized = remember(chapterId) { mutableStateOf(false) }
-        androidx.compose.ui.viewinterop.AndroidView(
-            modifier = modifier,
-            factory = { context ->
-                FragmentContainerView(context).apply {
-                    id = android.view.View.generateViewId()
-                }
-            },
-            update = { view ->
-                if (!initialized.value) {
-                    fragmentManager.commit {
-                        setReorderingAllowed(true)
-                        replace(view.id, EpubReaderFragment.newInstance(chapterId), READER_FRAGMENT_TAG)
-                    }
-                    initialized.value = true
-                } else {
-                    fragmentManager.onContainerAvailable(view)
-                }
-                applyInsets(view, viewModel.state.value.menuVisible)
-            },
+        val fullscreen by remember(readerPreferences) { readerPreferences.fullscreen.changes() }
+            .collectAsState(initial = readerPreferences.fullscreen.get())
+        val arguments = remember(chapterId) { EpubReaderFragment.createArguments(chapterId) }
+        val containerModifier = if (!menuVisible && !fullscreen) {
+            modifier.windowInsetsPadding(WindowInsets.systemBars)
+        } else {
+            modifier
+        }
+        AndroidFragment<EpubReaderFragment>(
+            modifier = containerModifier,
+            arguments = arguments,
+            onUpdate = { readerFragment = it },
         )
     }
 
@@ -339,26 +343,5 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 }
             },
         )
-    }
-
-    private fun FragmentManager.onContainerAvailable(view: FragmentContainerView) {
-        val method = FragmentManager::class.java.getDeclaredMethod(
-            "onContainerAvailable",
-            FragmentContainerView::class.java,
-        )
-        method.isAccessible = true
-        method.invoke(this, view)
-    }
-
-    private fun applyInsets(
-        view: android.view.View,
-        menuVisible: Boolean,
-    ) {
-        val insets = if (menuVisible || !readerPreferences.fullscreen.get()) {
-            ViewCompat.getRootWindowInsets(view)?.getInsets(WindowInsetsCompat.Type.systemBars()) ?: Insets.NONE
-        } else {
-            Insets.NONE
-        }
-        view.setPadding(insets.left, insets.top, insets.right, insets.bottom)
     }
 }
