@@ -17,9 +17,15 @@ class DownloadQueueOrderTest {
     }
 
     @Test
-    fun `reorder rejects missing added or duplicated chapters`() {
+    fun `reorder accepts new chapters without losing existing chapters`() {
+        assertTrue(isValidDownloadQueueReorder(emptyList(), listOf(1L)))
+        assertTrue(isValidDownloadQueueReorder(listOf(1L, 2L), listOf(3L, 1L, 2L)))
+    }
+
+    @Test
+    fun `reorder rejects missing or duplicated chapters`() {
         assertFalse(isValidDownloadQueueReorder(listOf(1L, 2L), listOf(1L)))
-        assertFalse(isValidDownloadQueueReorder(listOf(1L, 2L), listOf(1L, 2L, 3L)))
         assertFalse(isValidDownloadQueueReorder(listOf(1L, 2L), listOf(1L, 1L)))
+        assertFalse(isValidDownloadQueueReorder(listOf(1L, 2L), listOf(1L, 3L)))
     }
 }

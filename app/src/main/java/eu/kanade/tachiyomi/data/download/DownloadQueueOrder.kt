@@ -4,6 +4,7 @@ internal fun isValidDownloadQueueReorder(
     currentChapterIds: List<Long>,
     reorderedChapterIds: List<Long>,
 ): Boolean {
-    return currentChapterIds.size == reorderedChapterIds.size &&
-        currentChapterIds.toSet() == reorderedChapterIds.toSet()
+    val reorderedChapterIdSet = reorderedChapterIds.toSet()
+    return reorderedChapterIdSet.size == reorderedChapterIds.size &&
+        reorderedChapterIdSet.containsAll(currentChapterIds)
 }
