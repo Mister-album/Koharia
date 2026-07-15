@@ -164,6 +164,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var paginationGeneration = 0L
     private var paginationLayoutKey: String? = null
     private var paginationLayoutJson: String? = null
+    private var isRtlLayout = false
     private var currentPublicationKey: String? = null
     private var currentChapterUrl: String? = null
     private var currentChapterRead = false
@@ -303,9 +304,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
                 currentBookUrl = remoteBookUrl
                 currentPublicationKey = when {
+                    primarySource == EpubOpenRequest.OpenSource.LOCAL && localFile != null ->
+                        "local:$localUri:${localFile.lastModified()}:${localFile.length()}"
+                    primarySource == EpubOpenRequest.OpenSource.LOCAL ->
+                        "local:$localUri"
                     !bookDetails?.fileHash.isNullOrBlank() -> "komga:${bookDetails.fileHash}"
                     bookDetails != null -> "komga:${bookDetails.fileLastModified}:${bookDetails.sizeBytes}"
-                    localFile != null -> "local:$localUri:${localFile.lastModified()}:${localFile.length()}"
                     else -> "book:${chapter.id}:${chapter.url}"
                 }
 
@@ -566,6 +570,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         lastVisualTotalPages = null
         paginationLayoutKey = null
         paginationLayoutJson = null
+        isRtlLayout = false
         mutableState.update {
             it.copy(
                 currentVisualPage = null,
@@ -581,6 +586,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
         val generation = paginationGeneration
         paginationLayoutKey = snapshot.key
         paginationLayoutJson = snapshot.json
+        isRtlLayout = snapshot.pageDirection ==
+            koharia.epub.settings.EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT.name
         lastVisualHref = null
         lastVisualPageIndex = null
         lastVisualTotalPages = null
@@ -754,11 +761,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }?.value ?: return null
         val progression = (locator.locations.progression as? Number)?.toDouble() ?: 0.0
         var pageIndex = (progression * resourcePages).roundToInt().coerceIn(0, resourcePages - 1)
-        val isRtl = runCatching {
-            JSONObject(paginationLayoutJson.orEmpty()).optString("pageDirection") ==
-                koharia.epub.settings.EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT.name
-        }.getOrDefault(false)
-        if (isRtl && pageIndex > 0) pageIndex -= 1
+        if (isRtlLayout && pageIndex > 0) pageIndex -= 1
         return exactVisualPage(href, pageIndex, readingOrder, pageCounts)
     }
 
@@ -790,6 +793,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         bookVisualPageCounts = emptyMap()
         paginationLayoutKey = null
         paginationLayoutJson = null
+        isRtlLayout = false
     }
 
     fun dismissServerTimeWarning() {

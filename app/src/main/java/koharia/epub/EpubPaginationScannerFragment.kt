@@ -208,6 +208,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
     private fun String.isSameResourceHref(other: String): Boolean {
         val first = resourceKey()
         val second = other.resourceKey()
+        if (first.isBlank() || second.isBlank()) return false
         return first == second || first.endsWith("/$second") || second.endsWith("/$first")
     }
 

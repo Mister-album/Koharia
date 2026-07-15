@@ -18,9 +18,11 @@ class EpubPaginationCacheRepositoryImpl(
         publicationKey: String,
         layoutKey: String,
     ): EpubPaginationCache? {
-        return database.epub_pagination_cacheQueries
-            .getByKey(chapterId, publicationKey, layoutKey, ::mapCache)
-            .awaitAsOneOrNull()
+        return withIOContext {
+            database.epub_pagination_cacheQueries
+                .getByKey(chapterId, publicationKey, layoutKey, ::mapCache)
+                .awaitAsOneOrNull()
+        }
     }
 
     override suspend fun upsertCache(cache: EpubPaginationCache) {
