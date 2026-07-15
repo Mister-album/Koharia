@@ -36,17 +36,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.fragment.app.commitNow
 import androidx.fragment.compose.AndroidFragment
 import androidx.lifecycle.lifecycleScope
+import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.epub.model.EpubTocEntry
+import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -80,7 +84,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     private val viewModel by viewModels<EpubReaderViewModel>()
     private val scopedPreferenceStoreFactory = Injekt.get<KomgaScopedPreferenceStoreFactory>()
+    private val sessionRepository = Injekt.get<EpubReaderSessionRepository>()
     private val sourceId by lazy { intent.extras?.getLong("source", -1L) ?: -1L }
+    private val basePreferences by lazy {
+        sourceId
+            .takeIf { it > 0L }
+            ?.let(scopedPreferenceStoreFactory::basePreferences)
+            ?: Injekt.get<BasePreferences>()
+    }
     private val epubReaderPreferences by lazy {
         sourceId
             .takeIf { it > 0L }
@@ -105,6 +116,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         super.onCreate(savedInstanceState)
+        removeRestoredReaderWithoutSession(savedInstanceState)
 
         setComposeContent {
             val state by viewModel.state.collectAsState()
@@ -207,6 +219,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             .onEach { updateSystemBars(viewModel.state.value.menuVisible) }
             .launchIn(lifecycleScope)
 
+        basePreferences.incognitoMode.changes()
+            .drop(1)
+            .onEach { if (!it) finish() }
+            .launchIn(lifecycleScope)
+
         viewModel.state
             .map { it.menuVisible }
             .distinctUntilChanged()
@@ -275,6 +292,20 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+    }
+
+    private fun removeRestoredReaderWithoutSession(savedInstanceState: Bundle?) {
+        if (savedInstanceState == null) return
+        val chapterId = intent.extras?.getLong("chapter", -1L) ?: -1L
+        if (chapterId <= 0L || sessionRepository.get(chapterId) != null) return
+
+        supportFragmentManager.fragments
+            .filterIsInstance<EpubReaderFragment>()
+            .forEach { fragment ->
+                supportFragmentManager.commitNow {
+                    remove(fragment)
+                }
+            }
     }
 
     @Composable

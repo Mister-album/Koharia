@@ -113,6 +113,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var currentChapterRead = false
     private var historyReadStartTime: Long? = null
     private var completionMarkedThisSession = false
+    private var incognitoSession = basePreferences.incognitoMode.get()
     private val locatorPersistenceJob = viewModelScope.launch {
         locatorUpdates
             .debounce(750L)
@@ -147,6 +148,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 savedState["source_id"] = source.id
                 epubReaderPreferences = scopedPreferenceStoreFactory.epubReaderPreferences(source.id)
                 basePreferences = scopedPreferenceStoreFactory.basePreferences(source.id)
+                incognitoSession = basePreferences.incognitoMode.get()
                 currentChapterRead = chapter.read
                 completionMarkedThisSession = chapter.read
                 historyReadStartTime = if (isIncognito()) null else System.currentTimeMillis()
@@ -317,7 +319,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         return flattenLinks(session.publication.tableOfContents)
     }
 
-    fun isIncognito(): Boolean = basePreferences.incognitoMode.get()
+    fun isIncognito(): Boolean = incognitoSession
 
     fun restartReadTimer() {
         historyReadStartTime = if (isIncognito()) null else System.currentTimeMillis()

@@ -65,7 +65,9 @@ private class ParagraphIndentNormalizingHttpClient(
         return delegate.stream(request).map { streamResponse ->
             val path = request.url.toString().substringBefore('?')
             val isHtml = htmlExtensions.any { path.endsWith(it, ignoreCase = true) }
-            if (!isHtml || !shouldNormalize()) {
+            val isFullGet = request.method == HttpRequest.Method.GET &&
+                request.headers.keys.none { it.equals("Range", ignoreCase = true) }
+            if (!isHtml || !isFullGet || !shouldNormalize()) {
                 return@map streamResponse
             }
 
@@ -76,16 +78,19 @@ private class ParagraphIndentNormalizingHttpClient(
             val normalized = leadingParagraphIndent
                 .replace(source) { match -> match.groupValues[1] }
                 .injectEpubParagraphIndentStyle()
+            val normalizedBytes = normalized.toByteArray(Charsets.UTF_8)
+            val normalizedResponse = streamResponse.response.copy(
+                headers = streamResponse.response.headers
+                    .filterKeys { !it.equals("Content-Length", ignoreCase = true) },
+            )
 
             logcat(LogPriority.DEBUG) {
                 "EPUB normalized paragraph indents url=${request.url} removedSpaces=$matches " +
                     "paragraphs=$paragraphCount declaredTextIndents=$declaredTextIndentCount injectedIndentStyle=true"
             }
             HttpStreamResponse(
-                response = streamResponse.response,
-                body = ByteArrayInputStream(
-                    normalized.toByteArray(Charsets.UTF_8),
-                ),
+                response = normalizedResponse,
+                body = ByteArrayInputStream(normalizedBytes),
             )
         }
     }
