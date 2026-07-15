@@ -147,6 +147,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var currentProgress: EpubProgress? = null
     private var latestLocator: Locator? = null
     private var publicationPositions: List<Locator> = emptyList()
+    private var publicationPositionByHref: Map<String, Int> = emptyMap()
     private var currentChapterUrl: String? = null
     private var currentChapterRead = false
     private var currentChapterBookmark = false
@@ -345,6 +346,13 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 )
                 sessionRepository.put(session)
                 publicationPositions = session.publication.positions()
+                publicationPositionByHref = buildMap {
+                    publicationPositions.forEachIndexed { index, locator ->
+                        locator.href.toString().hrefCandidates().forEach { href ->
+                            putIfAbsent(href, index + 1)
+                        }
+                    }
+                }
                 val initialPosition = initialLocator.positionIn(publicationPositions)
                 val initialProgression = initialLocator?.totalProgressionValue()
                     ?: initialPosition.toProgression(publicationPositions.size)
@@ -535,10 +543,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
     ): Pair<EpubTocEntry?, EpubTocEntry?> {
         val positionedEntries = entries
             .mapNotNull { entry ->
-                val positionIndex = publicationPositions.indexOfFirst { locator ->
-                    locator.href.toString().isSameResourceHref(entry.link.href.toString())
-                }
-                positionIndex.takeIf { it >= 0 }?.let { entry to (it + 1) }
+                entry.link.href.toString().hrefCandidates()
+                    .firstNotNullOfOrNull(publicationPositionByHref::get)
+                    ?.let { position -> entry to position }
             }
             .distinctBy { (_, position) -> position }
             .sortedBy { (_, position) -> position }
@@ -707,6 +714,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
             }
         }
         publicationPositions = emptyList()
+        publicationPositionByHref = emptyMap()
     }
 
     override fun onCleared() {
@@ -1002,6 +1010,13 @@ class EpubReaderViewModel @JvmOverloads constructor(
         substringBefore('#')
             .substringBefore('?')
             .trimStart('/')
+
+    private fun String.hrefCandidates(): List<String> {
+        val normalized = normalizedResourceHref()
+        if (normalized.isBlank()) return emptyList()
+        val segments = normalized.split('/').filter(String::isNotBlank)
+        return segments.indices.map { index -> segments.drop(index).joinToString("/") }
+    }
 
     private fun Double?.isSameBookmarkProgression(other: Double?): Boolean {
         if (this == null || other == null) return this == other

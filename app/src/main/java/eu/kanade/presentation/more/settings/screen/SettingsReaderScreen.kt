@@ -365,16 +365,16 @@ object SettingsReaderScreen : SearchableSettings {
             EpubLayoutPreferences.ReadingMode.SCROLL -> readerPreferences.webtoonNavInverted
         }
         val navigationMode by navigationModePreference.collectAsState()
-        val readWithVolumeKeys by readerPreferences.readWithVolumeKeys.collectAsState()
+        val readWithVolumeKeys by epubLayoutPreferences.readWithVolumeKeys.collectAsState()
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_reader_navigation),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.readWithVolumeKeys,
+                    preference = epubLayoutPreferences.readWithVolumeKeys,
                     title = stringResource(MR.strings.pref_read_with_volume_keys),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.readWithVolumeKeysInverted,
+                    preference = epubLayoutPreferences.readWithVolumeKeysInverted,
                     title = stringResource(MR.strings.pref_read_with_volume_keys_inverted),
                     enabled = readWithVolumeKeys,
                 ),

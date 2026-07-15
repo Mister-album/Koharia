@@ -212,17 +212,21 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 .collectAsState(epubLayoutPreferences.pageDirection.get())
             val currentVerticalMargins by epubLayoutPreferences.verticalMargins.changes()
                 .collectAsState(epubLayoutPreferences.verticalMargins.get())
-            val currentNavigationMode by when (currentReadingMode) {
-                EpubLayoutPreferences.ReadingMode.SCROLL -> readerPreferences.navigationModeWebtoon.changes()
-                    .collectAsState(readerPreferences.navigationModeWebtoon.get())
-                EpubLayoutPreferences.ReadingMode.PAGINATED -> readerPreferences.navigationModePager.changes()
-                    .collectAsState(readerPreferences.navigationModePager.get())
+            val navigationModeWebtoon by readerPreferences.navigationModeWebtoon.changes()
+                .collectAsState(readerPreferences.navigationModeWebtoon.get())
+            val navigationModePager by readerPreferences.navigationModePager.changes()
+                .collectAsState(readerPreferences.navigationModePager.get())
+            val currentNavigationMode = when (currentReadingMode) {
+                EpubLayoutPreferences.ReadingMode.SCROLL -> navigationModeWebtoon
+                EpubLayoutPreferences.ReadingMode.PAGINATED -> navigationModePager
             }
-            val currentInvertMode by when (currentReadingMode) {
-                EpubLayoutPreferences.ReadingMode.SCROLL -> readerPreferences.webtoonNavInverted.changes()
-                    .collectAsState(readerPreferences.webtoonNavInverted.get())
-                EpubLayoutPreferences.ReadingMode.PAGINATED -> readerPreferences.pagerNavInverted.changes()
-                    .collectAsState(readerPreferences.pagerNavInverted.get())
+            val webtoonNavInverted by readerPreferences.webtoonNavInverted.changes()
+                .collectAsState(readerPreferences.webtoonNavInverted.get())
+            val pagerNavInverted by readerPreferences.pagerNavInverted.changes()
+                .collectAsState(readerPreferences.pagerNavInverted.get())
+            val currentInvertMode = when (currentReadingMode) {
+                EpubLayoutPreferences.ReadingMode.SCROLL -> webtoonNavInverted
+                EpubLayoutPreferences.ReadingMode.PAGINATED -> pagerNavInverted
             }
             val showNavigationOverlayOnStart by readerPreferences.showNavigationOverlayOnStart.changes()
                 .collectAsState(readerPreferences.showNavigationOverlayOnStart.get())
@@ -755,7 +759,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
             event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
-        if (!isVolumeKey || !readerPreferences.readWithVolumeKeys.get() || viewModel.state.value.menuVisible) {
+        if (!isVolumeKey || !epubLayoutPreferences.readWithVolumeKeys.get() || viewModel.state.value.menuVisible) {
             return super.dispatchKeyEvent(event)
         }
 
@@ -764,15 +768,15 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         }
         if (event.action == KeyEvent.ACTION_UP) {
             val forward = (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) !=
-                readerPreferences.readWithVolumeKeysInverted.get()
-            val handled = if (forward) {
+                epubLayoutPreferences.readWithVolumeKeysInverted.get()
+            if (forward) {
                 epubReaderFragment()?.goForward()
             } else {
                 epubReaderFragment()?.goBackward()
             }
-            return handled ?: false
+            return true
         }
-        return super.dispatchKeyEvent(event)
+        return true
     }
 
     private fun updateSystemBars(visible: Boolean) {

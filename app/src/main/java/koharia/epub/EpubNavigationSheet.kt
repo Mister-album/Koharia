@@ -214,64 +214,66 @@ private fun BookmarkTab(
                     }
                 },
             )
-            SwipeToDismissBox(
-                state = dismissState,
-                backgroundContent = {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 24.dp),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Delete,
-                            contentDescription = stringResource(MR.strings.action_delete),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                },
-            ) {
-                ListItem(
-                    headlineContent = {
-                        Text(
-                            text = bookmark.sectionTitle?.takeIf(String::isNotBlank)
-                                ?: stringResource(MR.strings.epub_reader_bookmark),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    supportingContent = supportingText?.let { text ->
-                        {
-                            Text(
-                                text = text,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
+            Column {
+                SwipeToDismissBox(
+                    state = dismissState,
+                    backgroundContent = {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 24.dp),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Delete,
+                                contentDescription = stringResource(MR.strings.action_delete),
+                                tint = MaterialTheme.colorScheme.error,
                             )
                         }
                     },
-                    trailingContent = {
-                        Row {
-                            IconButton(onClick = { onEdit(bookmark) }) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Edit,
-                                    contentDescription = stringResource(MR.strings.action_edit),
+                ) {
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                text = bookmark.sectionTitle?.takeIf(String::isNotBlank)
+                                    ?: stringResource(MR.strings.epub_reader_bookmark),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        supportingContent = supportingText?.let { text ->
+                            {
+                                Text(
+                                    text = text,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            IconButton(onClick = { onDelete(bookmark) }) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Delete,
-                                    contentDescription = stringResource(MR.strings.action_delete),
-                                )
+                        },
+                        trailingContent = {
+                            Row {
+                                IconButton(onClick = { onEdit(bookmark) }) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Edit,
+                                        contentDescription = stringResource(MR.strings.action_edit),
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                IconButton(onClick = { onDelete(bookmark) }) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Delete,
+                                        contentDescription = stringResource(MR.strings.action_delete),
+                                    )
+                                }
                             }
-                        }
-                    },
-                    modifier = Modifier.combinedClickable(
-                        onClick = { onSelect(bookmark) },
-                        onLongClick = { onEdit(bookmark) },
-                    ),
-                )
+                        },
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onSelect(bookmark) },
+                            onLongClick = { onEdit(bookmark) },
+                        ),
+                    )
+                }
                 HorizontalDivider()
             }
         }

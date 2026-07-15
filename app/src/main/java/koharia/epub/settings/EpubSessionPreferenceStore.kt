@@ -15,6 +15,8 @@ internal class EpubSessionPreferenceStore(
 ) : PreferenceStore {
 
     private val preferences = mutableMapOf<String, SessionPreference<*>>()
+
+    @Volatile
     private var persistChanges = persistChanges
 
     fun setPersistChanges(enabled: Boolean) {
@@ -93,6 +95,8 @@ internal class EpubSessionPreferenceStore(
     ) : Preference<T> {
 
         private val state = MutableStateFlow(initialValue)
+
+        @Volatile
         private var isSet = initiallySet
 
         override fun key(): String = key

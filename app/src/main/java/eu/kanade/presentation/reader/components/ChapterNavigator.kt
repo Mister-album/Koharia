@@ -82,12 +82,13 @@ fun ChapterNavigator(
 ) {
     val haptic = LocalHapticFeedback.current
 
-    val usesProgress = sliderProgress != null
+    val progress = sliderProgress
+    val usesProgress = progress != null
     val sliderMax = totalPages.coerceAtLeast(2)
     val state = key(usesProgress, sliderMax) {
-        if (usesProgress) {
+        if (progress != null) {
             rememberSliderState(
-                value = sliderProgress.coerceIn(0f, 1f),
+                value = progress.coerceIn(0f, 1f),
                 valueRange = 0f..1f,
             )
         } else {
@@ -99,8 +100,8 @@ fun ChapterNavigator(
         }
     }
     if (!state.isDragging) {
-        state.value = if (usesProgress) {
-            sliderProgress.coerceIn(0f, 1f)
+        state.value = if (progress != null) {
+            progress.coerceIn(0f, 1f)
         } else {
             currentPage.coerceIn(1, sliderMax).toFloat()
         }

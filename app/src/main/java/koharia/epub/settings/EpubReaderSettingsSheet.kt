@@ -1461,16 +1461,16 @@ private fun ColumnScope.EpubReadingSettingsPage(
     }
 
     HeadingItem(stringResource(MR.strings.pref_reader_navigation))
-    val readWithVolumeKeys by readerPreferences.readWithVolumeKeys.changes()
-        .collectAsState(readerPreferences.readWithVolumeKeys.get())
+    val readWithVolumeKeys by preferences.readWithVolumeKeys.changes()
+        .collectAsState(preferences.readWithVolumeKeys.get())
     CheckboxItem(
         label = stringResource(MR.strings.pref_read_with_volume_keys),
-        pref = readerPreferences.readWithVolumeKeys,
+        pref = preferences.readWithVolumeKeys,
     )
     if (readWithVolumeKeys) {
         CheckboxItem(
             label = stringResource(MR.strings.pref_read_with_volume_keys_inverted),
-            pref = readerPreferences.readWithVolumeKeysInverted,
+            pref = preferences.readWithVolumeKeysInverted,
         )
     }
     TapZoneSection(preferences, readerPreferences)
