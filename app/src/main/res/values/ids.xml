@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <item name="epub_pagination_scanner_navigator_container" type="id"/>
+    <item name="epub_reader_navigator_container" type="id"/>
+    <item name="epub_reader_pagination_scanner_container" type="id"/>
     <item name="reader_pager" type="id"/>
 </resources>

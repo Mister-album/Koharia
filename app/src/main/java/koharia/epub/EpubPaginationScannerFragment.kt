@@ -6,6 +6,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentContainerView
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.lifecycleScope
+import eu.kanade.tachiyomi.R
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
@@ -107,7 +108,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
         savedInstanceState: Bundle?,
     ): View {
         return FragmentContainerView(requireContext()).apply {
-            id = View.generateViewId()
+            id = R.id.epub_pagination_scanner_navigator_container
             containerId = id
         }
     }
