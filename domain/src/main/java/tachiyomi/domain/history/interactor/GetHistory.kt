@@ -13,7 +13,7 @@ class GetHistory(
         return repository.getHistoryByMangaId(mangaId)
     }
 
-    fun subscribe(query: String): Flow<List<HistoryWithRelations>> {
-        return repository.getHistory(query)
+    fun subscribe(query: String, sourceId: Long? = null): Flow<List<HistoryWithRelations>> {
+        return repository.getHistory(query, sourceId)
     }
 }

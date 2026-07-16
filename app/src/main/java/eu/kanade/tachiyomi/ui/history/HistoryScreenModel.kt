@@ -10,14 +10,17 @@ import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.presentation.history.HistoryUiModel
 import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.util.lang.toLocalDate
+import koharia.source.komga.KomgaServerPreferences
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -60,6 +63,7 @@ class HistoryScreenModel(
     private val updateManga: UpdateManga = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
     private val sourceManager: SourceManager = Injekt.get(),
+    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
 ) : StateScreenModel<HistoryScreenModel.State>(State()) {
 
     private val _events: Channel<Event> = Channel(Channel.UNLIMITED)
@@ -71,10 +75,17 @@ class HistoryScreenModel(
         }
 
         screenModelScope.launch {
-            state.map { it.searchQuery }
-                .distinctUntilChanged()
-                .flatMapLatest { query ->
-                    getHistory.subscribe(query ?: "")
+            combine(
+                state.map { it.searchQuery }.distinctUntilChanged(),
+                komgaServerPreferences.activeServerId.changes().distinctUntilChanged(),
+            ) { query, sourceId -> query to sourceId }
+                .flatMapLatest { (query, sourceId) ->
+                    val history = if (sourceId == KomgaServerPreferences.NO_ACTIVE_SERVER) {
+                        flowOf(emptyList())
+                    } else {
+                        getHistory.subscribe(query ?: "", sourceId)
+                    }
+                    history
                         .distinctUntilChanged()
                         .catch { error ->
                             logcat(LogPriority.ERROR, error)
@@ -136,7 +147,10 @@ class HistoryScreenModel(
 
     fun removeAllHistory() {
         screenModelScope.launchIO {
-            val result = removeHistory.awaitAll()
+            val sourceId = komgaServerPreferences.activeServerId.get()
+                .takeUnless { it == KomgaServerPreferences.NO_ACTIVE_SERVER }
+                ?: return@launchIO
+            val result = removeHistory.awaitAll(sourceId)
             if (!result) return@launchIO
             _events.send(Event.HistoryCleared)
         }

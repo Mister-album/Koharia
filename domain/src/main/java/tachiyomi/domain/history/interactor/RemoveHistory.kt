@@ -7,8 +7,8 @@ class RemoveHistory(
     private val repository: HistoryRepository,
 ) {
 
-    suspend fun awaitAll(): Boolean {
-        return repository.deleteAllHistory()
+    suspend fun awaitAll(sourceId: Long? = null): Boolean {
+        return repository.deleteAllHistory(sourceId)
     }
 
     suspend fun await(history: HistoryWithRelations) {

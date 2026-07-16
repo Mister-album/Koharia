@@ -17,9 +17,9 @@ class HistoryRepositoryImpl(
     private val database: Database,
 ) : HistoryRepository {
 
-    override fun getHistory(query: String): Flow<List<HistoryWithRelations>> {
+    override fun getHistory(query: String, sourceId: Long?): Flow<List<HistoryWithRelations>> {
         return database.historyViewQueries
-            .history(query, HistoryMapper::mapHistoryWithRelations)
+            .history(query, sourceId, HistoryMapper::mapHistoryWithRelations)
             .subscribeToList()
     }
 
@@ -57,9 +57,13 @@ class HistoryRepositoryImpl(
         }
     }
 
-    override suspend fun deleteAllHistory(): Boolean {
+    override suspend fun deleteAllHistory(sourceId: Long?): Boolean {
         return try {
-            database.historyQueries.removeAllHistory()
+            if (sourceId == null) {
+                database.historyQueries.removeAllHistory()
+            } else {
+                database.historyQueries.removeHistoryBySourceId(sourceId)
+            }
             true
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, throwable = e)

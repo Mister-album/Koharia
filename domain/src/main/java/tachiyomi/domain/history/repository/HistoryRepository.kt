@@ -7,7 +7,7 @@ import tachiyomi.domain.history.model.HistoryWithRelations
 
 interface HistoryRepository {
 
-    fun getHistory(query: String): Flow<List<HistoryWithRelations>>
+    fun getHistory(query: String, sourceId: Long? = null): Flow<List<HistoryWithRelations>>
 
     suspend fun getLastHistory(): HistoryWithRelations?
 
@@ -19,7 +19,7 @@ interface HistoryRepository {
 
     suspend fun resetHistoryByMangaId(mangaId: Long)
 
-    suspend fun deleteAllHistory(): Boolean
+    suspend fun deleteAllHistory(sourceId: Long? = null): Boolean
 
     suspend fun upsertHistory(historyUpdate: HistoryUpdate)
 }

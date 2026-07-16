@@ -43,6 +43,7 @@ FROM historyView
 WHERE historyView.readAt > 0
 AND maxReadAtChapterId = historyView.chapterId
 AND lower(historyView.title) LIKE ('%' || :query || '%')
+AND (:sourceId IS NULL OR historyView.source = :sourceId)
 ORDER BY readAt DESC;
 
 getLatestHistory:
