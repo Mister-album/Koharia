@@ -46,7 +46,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
     private var awaitingMeasuredCallback = false
     private var readinessJob: Job? = null
     private val beginScanRunnable = Runnable {
-        if (!isAdded || view == null) return@Runnable
+        if (!isAdded || view == null || scanStarted) return@Runnable
         beginScan()
     }
     private val pageCounts by lazy {
@@ -115,17 +115,22 @@ internal class EpubPaginationScannerFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        if (childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) == null) {
-            val navigator = childFragmentManager.fragmentFactory.instantiate(
+        val navigator = (childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment) ?: run {
+            val createdNavigator = childFragmentManager.fragmentFactory.instantiate(
                 requireContext().classLoader,
                 EpubNavigatorFragment::class.java.name,
-            )
+            ) as EpubNavigatorFragment
             childFragmentManager.commitNow {
                 setReorderingAllowed(true)
-                replace(containerId, navigator, NAVIGATOR_TAG)
+                replace(containerId, createdNavigator, NAVIGATOR_TAG)
+            }
+            createdNavigator
+        }
+        navigator.viewLifecycleOwnerLiveData.observe(viewLifecycleOwner) { owner ->
+            if (owner != null && isAdded && this@EpubPaginationScannerFragment.view != null && !scanStarted) {
+                this@EpubPaginationScannerFragment.view?.post(beginScanRunnable)
             }
         }
-        view.post(beginScanRunnable)
     }
 
     override fun onDestroyView() {
@@ -144,14 +149,14 @@ internal class EpubPaginationScannerFragment : Fragment() {
         if (nextLink == null) {
             reportProgress(isComplete = true)
         } else {
-            navigatorFragment()?.go(nextLink)
+            readyNavigatorFragment()?.go(nextLink)
         }
     }
 
     private suspend fun awaitStableLayout(): Boolean {
         val loaded = withTimeoutOrNull(RESOURCE_READY_TIMEOUT_MS) {
             while (true) {
-                val navigator = navigatorFragment() ?: return@withTimeoutOrNull false
+                val navigator = readyNavigatorFragment() ?: return@withTimeoutOrNull false
                 val result = runCatching {
                     navigator.evaluateJavascript(RESOURCE_READY_SCRIPT)
                 }.getOrNull() ?: return@withTimeoutOrNull false
@@ -176,7 +181,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
         advancePastCachedResources()
         val nextLink = readingOrder().getOrNull(scanIndex)
         if (nextLink != null) {
-            navigatorFragment()?.go(nextLink)
+            readyNavigatorFragment()?.go(nextLink)
         } else {
             reportProgress(isComplete = true)
         }
@@ -205,6 +210,9 @@ internal class EpubPaginationScannerFragment : Fragment() {
         if (!isAdded) return null
         return childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
     }
+
+    private fun readyNavigatorFragment(): EpubNavigatorFragment? =
+        navigatorFragment()?.takeIf { it.view != null }
 
     private fun String.isSameResourceHref(other: String): Boolean {
         val first = resourceKey()
