@@ -46,6 +46,7 @@ AND (:bookmarked IS NULL OR bookmark = :bookmarked)
 AND (
     (excludedScanlator IS NULL OR :hideExcludedScanlators = 0)
 )
+AND (:sourceId IS NULL OR source = :sourceId)
 LIMIT :limit;
 
 getUpdatesByReadStatus:

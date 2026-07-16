@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.util.lang.toLocalDate
+import koharia.source.komga.KomgaServerPreferences
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.mutate
 import kotlinx.collections.immutable.persistentListOf
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -66,6 +68,7 @@ class UpdatesScreenModel(
     private val getChapter: GetChapter = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
     private val updatesPreferences: UpdatesPreferences = Injekt.get(),
+    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<UpdatesScreenModel.State>(State()) {
 
@@ -80,25 +83,32 @@ class UpdatesScreenModel(
 
     init {
         screenModelScope.launchIO {
-            // Set date limit for recent chapters
             val limit = ZonedDateTime.now().minusMonths(3).toInstant()
-
-            combine(
-                // needed for SQL filters (unread, started, bookmarked, etc)
-                getUpdatesItemPreferenceFlow()
-                    .distinctUntilChanged()
-                    .flatMapLatest {
+            val databaseUpdates = combine(
+                komgaServerPreferences.activeServerId.changes().distinctUntilChanged(),
+                getUpdatesItemPreferenceFlow().distinctUntilChanged { old, new ->
+                    old.hasSameDatabaseFilters(new)
+                },
+            ) { sourceId, itemPreferences -> sourceId to itemPreferences }
+                .flatMapLatest { (sourceId, itemPreferences) ->
+                    if (sourceId == KomgaServerPreferences.NO_ACTIVE_SERVER) {
+                        flowOf(emptyList())
+                    } else {
                         getUpdates.subscribe(
                             limit,
-                            unread = it.filterUnread.toBooleanOrNull(),
-                            started = it.filterStarted.toBooleanOrNull(),
-                            bookmarked = it.filterBookmarked.toBooleanOrNull(),
-                            hideExcludedScanlators = it.filterExcludedScanlators,
+                            unread = itemPreferences.filterUnread.toBooleanOrNull(),
+                            started = itemPreferences.filterStarted.toBooleanOrNull(),
+                            bookmarked = itemPreferences.filterBookmarked.toBooleanOrNull(),
+                            hideExcludedScanlators = itemPreferences.filterExcludedScanlators,
+                            sourceId = sourceId,
                         ).distinctUntilChanged()
-                    },
+                    }
+                }
+
+            combine(
+                databaseUpdates,
                 downloadCache.changes,
                 downloadManager.queueState,
-                // needed for Kotlin filters (downloaded)
                 getUpdatesItemPreferenceFlow().distinctUntilChanged { old, new ->
                     old.filterDownloaded == new.filterDownloaded
                 },
@@ -447,7 +457,14 @@ class UpdatesScreenModel(
         val filterStarted: TriState,
         val filterBookmarked: TriState,
         val filterExcludedScanlators: Boolean,
-    )
+    ) {
+        fun hasSameDatabaseFilters(other: ItemPreferences): Boolean {
+            return filterUnread == other.filterUnread &&
+                filterStarted == other.filterStarted &&
+                filterBookmarked == other.filterBookmarked &&
+                filterExcludedScanlators == other.filterExcludedScanlators
+        }
+    }
 
     @Immutable
     data class State(
