@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "82031285239",
-    "project_id": "mihonapp",
-    "storage_bucket": "mihonapp.appspot.com"
+    "project_number": "917147318869",
+    "project_id": "koharia-a3e1f",
+    "storage_bucket": "koharia-a3e1f.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:82031285239:android:336ed6dceef55c357594f2",
+        "mobilesdk_app_id": "1:917147318869:android:c40a67c21495580378b2dc",
         "android_client_info": {
           "package_name": "app.koharia"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDTvOxBQnuXADx5isKxoynPG0nlAO8bQbk"
+          "current_key": "AIzaSyBE9gLI8vxKFaiDAbo91PUhe85cLmufyDA"
         }
       ],
       "services": {
@@ -26,15 +26,15 @@
     },
     {
       "client_info": {
-        "mobilesdk_app_id": "1:82031285239:android:b7440cbdd0d33c9d7594f2",
+        "mobilesdk_app_id": "1:917147318869:android:ae64af663147c12378b2dc",
         "android_client_info": {
-          "package_name": "app.koharia.debug"
+          "package_name": "app.koharia.dev"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDTvOxBQnuXADx5isKxoynPG0nlAO8bQbk"
+          "current_key": "AIzaSyBE9gLI8vxKFaiDAbo91PUhe85cLmufyDA"
         }
       ],
       "services": {

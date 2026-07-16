@@ -9,7 +9,7 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
-object TelemetryConfig {
+internal object TelemetryImplementation {
     private var analytics: FirebaseAnalytics? = null
     private var crashlytics: FirebaseCrashlytics? = null
 
@@ -62,4 +62,4 @@ object TelemetryConfig {
 
 private val KOHARIA_PACKAGES = hashSetOf("app.koharia", "app.koharia.debug")
 private const val KOHARIA_CERTIFICATE_FINGERPRINT =
-    "9A:DD:65:5A:78:E9:6C:4E:C7:A5:3E:F8:9D:CC:B5:57:CB:5D:76:74:89:FA:C5:E7:85:D6:71:A5:A7:5D:4D:A2"
+    "14:DF:E0:17:E6:58:61:EC:5F:9D:7B:A1:26:B8:C8:A2:45:9F:8B:3B:6C:06:4E:B7:F8:DE:28:04:04:A6:DB:52"

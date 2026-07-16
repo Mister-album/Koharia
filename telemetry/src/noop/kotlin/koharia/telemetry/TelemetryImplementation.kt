@@ -3,7 +3,7 @@ package koharia.telemetry
 import android.content.Context
 
 @Suppress("UNUSED_PARAMETER")
-object TelemetryConfig {
+internal object TelemetryImplementation {
     fun init(context: Context) = Unit
 
     fun setAnalyticsEnabled(enabled: Boolean) = Unit
