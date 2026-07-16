@@ -75,6 +75,8 @@ class EpubReaderFragment : Fragment() {
     private var host: Host? = null
     private var containerId: Int = View.NO_ID
     private var scannerContainerId: Int = View.NO_ID
+    private var observedNavigator: EpubNavigatorFragment? = null
+    private var navigatorInputListener: InputListener? = null
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
 
@@ -159,23 +161,22 @@ class EpubReaderFragment : Fragment() {
             host?.onSessionMissing(chapterId)
             return
         }
-        if (childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) == null) {
+        val navigator = (childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment) ?: run {
             logcat(LogPriority.DEBUG) {
                 "EPUB fragment create navigator chapterId=$chapterId containerId=$containerId"
             }
-            val navigatorFragment = childFragmentManager.fragmentFactory.instantiate(
+            val createdNavigator = childFragmentManager.fragmentFactory.instantiate(
                 requireContext().classLoader,
                 EpubNavigatorFragment::class.java.name,
-            )
+            ) as EpubNavigatorFragment
             childFragmentManager.commitNow {
                 setReorderingAllowed(true)
-                replace(containerId, navigatorFragment, NAVIGATOR_TAG)
+                replace(containerId, createdNavigator, NAVIGATOR_TAG)
             }
+            createdNavigator
         }
-        observeNavigator()
-        if (navigatorFragment() != null) {
-            host?.onNavigatorReady(this)
-        }
+        observeNavigator(navigator)
+        observeNavigatorViewReady(navigator)
         val viewportView = view.findViewById<View>(containerId) ?: view
         viewportView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
             val width = right - left
@@ -203,24 +204,29 @@ class EpubReaderFragment : Fragment() {
         super.onDetach()
     }
 
+    override fun onDestroyView() {
+        clearNavigatorInputListener()
+        super.onDestroyView()
+    }
+
     fun goTo(link: Link): Boolean {
-        val navigator = navigatorFragment() ?: return false
+        val navigator = readyNavigatorFragment() ?: return false
         return navigator.go(link)
     }
 
     fun goTo(locator: Locator): Boolean {
-        val navigator = navigatorFragment() ?: return false
+        val navigator = readyNavigatorFragment() ?: return false
         val publication = sessionRepository.get(chapterId)?.publication ?: return false
         return navigator.go(publication.toNavigatorLocator(locator))
     }
 
     fun goForward(): Boolean {
-        val navigator = navigatorFragment() ?: return false
+        val navigator = readyNavigatorFragment() ?: return false
         return navigator.goForward()
     }
 
     fun goBackward(): Boolean {
-        val navigator = navigatorFragment() ?: return false
+        val navigator = readyNavigatorFragment() ?: return false
         return navigator.goBackward()
     }
 
@@ -241,7 +247,7 @@ class EpubReaderFragment : Fragment() {
     private fun applyParagraphIndentOverride() {
         if (!isAdded || view == null) return
         viewLifecycleOwner.lifecycleScope.launch {
-            val navigator = navigatorFragment() ?: return@launch
+            val navigator = readyNavigatorFragment() ?: return@launch
             navigator.evaluateJavascript(
                 if (paragraphIndentOverrideEnabled) {
                     APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
@@ -258,7 +264,8 @@ class EpubReaderFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             delay(PARAGRAPH_INDENT_DEBUG_DELAY_MS)
             if (debugGeneration != paragraphIndentDebugGeneration || !isAdded || view == null) return@launch
-            val result = navigatorFragment()?.evaluateJavascript(PARAGRAPH_INDENT_DEBUG_SCRIPT) ?: return@launch
+            val result = readyNavigatorFragment()?.evaluateJavascript(PARAGRAPH_INDENT_DEBUG_SCRIPT)
+                ?: return@launch
             logcat(LogPriority.DEBUG) {
                 "EPUB paragraph indent computed chapterId=$chapterId result=$result"
             }
@@ -303,23 +310,24 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
-    private fun observeNavigator() {
-        val navigator = navigatorFragment() ?: return
+    private fun observeNavigator(navigator: EpubNavigatorFragment) {
         logcat(LogPriority.DEBUG) {
             "EPUB fragment observe navigator chapterId=$chapterId"
         }
-        navigator.addInputListener(
-            object : InputListener {
-                override fun onTap(event: TapEvent): Boolean {
-                    val width = navigator.publicationView.width.toFloat().takeIf { it > 0f } ?: return false
-                    val height = navigator.publicationView.height.toFloat().takeIf { it > 0f } ?: return false
-                    return host?.onTap(
-                        positionX = event.point.x / width,
-                        positionY = event.point.y / height,
-                    ) ?: false
-                }
-            },
-        )
+        clearNavigatorInputListener()
+        val inputListener = object : InputListener {
+            override fun onTap(event: TapEvent): Boolean {
+                val width = navigator.publicationView.width.toFloat().takeIf { it > 0f } ?: return false
+                val height = navigator.publicationView.height.toFloat().takeIf { it > 0f } ?: return false
+                return host?.onTap(
+                    positionX = event.point.x / width,
+                    positionY = event.point.y / height,
+                ) ?: false
+            }
+        }
+        observedNavigator = navigator
+        navigatorInputListener = inputListener
+        navigator.addInputListener(inputListener)
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -331,10 +339,28 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
+    private fun clearNavigatorInputListener() {
+        navigatorInputListener?.let { listener ->
+            observedNavigator?.removeInputListener(listener)
+        }
+        navigatorInputListener = null
+        observedNavigator = null
+    }
+
+    private fun observeNavigatorViewReady(navigator: EpubNavigatorFragment) {
+        navigator.viewLifecycleOwnerLiveData.observe(viewLifecycleOwner) { owner ->
+            if (owner == null || !isAdded || view == null) return@observe
+            host?.onNavigatorReady(this)
+        }
+    }
+
     private fun navigatorFragment(): EpubNavigatorFragment? {
         if (!isAdded) return null
         return childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
     }
+
+    private fun readyNavigatorFragment(): EpubNavigatorFragment? =
+        navigatorFragment()?.takeIf { it.view != null }
 
     private fun paginationScannerFragment(): EpubPaginationScannerFragment? {
         if (!isAdded) return null
