@@ -53,7 +53,7 @@ class EpubReaderFragment : Fragment() {
 
         fun onExternalLinkActivated(url: AbsoluteUrl)
 
-        fun onNavigatorReady()
+        fun onNavigatorReady(fragment: EpubReaderFragment)
 
         fun onSessionMissing(chapterId: Long)
     }
@@ -174,7 +174,7 @@ class EpubReaderFragment : Fragment() {
         }
         observeNavigator()
         if (navigatorFragment() != null) {
-            host?.onNavigatorReady()
+            host?.onNavigatorReady(this)
         }
         val viewportView = view.findViewById<View>(containerId) ?: view
         viewportView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -225,6 +225,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     fun submitPreferences(preferences: EpubPreferences) {
+        if (!isAdded || view == null) return
         paragraphIndentOverrideEnabled = preferences.publisherStyles == false
         navigatorFragment()?.submitPreferences(preferences)
         applyParagraphIndentOverride()
@@ -265,6 +266,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     internal fun startPagination(request: EpubPaginationRequest) {
+        if (!isAdded || view == null) return
         val existing = paginationScannerFragment()
         if (!request.shouldScan) {
             if (existing != null) {
@@ -329,11 +331,15 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
-    private fun navigatorFragment(): EpubNavigatorFragment? =
-        childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
+    private fun navigatorFragment(): EpubNavigatorFragment? {
+        if (!isAdded) return null
+        return childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
+    }
 
-    private fun paginationScannerFragment(): EpubPaginationScannerFragment? =
-        childFragmentManager.findFragmentByTag(PAGINATION_SCANNER_TAG) as? EpubPaginationScannerFragment
+    private fun paginationScannerFragment(): EpubPaginationScannerFragment? {
+        if (!isAdded) return null
+        return childFragmentManager.findFragmentByTag(PAGINATION_SCANNER_TAG) as? EpubPaginationScannerFragment
+    }
 
     companion object {
         private const val ARG_CHAPTER_ID = "chapter_id"
