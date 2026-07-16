@@ -109,13 +109,13 @@ class UpdatesScreenModel(
                 databaseUpdates,
                 downloadCache.changes,
                 downloadManager.queueState,
-                getUpdatesItemPreferenceFlow().distinctUntilChanged { old, new ->
-                    old.filterDownloaded == new.filterDownloaded
-                },
-            ) { updates, _, _, itemPreferences ->
+                getUpdatesItemPreferenceFlow()
+                    .map { it.filterDownloaded }
+                    .distinctUntilChanged(),
+            ) { updates, _, _, filterDownloaded ->
                 updates
                     .toUpdateItems()
-                    .applyFilters(itemPreferences)
+                    .applyDownloadedFilter(filterDownloaded)
                     .toPersistentList()
             }
                 .collectLatest { updateItems ->
@@ -153,11 +153,7 @@ class UpdatesScreenModel(
             .launchIn(screenModelScope)
     }
 
-    private fun List<UpdatesItem>.applyFilters(
-        preferences: ItemPreferences,
-    ): List<UpdatesItem> {
-        val filterDownloaded = preferences.filterDownloaded
-
+    private fun List<UpdatesItem>.applyDownloadedFilter(filterDownloaded: TriState): List<UpdatesItem> {
         val filterFnDownloaded: (UpdatesItem) -> Boolean = {
             applyFilter(filterDownloaded) {
                 it.downloadStateProvider() == Download.State.DOWNLOADED

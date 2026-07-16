@@ -147,7 +147,10 @@ class HistoryScreenModel(
 
     fun removeAllHistory() {
         screenModelScope.launchIO {
-            val result = removeHistory.awaitAll()
+            val sourceId = komgaServerPreferences.activeServerId.get()
+                .takeUnless { it == KomgaServerPreferences.NO_ACTIVE_SERVER }
+                ?: return@launchIO
+            val result = removeHistory.awaitAll(sourceId)
             if (!result) return@launchIO
             _events.send(Event.HistoryCleared)
         }

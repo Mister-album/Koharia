@@ -55,6 +55,16 @@ WHERE _id IN (
 removeAllHistory:
 DELETE FROM history;
 
+removeHistoryBySourceId:
+DELETE FROM history
+WHERE chapter_id IN (
+    SELECT C._id
+    FROM chapters C
+    INNER JOIN mangas M
+    ON C.manga_id = M._id
+    WHERE M.source = :sourceId
+);
+
 removeResettedHistory:
 DELETE FROM history
 WHERE last_read = 0;

@@ -57,9 +57,13 @@ class HistoryRepositoryImpl(
         }
     }
 
-    override suspend fun deleteAllHistory(): Boolean {
+    override suspend fun deleteAllHistory(sourceId: Long?): Boolean {
         return try {
-            database.historyQueries.removeAllHistory()
+            if (sourceId == null) {
+                database.historyQueries.removeAllHistory()
+            } else {
+                database.historyQueries.removeHistoryBySourceId(sourceId)
+            }
             true
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, throwable = e)
