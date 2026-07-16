@@ -75,6 +75,8 @@ class EpubReaderFragment : Fragment() {
     private var host: Host? = null
     private var containerId: Int = View.NO_ID
     private var scannerContainerId: Int = View.NO_ID
+    private var observedNavigator: EpubNavigatorFragment? = null
+    private var navigatorInputListener: InputListener? = null
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
 
@@ -202,6 +204,11 @@ class EpubReaderFragment : Fragment() {
         super.onDetach()
     }
 
+    override fun onDestroyView() {
+        clearNavigatorInputListener()
+        super.onDestroyView()
+    }
+
     fun goTo(link: Link): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
         return navigator.go(link)
@@ -307,18 +314,20 @@ class EpubReaderFragment : Fragment() {
         logcat(LogPriority.DEBUG) {
             "EPUB fragment observe navigator chapterId=$chapterId"
         }
-        navigator.addInputListener(
-            object : InputListener {
-                override fun onTap(event: TapEvent): Boolean {
-                    val width = navigator.publicationView.width.toFloat().takeIf { it > 0f } ?: return false
-                    val height = navigator.publicationView.height.toFloat().takeIf { it > 0f } ?: return false
-                    return host?.onTap(
-                        positionX = event.point.x / width,
-                        positionY = event.point.y / height,
-                    ) ?: false
-                }
-            },
-        )
+        clearNavigatorInputListener()
+        val inputListener = object : InputListener {
+            override fun onTap(event: TapEvent): Boolean {
+                val width = navigator.publicationView.width.toFloat().takeIf { it > 0f } ?: return false
+                val height = navigator.publicationView.height.toFloat().takeIf { it > 0f } ?: return false
+                return host?.onTap(
+                    positionX = event.point.x / width,
+                    positionY = event.point.y / height,
+                ) ?: false
+            }
+        }
+        observedNavigator = navigator
+        navigatorInputListener = inputListener
+        navigator.addInputListener(inputListener)
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -328,6 +337,14 @@ class EpubReaderFragment : Fragment() {
                 }
             }
         }
+    }
+
+    private fun clearNavigatorInputListener() {
+        navigatorInputListener?.let { listener ->
+            observedNavigator?.removeInputListener(listener)
+        }
+        navigatorInputListener = null
+        observedNavigator = null
     }
 
     private fun observeNavigatorViewReady(navigator: EpubNavigatorFragment) {
