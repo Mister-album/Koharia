@@ -255,6 +255,7 @@ class WebtoonPageHolder(
     private fun onImageDecoded() {
         progressContainer.isVisible = false
         removeErrorLayout()
+        page?.let(viewer.activity::onPageDisplayed)
     }
 
     /**

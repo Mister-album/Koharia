@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -350,6 +351,38 @@ class ReaderActivity : BaseActivity() {
             }
             null -> {}
         }
+
+        state.remoteProgressConflict
+            ?.takeIf { state.dialog == null }
+            ?.let { conflict ->
+                AlertDialog(
+                    onDismissRequest = viewModel::keepLocalProgress,
+                    title = { Text(stringResource(MR.strings.epub_reader_remote_progress_title)) },
+                    text = {
+                        Text(
+                            stringResource(
+                                MR.strings.reader_remote_progress_message,
+                                conflict.localPageIndex + 1,
+                                conflict.localTotalPages,
+                                conflict.localPercent,
+                                conflict.remotePageIndex + 1,
+                                conflict.remoteTotalPages,
+                                conflict.remotePercent,
+                            ),
+                        )
+                    },
+                    dismissButton = {
+                        TextButton(onClick = viewModel::keepLocalProgress) {
+                            Text(stringResource(MR.strings.epub_reader_keep_local_progress))
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = viewModel::useRemoteProgress) {
+                            Text(stringResource(MR.strings.epub_reader_jump_remote_progress))
+                        }
+                    },
+                )
+            }
     }
 
     /**
@@ -706,6 +739,10 @@ class ReaderActivity : BaseActivity() {
      */
     fun onPageSelected(page: ReaderPage) {
         viewModel.onPageSelected(page)
+    }
+
+    fun onPageDisplayed(page: ReaderPage) {
+        viewModel.onPageDisplayed(page)
     }
 
     /**

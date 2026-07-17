@@ -114,12 +114,17 @@ data class PageWrapperDto<T>(
 @Serializable
 data class BookMediaDto(
     val mediaProfile: String = "",
+    val pagesCount: Int = 0,
 )
 
 @Serializable
 data class BookDto(
     val id: String,
     val seriesId: String = "",
+    val name: String = "",
+    val fileLastModified: String? = null,
+    val fileHash: String? = null,
+    val sizeBytes: Long = 0L,
     val readProgress: BookReadProgressDto? = null,
     val media: BookMediaDto? = null,
 )

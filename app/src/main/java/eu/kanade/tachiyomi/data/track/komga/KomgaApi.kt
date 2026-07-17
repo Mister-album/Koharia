@@ -10,6 +10,7 @@ import koharia.source.komga.KomgaSource
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
+import okhttp3.CacheControl
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -121,6 +122,32 @@ class KomgaApi(
                             isEpub = book.media?.mediaProfile == "EPUB",
                         )
                     }
+            }
+        }
+
+    suspend fun getBookProgress(bookUrl: String): BookProgressSnapshot? =
+        withIOContext {
+            val source = resolveSourceForUrl(bookUrl) ?: return@withIOContext null
+            with(json) {
+                val request = GET(bookUrl, source.currentHeaders())
+                    .newBuilder()
+                    .cacheControl(CacheControl.FORCE_NETWORK)
+                    .build()
+                val book = source.client.newCall(request)
+                    .awaitSuccess()
+                    .parseAs<BookDto>()
+                BookProgressSnapshot(
+                    url = bookUrl,
+                    pageIndex = book.readProgress?.page?.let { (it - 1).coerceAtLeast(0) },
+                    totalPages = book.media?.pagesCount ?: 0,
+                    completed = book.readProgress?.completed ?: false,
+                    readDate = book.readProgress?.readDate,
+                    isEpub = book.media?.mediaProfile == "EPUB",
+                    fileHash = book.fileHash,
+                    fileLastModified = book.fileLastModified,
+                    sizeBytes = book.sizeBytes,
+                    fileName = book.name,
+                )
             }
         }
 
@@ -237,5 +264,18 @@ class KomgaApi(
         val url: String,
         val readProgress: BookReadProgressDto?,
         val isEpub: Boolean = false,
+    )
+
+    data class BookProgressSnapshot(
+        val url: String,
+        val pageIndex: Int?,
+        val totalPages: Int,
+        val completed: Boolean,
+        val readDate: String?,
+        val isEpub: Boolean,
+        val fileHash: String?,
+        val fileLastModified: String?,
+        val sizeBytes: Long,
+        val fileName: String,
     )
 }

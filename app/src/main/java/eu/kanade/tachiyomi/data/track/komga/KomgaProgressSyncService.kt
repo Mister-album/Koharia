@@ -46,6 +46,18 @@ class KomgaProgressSyncService(
         }
     }
 
+    suspend fun pullBookProgress(
+        sourceId: Long,
+        chapterUrl: String,
+    ): KomgaApi.BookProgressSnapshot? {
+        if (sourceManager.get(sourceId) !is KomgaSource || !chapterUrl.contains("/api/v1/books/")) return null
+        return runCatching {
+            trackerManager.komga.api.getBookProgress(chapterUrl)
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "Failed to pull Komga page progress for $chapterUrl" }
+        }.getOrNull()
+    }
+
     suspend fun syncHistoryFromServer() {
         runCatching {
             val activeServerId = komgaServerPreferences.activeServerId.get()
