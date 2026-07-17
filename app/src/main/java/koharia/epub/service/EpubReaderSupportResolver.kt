@@ -13,7 +13,10 @@ import koharia.source.komga.KomgaSource
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChapter
+import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
@@ -26,6 +29,7 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val getManga: GetManga = Injekt.get(),
     private val getChapter: GetChapter = Injekt.get(),
+    private val updateChapter: UpdateChapter = Injekt.get(),
     private val epubCacheManager: EpubCacheManager = Injekt.get(),
 ) {
 
@@ -83,12 +87,22 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             else -> null
         }
 
-        val remoteLookup = if (memoIsEpub == true || localUri != null || !application.isOnline()) {
+        val remoteLookup = if (memoIsEpub != null || localUri != null || !application.isOnline()) {
             Result.success(null)
         } else {
             runCatching { source.getBookDetails(chapter.url) }
         }
         val remoteBook = remoteLookup.getOrNull()
+        if (remoteBook != null) {
+            val updatedMemo = KomgaChapterMemo.mergeInto(
+                existing = chapter.memo,
+                baseUrl = source.baseUrl.trimEnd('/'),
+                book = remoteBook,
+            )
+            if (updatedMemo != chapter.memo) {
+                updateChapter.await(ChapterUpdate(id = chapter.id, memo = updatedMemo))
+            }
+        }
         val resolvedRemotePublicationKey = remoteBook?.let { book ->
             EpubCachePolicy.publicationKey(
                 fileHash = book.fileHash,
@@ -117,7 +131,7 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             else -> EpubReaderSupportResolution.UnsupportedReason.REMOTE_METADATA_UNAVAILABLE
         }
 
-        EpubReaderSupportResolution(
+        val resolution = EpubReaderSupportResolution(
             mangaId = manga.id,
             chapterId = chapter.id,
             sourceId = source.id,
@@ -146,6 +160,12 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             isManualDownload = downloadedFile != null,
             isCompleteCache = downloadedFile == null && cachedBookFile != null,
         )
+        logcat {
+            "MangaStartup: reader route resolved chapterId=${chapter.id} " +
+                "memoType=$memoIsEpub metadataRequested=${memoIsEpub == null && localUri == null} " +
+                "nativeEpub=${resolution.isNativeSupported}"
+        }
+        resolution
     }
 }
 

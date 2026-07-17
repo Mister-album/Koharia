@@ -29,6 +29,18 @@ abstract class PageLoader {
      */
     open suspend fun loadPage(page: ReaderPage) {}
 
+    /** Marks the page that must be loaded ahead of all speculative work. */
+    open fun setActivePage(page: ReaderPage) {}
+
+    /** Releases speculative work only after the active page has actually been displayed. */
+    open fun onPageDisplayed(page: ReaderPage) {}
+
+    /** Reloads the page list without reusing its local or HTTP cache. */
+    open suspend fun refreshPages(): List<ReaderPage>? = null
+
+    /** Invalidates only the cached page list. Cached page images are versioned separately. */
+    open fun invalidatePageListCache() {}
+
     /**
      * Retries the given [page] in case it failed to load. This method only makes sense when an
      * online source is used.

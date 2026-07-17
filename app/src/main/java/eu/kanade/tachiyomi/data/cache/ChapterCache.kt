@@ -6,6 +6,7 @@ import com.jakewharton.disklrucache.DiskLruCache
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.saveTo
+import koharia.komga.download.KomgaChapterMemo
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import okhttp3.Response
@@ -75,13 +76,22 @@ class ChapterCache(
      * @param chapter the chapter.
      * @return the list of pages.
      */
-    fun getPageListFromCache(chapter: Chapter): List<Page> {
+    fun getPageListFromCache(chapter: Chapter): List<Page>? {
         // Get the key for the chapter.
         val key = DiskUtil.hashKeyForDisk(getKey(chapter))
 
-        // Convert JSON string to list of objects. Throws an exception if snapshot is null
-        return diskCache.get(key).use {
-            json.decodeFromString(it.getString(0))
+        val snapshot = try {
+            diskCache.get(key)
+        } catch (_: IOException) {
+            null
+        } ?: return null
+
+        return try {
+            snapshot.use { json.decodeFromString(it.getString(0)) }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Failed to read cached page list; discarding it" }
+            runCatching { diskCache.remove(key) }
+            null
         }
     }
 
@@ -117,6 +127,14 @@ class ChapterCache(
             // Ignore.
         } finally {
             editor?.abortUnlessCommitted()
+        }
+    }
+
+    fun removePageListFromCache(chapter: Chapter) {
+        runCatching {
+            diskCache.remove(DiskUtil.hashKeyForDisk(getKey(chapter)))
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "Failed to remove cached page list" }
         }
     }
 
@@ -208,7 +226,15 @@ class ChapterCache(
     }
 
     private fun getKey(chapter: Chapter): String {
-        return "${chapter.mangaId}${chapter.url}"
+        val publicationVersion = KomgaChapterMemo.publicationVersion(chapter.memo)
+        return buildString {
+            append(chapter.mangaId)
+            append(chapter.url)
+            publicationVersion?.let {
+                append("|publication=")
+                append(it)
+            }
+        }
     }
 }
 

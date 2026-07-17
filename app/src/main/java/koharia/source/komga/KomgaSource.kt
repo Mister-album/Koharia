@@ -23,6 +23,7 @@ import koharia.komga.api.KomgaApiClient
 import koharia.komga.api.dto.BookDto
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.domain.repository.KomgaRepository
+import koharia.komga.download.KomgaChapterMemo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -162,14 +163,26 @@ class KomgaSource(
     override fun chapterListParse(response: Response) = repository.chapterListParse(response, chapterNameTemplate)
 
     override fun pageListRequest(chapter: eu.kanade.tachiyomi.source.model.SChapter): Request =
-        repository.pageListRequest(chapter, KomgaCachePolicy.NetworkFirst)
+        repository.pageListRequest(chapter, KomgaCachePolicy.Default)
 
     override fun pageListParse(response: Response) = repository.pageListParse(response)
+
+    suspend fun getPageList(
+        chapter: eu.kanade.tachiyomi.source.model.SChapter,
+        cachePolicy: KomgaCachePolicy,
+    ): List<Page> {
+        return client.newCall(repository.pageListRequest(chapter, cachePolicy))
+            .awaitSuccess()
+            .let(repository::pageListParse)
+    }
 
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 
     override fun imageRequest(page: Page): Request =
-        GET(page.imageUrl!!, headersBuilder().add("Accept", "image/*,*/*;q=0.8").build())
+        GET(
+            KomgaChapterMemo.networkPageImageUrl(page.imageUrl!!),
+            headersBuilder().add("Accept", "image/*,*/*;q=0.8").build(),
+        )
 
     fun rawFileRequest(chapterUrl: String, rangeStart: Long? = null): Request = apiClient.bookFileRequest(
         chapterUrl,

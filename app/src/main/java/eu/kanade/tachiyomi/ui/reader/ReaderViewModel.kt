@@ -40,7 +40,9 @@ import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import koharia.komga.download.KomgaChapterMemo
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -157,6 +159,8 @@ class ReaderViewModel @JvmOverloads constructor(
 
     private var chapterToDownload: Download? = null
     private val currentChapterAutoCacheRequests = mutableSetOf<Long>()
+    private val remoteProgressChecksStarted = mutableSetOf<Long>()
+    private val remoteProgressVersionsHandled = mutableSetOf<String>()
 
     private val unfilteredChapterList by lazy {
         val manga = manga!!
@@ -296,7 +300,6 @@ class ReaderViewModel @JvmOverloads constructor(
                 val manga = getManga.await(mangaId)
                 if (manga != null) {
                     savedState["source_id"] = manga.source
-                    komgaProgressSyncService.syncFromServer(manga)
                     sourceManager.isInitialized.first { it }
                     mutableState.update { it.copy(manga = manga) }
                     if (chapterId == -1L) chapterId = initialChapterId
@@ -305,7 +308,11 @@ class ReaderViewModel @JvmOverloads constructor(
                     val source = sourceManager.getOrStub(manga.source)
                     loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
 
-                    loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
+                    loadChapter(
+                        loader = loader!!,
+                        chapter = chapterList.first { chapterId == it.chapter.id },
+                        initialPageIndex = chapterPageIndex.takeIf { it >= 0 },
+                    )
                     Result.success(true)
                 } else {
                     // Unlikely but okay
@@ -327,8 +334,9 @@ class ReaderViewModel @JvmOverloads constructor(
     private suspend fun loadChapter(
         loader: ChapterLoader,
         chapter: ReaderChapter,
+        initialPageIndex: Int? = null,
     ): ViewerChapters {
-        loader.loadChapter(chapter)
+        loader.loadChapter(chapter, initialPageIndex)
 
         val chapterPos = chapterList.indexOf(chapter)
         val newChapters = ViewerChapters(
@@ -461,6 +469,9 @@ class ReaderViewModel @JvmOverloads constructor(
 
         val selectedChapter = page.chapter
         val pages = selectedChapter.pages ?: return
+        selectedChapter.requestedPage = page.index
+        chapterPageIndex = page.index
+        selectedChapter.pageLoader?.setActivePage(page)
 
         // Save last page read and mark as read if needed
         viewModelScope.launchNonCancellable {
@@ -478,6 +489,168 @@ class ReaderViewModel @JvmOverloads constructor(
         }
 
         eventChannel.trySend(Event.PageChanged)
+    }
+
+    fun onPageDisplayed(page: ReaderPage) {
+        page.chapter.pageLoader?.onPageDisplayed(page)
+        val currentChapter = getCurrentChapter() ?: return
+        if (currentChapter !== page.chapter || currentChapter.requestedPage != page.index) return
+        logcat {
+            "MangaStartup: active image displayed chapterId=${page.chapter.chapter.id} page=${page.number}"
+        }
+        if (incognitoMode) return
+        val manga = manga ?: return
+        if (sourceManager.get(manga.source) !is KomgaSource) return
+        val currentChapterId = currentChapter.chapter.id ?: return
+        if (!remoteProgressChecksStarted.add(currentChapterId)) return
+
+        viewModelScope.launchIO {
+            refreshKomgaBookProgress(manga, currentChapter)
+        }
+    }
+
+    private suspend fun refreshKomgaBookProgress(manga: Manga, readerChapter: ReaderChapter) {
+        val chapter = readerChapter.chapter
+        val chapterId = chapter.id ?: return
+        logcat { "MangaStartup: remote progress check start chapterId=$chapterId" }
+        val remote = komgaProgressSyncService.pullBookProgress(
+            sourceId = manga.source,
+            chapterUrl = chapter.url,
+        )
+        logcat {
+            "MangaStartup: remote progress check complete chapterId=$chapterId " +
+                "found=${remote != null}"
+        }
+        if (remote == null || remote.isEpub) return
+
+        val oldMemo = chapter.memo
+        val oldPublicationVersion = KomgaChapterMemo.publicationVersion(oldMemo)
+        val updatedMemo = KomgaChapterMemo.mergePublicationMetadata(
+            existing = oldMemo,
+            bookUrl = remote.url,
+            fileHash = remote.fileHash,
+            fileLastModified = remote.fileLastModified,
+            sizeBytes = remote.sizeBytes,
+            fileName = remote.fileName,
+            isEpub = false,
+            pagesCount = remote.totalPages,
+        )
+        val newPublicationVersion = KomgaChapterMemo.publicationVersion(updatedMemo)
+        val publicationMetadataInitialized = oldPublicationVersion == null && newPublicationVersion != null
+        val publicationChanged = hasPublicationChanged(oldPublicationVersion, newPublicationVersion)
+        var pages = readerChapter.pages ?: return
+        val pageCountChanged = remote.totalPages > 0 && remote.totalPages != pages.size
+        val pageLoader = readerChapter.pageLoader ?: return
+
+        if (publicationMetadataInitialized) {
+            logcat {
+                "MangaStartup: publication metadata initialized; preserving visible page list chapterId=$chapterId"
+            }
+        }
+
+        if (publicationChanged || pageCountChanged) {
+            pageLoader.invalidatePageListCache()
+        }
+        if (updatedMemo != oldMemo) {
+            chapter.memo = updatedMemo
+            updateChapter.await(ChapterUpdate(id = chapterId, memo = updatedMemo))
+        }
+
+        if (publicationChanged || pageCountChanged) {
+            val refreshedPages = pageLoader.refreshPages()
+            if (refreshedPages.isNullOrEmpty()) {
+                logcat(LogPriority.WARN) {
+                    "MangaStartup: page list refresh unavailable chapterId=$chapterId " +
+                        "publicationChanged=$publicationChanged pageCountChanged=$pageCountChanged"
+                }
+                return
+            }
+            readerChapter.state = ReaderChapter.State.Loaded(refreshedPages)
+            pages = refreshedPages
+            val activePage = pages[readerChapter.requestedPage.coerceIn(0, pages.lastIndex)]
+            pageLoader.setActivePage(activePage)
+            eventChannel.trySend(Event.ReloadViewerChapters)
+        }
+
+        if (remote.totalPages > 0 && remote.totalPages != pages.size) {
+            logcat(LogPriority.WARN) {
+                "MangaStartup: server/local page count still differs chapterId=$chapterId " +
+                    "server=${remote.totalPages} local=${pages.size}"
+            }
+            return
+        }
+        if (getCurrentChapter() !== readerChapter) return
+
+        val remotePageIndex = remote.pageIndex
+            ?: if (remote.completed && pages.isNotEmpty()) pages.lastIndex else return
+        if (remotePageIndex !in pages.indices) return
+        val localPageIndex = readerChapter.requestedPage.coerceIn(0, pages.lastIndex)
+        if (remotePageIndex == localPageIndex) return
+
+        val remoteVersion = listOf(
+            chapterId,
+            remote.readDate.orEmpty(),
+            remotePageIndex,
+            remote.totalPages,
+            remote.completed,
+        ).joinToString(separator = ":")
+        val shouldShow = synchronized(remoteProgressVersionsHandled) {
+            remoteProgressVersionsHandled.add(remoteVersion)
+        }
+        if (!shouldShow) return
+
+        mutableState.update {
+            it.copy(
+                remoteProgressConflict = MangaRemoteProgressConflict(
+                    chapterId = chapterId,
+                    localPageIndex = localPageIndex,
+                    localTotalPages = pages.size,
+                    remotePageIndex = remotePageIndex,
+                    remoteTotalPages = remote.totalPages.takeIf { count -> count > 0 } ?: pages.size,
+                    remoteVersion = remoteVersion,
+                ),
+            )
+        }
+    }
+
+    fun keepLocalProgress() {
+        val conflict = state.value.remoteProgressConflict ?: return
+        mutableState.update { it.copy(remoteProgressConflict = null) }
+        val currentChapter = getCurrentChapter()?.takeIf { it.chapter.id == conflict.chapterId } ?: return
+        val pages = currentChapter.pages ?: return
+        val localPageIndex = currentChapter.requestedPage.coerceIn(0, pages.lastIndex)
+        viewModelScope.launchIO {
+            komgaProgressSyncService.pushPageProgress(
+                sourceId = manga?.source ?: return@launchIO,
+                chapterUrl = currentChapter.chapter.url,
+                pageIndex = localPageIndex,
+                totalPages = pages.size,
+            )
+        }
+    }
+
+    fun useRemoteProgress() {
+        val conflict = state.value.remoteProgressConflict ?: return
+        mutableState.update { it.copy(remoteProgressConflict = null) }
+        val currentChapter = getCurrentChapter()?.takeIf { it.chapter.id == conflict.chapterId } ?: return
+        val pages = currentChapter.pages ?: return
+        val targetPage = pages.getOrNull(conflict.remotePageIndex) ?: return
+        currentChapter.requestedPage = targetPage.index
+        currentChapter.chapter.last_page_read = targetPage.index
+        chapterPageIndex = targetPage.index
+        currentChapter.pageLoader?.setActivePage(targetPage)
+        state.value.viewer?.moveToPage(targetPage)
+        if (!incognitoMode) {
+            viewModelScope.launchNonCancellable {
+                updateChapter.await(
+                    ChapterUpdate(
+                        id = conflict.chapterId,
+                        read = conflict.remotePageIndex == pages.lastIndex,
+                        lastPageRead = conflict.remotePageIndex.toLong(),
+                    ),
+                )
+            }
+        }
     }
 
     private fun downloadNextChapters() {
@@ -518,6 +691,7 @@ class ReaderViewModel @JvmOverloads constructor(
         if (currentChapter.pageLoader is DownloadPageLoader) return
 
         val manga = manga ?: return
+        if (sourceManager.get(manga.source) is KomgaSource) return
         val chapter = currentChapter.chapter.toDomainChapter() ?: return
         val chapterId = chapter.id
         synchronized(currentChapterAutoCacheRequests) {
@@ -1018,6 +1192,7 @@ class ReaderViewModel @JvmOverloads constructor(
          */
         val viewer: Viewer? = null,
         val dialog: Dialog? = null,
+        val remoteProgressConflict: MangaRemoteProgressConflict? = null,
         val menuVisible: Boolean = false,
         @IntRange(from = -100, to = 100) val brightnessOverlayValue: Int = 0,
     ) {

@@ -28,7 +28,7 @@ class ChapterLoader(
      * Assigns the chapter's page loader and loads the its pages. Returns immediately if the chapter
      * is already loaded.
      */
-    suspend fun loadChapter(chapter: ReaderChapter) {
+    suspend fun loadChapter(chapter: ReaderChapter, initialPageIndex: Int? = null) {
         if (chapterIsReady(chapter)) {
             return
         }
@@ -49,11 +49,14 @@ class ChapterLoader(
 
                 // If the chapter is partially read, set the starting page to the last the user read
                 // otherwise use the requested page.
-                if (!chapter.chapter.read) {
+                if (initialPageIndex != null) {
+                    chapter.requestedPage = initialPageIndex
+                } else if (!chapter.chapter.read) {
                     chapter.requestedPage = chapter.chapter.last_page_read
                 }
 
                 chapter.state = ReaderChapter.State.Loaded(pages)
+                loader.setActivePage(pages[chapter.requestedPage.coerceIn(0, pages.lastIndex)])
             } catch (e: Throwable) {
                 chapter.state = ReaderChapter.State.Error(e)
                 throw e
