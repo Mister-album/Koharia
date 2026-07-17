@@ -28,8 +28,10 @@ class KomgaChapterMemoTest {
 
         val first = KomgaChapterMemo.versionedPageImageUrl(imageUrl, firstMemo)
         val second = KomgaChapterMemo.versionedPageImageUrl(imageUrl, secondMemo)
+        val firstToken = KomgaChapterMemo.pageImageCacheToken(firstMemo)
 
         assertNotEquals(first, second)
+        assertEquals(first, KomgaChapterMemo.versionedPageImageUrl(imageUrl, firstToken))
         assertTrue(first.startsWith(imageUrl))
         assertEquals(imageUrl, KomgaChapterMemo.networkPageImageUrl(first))
         assertEquals(first, KomgaChapterMemo.versionedPageImageUrl(first, firstMemo))

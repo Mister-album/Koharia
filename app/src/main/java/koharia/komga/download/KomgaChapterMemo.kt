@@ -168,10 +168,19 @@ object KomgaChapterMemo {
         }
     }
 
+    fun pageImageCacheToken(memo: JsonObject): String? = publicationVersion(memo)?.cacheToken()
+
     fun versionedPageImageUrl(imageUrl: String, memo: JsonObject): String {
+        return versionedPageImageUrl(imageUrl, pageImageCacheToken(memo))
+    }
+
+    fun versionedPageImageUrl(imageUrl: String, cacheToken: String?): String {
         val networkUrl = networkPageImageUrl(imageUrl)
-        val version = publicationVersion(memo) ?: return networkUrl
-        return "$networkUrl$PAGE_CACHE_VERSION_FRAGMENT${version.cacheToken()}"
+        return if (cacheToken != null) {
+            "$networkUrl$PAGE_CACHE_VERSION_FRAGMENT$cacheToken"
+        } else {
+            networkUrl
+        }
     }
 
     fun networkPageImageUrl(imageUrl: String): String = imageUrl.substringBefore(PAGE_CACHE_VERSION_FRAGMENT)

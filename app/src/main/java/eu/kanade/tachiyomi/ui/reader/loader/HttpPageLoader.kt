@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -98,9 +99,25 @@ internal class HttpPageLoader(
                         loadJob.start()
                         loadJob.join()
                     } finally {
-                        synchronized(schedulerLock) {
+                        val requeuedAsActive = synchronized(schedulerLock) {
                             activeLoads.remove(newActiveLoad)
                             scheduledPages.remove(queuedPage.page)
+                            // The user may select a prefetch after it was cancelled but before this cleanup.
+                            if (
+                                scope.isActive &&
+                                queuedPage.page.status == Page.State.Queue &&
+                                pageLoadGate.isActive(queuedPage.page.index)
+                            ) {
+                                enqueuePageLocked(queuedPage.page, PriorityPage.DEFAULT) != null
+                            } else {
+                                false
+                            }
+                        }
+                        if (requeuedAsActive) {
+                            logcat {
+                                "MangaStartup: cancelled page requeued as active " +
+                                    "chapterId=${chapter.chapter.id} page=${queuedPage.page.number}"
+                            }
                         }
                     }
                 }
@@ -171,12 +188,13 @@ internal class HttpPageLoader(
 
     private fun List<Page>.withPublicationVersion(memo: JsonObject): List<Page> {
         if (source !is KomgaSource) return this
+        val pageImageCacheToken = KomgaChapterMemo.pageImageCacheToken(memo)
         return map { page ->
             val imageUrl = page.imageUrl ?: return@map page
             Page(
                 index = page.index,
                 url = page.url,
-                imageUrl = KomgaChapterMemo.versionedPageImageUrl(imageUrl, memo),
+                imageUrl = KomgaChapterMemo.versionedPageImageUrl(imageUrl, pageImageCacheToken),
             )
         }
     }
@@ -345,10 +363,9 @@ internal class HttpPageLoader(
         // Cache current page list progress for online chapters to allow a faster reopen
         chapter.pages?.let { pages ->
             val chapterSnapshot = domainChapter
+            val pagesToSave = pages.map { Page(it.index, it.url, it.imageUrl) }
             pageListCacheWriteScope.launch {
                 try {
-                    // Convert to pages without reader information
-                    val pagesToSave = pages.map { Page(it.index, it.url, it.imageUrl) }
                     chapterCache.putPageListToCache(chapterSnapshot, pagesToSave)
                 } catch (e: Throwable) {
                     if (e is CancellationException) {

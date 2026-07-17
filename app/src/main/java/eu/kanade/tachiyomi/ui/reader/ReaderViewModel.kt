@@ -557,7 +557,16 @@ class ReaderViewModel @JvmOverloads constructor(
         }
 
         if (publicationChanged || pageCountChanged) {
-            val refreshedPages = pageLoader.refreshPages()
+            val refreshedPages = try {
+                pageLoader.refreshPages()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                logcat(LogPriority.WARN, error) {
+                    "MangaStartup: failed to refresh pages chapterId=$chapterId " +
+                        "publicationChanged=$publicationChanged pageCountChanged=$pageCountChanged"
+                }
+                return
+            }
             if (refreshedPages.isNullOrEmpty()) {
                 logcat(LogPriority.WARN) {
                     "MangaStartup: page list refresh unavailable chapterId=$chapterId " +
