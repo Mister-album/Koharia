@@ -455,23 +455,28 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 val serverTimeOffsetMinutes = remoteCache?.serverDate?.serverTimeOffsetMinutes()
                 val persistedLocator = localProgress?.toLocatorOrNull()
                 val savedStateLocator = restoreLocator()
+                val deferCachedRemoteSelection =
+                    epubReaderPreferences.correctKomgaServerTimestamps.get() &&
+                        persistedLocator != null &&
+                        remoteProgress != null
+                val initialRemoteProgress = remoteProgress.takeUnless { deferCachedRemoteSelection }
                 val initialLocator = savedStateLocator
                     ?: if (preserveLocalProgressAfterLayoutChange) {
                         persistedLocator
                     } else {
-                        chooseMoreRecentLocator(localProgress, remoteProgress)
+                        chooseMoreRecentLocator(localProgress, initialRemoteProgress)
                     }
                 val acceptedRemoteInitially = savedStateLocator == null &&
                     !preserveLocalProgressAfterLayoutChange &&
-                    remoteProgress != null &&
+                    initialRemoteProgress != null &&
                     (
                         localProgress == null ||
-                            remoteProgress.modifiedAt.time > localProgress.updatedAt.time ||
+                            initialRemoteProgress.modifiedAt.time > localProgress.updatedAt.time ||
                             persistedLocator == null
                         )
                 if (acceptedRemoteInitially) {
-                    initiallyAcceptedRemoteLocator = remoteProgress.locator
-                    initiallyAcceptedRemoteModifiedAt = remoteProgress.modifiedAt
+                    initiallyAcceptedRemoteLocator = initialRemoteProgress.locator
+                    initiallyAcceptedRemoteModifiedAt = initialRemoteProgress.modifiedAt
                 }
 
                 logcat(LogPriority.DEBUG) {
@@ -481,6 +486,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         "localUpdated=${localProgress?.updatedAt?.time} " +
                         "remote=${remoteProgress?.locator.debugProgress()} " +
                         "remoteUpdated=${remoteProgress?.modifiedAt?.time} " +
+                        "deferredRemoteTimestampCheck=$deferCachedRemoteSelection " +
                         "selected=${initialLocator.debugProgress()}"
                 }
 
@@ -565,7 +571,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     )
                 }
 
-                if (!incognito && !preserveLocalProgressAfterLayoutChange) {
+                if (!incognito && !preserveLocalProgressAfterLayoutChange && !deferCachedRemoteSelection) {
                     val selectedRemote = remoteProgress?.takeIf {
                         localProgress == null || it.modifiedAt.time > localProgress.updatedAt.time
                     }

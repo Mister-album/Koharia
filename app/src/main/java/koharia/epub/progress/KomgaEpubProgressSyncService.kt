@@ -32,6 +32,8 @@ class KomgaEpubProgressSyncService(
     private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory,
 ) {
 
+    private val recentPushes = ConcurrentHashMap<ProgressionKey, RecentPush>()
+
     suspend fun pullProgression(
         sourceId: Long,
         bookUrl: String,
@@ -125,9 +127,12 @@ class KomgaEpubProgressSyncService(
         val storedOffsetMinutes = offsetPreference.get()
         val key = ProgressionKey(sourceId, normalizedBookUrl)
         val now = System.currentTimeMillis()
-        val recentPush = recentPushes[key]
+        val observedRecentPush = recentPushes[key]
+        val recentPush = observedRecentPush
             ?.takeIf { now - it.recordedAtMillis <= RECENT_PUSH_EVIDENCE_TTL_MS }
-            .also { if (it == null) recentPushes.remove(key) }
+        if (observedRecentPush != null && recentPush == null) {
+            recentPushes.remove(key, observedRecentPush)
+        }
 
         val pushedOffsetMinutes = recentPush?.let {
             inferWholeHourOffsetMinutes(rawModifiedAt.time - it.modifiedAtMillis)
@@ -256,7 +261,5 @@ class KomgaEpubProgressSyncService(
         const val OFFSET_EVIDENCE_TOLERANCE_MS = 5 * MINUTE_MS
         const val RECENT_PUSH_EVIDENCE_TTL_MS = 5 * MINUTE_MS
         const val MAX_CORRECTION_HOURS = 24L
-
-        val recentPushes = ConcurrentHashMap<ProgressionKey, RecentPush>()
     }
 }
