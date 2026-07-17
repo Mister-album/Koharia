@@ -325,8 +325,8 @@ class EpubCacheManager(
             continuation.invokeOnCancellation { cancel() }
             enqueue(
                 object : Callback {
-                    override fun onFailure(call: Call, error: IOException) {
-                        val token = continuation.tryResumeWithException(error) ?: return
+                    override fun onFailure(call: Call, e: IOException) {
+                        val token = continuation.tryResumeWithException(e) ?: return
                         continuation.completeResume(token)
                     }
 

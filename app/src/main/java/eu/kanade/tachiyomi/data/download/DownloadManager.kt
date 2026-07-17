@@ -7,6 +7,9 @@ import eu.kanade.tachiyomi.source.model.Page
 import koharia.source.komga.DownloadDirectoryMode
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.drop
@@ -46,6 +49,8 @@ class DownloadManager(
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
     private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
 ) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * Downloader whose only task is to download chapters.
@@ -300,7 +305,7 @@ class DownloadManager(
      * @param source the source of the chapters.
      */
     fun deleteChapters(chapters: List<Chapter>, manga: Manga, source: Source) {
-        launchIO {
+        scope.launchIO {
             val filteredChapters = getChaptersToDelete(chapters, manga)
             if (filteredChapters.isEmpty()) {
                 return@launchIO
@@ -334,7 +339,7 @@ class DownloadManager(
      * @param removeQueued whether to also remove queued downloads.
      */
     fun deleteManga(manga: Manga, source: Source, removeQueued: Boolean = true) {
-        launchIO {
+        scope.launchIO {
             if (removeQueued) {
                 downloader.removeFromQueue(manga)
             }

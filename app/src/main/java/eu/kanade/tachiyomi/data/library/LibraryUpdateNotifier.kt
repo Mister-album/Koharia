@@ -31,7 +31,6 @@ import eu.kanade.tachiyomi.util.system.notify
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.i18n.pluralStringResource
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.Manga
@@ -166,7 +165,7 @@ class LibraryUpdateNotifier(
      *
      * @param updates a list of manga with new updates.
      */
-    fun showUpdateNotifications(updates: List<Pair<Manga, Array<Chapter>>>) {
+    suspend fun showUpdateNotifications(updates: List<Pair<Manga, Array<Chapter>>>) {
         // Parent group notification
         context.notify(
             Notifications.ID_NEW_CHAPTERS,
@@ -209,16 +208,14 @@ class LibraryUpdateNotifier(
 
         // Per-manga notification
         if (!securityPreferences.hideNotificationContent.get()) {
-            launchUI {
-                context.notify(
-                    updates.map { (manga, chapters) ->
-                        NotificationManagerCompat.NotificationWithIdAndTag(
-                            manga.id.hashCode(),
-                            createNewChaptersNotification(manga, chapters),
-                        )
-                    },
-                )
-            }
+            context.notify(
+                updates.map { (manga, chapters) ->
+                    NotificationManagerCompat.NotificationWithIdAndTag(
+                        manga.id.hashCode(),
+                        createNewChaptersNotification(manga, chapters),
+                    )
+                },
+            )
         }
     }
 

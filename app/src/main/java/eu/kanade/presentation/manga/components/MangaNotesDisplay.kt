@@ -13,11 +13,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import com.mohamedrejeb.richeditor.annotation.ExperimentalRichTextApi
 import com.mohamedrejeb.richeditor.model.rememberRichTextState
 import com.mohamedrejeb.richeditor.ui.material3.RichText
 
 private val FADE_TIME = tween<Float>(500)
 
+@OptIn(ExperimentalRichTextApi::class)
 @Composable
 fun MangaNotesDisplay(
     content: String,
