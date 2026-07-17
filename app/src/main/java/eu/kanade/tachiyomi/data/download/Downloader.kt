@@ -121,7 +121,9 @@ class Downloader(
     var isPaused: Boolean = false
 
     init {
-        restorePersistedQueueIfNeeded()
+        scope.launch {
+            restorePersistedQueueIfNeeded()
+        }
     }
 
     /**
