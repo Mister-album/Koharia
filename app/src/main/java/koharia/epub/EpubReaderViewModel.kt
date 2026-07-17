@@ -184,6 +184,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var positionsRefreshStarted = false
     private var lastPrefetchedHref: String? = null
     private var remoteProgressChecked = false
+    private var initiallyAcceptedRemoteLocator: Locator? = null
+    private var initiallyAcceptedRemoteModifiedAt: Date? = null
     private var layoutChangeRevision = 0L
     private var preserveLocalProgressAfterLayoutChange = false
     private var currentChapter: tachiyomi.domain.chapter.model.Chapter? = null
@@ -234,6 +236,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
         completeCacheStarted = false
         positionsRefreshStarted = false
         lastPrefetchedHref = null
+        initiallyAcceptedRemoteLocator = null
+        initiallyAcceptedRemoteModifiedAt = null
         layoutChangeRevision += 1
         this.preserveLocalProgressAfterLayoutChange = preserveLocalProgressAfterLayoutChange
         remoteProgressChecked = preserveLocalProgressAfterLayoutChange
@@ -457,6 +461,18 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     } else {
                         chooseMoreRecentLocator(localProgress, remoteProgress)
                     }
+                val acceptedRemoteInitially = savedStateLocator == null &&
+                    !preserveLocalProgressAfterLayoutChange &&
+                    remoteProgress != null &&
+                    (
+                        localProgress == null ||
+                            remoteProgress.modifiedAt.time > localProgress.updatedAt.time ||
+                            persistedLocator == null
+                        )
+                if (acceptedRemoteInitially) {
+                    initiallyAcceptedRemoteLocator = remoteProgress.locator
+                    initiallyAcceptedRemoteModifiedAt = remoteProgress.modifiedAt
+                }
 
                 logcat(LogPriority.DEBUG) {
                     "EPUB progress restore chapterId=${chapter.id} " +
@@ -800,6 +816,33 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 ?.let { json -> runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull() }
                 ?: return@launch
             val modifiedAt = remote.modifiedAt ?: return@launch
+            val acceptedRemoteLocator = initiallyAcceptedRemoteLocator
+            if (acceptedRemoteLocator != null && locator.isSamePaginationLocation(acceptedRemoteLocator)) {
+                val acceptedRemoteModifiedAt = initiallyAcceptedRemoteModifiedAt
+                val progress = currentProgress
+                if (acceptedRemoteModifiedAt != null &&
+                    progress != null &&
+                    progress.updatedAt.time == acceptedRemoteModifiedAt.time &&
+                    modifiedAt.time != acceptedRemoteModifiedAt.time
+                ) {
+                    val correctedProgress = progress.copy(
+                        updatedAt = modifiedAt,
+                        lastSyncedAt = modifiedAt,
+                    )
+                    currentProgress = correctedProgress
+                    upsertEpubProgress.await(correctedProgress)
+                    initiallyAcceptedRemoteModifiedAt = modifiedAt
+                    logcat(LogPriority.DEBUG) {
+                        "Corrected accepted initial EPUB remote timestamp chapterId=$chapterId " +
+                            "raw=${acceptedRemoteModifiedAt.time} corrected=${modifiedAt.time}"
+                    }
+                }
+                logcat(LogPriority.DEBUG) {
+                    "Ignoring already accepted initial EPUB remote progress chapterId=$chapterId " +
+                        "remote=${locator.debugProgress()} current=${latestLocator.debugProgress()}"
+                }
+                return@launch
+            }
             val localUpdatedAt = currentProgress?.updatedAt?.time
             if (localUpdatedAt != null && modifiedAt.time <= localUpdatedAt) {
                 logcat(LogPriority.DEBUG) {

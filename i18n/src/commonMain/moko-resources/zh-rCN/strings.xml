@@ -593,6 +593,8 @@
     <string name="pref_prefer_local_epub_file_summary">当本地和远程副本同时存在时，优先打开已下载文件</string>
     <string name="pref_sync_epub_progression_komga">将阅读进度同步到 Komga</string>
     <string name="pref_sync_epub_progression_komga_summary">将基于 Locator 的阅读位置与 Komga 保持同步</string>
+    <string name="pref_correct_komga_server_timestamps">修正服务器时间戳</string>
+    <string name="pref_correct_komga_server_timestamps_summary">使用 HTTP 服务器时间和最近的进度更新，识别并修正异常的整小时偏移。请仅对受影响的 Komga 服务器开启。</string>
     <string name="pref_epub_layout_mode">布局模式</string>
     <string name="pref_epub_page_direction">翻页方向</string>
     <string name="pref_epub_typography_and_appearance">排版与外观</string>

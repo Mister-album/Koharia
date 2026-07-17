@@ -177,7 +177,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { KomgaEpubPublicationService() }
         addSingletonFactory { EpubPublicationResolver() }
         addSingletonFactory { EpubReaderSupportResolver() }
-        addSingletonFactory { KomgaEpubProgressSyncService(get(), get()) }
+        addSingletonFactory { KomgaEpubProgressSyncService(get(), get(), get()) }
         addSingletonFactory { KomgaEpubRemoteProgressCoordinator(get(), get(), get(), get()) }
 
         // Asynchronously init expensive components for a faster cold start
