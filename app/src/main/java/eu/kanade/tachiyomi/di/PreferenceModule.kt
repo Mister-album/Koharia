@@ -66,6 +66,7 @@ class PreferenceModule(val app: Application) : InjektModule {
                 downloadProvider = get(),
                 downloadCache = get(),
                 komgaSharedDownloadIndexManager = get(),
+                epubCacheManager = get(),
             )
         }
         addSingletonFactory {

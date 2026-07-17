@@ -3,6 +3,7 @@ package koharia.epub.service
 import android.app.Application
 import android.net.Uri
 import koharia.epub.model.EpubOpenRequest
+import koharia.epub.session.EpubPositionsController
 import koharia.epub.session.EpubReaderSession
 import logcat.LogPriority
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
@@ -40,11 +41,13 @@ class LocalEpubPublicationService(
 
         val asset = assetRetriever.retrieve(url, MediaType.EPUB)
             .getOrElse { throw IllegalStateException(it.message) }
-        val publication = publicationOpener.open(asset, allowUserInteraction = false)
+        val openedPublication = publicationOpener.open(asset, allowUserInteraction = false)
             .getOrElse {
                 asset.close()
                 throw IllegalStateException(it.message)
             }
+        val publicationWithPositions = openedPublication.withEpubPositionsController()
+        val publication = publicationWithPositions.publication
         logcat(LogPriority.DEBUG) {
             "EPUB local open success chapterId=${request.chapterId} readingOrder=${publication.readingOrder.size} toc=${publication.tableOfContents.size}"
         }
@@ -55,6 +58,7 @@ class LocalEpubPublicationService(
             publication = publication,
             navigatorFactory = EpubNavigatorFactory(publication),
             initialLocator = initialLocator,
+            positionsController = publicationWithPositions.controller,
         )
     }
 }

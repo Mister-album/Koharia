@@ -11,6 +11,7 @@ object LocalTempCacheDirectoryProvider {
     private const val NETWORK_CACHE_DIR = "network_cache"
     private const val CHAPTER_CACHE_DIR = "chapter_disk_cache"
     private const val METADATA_CACHE_DIR = "komga_metadata_cache"
+    private const val EPUB_CACHE_DIR = "epub_cache"
     private const val DOWNLOAD_INDEX_FILE = "dl_index_cache_v4"
     private const val COIL_DISK_CACHE_DIR = "coil3_disk_cache"
     private const val SHARED_IMAGE_DIR = "shared_image"
@@ -20,6 +21,8 @@ object LocalTempCacheDirectoryProvider {
     fun chapterCacheDir(context: Context): File = prepareDirectory(context, CHAPTER_CACHE_DIR)
 
     fun metadataCacheDir(context: Context): File = prepareDirectory(context, METADATA_CACHE_DIR)
+
+    fun epubCacheDir(context: Context): File = prepareDirectory(context, EPUB_CACHE_DIR)
 
     fun downloadIndexCacheFile(context: Context): File = prepareFile(context, DOWNLOAD_INDEX_FILE)
 
@@ -93,12 +96,14 @@ object LocalTempCacheDirectoryProvider {
         return listOf(
             chapterCacheDir(context),
             metadataCacheDir(context),
+            epubCacheDir(context),
             networkCacheDir(context),
             downloadIndexCacheFile(context),
             coilDiskCacheDir(context),
             sharedImageDir(context),
             legacyDirectory(context, CHAPTER_CACHE_DIR),
             legacyDirectory(context, METADATA_CACHE_DIR),
+            legacyDirectory(context, EPUB_CACHE_DIR),
             legacyDirectory(context, NETWORK_CACHE_DIR),
             legacyFile(context, DOWNLOAD_INDEX_FILE),
             legacyDirectory(context, COIL_DISK_CACHE_DIR),

@@ -1,6 +1,7 @@
 package koharia.komga.download
 
 import koharia.komga.api.dto.BookDto
+import koharia.komga.api.dto.isEpub
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
@@ -27,6 +28,9 @@ object KomgaChapterMemo {
     const val BOOK_TITLE = "bookTitle"
     const val NUMBER_SORT = "numberSort"
     const val ISBN = "isbn"
+    const val IS_EPUB = "isEpub"
+    const val FILE_LAST_MODIFIED = "fileLastModified"
+    const val FILE_NAME = "fileName"
 
     fun buildFingerprint(baseUrl: String, book: BookDto): KomgaBookFingerprint {
         return KomgaBookFingerprint(
@@ -42,7 +46,13 @@ object KomgaChapterMemo {
     }
 
     fun buildMemo(baseUrl: String, book: BookDto): JsonObject {
-        return buildMemo(buildFingerprint(baseUrl, book))
+        val fingerprint = buildMemo(buildFingerprint(baseUrl, book))
+        return buildJsonObject {
+            fingerprint.forEach { (key, value) -> put(key, value) }
+            put(IS_EPUB, book.isEpub)
+            if (book.fileLastModified.isNotBlank()) put(FILE_LAST_MODIFIED, book.fileLastModified)
+            if (book.name.isNotBlank()) put(FILE_NAME, book.name)
+        }
     }
 
     fun buildMemo(fingerprint: KomgaBookFingerprint): JsonObject {
@@ -97,6 +107,12 @@ object KomgaChapterMemo {
             isbn = memo.string(ISBN).orEmpty(),
         )
     }
+
+    fun isEpub(memo: JsonObject): Boolean? = memo[IS_EPUB]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+
+    fun fileLastModified(memo: JsonObject): String? = memo.string(FILE_LAST_MODIFIED)
+
+    fun fileName(memo: JsonObject): String? = memo.string(FILE_NAME)
 
     private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull()
 

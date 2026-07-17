@@ -153,6 +153,7 @@ class DownloadCache(
         mangaTitle: String,
         sourceId: Long,
         skipCache: Boolean,
+        allowSharedLookup: Boolean = true,
     ): Boolean {
         if (skipCache) {
             val source = sourceManager.getOrStub(sourceId)
@@ -173,7 +174,9 @@ class DownloadCache(
             }
         }
 
-        if (komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared) {
+        if (allowSharedLookup &&
+            komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
+        ) {
             val source = sourceManager.getOrStub(sourceId)
             return provider.findChapterDir(chapterName, chapterScanlator, chapterUrl, mangaTitle, source) != null
         }

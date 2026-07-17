@@ -4,6 +4,7 @@ import androidx.core.content.edit
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager
+import koharia.epub.cache.EpubCacheManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
@@ -15,6 +16,7 @@ class KomgaServerRemovalManager(
     private val downloadProvider: DownloadProvider,
     private val downloadCache: DownloadCache,
     private val komgaSharedDownloadIndexManager: KomgaSharedDownloadIndexManager,
+    private val epubCacheManager: EpubCacheManager,
 ) {
 
     suspend fun removeServer(
@@ -27,6 +29,7 @@ class KomgaServerRemovalManager(
         withContext(Dispatchers.IO) {
             clearServerSettingsIfNeeded(serverId)
             cleanupDownloads(profile, options)
+            epubCacheManager.clearServer(serverId)
             localConfigManager.clearScopeForServer(serverId)
         }
         serverPreferences.setProfiles(currentProfiles - profile)

@@ -1307,4 +1307,15 @@
     <string name="epub_reader_font_size_input_range">Enter a font size from 13 to 32</string>
     <string name="epub_reader_reading_mode_settings">Reading mode</string>
     <string name="epub_reader_show_reading_progress">Show reading progress</string>
+    <string name="pref_book_cache">Book cache</string>
+    <string name="pref_cache_whole_book">Cache the whole book</string>
+    <string name="pref_cache_whole_book_summary">Cache the complete EPUB after the first page is shown. When disabled, only the current and next sections are cached.</string>
+    <string name="pref_book_cache_size">Book cache limit</string>
+    <string name="cache_size_megabytes">%1$d MB</string>
+    <string name="pref_clear_book_cache">Clear book cache</string>
+    <string name="pref_book_cache_info">Book cache is managed separately from downloads. Clearing it does not remove offline downloads, reading progress, or bookmarks.</string>
+    <string name="epub_reader_remote_progress_title">Server reading progress</string>
+    <string name="epub_reader_remote_progress_message">The server has a different saved position (%1$d%%). Jump to it?</string>
+    <string name="epub_reader_keep_local_progress">Keep current position</string>
+    <string name="epub_reader_jump_remote_progress">Jump to server position</string>
 </resources>

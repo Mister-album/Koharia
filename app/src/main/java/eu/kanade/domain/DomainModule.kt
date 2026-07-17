@@ -23,18 +23,22 @@ import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import koharia.data.epub.EpubBookmarkRepositoryImpl
 import koharia.data.epub.EpubPaginationCacheRepositoryImpl
 import koharia.data.epub.EpubProgressRepositoryImpl
+import koharia.data.epub.EpubRemoteProgressCacheRepositoryImpl
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
 import koharia.domain.epub.interactor.AddEpubBookmark
 import koharia.domain.epub.interactor.DeleteEpubBookmark
 import koharia.domain.epub.interactor.GetEpubBookmarks
 import koharia.domain.epub.interactor.GetEpubPaginationCache
 import koharia.domain.epub.interactor.GetEpubProgress
+import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
 import koharia.domain.epub.interactor.UpdateEpubBookmarkNote
 import koharia.domain.epub.interactor.UpsertEpubPaginationCache
 import koharia.domain.epub.interactor.UpsertEpubProgress
+import koharia.domain.epub.interactor.UpsertEpubRemoteProgressCache
 import koharia.domain.epub.repository.EpubBookmarkRepository
 import koharia.domain.epub.repository.EpubPaginationCacheRepository
 import koharia.domain.epub.repository.EpubProgressRepository
+import koharia.domain.epub.repository.EpubRemoteProgressCacheRepository
 import koharia.domain.upcoming.interactor.GetUpcomingManga
 import tachiyomi.data.category.CategoryRepositoryImpl
 import tachiyomi.data.chapter.ChapterRepositoryImpl
@@ -170,6 +174,9 @@ class DomainModule : InjektModule {
         addSingletonFactory<EpubProgressRepository> { EpubProgressRepositoryImpl(get()) }
         addFactory { GetEpubProgress(get()) }
         addFactory { UpsertEpubProgress(get()) }
+        addSingletonFactory<EpubRemoteProgressCacheRepository> { EpubRemoteProgressCacheRepositoryImpl(get()) }
+        addFactory { GetEpubRemoteProgressCache(get()) }
+        addFactory { UpsertEpubRemoteProgressCache(get()) }
         addSingletonFactory<EpubPaginationCacheRepository> { EpubPaginationCacheRepositoryImpl(get()) }
         addFactory { GetEpubPaginationCache(get()) }
         addFactory { UpsertEpubPaginationCache(get()) }

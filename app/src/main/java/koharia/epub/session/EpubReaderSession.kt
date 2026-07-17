@@ -10,6 +10,8 @@ data class EpubReaderSession(
     val publication: Publication,
     val navigatorFactory: EpubNavigatorFactory,
     val initialLocator: Locator?,
+    val positionsController: EpubPositionsController,
+    val prefetchNextResource: suspend (Locator?) -> Unit = {},
 ) {
     fun close() {
         publication.close()

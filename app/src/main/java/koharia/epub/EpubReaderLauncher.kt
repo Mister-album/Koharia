@@ -4,8 +4,6 @@ import android.content.Context
 import android.content.Intent
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import koharia.epub.service.EpubReaderSupportResolver
-import koharia.epub.settings.EpubReaderPreferences
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -17,9 +15,7 @@ import uy.kohesive.injekt.api.get
 
 class EpubReaderLauncher @JvmOverloads constructor(
     private val supportResolver: EpubReaderSupportResolver = Injekt.get(),
-    private val epubReaderPreferences: EpubReaderPreferences = Injekt.get(),
     private val getManga: GetManga = Injekt.get(),
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
 ) {
 
     fun launch(
@@ -50,32 +46,27 @@ class EpubReaderLauncher @JvmOverloads constructor(
         chapterId: Long,
         forcePages: Boolean = false,
     ): Intent {
-        val sourceId = withIOContext { getManga.await(mangaId)?.source }
-        val scopedPreferences = sourceId
-            ?.takeIf { it > 0L }
-            ?.let(scopedPreferenceStoreFactory::epubReaderPreferences)
-            ?: epubReaderPreferences
-
         if (forcePages) {
+            val sourceId = withIOContext { getManga.await(mangaId)?.source }
             return ReaderActivity.newIntent(context, mangaId, chapterId, sourceId)
         }
 
         return withIOContext {
             runCatching {
-                if (supportResolver.resolve(
-                        mangaId = mangaId,
-                        chapterId = chapterId,
-                        preferLocalFile = scopedPreferences.preferLocalFile.get(),
-                    ).isNativeSupported
-                ) {
-                    EpubReaderActivity.newIntent(context, mangaId, chapterId, sourceId)
+                val resolution = supportResolver.resolve(
+                    mangaId = mangaId,
+                    chapterId = chapterId,
+                )
+                if (resolution.isNativeSupported) {
+                    EpubReaderActivity.newIntent(context, mangaId, chapterId, resolution.sourceId, resolution)
                 } else {
-                    ReaderActivity.newIntent(context, mangaId, chapterId, sourceId)
+                    ReaderActivity.newIntent(context, mangaId, chapterId, resolution.sourceId)
                 }
             }.getOrElse { error ->
                 logcat(LogPriority.WARN, error) {
                     "EpubReaderLauncher failed to resolve reader type for chapterId=$chapterId"
                 }
+                val sourceId = getManga.await(mangaId)?.source
                 ReaderActivity.newIntent(context, mangaId, chapterId, sourceId)
             }
         }

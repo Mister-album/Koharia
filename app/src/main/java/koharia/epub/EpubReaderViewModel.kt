@@ -17,17 +17,22 @@ import koharia.domain.epub.interactor.UpsertEpubProgress
 import koharia.domain.epub.model.EpubBookmark
 import koharia.domain.epub.model.EpubPaginationCache
 import koharia.domain.epub.model.EpubProgress
+import koharia.epub.cache.EpubCacheManager
+import koharia.epub.cache.EpubCachePolicy
+import koharia.epub.cache.EpubCachePreferences
 import koharia.epub.locator.toPersistentLocator
 import koharia.epub.model.EpubOpenRequest
 import koharia.epub.model.EpubSearchResult
 import koharia.epub.model.EpubTocEntry
 import koharia.epub.progress.KomgaEpubProgressSyncService
+import koharia.epub.progress.KomgaEpubRemoteProgressCoordinator
 import koharia.epub.service.EpubPublicationResolver
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.epub.settings.EpubSessionPreferenceStore
 import koharia.komga.api.dto.isDivinaCompatibleEpub
 import koharia.komga.api.dto.isEpub
+import koharia.komga.download.KomgaChapterMemo
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +55,7 @@ import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Layout
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
+import org.readium.r2.shared.publication.services.locateProgression
 import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.publication.services.search.SearchIterator
 import org.readium.r2.shared.publication.services.search.isSearchable
@@ -73,6 +79,7 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.File
 import java.util.Date
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -98,6 +105,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private val getEpubPaginationCache: GetEpubPaginationCache = Injekt.get(),
     private val upsertEpubPaginationCache: UpsertEpubPaginationCache = Injekt.get(),
     private val komgaEpubProgressSyncService: KomgaEpubProgressSyncService = Injekt.get(),
+    private val epubRemoteProgressCoordinator: KomgaEpubRemoteProgressCoordinator = Injekt.get(),
+    private val epubCacheManager: EpubCacheManager = Injekt.get(),
+    private val epubCachePreferences: EpubCachePreferences = Injekt.get(),
     private val updateChapter: UpdateChapter = Injekt.get(),
     private val upsertHistory: UpsertHistory = Injekt.get(),
     private val getEpubBookmarks: GetEpubBookmarks = Injekt.get(),
@@ -166,6 +176,15 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var paginationLayoutJson: String? = null
     private var isRtlLayout = false
     private var currentPublicationKey: String? = null
+    private var leasedCacheFile: File? = null
+    private var leasedPublicationKey: String? = null
+    private var completeCacheStarted = false
+    private var positionsRefreshStarted = false
+    private var lastPrefetchedHref: String? = null
+    private var remoteProgressChecked = false
+    private var layoutChangeRevision = 0L
+    private var preserveLocalProgressAfterLayoutChange = false
+    private var currentChapter: tachiyomi.domain.chapter.model.Chapter? = null
     private var currentChapterUrl: String? = null
     private var currentChapterRead = false
     private var currentChapterBookmark = false
@@ -207,7 +226,15 @@ class EpubReaderViewModel @JvmOverloads constructor(
     suspend fun init(
         mangaId: Long,
         chapterId: Long,
+        preserveLocalProgressAfterLayoutChange: Boolean = false,
     ): Result<Unit> {
+        releaseCacheLeases()
+        completeCacheStarted = false
+        positionsRefreshStarted = false
+        lastPrefetchedHref = null
+        layoutChangeRevision += 1
+        this.preserveLocalProgressAfterLayoutChange = preserveLocalProgressAfterLayoutChange
+        remoteProgressChecked = preserveLocalProgressAfterLayoutChange
         this.mangaId = mangaId
         this.chapterId = chapterId
         mutableState.update {
@@ -229,6 +256,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
             runCatching {
                 val manga = checkNotNull(getManga.await(mangaId)) { "Manga not found" }
                 val chapter = checkNotNull(getChapter.await(chapterId)) { "Chapter not found" }
+                currentChapter = chapter
                 val source = sourceManager.get(manga.source) as? KomgaSource
                     ?: error(application.stringResource(MR.strings.source_unsupported))
 
@@ -251,42 +279,100 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 val nextBookChapterId = chapterIndex.takeIf { it >= 0 }
                     ?.let { chapters.getOrNull(it + 1)?.id }
 
-                val localFile = downloadProvider.findChapterDir(
-                    chapterName = chapter.name,
-                    chapterScanlator = chapter.scanlator,
-                    chapterUrl = chapter.url,
-                    mangaTitle = manga.title,
-                    source = source,
-                )
-                val localUri = localFile
+                val hasLauncherResolution =
+                    savedState.get<Long>("epub_resolution_chapter") == chapter.id &&
+                        savedState.get<Long>("epub_resolution_source") == source.id
+                val resolvedLocalUri = savedState.get<String>("epub_resolution_local_uri")
+                val resolvedRemoteBookUrl = savedState.get<String>("epub_resolution_remote_url")
+                val resolvedOpenSource = savedState.get<String>("epub_resolution_open_source")
+                    ?.let { value -> runCatching { EpubOpenRequest.OpenSource.valueOf(value) }.getOrNull() }
+                val resolvedPublicationKey = savedState.get<String>("epub_resolution_publication_key")
+                val resolvedCompleteCache =
+                    savedState.get<Boolean>("epub_resolution_complete_cache") == true
+
+                val downloadedFile = if (hasLauncherResolution) {
+                    null
+                } else {
+                    downloadProvider.findChapterDir(
+                        chapterName = chapter.name,
+                        chapterScanlator = chapter.scanlator,
+                        chapterUrl = chapter.url,
+                        mangaTitle = manga.title,
+                        source = source,
+                    )
+                }
+                val downloadedUri = downloadedFile
                     ?.takeIf { it.extension.equals("epub", ignoreCase = true) }
                     ?.uri
                     ?.toString()
 
-                val bookDetails = runCatching { source.getBookDetails(chapter.url) }
-                    .getOrNull()
-                    ?.takeIf { it.isEpub }
-                val remoteBookUrl = bookDetails
-                    ?.let { chapter.url.substringBefore('#').removeSuffix("/") }
-                val canOpenAsPages = bookDetails?.media?.let { media ->
-                    media.isDivinaCompatibleEpub && media.pagesCount > 0
-                } == true
+                val memoFingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
+                val memoIsEpub = KomgaChapterMemo.isEpub(chapter.memo)
+                val memoBookUrl = memoFingerprint?.bookUrl
+                    ?: chapter.url.substringBefore('#').removeSuffix("/")
+                val remotePublicationKey = EpubCachePolicy.publicationKey(
+                    fileHash = memoFingerprint?.fileHash,
+                    fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
+                    sizeBytes = memoFingerprint?.sizeBytes ?: 0L,
+                    fallback = "book:${chapter.id}:${chapter.url}",
+                )
+                val cachedBookFile = epubCacheManager.completeBookFile(source.id, remotePublicationKey)
+                val cachedBookUri = cachedBookFile?.toURI()?.toString()
+                val reusableResolvedLocalUri = resolvedLocalUri
+                    .takeUnless { resolvedCompleteCache && cachedBookFile == null }
+                val preferredLocalUri = reusableResolvedLocalUri ?: downloadedUri ?: cachedBookUri
+                val needsRemoteDetails = !hasLauncherResolution &&
+                    (preferredLocalUri == null || memoIsEpub == null)
+                val bookDetails = if (needsRemoteDetails) {
+                    runCatching { source.getBookDetails(chapter.url) }
+                        .getOrNull()
+                        ?.takeIf { it.isEpub }
+                } else {
+                    null
+                }
+                val remoteBookUrl = when {
+                    hasLauncherResolution -> resolvedRemoteBookUrl
+                    bookDetails != null -> chapter.url.substringBefore('#').removeSuffix("/")
+                    memoIsEpub == true || preferredLocalUri != null -> memoBookUrl
+                    else -> null
+                }
+                val canOpenAsPages = if (hasLauncherResolution) {
+                    savedState.get<Boolean>("epub_resolution_divina") == true
+                } else {
+                    bookDetails?.media?.let { media ->
+                        media.isDivinaCompatibleEpub && media.pagesCount > 0
+                    } == true
+                }
 
-                check(localUri != null || remoteBookUrl != null) {
+                check(preferredLocalUri != null || remoteBookUrl != null) {
                     application.stringResource(MR.strings.epub_reader_unsupported_book)
                 }
 
                 val primarySource = when {
-                    epubReaderPreferences.preferLocalFile.get() && localUri != null ->
+                    hasLauncherResolution && resolvedOpenSource == EpubOpenRequest.OpenSource.LOCAL &&
+                        preferredLocalUri != null -> EpubOpenRequest.OpenSource.LOCAL
+                    hasLauncherResolution && resolvedOpenSource == EpubOpenRequest.OpenSource.REMOTE &&
+                        remoteBookUrl != null -> EpubOpenRequest.OpenSource.REMOTE
+                    preferredLocalUri != null ->
                         EpubOpenRequest.OpenSource.LOCAL
                     remoteBookUrl != null ->
                         EpubOpenRequest.OpenSource.REMOTE
                     else ->
                         EpubOpenRequest.OpenSource.LOCAL
                 }
-                val bookFileName = localFile?.name ?: bookDetails?.name
-                val bookSizeBytes = localFile?.length()?.takeIf { size -> size > 0L }
+                val localUri = preferredLocalUri
+                val bookFileName = savedState.get<String>("epub_resolution_file_name")
+                    ?.takeIf { hasLauncherResolution }
+                    ?: downloadedFile?.name
+                    ?: cachedBookFile?.name
+                    ?: bookDetails?.name
+                    ?: KomgaChapterMemo.fileName(chapter.memo)
+                val bookSizeBytes = savedState.get<Long>("epub_resolution_file_size")
+                    ?.takeIf { hasLauncherResolution && it > 0L }
+                    ?: downloadedFile?.length()?.takeIf { size -> size > 0L }
+                    ?: cachedBookFile?.length()?.takeIf { size -> size > 0L }
                     ?: bookDetails?.sizeBytes?.takeIf { size -> size > 0L }
+                    ?: memoFingerprint?.sizeBytes?.takeIf { size -> size > 0L }
                 mutableState.update {
                     it.copy(
                         mangaTitle = manga.title,
@@ -304,13 +390,25 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
                 currentBookUrl = remoteBookUrl
                 currentPublicationKey = when {
-                    primarySource == EpubOpenRequest.OpenSource.LOCAL && localFile != null ->
-                        "local:$localUri:${localFile.lastModified()}:${localFile.length()}"
+                    hasLauncherResolution && !resolvedPublicationKey.isNullOrBlank() -> resolvedPublicationKey
+                    primarySource == EpubOpenRequest.OpenSource.LOCAL && downloadedFile != null ->
+                        "local:$localUri:${downloadedFile.lastModified()}:${downloadedFile.length()}"
+                    primarySource == EpubOpenRequest.OpenSource.LOCAL && cachedBookFile != null ->
+                        remotePublicationKey
                     primarySource == EpubOpenRequest.OpenSource.LOCAL ->
                         "local:$localUri"
                     !bookDetails?.fileHash.isNullOrBlank() -> "komga:${bookDetails.fileHash}"
-                    bookDetails != null -> "komga:${bookDetails.fileLastModified}:${bookDetails.sizeBytes}"
-                    else -> "book:${chapter.id}:${chapter.url}"
+                    bookDetails != null && bookDetails.fileLastModified.isNotBlank() ->
+                        "komga:${bookDetails.fileLastModified}:${bookDetails.sizeBytes}"
+                    else -> remotePublicationKey
+                }
+                epubCacheManager.acquirePublication(source.id, checkNotNull(currentPublicationKey))
+                leasedPublicationKey = currentPublicationKey
+                cachedBookFile?.takeIf {
+                    primarySource == EpubOpenRequest.OpenSource.LOCAL && localUri == cachedBookUri
+                }?.let {
+                    epubCacheManager.acquire(it)
+                    leasedCacheFile = it
                 }
 
                 val incognito = isIncognito()
@@ -325,25 +423,38 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         }
                         .getOrNull()
                 }
-                val remotePull = if (incognito || remoteBookUrl == null ||
+                val remoteCache = if (incognito || remoteBookUrl == null ||
                     !epubReaderPreferences.syncProgressionToKomga.get()
                 ) {
                     null
                 } else {
-                    runCatching { komgaEpubProgressSyncService.pullProgression(source.id, remoteBookUrl) }
+                    runCatching { epubRemoteProgressCoordinator.get(chapter.id) }
                         .onFailure { error ->
                             logcat(LogPriority.WARN, error) {
-                                "Failed to pull Komga EPUB progression for chapterId=${chapter.id}"
+                                "Failed to load cached Komga EPUB progression for chapterId=${chapter.id}"
                             }
                         }
                         .getOrNull()
                 }
-                val remoteProgress = remotePull?.progression
-                val serverTimeOffsetMinutes = remotePull?.serverDate?.serverTimeOffsetMinutes()
+                val remoteProgress = remoteCache?.let { cache ->
+                    val locator = cache.locatorJson
+                        ?.let { json -> runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull() }
+                    val modifiedAt = cache.modifiedAt
+                    if (locator != null && modifiedAt != null) {
+                        KomgaEpubProgressSyncService.RemoteProgression(locator, modifiedAt)
+                    } else {
+                        null
+                    }
+                }
+                val serverTimeOffsetMinutes = remoteCache?.serverDate?.serverTimeOffsetMinutes()
                 val persistedLocator = localProgress?.toLocatorOrNull()
                 val savedStateLocator = restoreLocator()
                 val initialLocator = savedStateLocator
-                    ?: chooseMoreRecentLocator(localProgress, remoteProgress)
+                    ?: if (preserveLocalProgressAfterLayoutChange) {
+                        persistedLocator
+                    } else {
+                        chooseMoreRecentLocator(localProgress, remoteProgress)
+                    }
 
                 logcat(LogPriority.DEBUG) {
                     "EPUB progress restore chapterId=${chapter.id} " +
@@ -370,18 +481,13 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         localUri = localUri,
                         openSource = primarySource,
                         publisherStylesOverride = publisherStylesOverride,
+                        publicationKey = checkNotNull(currentPublicationKey),
+                        persistCache = !incognito,
                     ),
                     initialLocator = initialLocator,
                 )
                 sessionRepository.put(session)
-                publicationPositions = session.publication.positions()
-                publicationPositionByHref = buildMap {
-                    publicationPositions.forEachIndexed { index, locator ->
-                        locator.href.toString().hrefCandidates().forEach { href ->
-                            putIfAbsent(href, index + 1)
-                        }
-                    }
-                }
+                applyPublicationPositions(session.positionsController.currentPositions())
                 resetVisualPagination()
                 val initialPosition = initialLocator.positionIn(publicationPositions)
                 val initialProgression = initialLocator?.totalProgressionValue()
@@ -441,7 +547,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     )
                 }
 
-                if (!incognito) {
+                if (!incognito && !preserveLocalProgressAfterLayoutChange) {
                     val selectedRemote = remoteProgress?.takeIf {
                         localProgress == null || it.modifiedAt.time > localProgress.updatedAt.time
                     }
@@ -501,12 +607,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
             ?.publication
             ?.toPersistentLocator(locator)
             ?: locator
+        val visualPagePair = visualPagePairForLocator(persistentLocator)
+        visualPagePair?.first?.let { visualPageNumber = it }
         latestLocator = persistentLocator
         val newLocatorJson = persistentLocator.toJSON().toString()
         locatorJson = newLocatorJson
         logcat(LogPriority.DEBUG) {
             "EPUB locator update chapterId=$chapterId navigatorHref=${locator.href} " +
-                persistentLocator.debugProgress()
+                "${persistentLocator.debugProgress()} visual=${visualPagePair?.first}/${visualPagePair?.second}"
         }
         mutableState.update {
             it.copy(
@@ -516,6 +624,13 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     ?: persistentLocator.positionIn(publicationPositions).toProgression(publicationPositions.size),
                 progressionPercent = persistentLocator.progressionPercent(),
                 currentPosition = persistentLocator.positionIn(publicationPositions),
+                currentVisualPage = visualPagePair?.first ?: it.currentVisualPage,
+                totalVisualPages = visualPagePair?.second ?: it.totalVisualPages,
+                paginationPhase = if (visualPagePair != null) {
+                    EpubPaginationPhase.READY
+                } else {
+                    it.paginationPhase
+                },
                 currentBookmarkId = findBookmarkForLocator(it.bookmarks, persistentLocator)?.id,
             )
         }
@@ -532,7 +647,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         lastVisualPageIndex = pageIndex
         lastVisualTotalPages = totalPages
 
-        val readingOrder = sessionRepository.get(chapterId)?.publication?.readingOrder.orEmpty()
+        val readingOrder = paginationReadingOrder()
         val exactPage = exactVisualPage(href, pageIndex, readingOrder, bookVisualPageCounts)
         val exactTotalPages = bookVisualPageCounts.values.sum()
             .takeIf { bookVisualPageCounts.size == readingOrder.size && it > 0 }
@@ -540,8 +655,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
             val currentPage = exactPage.coerceIn(1, exactTotalPages)
             visualPageNumber = currentPage
             val previousState = mutableState.value
-            if (previousState.paginationPhase != EpubPaginationPhase.READY ||
-                previousState.totalVisualPages != exactTotalPages
+            if (previousState.currentVisualPage != currentPage ||
+                previousState.totalVisualPages != exactTotalPages ||
+                previousState.paginationPhase != EpubPaginationPhase.READY
             ) {
                 logcat(LogPriority.DEBUG) {
                     "EPUB pagination visual page resolved chapterId=$chapterId " +
@@ -559,6 +675,166 @@ class EpubReaderViewModel @JvmOverloads constructor(
             }
             return
         }
+    }
+
+    fun onFirstContentDisplayed() {
+        refreshRemoteProgressAfterDisplay()
+        refreshPositionsAfterDisplay()
+        prefetchNextResourceIfNeeded()
+        if (completeCacheStarted || isIncognito() || state.value.isUsingLocalFile) return
+        if (!epubCachePreferences.cacheWholeBook.get()) return
+        val source = sourceManager.get(currentSourceId) as? KomgaSource ?: return
+        val bookUrl = currentBookUrl ?: return
+        val publicationKey = currentPublicationKey ?: return
+        val requestedChapterId = chapterId
+        completeCacheStarted = true
+        viewModelScope.launch {
+            val cachedFile = epubCacheManager.cacheCompleteBook(
+                source = source,
+                bookUrl = bookUrl,
+                publicationKey = publicationKey,
+                acquireLease = true,
+            ) ?: return@launch
+            if (chapterId != requestedChapterId || currentPublicationKey != publicationKey) {
+                epubCacheManager.release(cachedFile)
+                return@launch
+            }
+            val cachedUri = cachedFile.toURI().toString()
+            runCatching {
+                withIOContext {
+                    publicationResolver.open(
+                        request = EpubOpenRequest(
+                            mangaId = mangaId,
+                            chapterId = chapterId,
+                            sourceId = currentSourceId,
+                            title = mutableState.value.chapterTitle.orEmpty(),
+                            bookUrl = bookUrl,
+                            localUri = cachedUri,
+                            openSource = EpubOpenRequest.OpenSource.LOCAL,
+                            publisherStylesOverride = publisherStylesOverride,
+                            publicationKey = publicationKey,
+                            persistCache = !isIncognito(),
+                        ),
+                        initialLocator = null,
+                    )
+                }
+            }.onSuccess { paginationSession ->
+                if (chapterId != requestedChapterId || currentPublicationKey != publicationKey) {
+                    paginationSession.close()
+                    epubCacheManager.release(cachedFile)
+                    return@onSuccess
+                }
+                sessionRepository.putForPagination(paginationSession)
+                leasedCacheFile?.let(epubCacheManager::release)
+                leasedCacheFile = cachedFile
+                invalidatePaginationDisplay()
+                mutableState.update {
+                    it.copy(
+                        localEpubUri = cachedUri,
+                        bookSizeBytes = cachedFile.length(),
+                        paginationSourceVersion = it.paginationSourceVersion + 1,
+                    )
+                }
+            }.onFailure { error ->
+                epubCacheManager.release(cachedFile)
+                logcat(LogPriority.WARN, error) {
+                    "Failed to open cached EPUB for local pagination chapterId=$chapterId"
+                }
+            }
+        }
+    }
+
+    private fun refreshPositionsAfterDisplay() {
+        if (positionsRefreshStarted) return
+        val session = sessionRepository.get(chapterId) ?: return
+        positionsRefreshStarted = true
+        viewModelScope.launch {
+            runCatching { session.positionsController.refresh() }
+                .onSuccess(::applyPublicationPositions)
+                .onFailure { error ->
+                    logcat(LogPriority.WARN, error) {
+                        "Failed to refresh EPUB positions for chapterId=$chapterId"
+                    }
+                }
+        }
+    }
+
+    private fun prefetchNextResourceIfNeeded() {
+        if (isIncognito() || state.value.isUsingLocalFile || epubCachePreferences.cacheWholeBook.get()) return
+        val session = sessionRepository.get(chapterId) ?: return
+        val href = latestLocator?.href?.toString()?.normalizedResourceHref().orEmpty()
+        if (lastPrefetchedHref == href) return
+        lastPrefetchedHref = href
+        viewModelScope.launch {
+            runCatching { session.prefetchNextResource(latestLocator) }
+                .onFailure { error ->
+                    logcat(LogPriority.WARN, error) {
+                        "Failed to prefetch next EPUB resource chapterId=$chapterId href=$href"
+                    }
+                }
+        }
+    }
+
+    private fun refreshRemoteProgressAfterDisplay() {
+        if (remoteProgressChecked || isIncognito() || !epubReaderPreferences.syncProgressionToKomga.get()) return
+        val chapter = currentChapter ?: return
+        val sourceId = currentSourceId.takeIf { it > 0L } ?: return
+        val checkLayoutRevision = layoutChangeRevision
+        remoteProgressChecked = true
+        viewModelScope.launch {
+            val remote = runCatching {
+                epubRemoteProgressCoordinator.refreshChapter(mangaId, chapter, sourceId)
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) {
+                    "Failed to refresh EPUB remote progress for chapterId=$chapterId"
+                }
+            }.getOrNull() ?: return@launch
+            val locator = remote.locatorJson
+                ?.let { json -> runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull() }
+                ?: return@launch
+            val modifiedAt = remote.modifiedAt ?: return@launch
+            if (preserveLocalProgressAfterLayoutChange || checkLayoutRevision != layoutChangeRevision) {
+                logcat(LogPriority.DEBUG) {
+                    "Ignoring EPUB remote progress conflict after local layout change " +
+                        "chapterId=$chapterId remoteModified=${modifiedAt.time}"
+                }
+                return@launch
+            }
+            if (locator.isSamePaginationLocation(latestLocator)) return@launch
+            mutableState.update {
+                it.copy(
+                    serverTimeOffsetMinutes = remote.serverDate?.serverTimeOffsetMinutes(),
+                    remoteProgressConflict = EpubRemoteProgressConflict(
+                        locatorJson = locator.toJSON().toString(),
+                        progressionPercent = locator.progressionPercent(),
+                        sectionTitle = locator.title,
+                        modifiedAtMillis = modifiedAt.time,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun onLayoutPreferencesChanged() {
+        layoutChangeRevision += 1
+        preserveLocalProgressAfterLayoutChange = true
+        remoteProgressChecked = true
+        mutableState.update { state ->
+            state.copy(remoteProgressConflict = null)
+        }
+        logcat(LogPriority.DEBUG) {
+            "Keeping local EPUB progress after layout change chapterId=$chapterId revision=$layoutChangeRevision"
+        }
+    }
+
+    fun acceptRemoteProgress(): Locator? {
+        val conflict = mutableState.value.remoteProgressConflict ?: return null
+        mutableState.update { it.copy(remoteProgressConflict = null) }
+        return runCatching { Locator.fromJSON(JSONObject(conflict.locatorJson)) }.getOrNull()
+    }
+
+    fun dismissRemoteProgressConflict() {
+        mutableState.update { it.copy(remoteProgressConflict = null) }
     }
 
     fun invalidatePaginationDisplay() {
@@ -593,7 +869,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
         lastVisualTotalPages = null
 
         val publicationKey = currentPublicationKey ?: "chapter:$chapterId"
-        val publication = sessionRepository.get(chapterId)?.publication
+        val publication = sessionRepository.getForPagination(chapterId)?.publication
+        val hasLocalPaginationSource = mutableState.value.isUsingLocalFile ||
+            sessionRepository.hasDedicatedPaginationSession(chapterId)
         if (publication?.metadata?.layout == Layout.FIXED) {
             val fixedCounts = publication.readingOrder.associate { link ->
                 link.href.toString().normalizedResourceHref() to 1
@@ -646,7 +924,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         } else {
             getEpubPaginationCache.await(chapterId, publicationKey, snapshot.key)
         }
-        val readingOrder = sessionRepository.get(chapterId)?.publication?.readingOrder.orEmpty()
+        val readingOrder = publication?.readingOrder.orEmpty()
         val cachedCounts = cache?.resourcePageCountsJson
             ?.toPageCounts()
             ?.orderedFor(readingOrder)
@@ -680,13 +958,34 @@ class EpubReaderViewModel @JvmOverloads constructor(
             )
         }
 
+        if (!hasLocalPaginationSource && !isComplete) {
+            bookVisualPageCounts = emptyMap()
+            visualPageNumber = null
+            mutableState.update {
+                it.copy(
+                    currentVisualPage = null,
+                    totalVisualPages = null,
+                    paginationPhase = EpubPaginationPhase.UNAVAILABLE,
+                    paginationGeneration = generation,
+                )
+            }
+            return EpubPaginationRequest(
+                generation = generation,
+                publicationKey = publicationKey,
+                layoutKey = snapshot.key,
+                layoutSnapshotJson = snapshot.json,
+                initialPageCounts = emptyMap(),
+                shouldScan = false,
+            )
+        }
+
         return EpubPaginationRequest(
             generation = generation,
             publicationKey = publicationKey,
             layoutKey = snapshot.key,
             layoutSnapshotJson = snapshot.json,
             initialPageCounts = cachedCounts,
-            shouldScan = !isComplete,
+            shouldScan = hasLocalPaginationSource && !isComplete,
         )
     }
 
@@ -696,7 +995,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         isComplete: Boolean,
     ) {
         if (generation != paginationGeneration) return
-        val readingOrder = sessionRepository.get(chapterId)?.publication?.readingOrder.orEmpty()
+        val readingOrder = sessionRepository.getForPagination(chapterId)?.publication?.readingOrder.orEmpty()
         if (readingOrder.isEmpty()) return
         val orderedCounts = pageCounts.orderedFor(readingOrder)
         bookVisualPageCounts = orderedCounts
@@ -710,6 +1009,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
             ?: latestLocator?.href?.toString()?.normalizedResourceHref()
         val currentPage = lastVisualPageIndex
             ?.let { exactVisualPage(href, it, readingOrder, orderedCounts) }
+            ?: pageFromLocator(latestLocator, readingOrder, orderedCounts)
         val coercedCurrentPage = currentPage?.coerceIn(1, totalPages)
         logcat(LogPriority.DEBUG) {
             "EPUB pagination scan complete chapterId=$chapterId generation=$generation " +
@@ -756,9 +1056,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         locator ?: return null
         if (pageCounts.size != readingOrder.size) return null
         val href = locator.href.toString().normalizedResourceHref()
-        val resourcePages = pageCounts.entries.firstOrNull { (candidate, _) ->
-            href.isSameResourceHref(candidate)
-        }?.value ?: return null
+        val resourcePages = pageCounts.pageCountFor(href) ?: return null
         val progression = (locator.locations.progression as? Number)?.toDouble() ?: 0.0
         var pageIndex = (progression * resourcePages).roundToInt().coerceIn(0, resourcePages - 1)
         if (isRtlLayout && pageIndex > 0) pageIndex -= 1
@@ -776,13 +1074,39 @@ class EpubReaderViewModel @JvmOverloads constructor(
         var pagesBefore = 0
         for (link in readingOrder) {
             val resourceHref = link.href.toString().normalizedResourceHref()
-            val resourcePages = pageCounts[resourceHref] ?: return null
+            val resourcePages = pageCounts.pageCountFor(resourceHref) ?: return null
             if (resourceHref.isSameResourceHref(href)) {
                 return pagesBefore + (pageIndex + 1).coerceIn(1, resourcePages)
             }
             pagesBefore += resourcePages
         }
         return null
+    }
+
+    private fun Map<String, Int>.pageCountFor(href: String): Int? {
+        return entries.firstOrNull { (candidate, count) ->
+            count > 0 && candidate.isSameResourceHref(href)
+        }?.value
+    }
+
+    private fun paginationReadingOrder(): List<Link> {
+        return sessionRepository.getForPagination(chapterId)
+            ?.publication
+            ?.readingOrder
+            .orEmpty()
+            .ifEmpty {
+                sessionRepository.get(chapterId)?.publication?.readingOrder.orEmpty()
+            }
+    }
+
+    private fun visualPagePairForLocator(locator: Locator): Pair<Int, Int>? {
+        val readingOrder = paginationReadingOrder()
+        if (readingOrder.isEmpty() || bookVisualPageCounts.size != readingOrder.size) return null
+        val totalPages = bookVisualPageCounts.values.sum().takeIf { it > 0 } ?: return null
+        val currentPage = pageFromLocator(locator, readingOrder, bookVisualPageCounts)
+            ?.coerceIn(1, totalPages)
+            ?: return null
+        return currentPage to totalPages
     }
 
     private fun resetVisualPagination() {
@@ -802,11 +1126,84 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun locatorAtPosition(index: Int): Locator? = publicationPositions.getOrNull(index)
 
-    fun locatorAtProgression(progression: Double): Locator? {
+    suspend fun locatorAtProgression(progression: Double): Locator? {
+        val target = progression.coerceIn(0.0, 1.0)
+        sessionRepository.get(chapterId)
+            ?.publication
+            ?.locateProgression(target)
+            ?.let { locator ->
+                logcat(LogPriority.DEBUG) {
+                    "EPUB progression locate chapterId=$chapterId target=$target " + locator.debugProgress()
+                }
+                return locator
+            }
         if (publicationPositions.isEmpty()) return null
-        val index = (progression.coerceIn(0.0, 1.0) * (publicationPositions.size - 1))
+        val index = (target * (publicationPositions.size - 1))
             .roundToInt()
-        return publicationPositions.getOrNull(index)
+        return publicationPositions.getOrNull(index)?.also { locator ->
+            logcat(LogPriority.DEBUG) {
+                "EPUB progression locate fallback chapterId=$chapterId target=$target index=$index " +
+                    locator.debugProgress()
+            }
+        }
+    }
+
+    fun previewProgressionSeek(requestedProgression: Double, locator: Locator) {
+        val persistentLocator = sessionRepository.get(chapterId)
+            ?.publication
+            ?.toPersistentLocator(locator)
+            ?: locator
+        val progression = persistentLocator.totalProgressionValue()
+            ?: requestedProgression.coerceIn(0.0, 1.0)
+        val visualPagePair = visualPagePairForLocator(persistentLocator)
+        visualPagePair?.first?.let { visualPageNumber = it }
+        mutableState.update {
+            it.copy(
+                progression = progression,
+                progressionPercent = (progression * 100).roundToInt().coerceIn(0, 100),
+                currentPosition = persistentLocator.positionIn(publicationPositions),
+                currentVisualPage = visualPagePair?.first,
+                totalVisualPages = visualPagePair?.second,
+                paginationPhase = if (visualPagePair != null) {
+                    EpubPaginationPhase.READY
+                } else {
+                    it.paginationPhase
+                },
+            )
+        }
+        logcat(LogPriority.DEBUG) {
+            "EPUB progression preview chapterId=$chapterId requested=$requestedProgression " +
+                "${persistentLocator.debugProgress()} visual=${visualPagePair?.first}/${visualPagePair?.second}"
+        }
+    }
+
+    fun restoreCurrentProgressDisplay() {
+        latestLocator?.let(::updateLocator)
+    }
+
+    private fun applyPublicationPositions(positions: List<Locator>) {
+        if (positions.isEmpty()) return
+        publicationPositions = positions
+        publicationPositionByHref = buildMap {
+            positions.forEachIndexed { index, locator ->
+                locator.href.toString().hrefCandidates().forEach { href ->
+                    putIfAbsent(href, index + 1)
+                }
+            }
+        }
+        latestLocator?.let { locator ->
+            val position = locator.positionIn(positions)
+            val progression = locator.totalProgressionValue()
+                ?: position.toProgression(positions.size)
+            mutableState.update {
+                it.copy(
+                    progression = progression,
+                    progressionPercent = (progression * 100).roundToInt().coerceIn(0, 100),
+                    currentPosition = position,
+                    totalPositions = positions.size.coerceAtLeast(1),
+                )
+            }
+        }
     }
 
     fun currentLocator(): Locator? = latestLocator
@@ -1024,6 +1421,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     fun releaseSession() {
         locatorPersistenceJob.cancel()
         sessionRepository.remove(chapterId)?.close()
+        releaseCacheLeases()
 
         val locator = latestLocator
         if (locator != null && !isIncognito()) {
@@ -1044,7 +1442,18 @@ class EpubReaderViewModel @JvmOverloads constructor(
     override fun onCleared() {
         searchIterator?.close()
         searchIterator = null
+        releaseCacheLeases()
         super.onCleared()
+    }
+
+    private fun releaseCacheLeases() {
+        leasedCacheFile?.let(epubCacheManager::release)
+        leasedCacheFile = null
+        leasedPublicationKey?.let { publicationKey ->
+            currentSourceId.takeIf { it > 0L }
+                ?.let { sourceId -> epubCacheManager.releasePublication(sourceId, publicationKey) }
+        }
+        leasedPublicationKey = null
     }
 
     private suspend fun refreshBookmarks() {

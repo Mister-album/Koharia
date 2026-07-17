@@ -22,7 +22,10 @@ import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
+import koharia.epub.cache.EpubCacheManager
+import koharia.epub.cache.EpubCachePreferences
 import koharia.epub.progress.KomgaEpubProgressSyncService
+import koharia.epub.progress.KomgaEpubRemoteProgressCoordinator
 import koharia.epub.service.EpubPublicationResolver
 import koharia.epub.service.EpubReaderSupportResolver
 import koharia.epub.service.KomgaEpubPublicationService
@@ -45,6 +48,7 @@ import tachiyomi.data.DateColumnAdapter
 import tachiyomi.data.Epub_bookmark
 import tachiyomi.data.Epub_pagination_cache
 import tachiyomi.data.Epub_progress
+import tachiyomi.data.Epub_remote_progress_cache
 import tachiyomi.data.History
 import tachiyomi.data.Mangas
 import tachiyomi.data.MemoColumnAdapter
@@ -93,6 +97,11 @@ class AppModule(val app: Application) : InjektModule {
                     updated_atAdapter = DateColumnAdapter,
                     last_synced_atAdapter = DateColumnAdapter,
                 ),
+                epub_remote_progress_cacheAdapter = Epub_remote_progress_cache.Adapter(
+                    modified_atAdapter = DateColumnAdapter,
+                    checked_atAdapter = DateColumnAdapter,
+                    server_dateAdapter = DateColumnAdapter,
+                ),
                 epub_bookmarkAdapter = Epub_bookmark.Adapter(
                     created_atAdapter = DateColumnAdapter,
                 ),
@@ -139,7 +148,9 @@ class AppModule(val app: Application) : InjektModule {
 
         addSingletonFactory { ChapterCache(app, get()) }
         addSingletonFactory { CoverCache(app) }
-        addSingletonFactory { LocalCacheCleaner(app, get(), get(), get(), get()) }
+        addSingletonFactory { EpubCachePreferences(get()) }
+        addSingletonFactory { EpubCacheManager(app, get()) }
+        addSingletonFactory { LocalCacheCleaner(app, get(), get(), get(), get(), get()) }
 
         addSingletonFactory { NetworkHelper(app, get()) }
         addSingletonFactory { JavaScriptEngine(app) }
@@ -167,6 +178,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { EpubPublicationResolver() }
         addSingletonFactory { EpubReaderSupportResolver() }
         addSingletonFactory { KomgaEpubProgressSyncService(get(), get()) }
+        addSingletonFactory { KomgaEpubRemoteProgressCoordinator(get(), get(), get(), get()) }
 
         // Asynchronously init expensive components for a faster cold start
         ContextCompat.getMainExecutor(app).execute {
