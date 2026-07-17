@@ -3,26 +3,31 @@ package koharia.epub.cache
 import android.app.Application
 import android.text.format.Formatter
 import koharia.source.komga.KomgaSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
+import okhttp3.Response
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -47,11 +52,11 @@ class EpubCacheManager(
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transferMutexes = ConcurrentHashMap<String, Mutex>()
     private val transferClients = ConcurrentHashMap<Long, OkHttpClient>()
-    private val leasedFiles = Collections.synchronizedSet(mutableSetOf<String>())
-    private val leasedPublicationDirs = Collections.synchronizedSet(mutableSetOf<String>())
-    private val pendingDeleteFiles = Collections.synchronizedSet(mutableSetOf<String>())
-    private val pendingDeleteDirs = Collections.synchronizedSet(mutableSetOf<String>())
-    private val activePartialFiles = Collections.synchronizedSet(mutableSetOf<String>())
+    private val leasedFiles = ConcurrentHashMap.newKeySet<String>()
+    private val leasedPublicationDirs = ConcurrentHashMap.newKeySet<String>()
+    private val pendingDeleteFiles = ConcurrentHashMap.newKeySet<String>()
+    private val pendingDeleteDirs = ConcurrentHashMap.newKeySet<String>()
+    private val activePartialFiles = ConcurrentHashMap.newKeySet<String>()
     private val clearGeneration = AtomicLong(0L)
     private var scheduledTrimJob: Job? = null
 
@@ -74,6 +79,7 @@ class EpubCacheManager(
                 ioMutex.withLock { file.delete() }
             }
         }
+        scheduleTrim()
     }
 
     fun acquirePublication(sourceId: Long, publicationKey: String) {
@@ -91,6 +97,7 @@ class EpubCacheManager(
                 ioMutex.withLock { directory.deleteRecursively() }
             }
         }
+        scheduleTrim()
     }
 
     suspend fun cacheCompleteBook(
@@ -116,8 +123,8 @@ class EpubCacheManager(
                 val call = completeBookTransferClient(source).newCall(
                     source.rawFileRequest(bookUrl, existingBytes.takeIf { it > 0L }),
                 )
-                runCatching {
-                    call.execute().use { response ->
+                try {
+                    call.executeCancellable { response ->
                         check(response.isSuccessful) { "HTTP ${response.code}" }
                         val append = EpubCachePolicy.shouldAppendPartial(
                             existingBytes = existingBytes,
@@ -136,20 +143,24 @@ class EpubCacheManager(
                     check(temporary.length() > 0L) { "Empty EPUB cache response" }
                     if (generationAtStart != clearGeneration.get()) {
                         temporary.delete()
-                        return@runCatching null
+                        null
+                    } else {
+                        ioMutex.withLock {
+                            moveAtomically(temporary, target)
+                            touch(target)
+                            if (acquireLease) acquire(target)
+                            trimToSizeLocked()
+                        }
+                        target
                     }
-                    ioMutex.withLock {
-                        moveAtomically(temporary, target)
-                        touch(target)
-                        if (acquireLease) acquire(target)
-                        trimToSizeLocked()
-                    }
-                    target
-                }.onFailure { error ->
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
                     logcat(LogPriority.WARN, error) {
                         "Failed to cache complete EPUB sourceId=${source.id} bookUrl=$bookUrl"
                     }
-                }.getOrNull()
+                    null
+                }
             } finally {
                 activePartialFiles -= temporary.absolutePath
                 transferMutexes.remove(transferKey, transferMutex)
@@ -307,6 +318,33 @@ class EpubCacheManager(
                     },
                 )
                 .build()
+        }
+
+    private suspend fun <T> Call.executeCancellable(block: (Response) -> T): T =
+        suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { cancel() }
+            enqueue(
+                object : Callback {
+                    override fun onFailure(call: Call, error: IOException) {
+                        val token = continuation.tryResumeWithException(error) ?: return
+                        continuation.completeResume(token)
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        val result = runCatching { response.use(block) }
+                        result.fold(
+                            onSuccess = { value ->
+                                val token = continuation.tryResume(value) ?: return@fold
+                                continuation.completeResume(token)
+                            },
+                            onFailure = { error ->
+                                val token = continuation.tryResumeWithException(error) ?: return@fold
+                                continuation.completeResume(token)
+                            },
+                        )
+                    }
+                },
+            )
         }
 
     private fun resourcePublicationDir(sourceId: Long, publicationKey: String): File =

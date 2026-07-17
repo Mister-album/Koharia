@@ -47,6 +47,8 @@ import eu.kanade.tachiyomi.util.system.toast
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
+import koharia.domain.epub.model.EpubProgress
+import koharia.domain.epub.model.EpubRemoteProgressCache
 import koharia.epub.progress.KomgaEpubRemoteProgressCoordinator
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -99,6 +101,29 @@ import kotlin.math.roundToInt
 
 private const val KOMGA_DETAILS_REFRESH_INTERVAL_MS = 5 * 60 * 1_000L
 private const val EPUB_REMOTE_PROGRESS_DELAY_MS = 1_000L
+
+private fun mergeEpubProgressions(
+    localProgresses: List<EpubProgress>,
+    remoteProgresses: List<EpubRemoteProgressCache>,
+): Map<Long, Double> {
+    val localByChapter = localProgresses.associateBy(EpubProgress::chapterId)
+    val remoteByChapter = remoteProgresses.associateBy(EpubRemoteProgressCache::chapterId)
+    return (localByChapter.keys + remoteByChapter.keys)
+        .mapNotNull { chapterId ->
+            val local = localByChapter[chapterId]
+            val remote = remoteByChapter[chapterId]
+            val remoteModifiedAt = remote?.modifiedAt
+            val progression = if (remoteModifiedAt != null &&
+                (local == null || remoteModifiedAt.time > local.updatedAt.time)
+            ) {
+                remote.progression
+            } else {
+                local?.progression
+            }
+            progression?.let { chapterId to it }
+        }
+        .toMap()
+}
 
 class MangaScreenModel(
     private val context: Context,
@@ -184,22 +209,21 @@ class MangaScreenModel(
             combine(
                 getMangaAndChapters.subscribe(mangaId, applyScanlatorFilter = true).distinctUntilChanged(),
                 getEpubProgress.subscribeByMangaId(mangaId),
+                getEpubRemoteProgressCache.subscribeByMangaId(mangaId),
                 downloadCache.changes,
                 downloadManager.queueState,
-            ) { mangaAndChapters, epubProgresses, _, _ ->
-                mangaAndChapters to epubProgresses
+            ) { mangaAndChapters, localProgresses, remoteProgresses, _, _ ->
+                Triple(mangaAndChapters, localProgresses, remoteProgresses)
             }
                 .flowWithLifecycle(lifecycle)
-                .collectLatest { (mangaAndChapters, epubProgresses) ->
+                .collectLatest { (mangaAndChapters, localProgresses, remoteProgresses) ->
                     val (manga, chapters) = mangaAndChapters
                     updateSuccessState {
                         it.copy(
                             manga = manga,
                             chapters = chapters.toChapterListItems(
                                 manga,
-                                epubProgresses.mapNotNull { progress ->
-                                    progress.progression?.let { progress.chapterId to it }
-                                }.toMap(),
+                                mergeEpubProgressions(localProgresses, remoteProgresses),
                             ),
                         )
                     }
@@ -249,27 +273,10 @@ class MangaScreenModel(
             val excludedScanlatorsDeferred = async { getExcludedScanlators.await(mangaId) }
 
             val manga = mangaDeferred.await()
-            val localEpubProgresses = localProgressDeferred.await()
-                .associateBy { it.chapterId }
-            val cachedRemoteProgresses = remoteProgressDeferred.await()
-                .associateBy { it.chapterId }
-            val epubProgresses = (localEpubProgresses.keys + cachedRemoteProgresses.keys)
-                .associateWith { chapterId ->
-                    val local = localEpubProgresses[chapterId]
-                    val remote = cachedRemoteProgresses[chapterId]
-                    val remoteModifiedAt = remote?.modifiedAt
-                    if (remoteModifiedAt != null &&
-                        (local == null || remoteModifiedAt.time > local.updatedAt.time)
-                    ) {
-                        remote.progression
-                    } else {
-                        local?.progression
-                    }
-                }
-                .mapNotNull { (chapterId, progression) ->
-                    progression?.let { chapterId to it }
-                }
-                .toMap()
+            val epubProgresses = mergeEpubProgressions(
+                localProgresses = localProgressDeferred.await(),
+                remoteProgresses = remoteProgressDeferred.await(),
+            )
             val chapterModels = chaptersDeferred.await()
             val chapters = chapterModels.toChapterListItems(
                 manga = manga,

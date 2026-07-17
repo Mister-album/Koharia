@@ -25,6 +25,7 @@ class KomgaEpubRemoteProgressCoordinator(
         sourceId: Long,
         chapters: List<Chapter>,
         force: Boolean = false,
+        includeUnknownChapters: Boolean = false,
     ): List<EpubRemoteProgressCache> = coroutineScope {
         if (scopedPreferenceStoreFactory.basePreferences(sourceId).incognitoMode.get()) {
             return@coroutineScope emptyList()
@@ -33,7 +34,9 @@ class KomgaEpubRemoteProgressCoordinator(
         val now = System.currentTimeMillis()
         val semaphore = Semaphore(MAX_CONCURRENT_REQUESTS)
         chapters.filter { chapter ->
-            KomgaChapterMemo.isEpub(chapter.memo) == true || existing.containsKey(chapter.id)
+            KomgaChapterMemo.isEpub(chapter.memo) == true ||
+                existing.containsKey(chapter.id) ||
+                includeUnknownChapters
         }.map { chapter ->
             async {
                 semaphore.withPermit {
@@ -70,7 +73,13 @@ class KomgaEpubRemoteProgressCoordinator(
         mangaId: Long,
         chapter: Chapter,
         sourceId: Long,
-    ): EpubRemoteProgressCache? = syncManga(mangaId, sourceId, listOf(chapter), force = true).firstOrNull()
+    ): EpubRemoteProgressCache? = syncManga(
+        mangaId = mangaId,
+        sourceId = sourceId,
+        chapters = listOf(chapter),
+        force = true,
+        includeUnknownChapters = true,
+    ).firstOrNull()
 
     private fun Locator.totalProgression(): Double? =
         (locations.totalProgression as? Number)?.toDouble()

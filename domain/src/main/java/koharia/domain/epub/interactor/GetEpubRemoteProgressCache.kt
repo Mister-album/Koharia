@@ -7,4 +7,5 @@ class GetEpubRemoteProgressCache(
 ) {
     suspend fun await(chapterId: Long) = repository.getByChapterId(chapterId)
     suspend fun awaitByMangaId(mangaId: Long) = repository.getByMangaId(mangaId)
+    fun subscribeByMangaId(mangaId: Long) = repository.subscribeByMangaId(mangaId)
 }
