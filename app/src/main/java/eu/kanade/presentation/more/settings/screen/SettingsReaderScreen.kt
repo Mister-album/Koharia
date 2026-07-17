@@ -868,6 +868,7 @@ object SettingsReaderScreen : SearchableSettings {
 
     @Composable
     private fun getEpubReaderGroup(epubReaderPreferences: EpubReaderPreferences): Preference.PreferenceGroup {
+        val syncProgressionToKomga by epubReaderPreferences.syncProgressionToKomga.collectAsState()
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_category_epub_reader),
             preferenceItems = persistentListOf(
@@ -880,6 +881,12 @@ object SettingsReaderScreen : SearchableSettings {
                     preference = epubReaderPreferences.syncProgressionToKomga,
                     title = stringResource(MR.strings.pref_sync_epub_progression_komga),
                     subtitle = stringResource(MR.strings.pref_sync_epub_progression_komga_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = epubReaderPreferences.correctKomgaServerTimestamps,
+                    title = stringResource(MR.strings.pref_correct_komga_server_timestamps),
+                    subtitle = stringResource(MR.strings.pref_correct_komga_server_timestamps_summary),
+                    enabled = syncProgressionToKomga,
                 ),
                 Preference.PreferenceItem.ListPreference(
                     preference = epubReaderPreferences.completionThresholdPercent,

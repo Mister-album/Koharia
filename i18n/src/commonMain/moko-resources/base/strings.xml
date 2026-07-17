@@ -953,6 +953,8 @@
     <string name="pref_prefer_local_epub_file_summary">Use the downloaded file when both local and remote copies are available</string>
     <string name="pref_sync_epub_progression_komga">Sync reading progress to Komga</string>
     <string name="pref_sync_epub_progression_komga_summary">Sync locator-based reading progress with Komga</string>
+    <string name="pref_correct_komga_server_timestamps">Correct server timestamps</string>
+    <string name="pref_correct_komga_server_timestamps_summary">Use the HTTP server time and recent progress updates to detect and correct abnormal whole-hour offsets. Enable only for affected Komga servers.</string>
     <string name="pref_epub_layout_mode">Layout mode</string>
     <string name="pref_epub_page_direction">Page direction</string>
     <string name="pref_epub_typography_and_appearance">Typography &amp; appearance</string>
