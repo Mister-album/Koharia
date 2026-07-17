@@ -46,7 +46,6 @@ import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNow
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
@@ -122,7 +121,7 @@ class Downloader(
     var isPaused: Boolean = false
 
     init {
-        launchNow {
+        scope.launch {
             restorePersistedQueueIfNeeded()
         }
     }
@@ -703,14 +702,12 @@ class Downloader(
                     }
 
                     cache.addChapter(resolvedFinalFileName, mangaDir, download.manga)
-                    (download.source as? KomgaSource)?.let { komgaSource ->
-                        mangaDir.findFile(resolvedFinalFileName)?.let { finalizedFile ->
-                            komgaSharedDownloadIndexManager.indexDownloadedChapter(
-                                download.chapter,
-                                komgaSource,
-                                finalizedFile,
-                            )
-                        }
+                    mangaDir.findFile(resolvedFinalFileName)?.let { finalizedFile ->
+                        komgaSharedDownloadIndexManager.indexDownloadedChapter(
+                            download.chapter,
+                            source,
+                            finalizedFile,
+                        )
                     }
                     DiskUtil.createNoMediaFile(mangaDir, context)
                     download.status = Download.State.DOWNLOADED

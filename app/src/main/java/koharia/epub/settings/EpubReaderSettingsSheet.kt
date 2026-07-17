@@ -1221,13 +1221,17 @@ private fun SpacingPresetSection(
                 EpubLayoutPreferences.SpacingMode.RELAXED -> stringResource(MR.strings.pref_epub_spacing_relaxed)
                 EpubLayoutPreferences.SpacingMode.STANDARD -> stringResource(MR.strings.pref_epub_spacing_standard)
                 EpubLayoutPreferences.SpacingMode.COMPACT -> stringResource(MR.strings.pref_epub_spacing_compact)
-                else -> error("Only visual spacing presets are rendered here")
+                EpubLayoutPreferences.SpacingMode.NONE,
+                EpubLayoutPreferences.SpacingMode.CUSTOM,
+                -> error("Only visual spacing presets are rendered here")
             }
             val icon = when (mode) {
                 EpubLayoutPreferences.SpacingMode.RELAXED -> Icons.Outlined.DensityLarge
                 EpubLayoutPreferences.SpacingMode.STANDARD -> Icons.Outlined.DensityMedium
                 EpubLayoutPreferences.SpacingMode.COMPACT -> Icons.Outlined.DensitySmall
-                else -> error("Only visual spacing presets are rendered here")
+                EpubLayoutPreferences.SpacingMode.NONE,
+                EpubLayoutPreferences.SpacingMode.CUSTOM,
+                -> error("Only visual spacing presets are rendered here")
             }
             Surface(
                 onClick = { preferences.applySpacingMode(mode) },

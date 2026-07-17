@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -21,10 +20,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -108,35 +109,29 @@ class SupportUsScreen : Screen() {
 
     @Composable
     private fun MihonSupportLinks() {
-        val uriHandler = LocalUriHandler.current
         val primary = MaterialTheme.colorScheme.primary
         val annotated = buildAnnotatedString {
             append(stringResource(MR.strings.supportUsScreen_mihonSupportPrefix))
 
-            pushStringAnnotation(tag = "URL", annotation = Constants.URL_DONATE_PATREON)
-            withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
-                append("Patreon")
+            withLink(LinkAnnotation.Url(Constants.URL_DONATE_PATREON)) {
+                withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
+                    append("Patreon")
+                }
             }
-            pop()
 
             append(stringResource(MR.strings.supportUsScreen_mihonSupportSeparator))
 
-            pushStringAnnotation(tag = "URL", annotation = Constants.URL_DONATE_OPENCOLLECTIVE)
-            withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
-                append("OpenCollective")
+            withLink(LinkAnnotation.Url(Constants.URL_DONATE_OPENCOLLECTIVE)) {
+                withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
+                    append("OpenCollective")
+                }
             }
-            pop()
         }
 
-        ClickableText(
+        Text(
             text = annotated,
             style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
             modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-            onClick = { offset ->
-                annotated.getStringAnnotations(tag = "URL", start = offset, end = offset)
-                    .firstOrNull()
-                    ?.let { uriHandler.openUri(it.item) }
-            },
         )
     }
 

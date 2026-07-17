@@ -204,20 +204,16 @@ private fun BookmarkTab(
                 progressionText,
                 bookmark.note?.takeIf(String::isNotBlank),
             ).joinToString(" | ").takeIf(String::isNotBlank)
-            val dismissState = rememberSwipeToDismissBoxState(
-                confirmValueChange = { value ->
-                    if (value != SwipeToDismissBoxValue.Settled) {
-                        onDelete(bookmark)
-                        true
-                    } else {
-                        false
-                    }
-                },
-            )
+            val dismissState = rememberSwipeToDismissBoxState()
             Column {
                 SwipeToDismissBox(
                     state = dismissState,
                     enableDismissFromStartToEnd = false,
+                    onDismiss = { direction ->
+                        if (direction == SwipeToDismissBoxValue.EndToStart) {
+                            onDelete(bookmark)
+                        }
+                    },
                     backgroundContent = {
                         Row(
                             modifier = Modifier

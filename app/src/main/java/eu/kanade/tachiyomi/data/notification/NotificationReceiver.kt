@@ -17,9 +17,12 @@ import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.epub.EpubReaderLauncher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.Constants
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChapter
@@ -47,6 +50,7 @@ class NotificationReceiver : BroadcastReceiver() {
     private val getChapter: GetChapter by injectLazy()
     private val updateChapter: UpdateChapter by injectLazy()
     private val downloadManager: DownloadManager by injectLazy()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
@@ -79,21 +83,16 @@ class NotificationReceiver : BroadcastReceiver() {
             // Cancel downloading app update
             ACTION_CANCEL_APP_UPDATE_DOWNLOAD -> cancelDownloadAppUpdate(context)
             // Open reader activity
-            ACTION_OPEN_CHAPTER -> {
-                val pendingResult = goAsync()
-                launchIO {
-                    try {
-                        openChapter(
-                            context,
-                            intent.getLongExtra(EXTRA_MANGA_ID, -1),
-                            intent.getLongExtra(EXTRA_CHAPTER_ID, -1),
-                        )
-                    } catch (error: Exception) {
-                        logcat(LogPriority.ERROR, error) { "Failed to open EPUB chapter from notification" }
-                        withUIContext { context.toast(MR.strings.chapter_error) }
-                    } finally {
-                        pendingResult.finish()
-                    }
+            ACTION_OPEN_CHAPTER -> launchAsync {
+                try {
+                    openChapter(
+                        context,
+                        intent.getLongExtra(EXTRA_MANGA_ID, -1),
+                        intent.getLongExtra(EXTRA_CHAPTER_ID, -1),
+                    )
+                } catch (error: Exception) {
+                    logcat(LogPriority.ERROR, error) { "Failed to open EPUB chapter from notification" }
+                    withUIContext { context.toast(MR.strings.chapter_error) }
                 }
             }
             // Mark updated manga chapters as read
@@ -209,7 +208,7 @@ class NotificationReceiver : BroadcastReceiver() {
         val downloadPreferences: DownloadPreferences = Injekt.get()
         val sourceManager: SourceManager = Injekt.get()
 
-        launchIO {
+        launchAsync {
             val toUpdate = chapterUrls.mapNotNull { getChapter.await(it, mangaId) }
                 .map {
                     val chapter = it.copy(read = true)
@@ -235,10 +234,21 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param mangaId id of manga
      */
     private fun downloadChapters(chapterUrls: Array<String>, mangaId: Long) {
-        launchIO {
-            val manga = getManga.await(mangaId) ?: return@launchIO
+        launchAsync {
+            val manga = getManga.await(mangaId) ?: return@launchAsync
             val chapters = chapterUrls.mapNotNull { getChapter.await(it, mangaId) }
             downloadManager.downloadChapters(manga, chapters)
+        }
+    }
+
+    private fun launchAsync(block: suspend CoroutineScope.() -> Unit) {
+        val pendingResult = goAsync()
+        scope.launch {
+            try {
+                block()
+            } finally {
+                pendingResult.finish()
+            }
         }
     }
 
