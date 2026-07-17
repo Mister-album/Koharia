@@ -1168,4 +1168,15 @@
     <string name="epub_reader_font_size_input_range">请输入 13 至 32 之间的字号</string>
     <string name="epub_reader_reading_mode_settings">阅读模式</string>
     <string name="epub_reader_show_reading_progress">显示阅读进度</string>
+    <string name="pref_book_cache">书籍缓存</string>
+    <string name="pref_cache_whole_book">完整缓存整本书</string>
+    <string name="pref_cache_whole_book_summary">显示首个页面后缓存完整 EPUB；关闭时仅缓存当前章节和下一章节。</string>
+    <string name="pref_book_cache_size">书籍缓存上限</string>
+    <string name="cache_size_megabytes">%1$d MB</string>
+    <string name="pref_clear_book_cache">清除书籍缓存</string>
+    <string name="pref_book_cache_info">书籍缓存与下载相互独立。清除缓存不会删除离线下载、阅读进度或书签。</string>
+    <string name="epub_reader_remote_progress_title">服务器阅读进度</string>
+    <string name="epub_reader_remote_progress_message">服务器保存了不同的阅读位置（%1$d%%），是否跳转？</string>
+    <string name="epub_reader_keep_local_progress">保留当前位置</string>
+    <string name="epub_reader_jump_remote_progress">跳转至服务器进度</string>
 </resources>

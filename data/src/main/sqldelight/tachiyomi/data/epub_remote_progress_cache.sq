@@ -1,0 +1,46 @@
+import java.util.Date;
+
+CREATE TABLE epub_remote_progress_cache(
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    book_url TEXT NOT NULL,
+    locator_json TEXT,
+    progression REAL,
+    position_index INTEGER,
+    modified_at INTEGER AS Date,
+    checked_at INTEGER AS Date NOT NULL,
+    server_date INTEGER AS Date,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id) ON DELETE CASCADE,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id) ON DELETE CASCADE
+);
+
+CREATE INDEX epub_remote_progress_cache_manga_id_index
+ON epub_remote_progress_cache(manga_id);
+
+getByChapterId:
+SELECT * FROM epub_remote_progress_cache WHERE chapter_id = :chapterId;
+
+getByMangaId:
+SELECT * FROM epub_remote_progress_cache WHERE manga_id = :mangaId;
+
+upsert:
+INSERT INTO epub_remote_progress_cache(
+    chapter_id, manga_id, book_url, locator_json, progression, position_index,
+    modified_at, checked_at, server_date
+)
+VALUES (
+    :chapterId, :mangaId, :bookUrl, :locatorJson, :progression, :positionIndex,
+    :modifiedAt, :checkedAt, :serverDate
+)
+ON CONFLICT(chapter_id) DO UPDATE SET
+    manga_id = :mangaId,
+    book_url = :bookUrl,
+    locator_json = :locatorJson,
+    progression = :progression,
+    position_index = :positionIndex,
+    modified_at = :modifiedAt,
+    checked_at = :checkedAt,
+    server_date = :serverDate;
+
+deleteByChapterId:
+DELETE FROM epub_remote_progress_cache WHERE chapter_id = :chapterId;

@@ -3,9 +3,12 @@ package koharia.epub.service
 import android.app.Application
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.util.system.isOnline
+import koharia.epub.cache.EpubCacheManager
+import koharia.epub.cache.EpubCachePolicy
 import koharia.epub.model.EpubOpenRequest
 import koharia.komga.api.dto.isDivinaCompatibleEpub
 import koharia.komga.api.dto.isEpub
+import koharia.komga.download.KomgaChapterMemo
 import koharia.source.komga.KomgaSource
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.extension
@@ -23,12 +26,12 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val getManga: GetManga = Injekt.get(),
     private val getChapter: GetChapter = Injekt.get(),
+    private val epubCacheManager: EpubCacheManager = Injekt.get(),
 ) {
 
     suspend fun resolve(
         mangaId: Long,
         chapterId: Long,
-        preferLocalFile: Boolean,
     ): EpubReaderSupportResolution = withIOContext {
         val manga = getManga.await(mangaId) ?: return@withIOContext EpubReaderSupportResolution(
             mangaId = mangaId,
@@ -51,7 +54,7 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
                 unsupportedReason = EpubReaderSupportResolution.UnsupportedReason.SOURCE_UNSUPPORTED,
             )
 
-        val localUri = downloadProvider.findChapterDir(
+        val downloadedFile = downloadProvider.findChapterDir(
             chapterName = chapter.name,
             chapterScanlator = chapter.scanlator,
             chapterUrl = chapter.url,
@@ -59,25 +62,52 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             source = source,
         )
             ?.takeIf { it.extension.equals("epub", ignoreCase = true) }
-            ?.uri
-            ?.toString()
+        val downloadedUri = downloadedFile?.uri?.toString()
 
-        val remoteLookup = if (localUri != null && !application.isOnline()) {
+        val memoFingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
+        val memoIsEpub = KomgaChapterMemo.isEpub(chapter.memo)
+        val memoBookUrl = memoFingerprint?.bookUrl
+            ?: chapter.url.substringBefore('#').removeSuffix("/")
+        val remotePublicationKey = EpubCachePolicy.publicationKey(
+            fileHash = memoFingerprint?.fileHash,
+            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
+            sizeBytes = memoFingerprint?.sizeBytes ?: 0L,
+            fallback = "book:${chapter.id}:${chapter.url}",
+        )
+        val cachedBookFile = epubCacheManager.completeBookFile(source.id, remotePublicationKey)
+        val cachedBookUri = cachedBookFile?.toURI()?.toString()
+        val selectedSource = EpubCachePolicy.selectOpenSource(downloadedUri, cachedBookUri, memoBookUrl)
+        val localUri = when (selectedSource) {
+            EpubCachePolicy.OpenSource.MANUAL_DOWNLOAD -> downloadedUri
+            EpubCachePolicy.OpenSource.COMPLETE_CACHE -> cachedBookUri
+            else -> null
+        }
+
+        val remoteLookup = if (memoIsEpub == true || localUri != null || !application.isOnline()) {
             Result.success(null)
         } else {
             runCatching { source.getBookDetails(chapter.url) }
         }
         val remoteBook = remoteLookup.getOrNull()
-        val remoteBookUrl = remoteBook
-            ?.takeIf { it.isEpub }
-            ?.let { chapter.url.substringBefore('#').removeSuffix("/") }
+        val resolvedRemotePublicationKey = remoteBook?.let { book ->
+            EpubCachePolicy.publicationKey(
+                fileHash = book.fileHash,
+                fileLastModified = book.fileLastModified,
+                sizeBytes = book.sizeBytes,
+                fallback = remotePublicationKey,
+            )
+        } ?: remotePublicationKey
+        val remoteBookUrl = when {
+            remoteBook?.isEpub == true -> chapter.url.substringBefore('#').removeSuffix("/")
+            memoIsEpub == true || localUri != null -> memoBookUrl
+            else -> null
+        }
 
         val isDivinaCompatible = remoteBook?.media?.isDivinaCompatibleEpub == true
 
         val preferredOpenSource = when {
-            preferLocalFile && localUri != null -> EpubOpenRequest.OpenSource.LOCAL
-            remoteBookUrl != null -> EpubOpenRequest.OpenSource.REMOTE
             localUri != null -> EpubOpenRequest.OpenSource.LOCAL
+            remoteBookUrl != null -> EpubOpenRequest.OpenSource.REMOTE
             else -> null
         }
 
@@ -100,6 +130,21 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             preferredOpenSource = preferredOpenSource,
             unsupportedReason = unsupportedReason,
             metadataError = remoteLookup.exceptionOrNull(),
+            publicationKey = when {
+                downloadedFile != null ->
+                    "local:$downloadedUri:${downloadedFile.lastModified()}:${downloadedFile.length()}"
+                else -> resolvedRemotePublicationKey
+            },
+            bookFileName = downloadedFile?.name
+                ?: cachedBookFile?.name
+                ?: remoteBook?.name
+                ?: KomgaChapterMemo.fileName(chapter.memo),
+            bookSizeBytes = downloadedFile?.length()?.takeIf { it > 0L }
+                ?: cachedBookFile?.length()?.takeIf { it > 0L }
+                ?: remoteBook?.sizeBytes?.takeIf { it > 0L }
+                ?: memoFingerprint?.sizeBytes?.takeIf { it > 0L },
+            isManualDownload = downloadedFile != null,
+            isCompleteCache = downloadedFile == null && cachedBookFile != null,
         )
     }
 }
@@ -117,6 +162,11 @@ data class EpubReaderSupportResolution(
     val preferredOpenSource: EpubOpenRequest.OpenSource? = null,
     val unsupportedReason: UnsupportedReason? = null,
     val metadataError: Throwable? = null,
+    val publicationKey: String? = null,
+    val bookFileName: String? = null,
+    val bookSizeBytes: Long? = null,
+    val isManualDownload: Boolean = false,
+    val isCompleteCache: Boolean = false,
 ) {
 
     val isNativeSupported: Boolean
@@ -132,6 +182,7 @@ data class EpubReaderSupportResolution(
             bookUrl = remoteBookUrl,
             localUri = localUri,
             openSource = openSource,
+            publicationKey = publicationKey ?: "chapter:$chapterId",
         )
     }
 

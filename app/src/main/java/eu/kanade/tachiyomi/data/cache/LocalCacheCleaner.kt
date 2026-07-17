@@ -4,6 +4,7 @@ import android.content.Context
 import android.text.format.Formatter
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.network.NetworkHelper
+import koharia.epub.cache.EpubCacheManager
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.domain.manga.model.Manga
 
@@ -13,6 +14,7 @@ class LocalCacheCleaner(
     private val coverCache: CoverCache,
     private val downloadCache: DownloadCache,
     private val networkHelper: NetworkHelper,
+    private val epubCacheManager: EpubCacheManager,
 ) {
 
     fun temporaryCacheReadableSize(): String {
@@ -31,7 +33,7 @@ class LocalCacheCleaner(
         return coverCache.clear()
     }
 
-    fun clearAllTemporaryCache(): Int {
+    suspend fun clearAllTemporaryCache(): Int {
         var deleted = 0
         deleted += clearChapterCache()
         deleted += networkHelper.clearDiskCache()
@@ -39,6 +41,7 @@ class LocalCacheCleaner(
         deleted += downloadCache.clearDiskCache()
         deleted += LocalTempCacheDirectoryProvider.clearCoilDiskCache(context)
         deleted += LocalTempCacheDirectoryProvider.clearSharedImageCache(context)
+        deleted += epubCacheManager.clear()
         return deleted
     }
 }

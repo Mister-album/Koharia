@@ -27,6 +27,7 @@ data class EpubReaderUiState(
     val totalVisualPages: Int? = null,
     val paginationPhase: EpubPaginationPhase = EpubPaginationPhase.CALCULATING,
     val paginationGeneration: Long = 0,
+    val paginationSourceVersion: Long = 0,
     val sessionToken: Long = 0,
     val isLoading: Boolean = false,
     val isReady: Boolean = false,
@@ -43,4 +44,13 @@ data class EpubReaderUiState(
     val searchResults: List<EpubSearchResult> = emptyList(),
     val isSearchLoading: Boolean = false,
     val searchErrorMessage: String? = null,
+    val remoteProgressConflict: EpubRemoteProgressConflict? = null,
+)
+
+@Immutable
+data class EpubRemoteProgressConflict(
+    val locatorJson: String,
+    val progressionPercent: Int?,
+    val sectionTitle: String?,
+    val modifiedAtMillis: Long,
 )

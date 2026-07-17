@@ -259,8 +259,17 @@ class DownloadManager(
         mangaTitle: String,
         sourceId: Long,
         skipCache: Boolean = false,
+        allowSharedLookup: Boolean = true,
     ): Boolean {
-        return cache.isChapterDownloaded(chapterName, chapterScanlator, chapterUrl, mangaTitle, sourceId, skipCache)
+        return cache.isChapterDownloaded(
+            chapterName,
+            chapterScanlator,
+            chapterUrl,
+            mangaTitle,
+            sourceId,
+            skipCache,
+            allowSharedLookup,
+        )
     }
 
     /**

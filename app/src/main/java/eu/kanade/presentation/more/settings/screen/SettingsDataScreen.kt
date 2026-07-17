@@ -60,6 +60,8 @@ import eu.kanade.tachiyomi.data.export.LibraryExporter
 import eu.kanade.tachiyomi.data.export.LibraryExporter.ExportOptions
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.epub.cache.EpubCacheManager
+import koharia.epub.cache.EpubCachePreferences
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.Dispatchers
@@ -113,8 +115,67 @@ object SettingsDataScreen : SearchableSettings {
             Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.pref_storage_location_info)),
 
             getBackupAndRestoreGroup(backupPreferences = backupPreferences),
+            getBookCacheGroup(),
             getDataGroup(),
             getExportGroup(),
+        )
+    }
+
+    @Composable
+    private fun getBookCacheGroup(): Preference.PreferenceGroup {
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        val preferences = remember { Injekt.get<EpubCachePreferences>() }
+        val cacheManager = remember { Injekt.get<EpubCacheManager>() }
+        val cacheSizeMb by preferences.cacheSizeMb.collectAsState()
+        var cacheUsage by remember { mutableStateOf(Formatter.formatFileSize(context, 0)) }
+        var refreshKey by remember { mutableIntStateOf(0) }
+        val cacheSizeRange =
+            EpubCachePreferences.MIN_CACHE_SIZE_MB..EpubCachePreferences.MAX_CACHE_SIZE_MB step
+                EpubCachePreferences.CACHE_SIZE_STEP_MB
+
+        LaunchedEffect(refreshKey, cacheSizeMb) {
+            cacheUsage = withIOContext { cacheManager.readableSize() }
+        }
+
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_book_cache),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = preferences.cacheWholeBook,
+                    title = stringResource(MR.strings.pref_cache_whole_book),
+                    subtitle = stringResource(MR.strings.pref_cache_whole_book_summary),
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = cacheSizeMb,
+                    valueRange = cacheSizeRange,
+                    steps = 30,
+                    title = stringResource(MR.strings.pref_book_cache_size),
+                    valueString = stringResource(MR.strings.cache_size_megabytes, cacheSizeMb),
+                    subtitle = stringResource(MR.strings.used_cache, cacheUsage),
+                    onValueChanged = { value ->
+                        preferences.cacheSizeMb.set(value)
+                        scope.launch {
+                            cacheManager.trimToSize()
+                            refreshKey++
+                        }
+                    },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_clear_book_cache),
+                    subtitle = stringResource(MR.strings.used_cache, cacheUsage),
+                    onClick = {
+                        scope.launch {
+                            val deleted = cacheManager.clear()
+                            context.toast(context.stringResource(MR.strings.cache_deleted, deleted))
+                            refreshKey++
+                        }
+                    },
+                ),
+                Preference.PreferenceItem.InfoPreference(
+                    stringResource(MR.strings.pref_book_cache_info),
+                ),
+            ),
         )
     }
 

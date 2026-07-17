@@ -75,12 +75,14 @@ import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import koharia.epub.service.EpubReaderSupportResolution
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -116,12 +118,32 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         private const val READER_EDGE_PADDING_DP = 8
         private const val PAGINATION_SETTINGS_DEBOUNCE_MS = 250L
         private const val PAGINATION_VIEWPORT_DEBOUNCE_MS = 250L
+        private const val PROGRESSION_SEEK_DEBOUNCE_MS = 100L
 
-        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?, sourceId: Long? = null): Intent {
+        fun newIntent(
+            context: Context,
+            mangaId: Long?,
+            chapterId: Long?,
+            sourceId: Long? = null,
+            resolution: EpubReaderSupportResolution? = null,
+        ): Intent {
             return Intent(context, EpubReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
                 sourceId?.let { putExtra("source", it) }
+                resolution?.let {
+                    putExtra("epub_resolution_chapter", it.chapterId)
+                    putExtra("epub_resolution_source", it.sourceId)
+                    putExtra("epub_resolution_local_uri", it.localUri)
+                    putExtra("epub_resolution_remote_url", it.remoteBookUrl)
+                    putExtra("epub_resolution_open_source", it.preferredOpenSource?.name)
+                    putExtra("epub_resolution_publication_key", it.publicationKey)
+                    putExtra("epub_resolution_file_name", it.bookFileName)
+                    it.bookSizeBytes?.let { size -> putExtra("epub_resolution_file_size", size) }
+                    putExtra("epub_resolution_manual_download", it.isManualDownload)
+                    putExtra("epub_resolution_complete_cache", it.isCompleteCache)
+                    putExtra("epub_resolution_divina", it.isDivinaCompatible)
+                }
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
@@ -169,6 +191,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private var paginationViewport: EpubPaginationViewport? = null
     private var paginationViewportJob: Job? = null
     private var paginationJob: Job? = null
+    private var progressionSeekJob: Job? = null
+    private var progressionSeekGeneration = 0L
     private var currentPublisherStyles: Boolean? = null
     private var readerFragment: EpubReaderFragment? = null
 
@@ -396,8 +420,29 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                     }
                                 },
                                 onProgressionChange = { progression ->
-                                    viewModel.locatorAtProgression(progression)?.let { locator ->
-                                        epubReaderFragment()?.goTo(locator)
+                                    val generation = ++progressionSeekGeneration
+                                    progressionSeekJob?.cancel()
+                                    progressionSeekJob = lifecycleScope.launch {
+                                        delay(PROGRESSION_SEEK_DEBOUNCE_MS)
+                                        val locator = viewModel.locatorAtProgression(progression)
+                                        if (generation != progressionSeekGeneration) return@launch
+                                        if (locator == null) {
+                                            logcat(LogPriority.WARN) {
+                                                "EPUB progression seek unresolved generation=$generation " +
+                                                    "target=$progression"
+                                            }
+                                            viewModel.restoreCurrentProgressDisplay()
+                                            return@launch
+                                        }
+                                        viewModel.previewProgressionSeek(progression, locator)
+                                        val accepted = epubReaderFragment()?.goTo(locator) == true
+                                        logcat(LogPriority.DEBUG) {
+                                            "EPUB progression seek submitted generation=$generation " +
+                                                "target=$progression href=${locator.href} accepted=$accepted"
+                                        }
+                                        if (!accepted && generation == progressionSeekGeneration) {
+                                            viewModel.restoreCurrentProgressDisplay()
+                                        }
                                     }
                                 },
                                 onPreviousChapter = {
@@ -614,6 +659,45 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 )
             }
 
+            state.remoteProgressConflict?.let { conflict ->
+                AlertDialog(
+                    onDismissRequest = viewModel::dismissRemoteProgressConflict,
+                    title = { Text(stringResource(MR.strings.epub_reader_remote_progress_title)) },
+                    text = {
+                        Text(
+                            buildString {
+                                append(
+                                    stringResource(
+                                        MR.strings.epub_reader_remote_progress_message,
+                                        conflict.progressionPercent ?: 0,
+                                    ),
+                                )
+                                conflict.sectionTitle?.takeIf { it.isNotBlank() }?.let {
+                                    append("\n")
+                                    append(it)
+                                }
+                            },
+                        )
+                    },
+                    dismissButton = {
+                        TextButton(onClick = viewModel::dismissRemoteProgressConflict) {
+                            Text(stringResource(MR.strings.epub_reader_keep_local_progress))
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                viewModel.acceptRemoteProgress()?.let { locator ->
+                                    epubReaderFragment()?.goTo(locator)
+                                }
+                            },
+                        ) {
+                            Text(stringResource(MR.strings.epub_reader_jump_remote_progress))
+                        }
+                    },
+                )
+            }
+
             if (showBookInfoDialog) {
                 EpubBookInfoDialog(
                     state = state,
@@ -664,12 +748,26 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             .distinctUntilChanged()
             .onEach(::updateSystemBars)
             .launchIn(lifecycleScope)
+
+        viewModel.state
+            .map { it.paginationSourceVersion }
+            .distinctUntilChanged()
+            .drop(1)
+            .onEach {
+                if (viewModel.state.value.isReady) {
+                    epubReaderFragment()?.stopPagination()
+                    applyCurrentReadiumPreferences()
+                }
+            }
+            .launchIn(lifecycleScope)
     }
 
     override fun onPause() {
         isReaderResumed = false
         paginationViewportJob?.cancel()
         paginationJob?.cancel()
+        progressionSeekGeneration += 1
+        progressionSeekJob?.cancel()
         epubReaderFragment()?.stopPagination()
         lifecycleScope.launchNonCancellable {
             viewModel.saveCurrentProgress()
@@ -757,6 +855,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+        viewModel.onFirstContentDisplayed()
         viewModel.updateVisualPage(pageIndex, totalPages, locator)
     }
 
@@ -919,6 +1018,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     "EPUB pagination settings changed values=$values phase=${state.paginationPhase} " +
                         "pages=${state.currentVisualPage}/${state.totalVisualPages}"
                 }
+                viewModel.onLayoutPreferencesChanged()
                 paginationJob?.cancel()
                 viewModel.invalidatePaginationDisplay()
                 epubReaderFragment()?.stopPagination()
@@ -983,7 +1083,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             viewModel.setPublisherStylesOverride(enabled)
         }
         lifecycleScope.launch {
-            viewModel.init(state.mangaId, state.chapterId)
+            viewModel.init(
+                mangaId = state.mangaId,
+                chapterId = state.chapterId,
+                preserveLocalProgressAfterLayoutChange = true,
+            )
         }
     }
 

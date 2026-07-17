@@ -84,7 +84,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val session = sessionRepository.get(chapterId)
+        val session = sessionRepository.getForPagination(chapterId)
         val firstMissingLink = session?.publication?.readingOrder?.firstOrNull { link ->
             pageCounts.keys.none { cachedHref -> cachedHref.isSameResourceHref(link.href.toString()) }
         } ?: session?.publication?.readingOrder?.firstOrNull()
@@ -204,7 +204,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
         )
     }
 
-    private fun readingOrder() = sessionRepository.get(chapterId)?.publication?.readingOrder.orEmpty()
+    private fun readingOrder() = sessionRepository.getForPagination(chapterId)?.publication?.readingOrder.orEmpty()
 
     private fun navigatorFragment(): EpubNavigatorFragment? {
         if (!isAdded) return null
