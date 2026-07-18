@@ -88,3 +88,8 @@
 # Firebase
 -keep class com.google.firebase.installations.** { *; }
 -keep interface com.google.firebase.installations.** { *; }
+
+# WebView invokes these methods by their JavaScript names, so R8 must not remove or rename them.
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}

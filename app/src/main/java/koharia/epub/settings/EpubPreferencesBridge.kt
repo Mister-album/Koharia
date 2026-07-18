@@ -40,9 +40,11 @@ class EpubPreferencesBridge {
         publisherStyles: Boolean,
         customBackgroundColor: Int = EpubLayoutPreferences.DEFAULT_CUSTOM_BACKGROUND_COLOR,
     ): EpubPreferences {
+        val flowPreferences = resolveReadiumFlowPreferences(readingMode, pageDirection)
         return EpubPreferences(
-            scroll = readingMode == EpubLayoutPreferences.ReadingMode.SCROLL,
-            readingProgression = pageDirection.toReadiumReadingProgression(),
+            scroll = flowPreferences.scroll,
+            readingProgression = flowPreferences.readingProgression,
+            verticalText = flowPreferences.verticalText,
             theme = theme.toReadiumTheme(customBackgroundColor),
             backgroundColor = ReadiumColor(theme.backgroundColor(customBackgroundColor)),
             textColor = ReadiumColor(theme.textColor(customBackgroundColor)),
@@ -103,6 +105,25 @@ class EpubPreferencesBridge {
             EpubLayoutPreferences.FontFamily.OPEN_DYSLEXIC -> ReadiumFontFamily.OPEN_DYSLEXIC
         }
     }
+}
+
+internal data class ReadiumFlowPreferences(
+    val scroll: Boolean,
+    val readingProgression: ReadingProgression,
+    val verticalText: Boolean,
+)
+
+internal fun resolveReadiumFlowPreferences(
+    readingMode: EpubLayoutPreferences.ReadingMode,
+    pageDirection: EpubLayoutPreferences.PageDirection,
+): ReadiumFlowPreferences {
+    return ReadiumFlowPreferences(
+        scroll = readingMode == EpubLayoutPreferences.ReadingMode.SCROLL,
+        readingProgression = pageDirection.toReadiumReadingProgression(),
+        // Page direction controls navigation only. Without an explicit value, Readium treats
+        // CJK + RTL as vertical writing and also forces the navigator into scroll mode.
+        verticalText = false,
+    )
 }
 
 internal fun EpubLayoutPreferences.PageDirection.toReadiumReadingProgression(): ReadingProgression {
