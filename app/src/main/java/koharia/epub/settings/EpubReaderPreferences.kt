@@ -13,7 +13,7 @@ class EpubReaderPreferences(
         preferenceStore.getBoolean("epub_reader_sync_progression_komga", true)
 
     val correctKomgaServerTimestamps: Preference<Boolean> =
-        preferenceStore.getBoolean("epub_reader_correct_komga_server_timestamps", false)
+        preferenceStore.getBoolean("epub_reader_correct_komga_server_timestamps", true)
 
     fun komgaServerTimestampOffsetMinutes(sourceId: Long): Preference<Long> =
         preferenceStore.getLong("epub_reader_komga_server_timestamp_offset_minutes_$sourceId", 0L)
