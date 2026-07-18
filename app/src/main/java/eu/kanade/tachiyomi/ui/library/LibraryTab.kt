@@ -37,13 +37,23 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.jvm.Transient
 
 sealed class KomgaLibraryTab(
     private val libraryScope: KomgaLibraryScope,
     private val tabIndex: UShort,
 ) : Tab {
 
-    private var komgaBrowseScreen = newScreen(KomgaServerPreferences.NO_ACTIVE_SERVER)
+    // Voyager serializes Tab instances when the host Activity is stopped. The
+    // browse screen owns coroutine channels and must therefore stay runtime-only.
+    @Transient
+    private var runtimeBrowseScreen: KomgaLibraryScreen? = null
+
+    private fun browseScreen(): KomgaLibraryScreen {
+        return runtimeBrowseScreen ?: newScreen(KomgaServerPreferences.NO_ACTIVE_SERVER).also {
+            runtimeBrowseScreen = it
+        }
+    }
 
     override val options: TabOptions
         @Composable
@@ -68,7 +78,7 @@ sealed class KomgaLibraryTab(
         }
 
     override suspend fun onReselect(navigator: Navigator) {
-        komgaBrowseScreen.refresh()
+        browseScreen().refresh()
     }
 
     @Composable
@@ -100,13 +110,13 @@ sealed class KomgaLibraryTab(
         var hasEntered by remember { mutableStateOf(false) }
 
         SideEffect {
-            komgaBrowseScreen = activeScreen
+            runtimeBrowseScreen = activeScreen
         }
 
         LaunchedEffect(isSelected) {
             if (isSelected) {
                 if (hasEntered) {
-                    komgaBrowseScreen.refresh()
+                    browseScreen().refresh()
                 } else {
                     hasEntered = true
                 }
@@ -116,9 +126,9 @@ sealed class KomgaLibraryTab(
         activeScreen.Content()
     }
 
-    suspend fun search(query: String) = komgaBrowseScreen.search(query)
+    suspend fun search(query: String) = browseScreen().search(query)
 
-    suspend fun searchGenre(name: String) = komgaBrowseScreen.searchGenre(name)
+    suspend fun searchGenre(name: String) = browseScreen().searchGenre(name)
 
     private fun newScreen(sourceId: Long) = KomgaLibraryScreen(
         sourceId = sourceId,
