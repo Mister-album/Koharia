@@ -523,7 +523,8 @@ object SettingsReaderScreen : SearchableSettings {
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.ListPreference(
                     preference = readerPreferences.defaultOrientationType,
-                    entries = ReaderOrientation.entries.drop(1)
+                    entries = ReaderOrientation.entries
+                        .filterNot { it == ReaderOrientation.FREE }
                         .associate { it.flagValue to stringResource(it.stringRes) }
                         .toImmutableMap(),
                     title = stringResource(MR.strings.pref_rotation_type),

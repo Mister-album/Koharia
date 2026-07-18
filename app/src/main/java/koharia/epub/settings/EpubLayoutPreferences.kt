@@ -31,10 +31,10 @@ class EpubLayoutPreferences(
         preferenceStore.getFloat("epub_layout_font_size", 1.0f)
 
     val lineHeight: Preference<Float> =
-        preferenceStore.getFloat("epub_layout_line_height", 1.2f)
+        preferenceStore.getFloat("epub_layout_line_height", 1.7f)
 
     val paragraphSpacing: Preference<Float> =
-        preferenceStore.getFloat("epub_layout_paragraph_spacing", 0.0f)
+        preferenceStore.getFloat("epub_layout_paragraph_spacing", 0.05f)
 
     val paragraphIndent: Preference<Float> =
         preferenceStore.getFloat("epub_layout_paragraph_indent", 2.0f)
@@ -46,13 +46,13 @@ class EpubLayoutPreferences(
         preferenceStore.getFloat("epub_layout_vertical_margins", 1.0f)
 
     val spacingMode: Preference<SpacingMode> =
-        preferenceStore.getEnum("epub_layout_spacing_mode", SpacingMode.CUSTOM)
+        preferenceStore.getEnum("epub_layout_spacing_mode", SpacingMode.STANDARD)
 
     val fontFamily: Preference<FontFamily> =
         preferenceStore.getEnum("epub_layout_font_family", FontFamily.ORIGINAL)
 
     val publisherStyles: Preference<Boolean> =
-        preferenceStore.getBoolean("epub_layout_publisher_styles", true)
+        preferenceStore.getBoolean("epub_layout_publisher_styles", false)
 
     val readWithVolumeKeys: Preference<Boolean> =
         preferenceStore.getBoolean("epub_layout_volume_keys", true)

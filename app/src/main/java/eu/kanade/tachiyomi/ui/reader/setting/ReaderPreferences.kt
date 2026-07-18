@@ -53,8 +53,12 @@ class ReaderPreferences(
 
     val defaultOrientationType: Preference<Int> = preferenceStore.getInt(
         "pref_default_orientation_type_key",
-        ReaderOrientation.FREE.flagValue,
-    )
+        ReaderOrientation.DEFAULT.flagValue,
+    ).also { preference ->
+        // FREE and DEFAULT both follow the system. Normalize the legacy FREE
+        // default so every settings surface can display the explicit default.
+        if (preference.get() == ReaderOrientation.FREE.flagValue) preference.delete()
+    }
 
     val webtoonDoubleTapZoomEnabled: Preference<Boolean> = preferenceStore.getBoolean(
         "pref_enable_double_tap_zoom_webtoon",
