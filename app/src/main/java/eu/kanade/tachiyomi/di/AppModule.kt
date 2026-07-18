@@ -79,9 +79,13 @@ class AppModule(val app: Application) : InjektModule {
             synchronized(lock) {
                 sqlDriverRef?.get()?.let { return@synchronized it }
 
-                val schemaBridge = LegacyDatabaseSchemaBridge(app)
-                val migrationBackup = schemaBridge.prepare()
+                val schemaBridge = LegacyDatabaseSchemaBridge(
+                    context = app,
+                    expectedSchemaVersion = Database.Schema.version.toInt(),
+                )
+                var migrationBackup: LegacyDatabaseSchemaBridge.MigrationBackup? = null
                 try {
+                    migrationBackup = schemaBridge.prepare()
                     AndroidxSqliteDriver(
                         driver = BundledSQLiteDriver(),
                         databaseType = AndroidxSqliteDatabaseType.FileProvider(app, "tachiyomi.db"),
@@ -89,8 +93,12 @@ class AppModule(val app: Application) : InjektModule {
                         configuration = AndroidxSqliteConfiguration(
                             isForeignKeyConstraintsEnabled = true,
                         ),
+                        onOpen = {
+                            // The AndroidX driver is lazy. Finalize only after
+                            // SQLDelight has actually completed its migrations.
+                            schemaBridge.complete(migrationBackup)
+                        },
                     ).also {
-                        schemaBridge.complete(migrationBackup)
                         sqlDriverRef = WeakReference(it)
                     }
                 } catch (exception: Throwable) {
