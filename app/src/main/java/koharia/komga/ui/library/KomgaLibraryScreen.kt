@@ -95,10 +95,14 @@ data class KomgaLibraryScreen(
     // serializable Voyager Screen prevents Activity state saving from trying to
     // serialize kotlinx.coroutines' BufferedChannel implementation.
     @Transient
+    @Volatile
     private var runtimeEvents: RuntimeEvents? = null
 
     private fun events(): RuntimeEvents {
-        return runtimeEvents ?: RuntimeEvents().also { runtimeEvents = it }
+        runtimeEvents?.let { return it }
+        return synchronized(this) {
+            runtimeEvents ?: RuntimeEvents().also { runtimeEvents = it }
+        }
     }
 
     override fun onProvideAssistUrl() = assistUrl

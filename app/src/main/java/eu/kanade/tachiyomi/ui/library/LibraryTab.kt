@@ -47,11 +47,15 @@ sealed class KomgaLibraryTab(
     // Voyager serializes Tab instances when the host Activity is stopped. The
     // browse screen owns coroutine channels and must therefore stay runtime-only.
     @Transient
+    @Volatile
     private var runtimeBrowseScreen: KomgaLibraryScreen? = null
 
     private fun browseScreen(): KomgaLibraryScreen {
-        return runtimeBrowseScreen ?: newScreen(KomgaServerPreferences.NO_ACTIVE_SERVER).also {
-            runtimeBrowseScreen = it
+        runtimeBrowseScreen?.let { return it }
+        return synchronized(this) {
+            runtimeBrowseScreen ?: newScreen(KomgaServerPreferences.NO_ACTIVE_SERVER).also {
+                runtimeBrowseScreen = it
+            }
         }
     }
 
