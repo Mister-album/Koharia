@@ -79,6 +79,7 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.jvm.Transient
 import kotlin.math.roundToInt
 
 data class KomgaLibraryScreen(
@@ -89,8 +90,20 @@ data class KomgaLibraryScreen(
 ) : Screen(), AssistContentScreen {
 
     private var assistUrl: String? = null
-    private val queryEvent = Channel<SearchType>()
-    private val refreshEvent = Channel<Unit>(capacity = Channel.CONFLATED)
+
+    // These channels are runtime event buses. Keeping them out of the
+    // serializable Voyager Screen prevents Activity state saving from trying to
+    // serialize kotlinx.coroutines' BufferedChannel implementation.
+    @Transient
+    @Volatile
+    private var runtimeEvents: RuntimeEvents? = null
+
+    private fun events(): RuntimeEvents {
+        runtimeEvents?.let { return it }
+        return synchronized(this) {
+            runtimeEvents ?: RuntimeEvents().also { runtimeEvents = it }
+        }
+    }
 
     override fun onProvideAssistUrl() = assistUrl
 
@@ -306,7 +319,7 @@ data class KomgaLibraryScreen(
         }
 
         LaunchedEffect(Unit) {
-            queryEvent.receiveAsFlow()
+            events().query.receiveAsFlow()
                 .collectLatest {
                     when (it) {
                         is SearchType.Genre -> screenModel.searchGenre(it.txt)
@@ -316,15 +329,20 @@ data class KomgaLibraryScreen(
         }
 
         LaunchedEffect(Unit) {
-            refreshEvent.receiveAsFlow().collectLatest {
+            events().refresh.receiveAsFlow().collectLatest {
                 screenModel.refresh()
             }
         }
     }
 
-    suspend fun search(query: String) = queryEvent.send(SearchType.Text(query))
-    suspend fun searchGenre(name: String) = queryEvent.send(SearchType.Genre(name))
-    suspend fun refresh() = refreshEvent.send(Unit)
+    suspend fun search(query: String) = events().query.send(SearchType.Text(query))
+    suspend fun searchGenre(name: String) = events().query.send(SearchType.Genre(name))
+    suspend fun refresh() = events().refresh.send(Unit)
+
+    private class RuntimeEvents {
+        val query = Channel<SearchType>()
+        val refresh = Channel<Unit>(capacity = Channel.CONFLATED)
+    }
 
     sealed class SearchType(val txt: String) {
         class Text(txt: String) : SearchType(txt)
