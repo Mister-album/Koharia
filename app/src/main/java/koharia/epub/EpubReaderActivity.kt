@@ -241,9 +241,6 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             val currentTheme by epubLayoutPreferences.theme.changes().collectAsState(epubLayoutPreferences.theme.get())
             val currentCustomBackgroundColor by epubLayoutPreferences.customBackgroundColor.changes()
                 .collectAsState(epubLayoutPreferences.customBackgroundColor.get())
-            val currentReaderBackgroundColor = remember(currentTheme, currentCustomBackgroundColor) {
-                Color(currentTheme.readerBackgroundColor(currentCustomBackgroundColor))
-            }
             val currentReadingMode by epubLayoutPreferences.readingMode.changes()
                 .collectAsState(epubLayoutPreferences.readingMode.get())
             val currentPageDirection by epubLayoutPreferences.pageDirection.changes()
@@ -299,6 +296,15 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             val grayscale by readerPreferences.grayscale.changes().collectAsState(readerPreferences.grayscale.get())
             val invertedColors by readerPreferences.invertedColors.changes()
                 .collectAsState(readerPreferences.invertedColors.get())
+            val currentReaderBackgroundColor = remember(
+                currentTheme,
+                currentCustomBackgroundColor,
+                grayscale,
+                invertedColors,
+            ) {
+                Color(currentTheme.readerBackgroundColor(currentCustomBackgroundColor))
+                    .applyReaderColorFilter(grayscale, invertedColors)
+            }
             val subtitle = remember(state.chapterTitle, state.currentSectionTitle, state.progressionPercent) {
                 listOfNotNull(
                     state.chapterTitle,
@@ -1380,6 +1386,31 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private fun readerVerticalPaddingDp(verticalMargins: Float): Float {
         return READER_EDGE_PADDING_DP +
             EpubLayoutPreferences.VERTICAL_MARGIN_BASE_DP * verticalMargins
+    }
+
+    /**
+     * Applies the same grayscale/inversion operations as [readerColorFilterPaint] to Compose edge colors.
+     * The reader Fragment is filtered by an Android [ColorMatrixColorFilter], while the Compose edge bands
+     * are separate layers and therefore need the transformed color explicitly.
+     */
+    private fun Color.applyReaderColorFilter(grayscale: Boolean, invertedColors: Boolean): Color {
+        var red = red
+        var green = green
+        var blue = blue
+
+        if (grayscale) {
+            val luminance = 0.213f * red + 0.715f * green + 0.072f * blue
+            red = luminance
+            green = luminance
+            blue = luminance
+        }
+        if (invertedColors) {
+            red = 1f - red
+            green = 1f - green
+            blue = 1f - blue
+        }
+
+        return Color(red, green, blue, alpha)
     }
 
     private fun EpubLayoutPreferences.Theme.readerBackgroundColor(customBackgroundColor: Int): Int {
