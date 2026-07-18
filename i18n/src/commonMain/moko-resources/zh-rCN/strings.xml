@@ -79,6 +79,7 @@
     <string name="action_add_server">添加服务器</string>
     <string name="delete_server">删除服务器</string>
     <string name="delete_server_confirmation">确定要删除服务器“%s”吗？</string>
+    <string name="komga_server_delete_failed">无法删除服务器，服务器设置已保留，请重试。</string>
     <string name="komga_pref_address_title">Komga服务器地址</string>
     <string name="komga_pref_address_summary">Komga 服务器地址</string>
     <string name="komga_pref_address_dialog">地址末尾不能带斜杠。</string>

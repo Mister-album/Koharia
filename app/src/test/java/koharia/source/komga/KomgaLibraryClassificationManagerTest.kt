@@ -1,5 +1,9 @@
 package koharia.source.komga
 
+import android.content.Context
+import android.content.SharedPreferences
+import io.mockk.every
+import io.mockk.mockk
 import koharia.komga.api.dto.LibraryDto
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -63,7 +67,13 @@ class KomgaLibraryClassificationManagerTest {
     private fun fixture(): Fixture {
         val store = InMemoryPreferenceStore()
         val json = Json { ignoreUnknownKeys = true }
-        val serverPreferences = KomgaServerPreferences(store, json)
+        val legacyPreferences = mockk<SharedPreferences> {
+            every { contains(any()) } returns false
+        }
+        val context = mockk<Context> {
+            every { getSharedPreferences(any(), any()) } returns legacyPreferences
+        }
+        val serverPreferences = KomgaServerPreferences(context, store, json)
         val localConfigManager = KomgaLocalConfigManager(
             preferenceStore = store,
             serverPreferences = serverPreferences,

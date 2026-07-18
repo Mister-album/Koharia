@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager
 import koharia.epub.cache.EpubCacheManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
@@ -23,24 +24,36 @@ class KomgaServerRemovalManager(
     suspend fun removeServer(
         serverId: Long,
         options: DownloadCleanupMode = DownloadCleanupMode.Preserve,
-    ) {
+    ): Result<Unit> {
         val currentProfiles = serverPreferences.getProfiles()
-        val profile = currentProfiles.find { it.id == serverId } ?: return
+        val profile = currentProfiles.find { it.id == serverId } ?: return Result.success(Unit)
 
-        withContext(Dispatchers.IO) {
-            clearServerSettingsIfNeeded(serverId)
-            cleanupDownloads(profile, options)
-            epubCacheManager.clearServer(serverId)
-            libraryClassificationManager.clearServer(serverId)
-            localConfigManager.clearScopeForServer(serverId)
-        }
-        serverPreferences.setProfiles(currentProfiles - profile)
+        return try {
+            withContext(Dispatchers.IO) {
+                // Keep credentials and scoped settings until every retryable
+                // cleanup step succeeds, so a failure cannot orphan the profile.
+                cleanupDownloads(profile, options)
+                epubCacheManager.clearServer(serverId)
+                libraryClassificationManager.clearServer(serverId)
+                localConfigManager.clearScopeForServer(serverId)
+                clearServerSettingsIfNeeded(serverId)
+            }
+            serverPreferences.setProfiles(currentProfiles - profile)
 
-        logcat(LogPriority.DEBUG) {
-            "Removed Komga server id=$serverId name=${profile.name} " +
-                "(localConfigMode=${serverPreferences.localConfigMode.get()}, " +
-                "downloadDirectoryMode=${serverPreferences.downloadDirectoryMode.get()}, " +
-                "cleanupMode=$options)"
+            logcat(LogPriority.DEBUG) {
+                "Removed Komga server id=$serverId name=${profile.name} " +
+                    "(localConfigMode=${serverPreferences.localConfigMode.get()}, " +
+                    "downloadDirectoryMode=${serverPreferences.downloadDirectoryMode.get()}, " +
+                    "cleanupMode=$options)"
+            }
+            Result.success(Unit)
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Throwable) {
+            logcat(LogPriority.ERROR, exception) {
+                "Failed to remove Komga server id=$serverId; profile and scoped settings were retained"
+            }
+            Result.failure(exception)
         }
     }
 
