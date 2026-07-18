@@ -1,23 +1,19 @@
 # Koharia - AI Agent Guide
 
-Koharia is an Android reader forked from Mihon `0.19.9` and adapted into a Komga-focused client. Stack: Kotlin/JVM 17, Jetpack Compose + Material3, Voyager navigation, SQLDelight, Injekt DI, moko-resources. App namespace remains `eu.kanade.tachiyomi`; `applicationId` is `app.koharia`.
-
-This file is for AI coding agents working in this repository. Follow it before making changes.
-
----
+Koharia is a Komga-focused Android reader forked from Mihon `0.19.9`. It uses Kotlin/JVM 17, Jetpack Compose + Material3, Voyager, SQLDelight, Injekt, and moko-resources. The namespace remains `eu.kanade.tachiyomi`; `applicationId` is `app.koharia`.
 
 ## Mandatory Rules
 
-### Preserve User Work
+### Preserve User Work And Secrets
 
-- The worktree may contain user changes. Do not revert, overwrite, or reformat unrelated files.
-- Keep edits narrowly scoped to the requested task.
-- Do not run destructive git commands (`reset --hard`, `checkout --`, force push) unless the user explicitly asks.
-- Do not commit or push unless the user explicitly asks.
+- Preserve unrelated user changes; keep edits narrowly scoped.
+- Do not use destructive Git commands, force-push, commit, or push unless explicitly requested.
+- Treat `local.properties`, `keystore.properties`, `*.jks`, API keys, and tokens as secrets. Never print, log, or commit them.
+- Confirm the destination before pushing: `github` targets GitHub, while `origin` targets the self-hosted repository.
 
 ### Formatting And Verification
 
-Use Windows commands in this workspace:
+Use Windows commands:
 
 ```powershell
 .\gradlew.bat spotlessApply
@@ -25,232 +21,86 @@ Use Windows commands in this workspace:
 .\gradlew.bat :app:compileDebugKotlin
 ```
 
-For release validation:
-
-```powershell
-.\gradlew.bat :app:assembleRelease
-```
-
-Guidelines:
-
 - Run `spotlessApply` after Kotlin/XML edits when practical.
-- Run `spotlessCheck` before considering a formatting-sensitive change complete.
-- Run at least `:app:compileDebugKotlin` for code/schema/resource changes.
-- After `.sq` or `.sqm` edits, a compile touching `:data` is enough to regenerate SQLDelight interfaces; `:app:compileDebugKotlin` does this.
+- Run `spotlessCheck` for formatting-sensitive work and at least `:app:compileDebugKotlin` for code, schema, or resource changes unless the user requests a lighter workflow.
+- For release validation use `.\gradlew.bat :app:assembleRelease`.
+- Focus checks when appropriate: `:data:generateDebugDatabaseInterface`, `:domain:test`, or relevant module tests.
+- If Gradle state is stale, use `.\gradlew.bat --stop` before broader cleanup.
 
 ### Internationalization
 
 - Shared strings live in `i18n/src/commonMain/moko-resources/base/strings.xml` and use `tachiyomi.i18n.MR`.
-- Koharia currently has no separate `i18n-koharia` module; add new app strings to `i18n/.../base` unless a dedicated module is introduced.
-- For Chinese user-facing Koharia changes, it is acceptable to update `zh-rCN` alongside `base` when the task is explicitly Chinese-facing. Avoid mass-editing other locales.
-- Do not add strings directly in composables when an `MR.strings.*` resource is appropriate.
-- After i18n edits, run a compile so moko-resources regenerates accessors.
+- Chinese-facing changes may update `zh-rCN` with `base`; avoid mass-editing other locales.
+- Do not hardcode user-facing strings in composables when an `MR.strings.*` resource fits.
+- Compile after i18n edits to regenerate moko-resources accessors.
 
----
-
-## Project Layout
+## Project Map
 
 | Path | Purpose |
 |------|---------|
-| `app/` | Android app, Compose screens, Voyager screens, DI, workers, reader, Komga integration |
-| `app/src/main/java/koharia/source/komga/` | Built-in Komga source and source settings |
-| `app/src/main/java/koharia/komga/` | Komga API, repository, library UI |
-| `app/src/main/java/eu/kanade/tachiyomi/ui/reader/` | Reader activity, view model, loaders, viewers |
-| `app/src/main/java/eu/kanade/tachiyomi/data/download/` | Download/cache pipeline; Koharia raw Komga downloads are customized here |
-| `app/src/main/java/eu/kanade/tachiyomi/data/track/komga/` | Komga progress/history sync |
-| `domain/` | Domain models, repository interfaces, interactors |
-| `data/` | SQLDelight schema, migrations, repository implementations |
-| `source-api/` | Source ABI and source models; avoid breaking extension compatibility casually |
-| `source-local/` | Local source implementation |
-| `core/common/` | Shared utilities, network, preferences, storage, security |
-| `core/archive/` | Archive/EPUB/CBZ reading utilities |
-| `core-metadata/` | ComicInfo metadata support |
-| `presentation-core/` | Shared Compose components and theme resources |
-| `presentation-widget/` | Glance widgets |
-| `telemetry/` | Firebase/noop telemetry variants |
-| `macrobenchmark/` | Benchmark and baseline profile utilities |
+| `app/src/main/java/koharia/epub/` | Native EPUB/Readium reader, cache, pagination, settings, progress |
+| `app/src/main/java/koharia/source/komga/` | Built-in Komga source, server profiles, scoped configuration |
+| `app/src/main/java/koharia/komga/` | Komga API, repository, downloads, library UI |
+| `app/src/main/java/eu/kanade/tachiyomi/ui/reader/` | Comic pager/webtoon reader |
+| `app/src/main/java/eu/kanade/tachiyomi/data/download/` | Download and page-cache pipeline |
+| `app/src/main/java/eu/kanade/tachiyomi/data/track/komga/` | Komga comic progress/history sync |
+| `domain/`, `data/` | Domain contracts/interactors and SQLDelight implementations |
+| `source-api/`, `source-local/` | Source ABI and local-source implementation |
+| `core/`, `presentation-core/`, `presentation-widget/` | Shared utilities, archive support, UI, widgets |
 
-Version catalogs:
+Dependency versions are defined in `gradle/libs.versions.toml`; SDK, NDK, and Java versions are defined in `gradle/koharia.versions.toml`.
 
-- `gradle/libs.versions.toml`
-- `gradle/koharia.versions.toml`
+## Architecture
 
-SDK/JDK:
+### Dependency Injection And UI
 
-- min SDK 26
-- compile SDK 37
-- target SDK 36
-- Java 17
+- Koharia uses Injekt, not Hilt.
+- Registrations live in `AppModule.kt`, `PreferenceModule.kt`, and `DomainModule.kt`.
+- Resolve with `Injekt.get<T>()` or `injectLazy<T>()`.
+- Follow existing Voyager `Screen` and `StateScreenModel` patterns; use `screenModelScope`, `launchIO`, and `withIOContext` for asynchronous work.
 
----
+### Database And Preferences
 
-## Architecture Notes
+- SQLDelight schema, views, and migrations live under `data/src/main/sqldelight/tachiyomi/`.
+- Every schema change needs a migration. Inspect existing numeric `.sqm` files and use the next consecutive number; never trust a number copied from documentation.
+- Keep adapters, generated query mappers, and repository signatures aligned.
+- App/preference migrations live under `app/src/main/java/koharia/core/migration/migrations/`.
+- Most user configuration uses `ScopedPreferenceStore` per Komga server. Truly global settings must explicitly use the unscoped `PreferenceStore`.
 
-### DI
+## Koharia-Specific Boundaries
 
-Koharia uses Injekt, not Hilt.
+- Koharia is Komga-first; do not restore removed extension/browse ecosystems unless requested.
+- `KomgaSource` is the only built-in network source registered by `AndroidSourceManager`.
+- Confirm the launch path before reader changes: EPUB/Readium is under `koharia/epub`; comic paging/webtoon is under `ui/reader`.
+- Manual downloads, EPUB book cache, and comic page cache are distinct. Cache state must not become download state, and clearing caches must not delete manual downloads.
+- Komga sync uses stable locator/progression data. EPUB visual page counts depend on device and layout, remain local, and must not replace cloud progress.
+- Komga browsing, raw-file downloads, resumable transfers, progress, and history contain project-specific behavior; prefer existing managers/repositories over parallel implementations.
+- Preserve current `koharia.*` package names instead of reintroducing removed `mihon.*` roots.
 
-- App-level registrations: `app/src/main/java/eu/kanade/tachiyomi/di/AppModule.kt`
-- Domain registrations: `app/src/main/java/eu/kanade/domain/DomainModule.kt`
-- Resolve dependencies with `Injekt.get<T>()` or `injectLazy<T>()`.
+## Upstream Mihon Sync
 
-### UI And Navigation
-
-- Voyager `Screen` classes are under `eu.kanade.tachiyomi.ui.*`, `koharia.*`, and renamed `koharia.feature.*` packages.
-- Presentation composables are usually under `eu.kanade.presentation.*`.
-- Prefer existing `StateScreenModel<State>` patterns.
-- Use `screenModelScope`, `launchIO`, and `withIOContext` for async work.
-
-### Database
-
-SQLDelight files live under:
-
-- `data/src/main/sqldelight/tachiyomi/data/*.sq`
-- `data/src/main/sqldelight/tachiyomi/view/*.sq`
-- `data/src/main/sqldelight/tachiyomi/migrations/*.sqm`
-
-Rules:
-
-- Every schema change needs a migration.
-- Current latest Koharia SQLDelight migration is `11.sqm`; the next schema migration should be `12.sqm`.
-- Register custom column adapters in `AppModule.kt`.
-- Keep mapper signatures in sync with generated SQLDelight query output.
-
-### Preferences And App Migrations
-
-App preference migrations are under:
-
-- `app/src/main/java/koharia/core/migration/migrations/`
-
-Use these for preference cleanup or app-state migration, not SQL schema migration.
-
----
-
-## Koharia-Specific Constraints
-
-Koharia is Komga-first. Before porting upstream Mihon features, check whether they make sense for a dedicated Komga client.
-
-Important custom areas:
-
-- `KomgaSource` is the only built-in network source currently registered by `AndroidSourceManager`.
-- Komga library browsing is customized from Mihon browse/source screens.
-- Downloads are customized for Komga raw-file caching and resumable behavior.
-- Komga progress/history sync is integrated into reader, manga, and history flows.
-- Many `mihon.*` package roots have been renamed to `koharia.*`; preserve current package names.
-
-Avoid casually restoring removed upstream browse/extension UI unless the task explicitly asks for it.
-
----
-
-## Upstream Mihon Merge State
-
-Current upstream review baseline:
-
-- Reviewed through Mihon `mihon/main` commit `c7e782c17` (`Update markdown to v0.42.0`, 2026-06-20).
-- Future upstream review should start after `c7e782c17`.
-
-Important caveat:
-
-- Koharia did not wholesale merge all changes up to that commit.
-- Priority items selectively merged include reader vertical chapter navigator, Shizuku receiver safety, Nord `outlineVariant`, manga notes text-limit removal, and TachiyomiX 1.6 `memo` backup/model persistence.
-- Extension-store refactors and the large Source API `getMangaUpdate` refactor were intentionally not wholesale merged because they conflict with the Komga-only direction and current source flow.
-
-When merging future Mihon upstream:
-
-- Prefer cherry-picking or manual porting over full branch merge.
-- First classify changes as reader/core/bugfix/dependency vs extension-store/browse/source-ecosystem.
-- Be extra careful around:
-  - `source-api/`
-  - `AndroidSourceManager`
-  - `DownloadManager`, `Downloader`, `DownloadJob`
-  - `KomgaSource`
-  - `KomgaProgressSyncService`
-  - backup models and SQLDelight migrations
-
----
-
-## Build Variants And Flags
-
-Build types:
-
-- `debug`: `app.koharia.dev`
-- `release`: production package
-- `foss`: release-derived, `.foss`
-- `preview`: release-derived, `.debug`
-- `benchmark`: profileable benchmark package
-
-Gradle project flags:
-
-| Flag | Effect |
-|------|--------|
-| `-Pinclude-telemetry` | Include Firebase/Crashlytics telemetry |
-| `-Penable-updater` | Enable updater code path |
-| `-Pdisable-code-shrink` | Disable R8/resource shrinking |
-
-Release signing uses `keystore.properties` when present.
-
----
-
-## Common Commands
-
-```powershell
-.\gradlew.bat spotlessApply
-.\gradlew.bat spotlessCheck
-.\gradlew.bat :app:compileDebugKotlin
-.\gradlew.bat :app:assembleRelease
-.\gradlew.bat test
-```
-
-Useful focused checks:
-
-```powershell
-.\gradlew.bat :data:generateDebugDatabaseInterface
-.\gradlew.bat :domain:test
-```
-
-If Gradle state is stale:
-
-```powershell
-.\gradlew.bat --stop
-```
-
----
+- Review resumes after Mihon commit `c7e782c17` (2026-06-20).
+- Selectively port compatible reader, core, bug-fix, and dependency changes; do not wholesale merge upstream.
+- Treat extension-store, Source API, download, backup, and database changes as compatibility-sensitive and check them against the Komga-only direction.
 
 ## Coding Conventions
 
-- Match nearby code style and local abstractions.
-- Prefer existing interactors/repositories over adding service-style shortcuts.
-- Prefer structured parsers/APIs over ad hoc string parsing.
-- Use `logcat` helpers from `tachiyomi.core.common.util.system.logcat`; avoid raw `android.util.Log`.
-- Keep comments sparse and useful.
-- Do not introduce new libraries unless the existing stack cannot reasonably solve the task.
-- For Compose UI, follow existing Material3/Voyager patterns and reuse `presentation-core` components.
-- For source model changes, preserve source ABI compatibility where possible.
-
----
+- Match nearby style and abstractions.
+- Prefer interactors and repositories over service-style shortcuts.
+- Prefer structured APIs/parsers over ad hoc string parsing.
+- Use `tachiyomi.core.common.util.system.logcat`; do not copy existing raw `android.util.Log` usage into new code.
+- Keep comments sparse and useful; do not add dependencies unless the current stack is insufficient.
+- Reuse existing Material3/Voyager and `presentation-core` components.
+- Preserve Source API compatibility unless a breaking change is explicitly required.
+- Build variants, flags, shrinking, and signing rules are defined in `app/build.gradle.kts`; inspect it for release-specific work.
 
 ## High-Risk Areas
 
-Treat these as high-risk and verify with compile/tests:
+Use proportional compile/tests for:
 
-- SQLDelight schema or migrations
-- Backup/restore models and proto numbers
-- Reader loading/viewer logic
-- Download queue/resume/delete behavior
-- Komga progress sync and history sync
-- Source API or extension loading
-- Build logic and version catalogs
-
----
-
-## Key Files
-
-- `README.md` - project overview
-- `app/build.gradle.kts` - app id, variants, signing, version
-- `settings.gradle.kts` - module list
-- `app/src/main/java/eu/kanade/tachiyomi/App.kt` - app bootstrap
-- `app/src/main/java/eu/kanade/tachiyomi/di/AppModule.kt` - app DI
-- `app/src/main/java/eu/kanade/domain/DomainModule.kt` - domain DI
-- `app/src/main/java/koharia/source/komga/KomgaSource.kt` - Komga source
-- `app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt` - reader shell
-- `data/src/main/sqldelight/tachiyomi/` - DB schema and migrations
+- SQLDelight migrations, backup models, and proto numbers
+- EPUB/Readium or comic loading, pagination, and caches
+- Download queue, resume, deletion, and download/cache boundaries
+- Komga progress/history synchronization
+- Scoped/global preferences and server deletion cleanup
+- Source API, extension loading, build logic, and version catalogs
