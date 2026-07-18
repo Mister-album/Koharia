@@ -144,6 +144,7 @@ class LegacyDatabaseSchemaBridge(
                     CREATE TRIGGER update_last_modified_at_mangas
                     AFTER UPDATE ON mangas
                     FOR EACH ROW
+                    WHEN new.last_modified_at = old.last_modified_at
                     BEGIN
                       UPDATE mangas SET last_modified_at = strftime('%s', 'now')
                       WHERE _id = new._id;
@@ -156,6 +157,7 @@ class LegacyDatabaseSchemaBridge(
                     CREATE TRIGGER update_last_modified_at_chapters
                     AFTER UPDATE ON chapters
                     FOR EACH ROW
+                    WHEN new.last_modified_at = old.last_modified_at
                     BEGIN
                       UPDATE chapters SET last_modified_at = strftime('%s', 'now')
                       WHERE _id = new._id;
@@ -285,7 +287,13 @@ class LegacyDatabaseSchemaBridge(
     }
 
     private fun SQLiteDatabase.checkpointWal() {
-        runCatching { rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { } }
+        runCatching {
+            rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { cursor ->
+                // rawQuery is lazy; advancing the cursor is required for the
+                // checkpoint statement to actually execute before the backup.
+                cursor.moveToFirst()
+            }
+        }
     }
 
     class MigrationBackup internal constructor(
