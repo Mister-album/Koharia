@@ -562,16 +562,18 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                 // Readium applies padding to a white Fragment container. Paint only the reserved
                                 // fullscreen edges here; visible reader menus must keep their Material theme colors.
                                 if (fullscreen && !state.menuVisible) {
-                                    Column(
-                                        modifier = Modifier
-                                            .align(Alignment.TopCenter)
-                                            .fillMaxWidth()
-                                            .background(currentReaderBackgroundColor),
-                                    ) {
-                                        Spacer(
-                                            modifier = Modifier.windowInsetsTopHeight(WindowInsets.displayCutout),
-                                        )
-                                        Spacer(modifier = Modifier.height(fullscreenVerticalPadding))
+                                    if (!drawUnderCutout) {
+                                        Column(
+                                            modifier = Modifier
+                                                .align(Alignment.TopCenter)
+                                                .fillMaxWidth()
+                                                .background(currentReaderBackgroundColor),
+                                        ) {
+                                            Spacer(
+                                                modifier = Modifier.windowInsetsTopHeight(WindowInsets.displayCutout),
+                                            )
+                                            Spacer(modifier = Modifier.height(fullscreenVerticalPadding))
+                                        }
                                     }
                                     Column(
                                         modifier = Modifier
@@ -1257,25 +1259,37 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     fragment.view?.let { view ->
                         view.setBackgroundColor(theme.readerBackgroundColor(customBackgroundColor))
                         view.setLayerType(View.LAYER_TYPE_HARDWARE, readerColorFilterPaint(grayscale, invertedColors))
-                        view.applyInsetsPadding(
-                            windowInsets = ViewCompat.getRootWindowInsets(view),
+                        view.updateInsetsHandling(
                             fullscreen = fullscreen,
                             drawUnderCutout = drawUnderCutout,
                             verticalMargins = verticalMargins,
                         )
-                        ViewCompat.setOnApplyWindowInsetsListener(view) { insetView, windowInsets ->
-                            insetView.applyInsetsPadding(
-                                windowInsets = windowInsets,
-                                fullscreen = fullscreen,
-                                drawUnderCutout = drawUnderCutout,
-                                verticalMargins = verticalMargins,
-                            )
-                            windowInsets
-                        }
-                        ViewCompat.requestApplyInsets(view)
                     }
                 },
             )
+            LaunchedEffect(
+                chapterId,
+                sessionToken,
+                fullscreen,
+                drawUnderCutout,
+                grayscale,
+                invertedColors,
+                theme,
+                customBackgroundColor,
+                verticalMargins,
+            ) {
+                // AndroidFragment.onUpdate is only invoked when the Fragment is created. Re-apply
+                // layout-affecting reader settings when Compose preferences change in the same session.
+                readerFragment?.view?.let { view ->
+                    view.setBackgroundColor(theme.readerBackgroundColor(customBackgroundColor))
+                    view.setLayerType(View.LAYER_TYPE_HARDWARE, readerColorFilterPaint(grayscale, invertedColors))
+                    view.updateInsetsHandling(
+                        fullscreen = fullscreen,
+                        drawUnderCutout = drawUnderCutout,
+                        verticalMargins = verticalMargins,
+                    )
+                }
+            }
         }
     }
 
@@ -1322,6 +1336,29 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         }
     }
 
+    private fun View.updateInsetsHandling(
+        fullscreen: Boolean,
+        drawUnderCutout: Boolean,
+        verticalMargins: Float,
+    ) {
+        applyInsetsPadding(
+            windowInsets = ViewCompat.getRootWindowInsets(this),
+            fullscreen = fullscreen,
+            drawUnderCutout = drawUnderCutout,
+            verticalMargins = verticalMargins,
+        )
+        ViewCompat.setOnApplyWindowInsetsListener(this) { insetView, windowInsets ->
+            insetView.applyInsetsPadding(
+                windowInsets = windowInsets,
+                fullscreen = fullscreen,
+                drawUnderCutout = drawUnderCutout,
+                verticalMargins = verticalMargins,
+            )
+            windowInsets
+        }
+        ViewCompat.requestApplyInsets(this)
+    }
+
     private fun View.applyInsetsPadding(
         windowInsets: WindowInsetsCompat?,
         fullscreen: Boolean,
@@ -1335,8 +1372,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             !drawUnderCutout -> displayCutout
             else -> Insets.NONE
         }
-        // EPUB text must always stay below the camera cutout, even when edge drawing is enabled.
-        val topInset = if (fullscreen) displayCutout.top else systemBars.top
+        val topInset = when {
+            !fullscreen -> systemBars.top
+            !drawUnderCutout -> displayCutout.top
+            else -> 0
+        }
         val bottomInset = when {
             !fullscreen -> systemBars.bottom
             !drawUnderCutout -> displayCutout.bottom
@@ -1347,7 +1387,6 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         } else {
             0
         }
-
         setPadding(
             horizontalInsets.left,
             topInset + verticalPadding,

@@ -42,7 +42,7 @@ class ReaderPreferences(
 
     val fullscreen: Preference<Boolean> = preferenceStore.getBoolean("fullscreen", true)
 
-    val drawUnderCutout: Preference<Boolean> = preferenceStore.getBoolean("cutout_short", true)
+    val drawUnderCutout: Preference<Boolean> = preferenceStore.getBoolean("cutout_short", false)
 
     val keepScreenOn: Preference<Boolean> = preferenceStore.getBoolean("pref_keep_screen_on_key", false)
 
