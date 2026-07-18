@@ -1324,10 +1324,10 @@
     <string name="label_comics">Comics</string>
     <string name="label_books">Books</string>
     <string name="komga_library_classification_group">Content classification</string>
-    <string name="komga_library_classification_enable">Separate comics and books</string>
+    <string name="komga_library_classification_enable">Library classification</string>
     <string name="komga_library_classification_summary">Classify the active server's libraries into separate Comics and Books tabs</string>
-    <string name="komga_library_classification_configure">Configure server library classification</string>
-    <string name="komga_library_classification_counts">%1$s · Comics %2$d · Books %3$d</string>
+    <string name="komga_library_classification_configure">Server library classification</string>
+    <string name="komga_library_classification_counts">Comics %1$d · Books %2$d</string>
     <string name="komga_library_classification_confirm_title">Enable comics and books classification?</string>
     <string name="komga_library_classification_confirm_message">The main navigation will be split into Comics and Books. If local configuration is shared, the existing configuration will be copied to each server and switched to separate mode.</string>
     <string name="komga_library_classification_disable_title">Switch to shared configuration?</string>

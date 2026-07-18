@@ -1185,10 +1185,10 @@
     <string name="label_comics">漫画</string>
     <string name="label_books">书籍</string>
     <string name="komga_library_classification_group">内容分类</string>
-    <string name="komga_library_classification_enable">开启漫画、书籍分类</string>
+    <string name="komga_library_classification_enable">书架分类</string>
     <string name="komga_library_classification_summary">按当前服务器的库标签，将主导航拆分为漫画和书籍</string>
-    <string name="komga_library_classification_configure">配置服务器库分类</string>
-    <string name="komga_library_classification_counts">%1$s · 漫画 %2$d · 书籍 %3$d</string>
+    <string name="komga_library_classification_configure">服务器库分类</string>
+    <string name="komga_library_classification_counts">漫画 %1$d · 书籍 %2$d</string>
     <string name="komga_library_classification_confirm_title">开启漫画、书籍分类？</string>
     <string name="komga_library_classification_confirm_message">主导航将拆分为漫画和书籍。若当前使用共用本地配置，现有配置将先复制到各服务器并切换为独立模式。</string>
     <string name="komga_library_classification_disable_title">切换为共用配置？</string>

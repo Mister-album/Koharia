@@ -99,7 +99,7 @@ object SettingsLibraryScreen : SearchableSettings {
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.komga_library_classification_group),
-            preferenceItems = persistentListOf(
+            preferenceItems = persistentListOf<Preference.PreferenceItem<out Any, out Any>>(
                 Preference.PreferenceItem.CustomPreference(
                     title = stringResource(MR.strings.komga_library_classification_enable),
                 ) {
@@ -123,20 +123,24 @@ object SettingsLibraryScreen : SearchableSettings {
                         },
                     )
                 },
-                Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.komga_library_classification_configure),
-                    subtitle = activeServer?.let {
-                        stringResource(
-                            MR.strings.komga_library_classification_counts,
-                            it.name,
-                            comicCount,
-                            bookCount,
-                        )
-                    } ?: stringResource(MR.strings.komga_library_classification_no_server),
-                    enabled = hasServer,
-                    onClick = { navigator.push(KomgaLibraryClassificationScreen()) }.takeIf { hasServer },
-                ),
-            ),
+            ).let { items ->
+                if (enabled) {
+                    items.add(
+                        Preference.PreferenceItem.TextPreference(
+                            title = stringResource(MR.strings.komga_library_classification_configure),
+                            subtitle = stringResource(
+                                MR.strings.komga_library_classification_counts,
+                                comicCount,
+                                bookCount,
+                            ),
+                            enabled = hasServer,
+                            onClick = { navigator.push(KomgaLibraryClassificationScreen()) }.takeIf { hasServer },
+                        ),
+                    )
+                } else {
+                    items
+                }
+            },
         )
     }
 
