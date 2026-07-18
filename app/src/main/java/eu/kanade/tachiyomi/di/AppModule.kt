@@ -37,11 +37,13 @@ import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
+import logcat.LogPriority
 import nl.adaptivity.xmlutil.XmlDeclMode
 import nl.adaptivity.xmlutil.core.XmlVersion
 import nl.adaptivity.xmlutil.serialization.XML
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.storage.AndroidStorageFolderProvider
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Chapters
 import tachiyomi.data.Database
 import tachiyomi.data.DateColumnAdapter
@@ -54,6 +56,7 @@ import tachiyomi.data.Mangas
 import tachiyomi.data.MemoColumnAdapter
 import tachiyomi.data.StringListColumnAdapter
 import tachiyomi.data.UpdateStrategyColumnAdapter
+import tachiyomi.data.migration.LegacyDatabaseSchemaBridge
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
 import uy.kohesive.injekt.api.InjektModule
@@ -76,15 +79,29 @@ class AppModule(val app: Application) : InjektModule {
             synchronized(lock) {
                 sqlDriverRef?.get()?.let { return@synchronized it }
 
-                AndroidxSqliteDriver(
-                    driver = BundledSQLiteDriver(),
-                    databaseType = AndroidxSqliteDatabaseType.FileProvider(app, "tachiyomi.db"),
-                    schema = Database.Schema,
-                    configuration = AndroidxSqliteConfiguration(
-                        isForeignKeyConstraintsEnabled = true,
-                    ),
-                )
-                    .also { sqlDriverRef = WeakReference(it) }
+                val schemaBridge = LegacyDatabaseSchemaBridge(app)
+                val migrationBackup = schemaBridge.prepare()
+                try {
+                    AndroidxSqliteDriver(
+                        driver = BundledSQLiteDriver(),
+                        databaseType = AndroidxSqliteDatabaseType.FileProvider(app, "tachiyomi.db"),
+                        schema = Database.Schema,
+                        configuration = AndroidxSqliteConfiguration(
+                            isForeignKeyConstraintsEnabled = true,
+                        ),
+                    ).also {
+                        schemaBridge.complete(migrationBackup)
+                        sqlDriverRef = WeakReference(it)
+                    }
+                } catch (exception: Throwable) {
+                    // Keep the backup created by the bridge. The next launch
+                    // can retry SQLDelight's migration without data loss.
+                    schemaBridge.logMigrationFailure(migrationBackup, exception)
+                    logcat(LogPriority.ERROR, exception) {
+                        "Database open/migration failed; migration backup was retained"
+                    }
+                    throw exception
+                }
             }
         }
         addSingletonFactory {
