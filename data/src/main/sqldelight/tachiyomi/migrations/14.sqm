@@ -1,4 +1,4 @@
-CREATE TABLE epub_bookmark(
+CREATE TABLE IF NOT EXISTS epub_bookmark(
     _id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     chapter_id INTEGER NOT NULL,
     manga_id INTEGER NOT NULL,
@@ -13,5 +13,5 @@ CREATE TABLE epub_bookmark(
     ON DELETE CASCADE
 );
 
-CREATE INDEX epub_bookmark_chapter_id_index ON epub_bookmark(chapter_id);
-CREATE INDEX epub_bookmark_manga_id_index ON epub_bookmark(manga_id);
+CREATE INDEX IF NOT EXISTS epub_bookmark_chapter_id_index ON epub_bookmark(chapter_id);
+CREATE INDEX IF NOT EXISTS epub_bookmark_manga_id_index ON epub_bookmark(manga_id);

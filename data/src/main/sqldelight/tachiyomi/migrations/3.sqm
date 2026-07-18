@@ -1,5 +1,5 @@
 -- Create ExtensionRepo table --
-CREATE TABLE extension_repos (
+CREATE TABLE IF NOT EXISTS extension_repos (
     base_url TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     short_name TEXT,

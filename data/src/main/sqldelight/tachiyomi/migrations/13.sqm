@@ -1,4 +1,4 @@
-CREATE TABLE epub_progress(
+CREATE TABLE IF NOT EXISTS epub_progress(
     chapter_id INTEGER NOT NULL PRIMARY KEY,
     manga_id INTEGER NOT NULL,
     book_url TEXT,
@@ -13,5 +13,5 @@ CREATE TABLE epub_progress(
     ON DELETE CASCADE
 );
 
-CREATE INDEX epub_progress_manga_id_index ON epub_progress(manga_id);
-CREATE INDEX epub_progress_updated_at_index ON epub_progress(updated_at);
+CREATE INDEX IF NOT EXISTS epub_progress_manga_id_index ON epub_progress(manga_id);
+CREATE INDEX IF NOT EXISTS epub_progress_updated_at_index ON epub_progress(updated_at);

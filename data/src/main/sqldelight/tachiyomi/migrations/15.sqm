@@ -1,7 +1,7 @@
 import java.util.Date;
 import kotlin.Boolean;
 
-CREATE TABLE epub_pagination_cache(
+CREATE TABLE IF NOT EXISTS epub_pagination_cache(
     chapter_id INTEGER NOT NULL,
     publication_key TEXT NOT NULL,
     layout_key TEXT NOT NULL,
@@ -18,5 +18,5 @@ CREATE TABLE epub_pagination_cache(
     ON DELETE CASCADE
 );
 
-CREATE INDEX epub_pagination_cache_chapter_id_index
+CREATE INDEX IF NOT EXISTS epub_pagination_cache_chapter_id_index
 ON epub_pagination_cache(chapter_id);
