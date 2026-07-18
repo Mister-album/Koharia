@@ -22,6 +22,10 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import koharia.komga.api.dto.LibraryDto
+import koharia.source.komga.KomgaClassifiedLibrary
+import koharia.source.komga.KomgaLibraryClassificationManager
+import koharia.source.komga.KomgaLibraryKind
+import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaSource
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -33,6 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -58,6 +63,8 @@ class KomgaLibraryScreenModel(
     private val getRemoteManga: GetRemoteManga,
     private val getManga: GetManga,
     private val getIncognitoState: GetIncognitoState,
+    private val libraryScope: KomgaLibraryScope,
+    private val libraryClassificationManager: KomgaLibraryClassificationManager,
 ) : StateScreenModel<KomgaLibraryScreenModel.State>(State(Listing.valueOf(listingQuery))) {
     var displayMode by sourcePreferences.sourceDisplayMode.asState(screenModelScope)
     var cachedOnly by basePreferences.downloadedOnly.asState(screenModelScope)
@@ -96,6 +103,13 @@ class KomgaLibraryScreenModel(
             screenModelScope.launchIO {
                 reloadKomgaState(source, showRefreshing = false, resetSelection = true, forceRefresh = true)
             }
+            if (libraryScope != KomgaLibraryScope.ALL) {
+                screenModelScope.launchIO {
+                    libraryClassificationManager.classificationsChanges(sourceId).collect { libraries ->
+                        applyClassifiedLibraries(source, libraries)
+                    }
+                }
+            }
         }
 
         if (!getIncognitoState.await(source.id)) {
@@ -105,27 +119,32 @@ class KomgaLibraryScreenModel(
 
     val mangaPagerFlow: Flow<PagingData<StateFlow<Manga>>> = combine(
         state.map { it.listing }.distinctUntilChanged(),
+        state.map { it.isLibraryScopeEmpty }.distinctUntilChanged(),
         basePreferences.downloadedOnly.changes().onStart { emit(basePreferences.downloadedOnly.get()) },
         refreshSignal,
-    ) { listing, cachedOnly, refreshSignal ->
-        Triple(listing, cachedOnly, refreshSignal)
-    }.flatMapLatest { (listing, cachedOnly, _) ->
-        Pager(PagingConfig(pageSize = 25)) {
-            getRemoteManga(sourceId, listing.query ?: "", listing.filters)
-        }.flow.map { pagingData ->
-            pagingData.map { remoteManga ->
-                getManga.subscribe(remoteManga.url, remoteManga.source)
-                    .map { localManga -> mergeRemoteWithLocal(remoteManga, localManga) }
-                    .stateIn(
-                        scope = ioCoroutineScope,
-                        started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
-                        initialValue = remoteManga,
-                    )
-            }
-                .filter { mangaStateFlow ->
-                    !cachedOnly ||
-                        downloadManager.getDownloadCount(mangaStateFlow.value) > 0
+    ) { listing, scopeEmpty, cachedOnly, refreshSignal ->
+        BrowseRequest(listing, scopeEmpty, cachedOnly, refreshSignal)
+    }.flatMapLatest { request ->
+        if (request.scopeEmpty) {
+            flowOf(PagingData.empty())
+        } else {
+            Pager(PagingConfig(pageSize = 25)) {
+                getRemoteManga(sourceId, request.listing.query ?: "", request.listing.filters)
+            }.flow.map { pagingData ->
+                pagingData.map { remoteManga ->
+                    getManga.subscribe(remoteManga.url, remoteManga.source)
+                        .map { localManga -> mergeRemoteWithLocal(remoteManga, localManga) }
+                        .stateIn(
+                            scope = ioCoroutineScope,
+                            started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+                            initialValue = remoteManga,
+                        )
                 }
+                    .filter { mangaStateFlow ->
+                        !request.cachedOnly ||
+                            downloadManager.getDownloadCount(mangaStateFlow.value) > 0
+                    }
+            }
         }
     }
         .cachedIn(ioCoroutineScope)
@@ -134,7 +153,10 @@ class KomgaLibraryScreenModel(
         if (source !is CatalogueSource) return
 
         (source as? KomgaSource)?.resetPersistentFilters()
-        val filters = source.getFilterList()
+        val filters = (source as? KomgaSource)?.buildFilterListForLibrary(
+            libraryId = state.value.selectedKomgaLibraryId,
+            allowedLibraryIds = currentAllowedLibraryIds(),
+        ) ?: source.getFilterList()
         mutableState.update { it.copy(filters = filters) }
     }
 
@@ -156,7 +178,13 @@ class KomgaLibraryScreenModel(
         if (source !is CatalogueSource) return
 
         val input = state.value.listing as? Listing.Search
-            ?: Listing.Search(query = null, filters = source.getFilterList())
+            ?: Listing.Search(
+                query = null,
+                filters = (source as? KomgaSource)?.buildFilterListForLibrary(
+                    libraryId = state.value.selectedKomgaLibraryId,
+                    allowedLibraryIds = currentAllowedLibraryIds(),
+                ) ?: source.getFilterList(),
+            )
 
         val nextFilters = filters ?: input.filters
         (source as? KomgaSource)?.savePersistentFilterState(nextFilters)
@@ -182,7 +210,7 @@ class KomgaLibraryScreenModel(
         if (source !is CatalogueSource) return
 
         if (source is KomgaSource) {
-            val filters = source.buildFilterListForTagSearch(genreName)
+            val filters = source.buildFilterListForTagSearch(genreName, currentAllowedLibraryIds())
             logcat(LogPriority.DEBUG) {
                 "KomgaLibraryScreenModel.searchGenre: applying Komga tag search tag=$genreName"
             }
@@ -269,7 +297,10 @@ class KomgaLibraryScreenModel(
 
     fun selectKomgaLibrary(libraryId: String?) {
         val komgaSource = source as? KomgaSource ?: return
-        val filters = komgaSource.buildFilterListForLibrary(libraryId)
+        val filters = komgaSource.buildFilterListForLibrary(
+            libraryId = libraryId,
+            allowedLibraryIds = currentAllowedLibraryIds(),
+        )
         mutableState.update {
             it.copy(
                 selectedKomgaLibraryId = libraryId,
@@ -310,23 +341,27 @@ class KomgaLibraryScreenModel(
 
         try {
             val libraries = komgaSource.getBrowseLibraries(forceRefresh)
+            libraryClassificationManager.updateLibraries(sourceId, libraries)
+            val visibleLibraries = librariesForScope(libraries)
             val selectedLibraryId = if (resetSelection) {
                 null
             } else {
                 state.value.selectedKomgaLibraryId
-                    ?.takeIf { selectedId -> libraries.any { it.id == selectedId } }
+                    ?.takeIf { selectedId -> visibleLibraries.any { it.id == selectedId } }
             }
             val filters = komgaSource.buildFilterListForLibrary(
                 libraryId = selectedLibraryId,
                 preservePersistentFilters = selectedLibraryId == null,
+                allowedLibraryIds = visibleLibraries.idsForScope(),
             )
 
             mutableState.update {
                 it.copy(
                     listing = Listing.Search(query = null, filters = filters),
                     filters = filters,
-                    komgaLibraries = libraries.toImmutableList(),
+                    komgaLibraries = visibleLibraries.toImmutableList(),
                     selectedKomgaLibraryId = selectedLibraryId,
+                    isLibraryScopeEmpty = libraryScope != KomgaLibraryScope.ALL && visibleLibraries.isEmpty(),
                     toolbarQuery = null,
                     persistentFilteringEnabled = komgaSource.isPersistentFilteringEnabled(),
                 )
@@ -335,7 +370,12 @@ class KomgaLibraryScreenModel(
                 komgaSource.refreshBrowseRequests()
             }
         } catch (e: Exception) {
-            if (resetSelection) {
+            if (libraryScope != KomgaLibraryScope.ALL) {
+                applyClassifiedLibraries(
+                    komgaSource,
+                    libraryClassificationManager.getLibraries(sourceId),
+                )
+            } else if (resetSelection) {
                 val filters = FilterList()
                 mutableState.update {
                     it.copy(
@@ -361,6 +401,50 @@ class KomgaLibraryScreenModel(
         }
         komgaSettingsChangeListener = null
         super.onDispose()
+    }
+
+    private fun applyClassifiedLibraries(
+        komgaSource: KomgaSource,
+        libraries: List<KomgaClassifiedLibrary>,
+    ) {
+        if (libraryScope == KomgaLibraryScope.ALL) return
+        val visibleLibraries = libraries
+            .filter { it.kind == libraryScope.kind }
+            .map { LibraryDto(it.id, it.name) }
+        val selectedLibraryId = state.value.selectedKomgaLibraryId
+            ?.takeIf { selectedId -> visibleLibraries.any { it.id == selectedId } }
+        val filters = komgaSource.buildFilterListForLibrary(
+            libraryId = selectedLibraryId,
+            preservePersistentFilters = selectedLibraryId == null,
+            allowedLibraryIds = visibleLibraries.mapTo(linkedSetOf(), LibraryDto::id),
+        )
+        mutableState.update {
+            it.copy(
+                listing = Listing.Search(query = null, filters = filters),
+                filters = filters,
+                toolbarQuery = null,
+                komgaLibraries = visibleLibraries.toImmutableList(),
+                selectedKomgaLibraryId = selectedLibraryId,
+                isLibraryScopeEmpty = visibleLibraries.isEmpty(),
+            )
+        }
+        refreshSignal.value += 1
+    }
+
+    private fun librariesForScope(libraries: List<LibraryDto>): List<LibraryDto> {
+        if (libraryScope == KomgaLibraryScope.ALL) return libraries
+        val kindById = libraryClassificationManager.getLibraries(sourceId).associate { it.id to it.kind }
+        return libraries.filter { library ->
+            (kindById[library.id] ?: KomgaLibraryKind.COMIC) == libraryScope.kind
+        }
+    }
+
+    private fun List<LibraryDto>.idsForScope(): Set<String>? {
+        return if (libraryScope == KomgaLibraryScope.ALL) null else mapTo(linkedSetOf(), LibraryDto::id)
+    }
+
+    private fun currentAllowedLibraryIds(): Set<String>? {
+        return state.value.komgaLibraries.idsForScope()
     }
 
     sealed class Listing(open val query: String?, open val filters: FilterList) {
@@ -395,11 +479,26 @@ class KomgaLibraryScreenModel(
         val komgaLibraries: ImmutableList<LibraryDto> = persistentListOf(),
         val selectedKomgaLibraryId: String? = null,
         val isRefreshing: Boolean = false,
+        val isLibraryScopeEmpty: Boolean = false,
         val persistentFilteringEnabled: Boolean = false,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }
 }
+
+private val KomgaLibraryScope.kind: KomgaLibraryKind
+    get() = when (this) {
+        KomgaLibraryScope.ALL -> KomgaLibraryKind.COMIC
+        KomgaLibraryScope.COMIC -> KomgaLibraryKind.COMIC
+        KomgaLibraryScope.BOOK -> KomgaLibraryKind.BOOK
+    }
+
+private data class BrowseRequest(
+    val listing: KomgaLibraryScreenModel.Listing,
+    val scopeEmpty: Boolean,
+    val cachedOnly: Boolean,
+    @Suppress("unused") val refreshSignal: Int,
+)
 
 private fun mergeRemoteWithLocal(remote: Manga, local: Manga?): Manga {
     if (local == null) return remote

@@ -1,14 +1,25 @@
 package eu.kanade.presentation.more.settings.screen
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import koharia.source.komga.KomgaLibraryClassificationManager
+import koharia.source.komga.KomgaLibraryKind
+import koharia.source.komga.KomgaServerPreferences
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -36,10 +47,96 @@ object SettingsLibraryScreen : SearchableSettings {
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
 
         return listOf(
+            getContentClassificationGroup(),
             getDisplayGroup(libraryPreferences),
             getGlobalUpdateGroup(libraryPreferences),
             getChapterSettingsGroup(libraryPreferences),
             getBehaviorGroup(libraryPreferences),
+        )
+    }
+
+    @Composable
+    private fun getContentClassificationGroup(): Preference.PreferenceGroup {
+        val navigator = LocalNavigator.currentOrThrow
+        val manager = remember { Injekt.get<KomgaLibraryClassificationManager>() }
+        val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
+        val enabled by manager.enabled.collectAsState()
+        val activeServerId by serverPreferences.activeServerId.collectAsState()
+        val profiles by remember(serverPreferences) {
+            serverPreferences.profilesChanges()
+        }.collectAsState(initial = serverPreferences.getProfiles())
+        val libraries by remember(activeServerId) {
+            manager.classificationsChanges(activeServerId)
+        }.collectAsState(initial = manager.getLibraries(activeServerId))
+        val activeServer = profiles.firstOrNull { it.id == activeServerId }
+        val hasServer = activeServer != null
+        val comicCount = libraries.count { it.kind == KomgaLibraryKind.COMIC }
+        val bookCount = libraries.count { it.kind == KomgaLibraryKind.BOOK }
+        var showEnableConfirmation by remember { mutableStateOf(false) }
+
+        if (showEnableConfirmation) {
+            AlertDialog(
+                onDismissRequest = { showEnableConfirmation = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            manager.enableClassification()
+                            showEnableConfirmation = false
+                        },
+                    ) {
+                        Text(stringResource(MR.strings.action_ok))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEnableConfirmation = false }) {
+                        Text(stringResource(MR.strings.action_cancel))
+                    }
+                },
+                title = { Text(stringResource(MR.strings.komga_library_classification_confirm_title)) },
+                text = { Text(stringResource(MR.strings.komga_library_classification_confirm_message)) },
+            )
+        }
+
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.komga_library_classification_group),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.CustomPreference(
+                    title = stringResource(MR.strings.komga_library_classification_enable),
+                ) {
+                    SwitchPreferenceWidget(
+                        title = stringResource(MR.strings.komga_library_classification_enable),
+                        subtitle = stringResource(
+                            if (hasServer) {
+                                MR.strings.komga_library_classification_summary
+                            } else {
+                                MR.strings.komga_library_classification_no_server
+                            },
+                        ),
+                        checked = enabled,
+                        enabled = hasServer,
+                        onCheckedChanged = { checked ->
+                            if (checked) {
+                                showEnableConfirmation = true
+                            } else {
+                                manager.disableClassification()
+                            }
+                        },
+                    )
+                },
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.komga_library_classification_configure),
+                    subtitle = activeServer?.let {
+                        stringResource(
+                            MR.strings.komga_library_classification_counts,
+                            it.name,
+                            comicCount,
+                            bookCount,
+                        )
+                    } ?: stringResource(MR.strings.komga_library_classification_no_server),
+                    enabled = hasServer,
+                    onClick = { navigator.push(KomgaLibraryClassificationScreen()) }.takeIf { hasServer },
+                ),
+            ),
         )
     }
 
@@ -125,10 +222,6 @@ object SettingsLibraryScreen : SearchableSettings {
                         MANGA_NON_COMPLETED to stringResource(MR.strings.pref_update_only_non_completed),
                     ),
                     title = stringResource(MR.strings.pref_library_update_smart_update),
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = libraryPreferences.newShowUpdatesCount,
-                    title = stringResource(MR.strings.pref_library_update_show_tab_badge),
                 ),
             ),
         )

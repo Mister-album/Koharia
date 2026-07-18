@@ -64,15 +64,18 @@ class KomgaServerProfilesScreen : Screen() {
         val navigator = LocalNavigator.currentOrThrow
         val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
         val localConfigManager = remember { Injekt.get<KomgaLocalConfigManager>() }
+        val classificationManager = remember { Injekt.get<KomgaLibraryClassificationManager>() }
         val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
         val profiles by serverPreferences.profilesChanges().collectAsState(initial = serverPreferences.getProfiles())
         val activeServerId by serverPreferences.activeServerId.collectAsState()
         val localConfigMode by serverPreferences.localConfigMode.collectAsState()
+        val classificationEnabled by classificationManager.enabled.collectAsState()
         val downloadDirectoryMode by serverPreferences.downloadDirectoryMode.collectAsState()
         val scope = rememberCoroutineScope()
 
         var showAddDialog by rememberSaveable { mutableStateOf(false) }
         var showModeHelpDialog by rememberSaveable { mutableStateOf(false) }
+        var showDisableClassificationDialog by rememberSaveable { mutableStateOf(false) }
         var pendingServerName by rememberSaveable { mutableStateOf<String?>(null) }
         var profileToDelete by remember { mutableStateOf<KomgaServerProfile?>(null) }
         val addServerTitle = stringResource(MR.strings.komga_server_settings_add_title)
@@ -139,7 +142,13 @@ class KomgaServerProfilesScreen : Screen() {
                             LocalConfigMode.Shared to stringResource(MR.strings.komga_local_config_mode_shared),
                             LocalConfigMode.Separate to stringResource(MR.strings.komga_local_config_mode_separate),
                         ).toImmutableMap(),
-                        onValueChange = { localConfigManager.setLocalConfigMode(it) },
+                        onValueChange = { mode ->
+                            if (mode == LocalConfigMode.Shared && classificationEnabled) {
+                                showDisableClassificationDialog = true
+                            } else {
+                                localConfigManager.setLocalConfigMode(mode)
+                            }
+                        },
                     )
                 }
                 item {
@@ -203,6 +212,29 @@ class KomgaServerProfilesScreen : Screen() {
         if (showModeHelpDialog) {
             ModeHelpDialog(
                 onDismissRequest = { showModeHelpDialog = false },
+            )
+        }
+
+        if (showDisableClassificationDialog) {
+            AlertDialog(
+                onDismissRequest = { showDisableClassificationDialog = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            classificationManager.disableClassificationAndUseSharedConfig()
+                            showDisableClassificationDialog = false
+                        },
+                    ) {
+                        Text(text = stringResource(MR.strings.action_ok))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDisableClassificationDialog = false }) {
+                        Text(text = stringResource(MR.strings.action_cancel))
+                    }
+                },
+                title = { Text(stringResource(MR.strings.komga_library_classification_disable_title)) },
+                text = { Text(stringResource(MR.strings.komga_library_classification_disable_message)) },
             )
         }
 

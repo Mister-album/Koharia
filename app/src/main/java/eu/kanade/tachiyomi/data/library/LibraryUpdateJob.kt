@@ -272,8 +272,6 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                                                 hasDownloads.store(true)
                                             }
 
-                                            libraryPreferences.newUpdatesCount.getAndSet { it + newChapters.size }
-
                                             // Convert to the manga that contains new chapters
                                             newUpdates.add(manga to newChapters.toTypedArray())
                                         }

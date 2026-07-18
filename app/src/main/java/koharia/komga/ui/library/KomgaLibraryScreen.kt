@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
@@ -45,6 +47,7 @@ import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
+import eu.kanade.presentation.more.settings.screen.KomgaLibraryClassificationScreen
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.download.DownloadManager
@@ -53,7 +56,10 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
+import koharia.source.komga.KomgaLibraryClassificationManager
+import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaServerPreferences
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -67,6 +73,8 @@ import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.screens.EmptyScreen
+import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
@@ -77,9 +85,12 @@ data class KomgaLibraryScreen(
     val sourceId: Long,
     private val listingQuery: String?,
     private val showNavigationUp: Boolean = true,
+    private val libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
 ) : Screen(), AssistContentScreen {
 
     private var assistUrl: String? = null
+    private val queryEvent = Channel<SearchType>()
+    private val refreshEvent = Channel<Unit>(capacity = Channel.CONFLATED)
 
     override fun onProvideAssistUrl() = assistUrl
 
@@ -100,6 +111,7 @@ data class KomgaLibraryScreen(
         val getRemoteManga: GetRemoteManga = Injekt.get()
         val getManga: GetManga = Injekt.get()
         val getIncognitoState: GetIncognitoState = Injekt.get()
+        val libraryClassificationManager: KomgaLibraryClassificationManager = Injekt.get()
 
         val screenModel = rememberScreenModel {
             KomgaLibraryScreenModel(
@@ -113,6 +125,8 @@ data class KomgaLibraryScreen(
                 getRemoteManga = getRemoteManga,
                 getManga = getManga,
                 getIncognitoState = getIncognitoState,
+                libraryScope = libraryScope,
+                libraryClassificationManager = libraryClassificationManager,
             )
         }
         val state by screenModel.state.collectAsState()
@@ -234,20 +248,34 @@ data class KomgaLibraryScreen(
                     .fillMaxSize()
                     .pullRefresh(pullRefreshState),
             ) {
-                BrowseSourceContent(
-                    source = screenModel.source,
-                    mangaList = mangaList,
-                    columns = libraryGridCellsForColumns(columns),
-                    displayMode = screenModel.displayMode,
-                    snackbarHostState = snackbarHostState,
-                    contentPadding = paddingValues,
-                    showLibraryBadges = false,
-                    onWebViewClick = onWebViewClick,
-                    onHelpClick = onHelpClick,
-                    onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
-                    onMangaLongClick = {},
-                    modifier = Modifier.offset { IntOffset(x = 0, y = pullOffsetPx.roundToInt()) },
-                )
+                if (state.isLibraryScopeEmpty && libraryScope != KomgaLibraryScope.ALL) {
+                    EmptyScreen(
+                        stringRes = MR.strings.komga_library_classification_empty,
+                        modifier = Modifier.padding(paddingValues),
+                        actions = persistentListOf(
+                            EmptyScreenAction(
+                                stringRes = MR.strings.komga_library_classification_configure,
+                                icon = Icons.Outlined.Settings,
+                                onClick = { navigator.push(KomgaLibraryClassificationScreen()) },
+                            ),
+                        ),
+                    )
+                } else {
+                    BrowseSourceContent(
+                        source = screenModel.source,
+                        mangaList = mangaList,
+                        columns = libraryGridCellsForColumns(columns),
+                        displayMode = screenModel.displayMode,
+                        snackbarHostState = snackbarHostState,
+                        contentPadding = paddingValues,
+                        showLibraryBadges = false,
+                        onWebViewClick = onWebViewClick,
+                        onHelpClick = onHelpClick,
+                        onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
+                        onMangaLongClick = {},
+                        modifier = Modifier.offset { IntOffset(x = 0, y = pullOffsetPx.roundToInt()) },
+                    )
+                }
                 PullRefreshIndicator(
                     refreshing = isRefreshing,
                     state = pullRefreshState,
@@ -297,11 +325,6 @@ data class KomgaLibraryScreen(
     suspend fun search(query: String) = queryEvent.send(SearchType.Text(query))
     suspend fun searchGenre(name: String) = queryEvent.send(SearchType.Genre(name))
     suspend fun refresh() = refreshEvent.send(Unit)
-
-    companion object {
-        private val queryEvent = Channel<SearchType>()
-        private val refreshEvent = Channel<Unit>(capacity = Channel.CONFLATED)
-    }
 
     sealed class SearchType(val txt: String) {
         class Text(txt: String) : SearchType(txt)

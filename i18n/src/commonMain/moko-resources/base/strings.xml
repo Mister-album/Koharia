@@ -1321,4 +1321,19 @@
     <string name="reader_remote_progress_message">Local: page %1$d of %2$d (%3$d%%)\nServer: page %4$d of %5$d (%6$d%%)</string>
     <string name="epub_reader_keep_local_progress">Keep current position</string>
     <string name="epub_reader_jump_remote_progress">Jump to server position</string>
+    <string name="label_comics">Comics</string>
+    <string name="label_books">Books</string>
+    <string name="komga_library_classification_group">Content classification</string>
+    <string name="komga_library_classification_enable">Separate comics and books</string>
+    <string name="komga_library_classification_summary">Classify the active server's libraries into separate Comics and Books tabs</string>
+    <string name="komga_library_classification_configure">Configure server library classification</string>
+    <string name="komga_library_classification_counts">%1$s · Comics %2$d · Books %3$d</string>
+    <string name="komga_library_classification_confirm_title">Enable comics and books classification?</string>
+    <string name="komga_library_classification_confirm_message">The main navigation will be split into Comics and Books. If local configuration is shared, the existing configuration will be copied to each server and switched to separate mode.</string>
+    <string name="komga_library_classification_disable_title">Switch to shared configuration?</string>
+    <string name="komga_library_classification_disable_message">Comics and books classification requires separate local configuration. Continuing will disable classification and switch to shared configuration. Saved library labels will be kept.</string>
+    <string name="komga_library_classification_no_server">Add and select a Komga server first</string>
+    <string name="komga_library_classification_load_failed">Couldn't refresh the server libraries. Showing the last saved list.</string>
+    <string name="komga_library_classification_no_libraries">No libraries were found on this server</string>
+    <string name="komga_library_classification_empty">No libraries have been assigned to this section</string>
 </resources>

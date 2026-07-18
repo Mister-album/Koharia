@@ -13,6 +13,7 @@ import tachiyomi.core.common.util.system.logcat
 class KomgaServerRemovalManager(
     private val serverPreferences: KomgaServerPreferences,
     private val localConfigManager: KomgaLocalConfigManager,
+    private val libraryClassificationManager: KomgaLibraryClassificationManager,
     private val downloadProvider: DownloadProvider,
     private val downloadCache: DownloadCache,
     private val komgaSharedDownloadIndexManager: KomgaSharedDownloadIndexManager,
@@ -30,6 +31,7 @@ class KomgaServerRemovalManager(
             clearServerSettingsIfNeeded(serverId)
             cleanupDownloads(profile, options)
             epubCacheManager.clearServer(serverId)
+            libraryClassificationManager.clearServer(serverId)
             localConfigManager.clearScopeForServer(serverId)
         }
         serverPreferences.setProfiles(currentProfiles - profile)

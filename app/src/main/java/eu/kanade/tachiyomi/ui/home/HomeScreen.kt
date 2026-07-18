@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBarItem
@@ -23,10 +21,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.util.fastForEach
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -37,23 +34,23 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
+import eu.kanade.tachiyomi.ui.library.BooksTab
+import eu.kanade.tachiyomi.ui.library.ComicsTab
+import eu.kanade.tachiyomi.ui.library.KomgaLibraryTab
 import eu.kanade.tachiyomi.ui.library.LibraryTab
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.more.MoreTab
-import eu.kanade.tachiyomi.ui.updates.UpdatesTab
+import koharia.source.komga.KomgaLibraryClassificationManager
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import soup.compose.material.motion.animation.materialFadeThroughIn
 import soup.compose.material.motion.animation.materialFadeThroughOut
-import tachiyomi.domain.library.service.LibraryPreferences
-import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.NavigationBar
 import tachiyomi.presentation.core.components.material.NavigationRail
 import tachiyomi.presentation.core.components.material.Scaffold
-import tachiyomi.presentation.core.i18n.pluralStringResource
+import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -70,18 +67,19 @@ object HomeScreen : Screen() {
     @Suppress("ConstPropertyName")
     private const val TabNavigatorKey = "HomeTabs"
 
-    private val TABS = listOf(
-        LibraryTab,
-        UpdatesTab,
-        HistoryTab,
-        MoreTab,
-    )
-
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
+        val classificationManager = remember { Injekt.get<KomgaLibraryClassificationManager>() }
+        val classificationEnabled by classificationManager.enabled.collectAsState()
+        val defaultLibraryTab: KomgaLibraryTab = if (classificationEnabled) ComicsTab else LibraryTab
+        val tabs = if (classificationEnabled) {
+            listOf(ComicsTab, BooksTab, HistoryTab, MoreTab)
+        } else {
+            listOf(LibraryTab, HistoryTab, MoreTab)
+        }
         TabNavigator(
-            tab = LibraryTab,
+            tab = defaultLibraryTab,
             key = TabNavigatorKey,
         ) { tabNavigator ->
             // Provide usable navigator to content screen
@@ -90,7 +88,7 @@ object HomeScreen : Screen() {
                     startBar = {
                         if (isTabletUi()) {
                             NavigationRail {
-                                TABS.fastForEach {
+                                tabs.fastForEach {
                                     NavigationRailItem(it)
                                 }
                             }
@@ -107,7 +105,7 @@ object HomeScreen : Screen() {
                                 exit = shrinkVertically(),
                             ) {
                                 NavigationBar {
-                                    TABS.fastForEach {
+                                    tabs.fastForEach {
                                         NavigationBarItem(it)
                                     }
                                 }
@@ -137,28 +135,37 @@ object HomeScreen : Screen() {
                 }
             }
 
-            val goToLibraryTab = { tabNavigator.current = LibraryTab }
+            val goToLibraryTab = { tabNavigator.current = defaultLibraryTab }
 
-            BackHandler(enabled = tabNavigator.current != LibraryTab, onBack = goToLibraryTab)
+            BackHandler(enabled = tabNavigator.current != defaultLibraryTab, onBack = goToLibraryTab)
 
-            LaunchedEffect(Unit) {
+            LaunchedEffect(classificationEnabled) {
+                tabNavigator.current = when {
+                    classificationEnabled && tabNavigator.current == LibraryTab -> ComicsTab
+                    !classificationEnabled &&
+                        (tabNavigator.current == ComicsTab || tabNavigator.current == BooksTab) -> LibraryTab
+                    else -> tabNavigator.current
+                }
+            }
+
+            LaunchedEffect(classificationEnabled) {
                 launch {
                     librarySearchEvent.receiveAsFlow().collectLatest {
                         goToLibraryTab()
-                        LibraryTab.search(it)
+                        defaultLibraryTab.search(it)
                     }
                 }
                 launch {
                     libraryGenreSearchEvent.receiveAsFlow().collectLatest {
                         goToLibraryTab()
-                        LibraryTab.searchGenre(it)
+                        defaultLibraryTab.searchGenre(it)
                     }
                 }
                 launch {
                     openTabEvent.receiveAsFlow().collectLatest {
                         tabNavigator.current = when (it) {
-                            is Tab.Library -> LibraryTab
-                            Tab.Updates -> UpdatesTab
+                            is Tab.Library -> defaultLibraryTab
+                            Tab.Updates -> if (classificationEnabled) BooksTab else LibraryTab
                             Tab.History -> HistoryTab
                             is Tab.More -> MoreTab
                         }
@@ -180,7 +187,7 @@ object HomeScreen : Screen() {
         val tabNavigator = LocalTabNavigator.current
         val navigator = LocalNavigator.currentOrThrow
         val scope = rememberCoroutineScope()
-        val selected = tabNavigator.current::class == tab::class
+        val selected = tabNavigator.current.key == tab.key
         NavigationBarItem(
             selected = selected,
             onClick = {
@@ -208,7 +215,7 @@ object HomeScreen : Screen() {
         val tabNavigator = LocalTabNavigator.current
         val navigator = LocalNavigator.currentOrThrow
         val scope = rememberCoroutineScope()
-        val selected = tabNavigator.current::class == tab::class
+        val selected = tabNavigator.current.key == tab.key
         NavigationRailItem(
             selected = selected,
             onClick = {
@@ -233,40 +240,10 @@ object HomeScreen : Screen() {
 
     @Composable
     private fun NavigationIconItem(tab: eu.kanade.presentation.util.Tab) {
-        BadgedBox(
-            badge = {
-                when {
-                    tab is UpdatesTab -> {
-                        val count by produceState(initialValue = 0) {
-                            val pref = Injekt.get<LibraryPreferences>()
-                            combine(
-                                pref.newShowUpdatesCount.changes(),
-                                pref.newUpdatesCount.changes(),
-                            ) { show, count -> if (show) count else 0 }
-                                .collectLatest { value = it }
-                        }
-                        if (count > 0) {
-                            Badge {
-                                val desc = pluralStringResource(
-                                    MR.plurals.notification_chapters_generic,
-                                    count = count,
-                                    count,
-                                )
-                                Text(
-                                    text = count.toString(),
-                                    modifier = Modifier.semantics { contentDescription = desc },
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-        ) {
-            Icon(
-                painter = tab.options.icon!!,
-                contentDescription = tab.options.title,
-            )
-        }
+        Icon(
+            painter = tab.options.icon!!,
+            contentDescription = tab.options.title,
+        )
     }
 
     suspend fun search(query: String) {

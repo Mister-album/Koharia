@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
@@ -27,6 +28,7 @@ import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
 import koharia.komga.ui.library.KomgaLibraryScreen
+import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaServerProfilesScreen
 import tachiyomi.i18n.MR
@@ -36,23 +38,32 @@ import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-data object LibraryTab : Tab {
+sealed class KomgaLibraryTab(
+    private val libraryScope: KomgaLibraryScope,
+    private val tabIndex: UShort,
+) : Tab {
 
-    private var komgaBrowseScreen = KomgaLibraryScreen(
-        sourceId = KomgaServerPreferences.NO_ACTIVE_SERVER,
-        listingQuery = null,
-        showNavigationUp = false,
-    )
+    private var komgaBrowseScreen = newScreen(KomgaServerPreferences.NO_ACTIVE_SERVER)
 
     override val options: TabOptions
         @Composable
         get() {
             val isSelected = LocalTabNavigator.current.current.key == key
-            val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_library_enter)
+            val title = when (libraryScope) {
+                KomgaLibraryScope.ALL -> stringResource(MR.strings.label_library)
+                KomgaLibraryScope.COMIC -> stringResource(MR.strings.label_comics)
+                KomgaLibraryScope.BOOK -> stringResource(MR.strings.label_books)
+            }
+            val icon = if (libraryScope == KomgaLibraryScope.BOOK) {
+                painterResource(R.drawable.ic_book_24dp)
+            } else {
+                val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_library_enter)
+                rememberAnimatedVectorPainter(image, isSelected)
+            }
             return TabOptions(
-                index = 0u,
-                title = stringResource(MR.strings.label_library),
-                icon = rememberAnimatedVectorPainter(image, isSelected),
+                index = tabIndex,
+                title = title,
+                icon = icon,
             )
         }
 
@@ -84,13 +95,7 @@ data object LibraryTab : Tab {
             }
             return
         }
-        val activeScreen = remember(activeServerId) {
-            KomgaLibraryScreen(
-                sourceId = activeServerId,
-                listingQuery = null,
-                showNavigationUp = false,
-            )
-        }
+        val activeScreen = remember(activeServerId) { newScreen(activeServerId) }
         val isSelected = LocalTabNavigator.current.current.key == key
         var hasEntered by remember { mutableStateOf(false) }
 
@@ -114,4 +119,17 @@ data object LibraryTab : Tab {
     suspend fun search(query: String) = komgaBrowseScreen.search(query)
 
     suspend fun searchGenre(name: String) = komgaBrowseScreen.searchGenre(name)
+
+    private fun newScreen(sourceId: Long) = KomgaLibraryScreen(
+        sourceId = sourceId,
+        listingQuery = null,
+        showNavigationUp = false,
+        libraryScope = libraryScope,
+    )
 }
+
+data object LibraryTab : KomgaLibraryTab(KomgaLibraryScope.ALL, 0u)
+
+data object ComicsTab : KomgaLibraryTab(KomgaLibraryScope.COMIC, 0u)
+
+data object BooksTab : KomgaLibraryTab(KomgaLibraryScope.BOOK, 1u)

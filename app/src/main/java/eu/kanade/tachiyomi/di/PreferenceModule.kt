@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
+import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaServerPreferences
@@ -24,7 +25,6 @@ import tachiyomi.domain.backup.service.BackupPreferences
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StoragePreferences
-import tachiyomi.domain.updates.service.UpdatesPreferences
 import uy.kohesive.injekt.api.InjektModule
 import uy.kohesive.injekt.api.InjektRegistrar
 import uy.kohesive.injekt.api.addSingletonFactory
@@ -53,6 +53,14 @@ class PreferenceModule(val app: Application) : InjektModule {
             )
         }
         addSingletonFactory {
+            KomgaLibraryClassificationManager(
+                preferenceStore = get<PreferenceStore>(),
+                serverPreferences = get<KomgaServerPreferences>(),
+                localConfigManager = get<KomgaLocalConfigManager>(),
+                json = get(),
+            )
+        }
+        addSingletonFactory {
             KomgaScopedPreferenceStoreFactory(
                 app = app,
                 preferenceStore = get<PreferenceStore>(),
@@ -63,6 +71,7 @@ class PreferenceModule(val app: Application) : InjektModule {
             KomgaServerRemovalManager(
                 serverPreferences = get<KomgaServerPreferences>(),
                 localConfigManager = get<KomgaLocalConfigManager>(),
+                libraryClassificationManager = get(),
                 downloadProvider = get(),
                 downloadCache = get(),
                 komgaSharedDownloadIndexManager = get(),
@@ -86,9 +95,6 @@ class PreferenceModule(val app: Application) : InjektModule {
         }
         addSingletonFactory {
             LibraryPreferences(get<ScopedPreferenceStore>())
-        }
-        addSingletonFactory {
-            UpdatesPreferences(get())
         }
         addSingletonFactory {
             ReaderPreferences(get<ScopedPreferenceStore>())

@@ -1182,4 +1182,19 @@
     <string name="reader_remote_progress_message">本地：第 %1$d/%2$d 页（%3$d%%）\n服务器：第 %4$d/%5$d 页（%6$d%%）</string>
     <string name="epub_reader_keep_local_progress">保留当前位置</string>
     <string name="epub_reader_jump_remote_progress">跳转至服务器进度</string>
+    <string name="label_comics">漫画</string>
+    <string name="label_books">书籍</string>
+    <string name="komga_library_classification_group">内容分类</string>
+    <string name="komga_library_classification_enable">开启漫画、书籍分类</string>
+    <string name="komga_library_classification_summary">按当前服务器的库标签，将主导航拆分为漫画和书籍</string>
+    <string name="komga_library_classification_configure">配置服务器库分类</string>
+    <string name="komga_library_classification_counts">%1$s · 漫画 %2$d · 书籍 %3$d</string>
+    <string name="komga_library_classification_confirm_title">开启漫画、书籍分类？</string>
+    <string name="komga_library_classification_confirm_message">主导航将拆分为漫画和书籍。若当前使用共用本地配置，现有配置将先复制到各服务器并切换为独立模式。</string>
+    <string name="komga_library_classification_disable_title">切换为共用配置？</string>
+    <string name="komga_library_classification_disable_message">漫画、书籍分类需要使用独立本地配置。继续后将关闭分类并切换为共用配置，已保存的库标签会保留。</string>
+    <string name="komga_library_classification_no_server">请先添加并选择 Komga 服务器</string>
+    <string name="komga_library_classification_load_failed">无法刷新服务器库，当前显示最近保存的列表</string>
+    <string name="komga_library_classification_no_libraries">当前服务器中没有可访问的库</string>
+    <string name="komga_library_classification_empty">尚未将库分配到此分区</string>
 </resources>

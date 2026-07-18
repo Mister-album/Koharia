@@ -532,7 +532,7 @@ class KomgaSource(
         } catch (e: Exception) {
             fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
             Log.e("KomgaSource", "Failed to load Komga libraries", e)
-            emptyList()
+            throw e
         }
     }
 
@@ -568,15 +568,19 @@ class KomgaSource(
         preferences.unregisterOnSharedPreferenceChangeListener(listener)
     }
 
-    fun buildFilterListForLibrary(libraryId: String?, preservePersistentFilters: Boolean = false): FilterList {
-        val filters = getFilterList()
+    fun buildFilterListForLibrary(
+        libraryId: String?,
+        preservePersistentFilters: Boolean = false,
+        allowedLibraryIds: Set<String>? = null,
+    ): FilterList {
+        val filters = getFilterList().restrictLibraries(allowedLibraryIds)
         if (libraryId == null && preservePersistentFilters && isPersistentFilteringEnabled()) {
-            return filters
+            if (allowedLibraryIds == null) return filters
         }
 
         filters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.forEach { option ->
             option.state = if (libraryId == null) {
-                true
+                allowedLibraryIds != null || option.state
             } else {
                 option.id == libraryId
             }
@@ -586,7 +590,7 @@ class KomgaSource(
         return filters
     }
 
-    fun buildFilterListForTagSearch(tag: String): FilterList {
+    fun buildFilterListForTagSearch(tag: String, allowedLibraryIds: Set<String>? = null): FilterList {
         val targetGroup = when {
             tags.any { it.equals(tag, true) } -> "Tags"
             genres.any { it.equals(tag, true) } -> "Genres"
@@ -594,7 +598,12 @@ class KomgaSource(
         }
         Log.d("KomgaSource", "buildFilterListForTagSearch: tag=$tag targetGroup=$targetGroup")
 
-        val filters = getFilterList().withSelectedMultiOption(targetGroup, tag)
+        val filters = getFilterList()
+            .restrictLibraries(allowedLibraryIds)
+            .withSelectedMultiOption(targetGroup, tag)
+        if (allowedLibraryIds != null) {
+            filters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.forEach { it.state = true }
+        }
         filters.filterIsInstance<TypeSelect>().firstOrNull()?.state = 0
         filters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(1, true)
         return filters
@@ -733,6 +742,24 @@ private fun FilterList.withSelectedMultiOption(groupName: String, optionId: Stri
                 groupName,
                 listOf(UriMultiSelectOption(optionId).apply { state = true }),
             )
+        },
+    )
+}
+
+private fun FilterList.restrictLibraries(allowedLibraryIds: Set<String>?): FilterList {
+    if (allowedLibraryIds == null) return this
+    return FilterList(
+        map { filter ->
+            if (filter is LibraryFilter) {
+                LibraryFilter(
+                    libraries = filter.state
+                        .filter { it.id in allowedLibraryIds }
+                        .map { LibraryDto(id = it.id, name = it.name) },
+                    defaultLibraries = emptySet(),
+                )
+            } else {
+                filter
+            }
         },
     )
 }
