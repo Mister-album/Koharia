@@ -17,17 +17,23 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalDrawerSheet
@@ -235,12 +241,18 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             val currentTheme by epubLayoutPreferences.theme.changes().collectAsState(epubLayoutPreferences.theme.get())
             val currentCustomBackgroundColor by epubLayoutPreferences.customBackgroundColor.changes()
                 .collectAsState(epubLayoutPreferences.customBackgroundColor.get())
+            val currentReaderBackgroundColor = remember(currentTheme, currentCustomBackgroundColor) {
+                Color(currentTheme.readerBackgroundColor(currentCustomBackgroundColor))
+            }
             val currentReadingMode by epubLayoutPreferences.readingMode.changes()
                 .collectAsState(epubLayoutPreferences.readingMode.get())
             val currentPageDirection by epubLayoutPreferences.pageDirection.changes()
                 .collectAsState(epubLayoutPreferences.pageDirection.get())
             val currentVerticalMargins by epubLayoutPreferences.verticalMargins.changes()
                 .collectAsState(epubLayoutPreferences.verticalMargins.get())
+            val fullscreenVerticalPadding = remember(currentVerticalMargins) {
+                readerVerticalPaddingDp(currentVerticalMargins).dp
+            }
             val navigationModeWebtoon by readerPreferences.navigationModeWebtoon.changes()
                 .collectAsState(readerPreferences.navigationModeWebtoon.get())
             val navigationModePager by readerPreferences.navigationModePager.changes()
@@ -540,6 +552,37 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                     customBackgroundColor = currentCustomBackgroundColor,
                                     verticalMargins = currentVerticalMargins,
                                 )
+
+                                // Readium applies padding to a white Fragment container. Paint only the reserved
+                                // fullscreen edges here; visible reader menus must keep their Material theme colors.
+                                if (fullscreen && !state.menuVisible) {
+                                    Column(
+                                        modifier = Modifier
+                                            .align(Alignment.TopCenter)
+                                            .fillMaxWidth()
+                                            .background(currentReaderBackgroundColor),
+                                    ) {
+                                        Spacer(
+                                            modifier = Modifier.windowInsetsTopHeight(WindowInsets.displayCutout),
+                                        )
+                                        Spacer(modifier = Modifier.height(fullscreenVerticalPadding))
+                                    }
+                                    Column(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                            .background(currentReaderBackgroundColor),
+                                    ) {
+                                        Spacer(modifier = Modifier.height(fullscreenVerticalPadding))
+                                        if (!drawUnderCutout) {
+                                            Spacer(
+                                                modifier = Modifier.windowInsetsBottomHeight(
+                                                    WindowInsets.displayCutout,
+                                                ),
+                                            )
+                                        }
+                                    }
+                                }
 
                                 ReaderContentOverlay(
                                     brightness = 0,
@@ -1293,17 +1336,17 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             !drawUnderCutout -> displayCutout.bottom
             else -> 0
         }
-        val edgePadding = if (fullscreen) readerEdgePaddingPx() else 0
-        val verticalMargin = (
-            EpubLayoutPreferences.VERTICAL_MARGIN_BASE_DP *
-                verticalMargins * resources.displayMetrics.density
-            ).roundToInt()
+        val verticalPadding = if (fullscreen) {
+            (readerVerticalPaddingDp(verticalMargins) * resources.displayMetrics.density).roundToInt()
+        } else {
+            0
+        }
 
         setPadding(
             horizontalInsets.left,
-            topInset + edgePadding + verticalMargin,
+            topInset + verticalPadding,
             horizontalInsets.right,
-            bottomInset + edgePadding + verticalMargin,
+            bottomInset + verticalPadding,
         )
     }
 
@@ -1333,8 +1376,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         }
     }
 
-    private fun View.readerEdgePaddingPx(): Int {
-        return (READER_EDGE_PADDING_DP * resources.displayMetrics.density).roundToInt()
+    // Shared by the Fragment padding and fullscreen background overlays so their bounds cannot drift apart.
+    private fun readerVerticalPaddingDp(verticalMargins: Float): Float {
+        return READER_EDGE_PADDING_DP +
+            EpubLayoutPreferences.VERTICAL_MARGIN_BASE_DP * verticalMargins
     }
 
     private fun EpubLayoutPreferences.Theme.readerBackgroundColor(customBackgroundColor: Int): Int {
