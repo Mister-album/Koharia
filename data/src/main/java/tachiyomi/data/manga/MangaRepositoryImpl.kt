@@ -31,10 +31,22 @@ class MangaRepositoryImpl(
             .awaitAsOne()
     }
 
+    override suspend fun getMangaByIdOrNull(id: Long): Manga? {
+        return database.mangasQueries
+            .getMangaById(id, MangaMapper::mapManga)
+            .awaitAsOneOrNull()
+    }
+
     override suspend fun getMangaByIdAsFlow(id: Long): Flow<Manga> {
         return database.mangasQueries
             .getMangaById(id, MangaMapper::mapManga)
             .subscribeToOne()
+    }
+
+    override suspend fun getMangaByIdAsFlowOrNull(id: Long): Flow<Manga?> {
+        return database.mangasQueries
+            .getMangaById(id, MangaMapper::mapManga)
+            .subscribeToOneOrNull()
     }
 
     override suspend fun getMangaByUrlAndSourceId(url: String, sourceId: Long): Manga? {

@@ -448,6 +448,8 @@ class NotificationReceiver : BroadcastReceiver() {
                 Intent(context, MainActivity::class.java).setAction(Constants.SHORTCUT_MANGA)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     .putExtra(Constants.MANGA_EXTRA, manga.id)
+                    .putExtra(Constants.MANGA_SOURCE_EXTRA, manga.source)
+                    .putExtra(Constants.MANGA_URL_EXTRA, manga.url)
                     .putExtra("notificationId", manga.id.hashCode())
                     .putExtra("groupId", groupId)
             return PendingIntent.getActivity(

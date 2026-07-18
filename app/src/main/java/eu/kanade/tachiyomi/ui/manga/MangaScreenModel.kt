@@ -128,8 +128,10 @@ private fun mergeEpubProgressions(
 class MangaScreenModel(
     private val context: Context,
     private val lifecycle: Lifecycle,
-    private val mangaId: Long,
+    private var mangaId: Long,
     private val isFromSource: Boolean,
+    private val routeSourceId: Long? = null,
+    private val routeUrl: String? = null,
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
     private val trackPreferences: TrackPreferences = Injekt.get(),
     readerPreferences: ReaderPreferences = Injekt.get(),
@@ -198,64 +200,27 @@ class MangaScreenModel(
     private inline fun updateSuccessState(func: (State.Success) -> State.Success) {
         mutableState.update {
             when (it) {
-                State.Loading -> it
+                State.Loading, State.Error -> it
                 is State.Success -> func(it)
             }
         }
     }
 
     init {
-        screenModelScope.launchIO {
-            combine(
-                getMangaAndChapters.subscribe(mangaId, applyScanlatorFilter = true).distinctUntilChanged(),
-                getEpubProgress.subscribeByMangaId(mangaId),
-                getEpubRemoteProgressCache.subscribeByMangaId(mangaId),
-                downloadCache.changes,
-                downloadManager.queueState,
-            ) { mangaAndChapters, localProgresses, remoteProgresses, _, _ ->
-                Triple(mangaAndChapters, localProgresses, remoteProgresses)
-            }
-                .flowWithLifecycle(lifecycle)
-                .collectLatest { (mangaAndChapters, localProgresses, remoteProgresses) ->
-                    val (manga, chapters) = mangaAndChapters
-                    updateSuccessState {
-                        it.copy(
-                            manga = manga,
-                            chapters = chapters.toChapterListItems(
-                                manga,
-                                mergeEpubProgressions(localProgresses, remoteProgresses),
-                            ),
-                        )
-                    }
-                }
-        }
-
-        screenModelScope.launchIO {
-            getExcludedScanlators.subscribe(mangaId)
-                .flowWithLifecycle(lifecycle)
-                .distinctUntilChanged()
-                .collectLatest { excludedScanlators ->
-                    updateSuccessState {
-                        it.copy(excludedScanlators = excludedScanlators)
-                    }
-                }
-        }
-
-        screenModelScope.launchIO {
-            getAvailableScanlators.subscribe(mangaId)
-                .flowWithLifecycle(lifecycle)
-                .distinctUntilChanged()
-                .collectLatest { availableScanlators ->
-                    updateSuccessState {
-                        it.copy(availableScanlators = availableScanlators)
-                    }
-                }
-        }
-
         observeDownloads()
 
         screenModelScope.launchIO {
-            val mangaDeferred = async { getMangaAndChapters.awaitManga(mangaId) }
+            val manga = resolveManga()
+            if (manga == null) {
+                logcat(LogPriority.WARN) {
+                    "Manga route is no longer valid: mangaId=$mangaId, " +
+                        "routeSourceId=$routeSourceId, hasRouteUrl=${!routeUrl.isNullOrBlank()}"
+                }
+                mutableState.update { State.Error }
+                return@launchIO
+            }
+            mangaId = manga.id
+
             val chaptersDeferred = async {
                 getMangaAndChapters.awaitChapters(mangaId, applyScanlatorFilter = true)
             }
@@ -272,7 +237,6 @@ class MangaScreenModel(
             val availableScanlatorsDeferred = async { getAvailableScanlators.await(mangaId) }
             val excludedScanlatorsDeferred = async { getExcludedScanlators.await(mangaId) }
 
-            val manga = mangaDeferred.await()
             val epubProgresses = mergeEpubProgressions(
                 localProgresses = localProgressDeferred.await(),
                 remoteProgresses = remoteProgressDeferred.await(),
@@ -284,6 +248,49 @@ class MangaScreenModel(
                 allowSharedDownloadLookup = false,
             )
             val source = Injekt.get<SourceManager>().getOrStub(manga.source)
+
+            launch {
+                combine(
+                    getMangaAndChapters.subscribe(mangaId, applyScanlatorFilter = true).distinctUntilChanged(),
+                    getEpubProgress.subscribeByMangaId(mangaId),
+                    getEpubRemoteProgressCache.subscribeByMangaId(mangaId),
+                    downloadCache.changes,
+                    downloadManager.queueState,
+                ) { mangaAndChapters, localProgresses, remoteProgresses, _, _ ->
+                    Triple(mangaAndChapters, localProgresses, remoteProgresses)
+                }
+                    .flowWithLifecycle(lifecycle)
+                    .collectLatest { (mangaAndChapters, localProgresses, remoteProgresses) ->
+                        val (updatedManga, chapters) = mangaAndChapters
+                        updateSuccessState {
+                            it.copy(
+                                manga = updatedManga,
+                                chapters = chapters.toChapterListItems(
+                                    updatedManga,
+                                    mergeEpubProgressions(localProgresses, remoteProgresses),
+                                ),
+                            )
+                        }
+                    }
+            }
+
+            launch {
+                getExcludedScanlators.subscribe(mangaId)
+                    .flowWithLifecycle(lifecycle)
+                    .distinctUntilChanged()
+                    .collectLatest { excludedScanlators ->
+                        updateSuccessState { it.copy(excludedScanlators = excludedScanlators) }
+                    }
+            }
+
+            launch {
+                getAvailableScanlators.subscribe(mangaId)
+                    .flowWithLifecycle(lifecycle)
+                    .distinctUntilChanged()
+                    .collectLatest { availableScanlators ->
+                        updateSuccessState { it.copy(availableScanlators = availableScanlators) }
+                    }
+            }
 
             if (!manga.favorite) {
                 setMangaDefaultChapterFlags.await(manga)
@@ -349,6 +356,17 @@ class MangaScreenModel(
                 syncEpubProgressInBackground(source, current.chapters.map { it.chapter })
             }
             syncKomgaProgressInBackground(source)
+        }
+    }
+
+    private suspend fun resolveManga(): Manga? {
+        val byId = getMangaAndChapters.awaitMangaOrNull(mangaId)
+        if (byId != null && (routeSourceId == null || byId.source == routeSourceId)) return byId
+
+        return if (!routeUrl.isNullOrBlank() && routeSourceId != null) {
+            mangaRepository.getMangaByUrlAndSourceId(routeUrl, routeSourceId)
+        } else {
+            null
         }
     }
 
@@ -1310,6 +1328,9 @@ class MangaScreenModel(
     sealed interface State {
         @Immutable
         data object Loading : State
+
+        @Immutable
+        data object Error : State
 
         @Immutable
         data class Success(

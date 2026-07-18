@@ -622,6 +622,10 @@ class ReaderActivity : BaseActivity() {
                 Intent(this, MainActivity::class.java).apply {
                     action = Constants.SHORTCUT_MANGA
                     putExtra(Constants.MANGA_EXTRA, id)
+                    viewModel.manga?.let { manga ->
+                        putExtra(Constants.MANGA_SOURCE_EXTRA, manga.source)
+                        putExtra(Constants.MANGA_URL_EXTRA, manga.url)
+                    }
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 },
             )

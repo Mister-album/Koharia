@@ -59,11 +59,15 @@ import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
 
 class MangaScreen(
-    private val mangaId: Long,
+    val mangaId: Long,
     val fromSource: Boolean = false,
+    val sourceId: Long? = null,
+    val mangaUrl: String? = null,
 ) : Screen(), AssistContentScreen {
 
     override fun onProvideAssistUrl(): String? = null
@@ -81,8 +85,15 @@ class MangaScreen(
         val scope = rememberCoroutineScope()
         val epubReaderLauncher = remember { EpubReaderLauncher() }
         val lifecycleOwner = LocalLifecycleOwner.current
-        val screenModel = rememberScreenModel {
-            MangaScreenModel(context, lifecycleOwner.lifecycle, mangaId, fromSource)
+        val screenModel = rememberScreenModel(tag = "$mangaId:$sourceId:$mangaUrl") {
+            MangaScreenModel(
+                context = context,
+                lifecycle = lifecycleOwner.lifecycle,
+                mangaId = mangaId,
+                isFromSource = fromSource,
+                routeSourceId = sourceId,
+                routeUrl = mangaUrl,
+            )
         }
 
         val state by screenModel.state.collectAsStateWithLifecycle()
@@ -90,6 +101,11 @@ class MangaScreen(
 
         if (state is MangaScreenModel.State.Loading) {
             LoadingScreen()
+            return
+        }
+
+        if (state is MangaScreenModel.State.Error) {
+            EmptyScreen(stringRes = MR.strings.epub_reader_manga_not_found)
             return
         }
 
