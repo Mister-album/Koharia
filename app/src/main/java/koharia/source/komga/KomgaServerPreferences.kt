@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
+import kotlin.random.Random
 
 @Serializable
 data class KomgaServerProfile(
@@ -133,6 +134,29 @@ class KomgaServerPreferences(
         return serverId == KomgaSource.ID || serverId.toString() in knownServerIds.get()
     }
 
+    @Synchronized
+    fun allocateServerId(): Long {
+        // Historical IDs remain reserved because preserved manga, downloads, and source stubs
+        // can still reference them after a profile is deleted. Reusing one would also make a
+        // newly added server inherit any ID-keyed state left for those preserved records.
+        val reservedIds = knownServerIds.get()
+            .mapNotNullTo(mutableSetOf(), String::toLongOrNull)
+            .apply {
+                add(KomgaSource.ID)
+                getProfiles().mapTo(this, KomgaServerProfile::id)
+            }
+        val nextSequentialId = reservedIds.maxOrNull()
+            ?.takeIf { it < Long.MAX_VALUE }
+            ?.plus(1)
+        val allocatedId = nextSequentialId ?: generateSequence {
+            Random.nextLong(1, Long.MAX_VALUE)
+        }.first { it !in reservedIds }
+
+        reservedIds += allocatedId
+        knownServerIds.set(reservedIds.mapTo(linkedSetOf()) { it.toString() })
+        return allocatedId
+    }
+
     fun needsDownloadDirectoryLayoutMigration(): Boolean {
         return downloadDirectoryLayoutVersion.get() < DOWNLOAD_DIRECTORY_LAYOUT_VERSION
     }
@@ -156,6 +180,7 @@ class KomgaServerPreferences(
         serializedDirectoryAliases.set(updated.mapTo(linkedSetOf(), json::encodeToString))
     }
 
+    @Synchronized
     private fun rememberServerIds(profiles: Collection<KomgaServerProfile>) {
         val updated = knownServerIds.get().toMutableSet().apply {
             add(KomgaSource.ID.toString())

@@ -122,13 +122,8 @@ class KomgaLocalConfigManager(
     }
 
     fun clearScopeForServer(serverId: Long) {
-        if (serverPreferences.localConfigMode.get() != LocalConfigMode.Separate) {
-            logcat(LogPriority.DEBUG) {
-                "Skipping scoped config cleanup for serverId=$serverId because local config mode is shared"
-            }
-            return
-        }
-
+        // A server may still have a dedicated scope after switching back to shared mode.
+        // Removing the profile must clear that stale scope without touching shared settings.
         val targetPrefix = serverScopePrefix(serverId)
         val keysToDelete = preferenceStore.getAll().keys.filter { it.startsWith(targetPrefix) }
         if (keysToDelete.isEmpty()) return
