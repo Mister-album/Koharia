@@ -9,6 +9,10 @@ plugins {
 android {
     namespace = "tachiyomi.data"
 
+    defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
     sqldelight {
         databases {
             create("Database") {
@@ -33,4 +37,8 @@ dependencies {
     implementation(projects.core.common)
 
     api(libs.bundles.sqldelight)
+
+    androidTestImplementation(libs.androidx.sqlite.bundled)
+    androidTestImplementation(libs.androidx.test.espresso.core)
+    androidTestImplementation(libs.androidx.test.junit)
 }

@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.di
 import android.app.Application
 import androidx.core.content.ContextCompat
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
@@ -35,6 +36,7 @@ import koharia.epub.session.EpubReaderSessionRepository
 import koharia.komga.api.KomgaActiveServerSseManager
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
@@ -79,18 +81,53 @@ class AppModule(val app: Application) : InjektModule {
             synchronized(lock) {
                 sqlDriverRef?.get()?.let { return@synchronized it }
 
-                val schemaBridge = LegacyDatabaseSchemaBridge(app)
-                val migrationBackup = schemaBridge.prepare()
+                val schemaBridge = LegacyDatabaseSchemaBridge(
+                    context = app,
+                    expectedSchemaVersion = Database.Schema.version.toInt(),
+                )
+                var migrationBackup: LegacyDatabaseSchemaBridge.MigrationBackup? = null
                 try {
-                    AndroidxSqliteDriver(
-                        driver = BundledSQLiteDriver(),
-                        databaseType = AndroidxSqliteDatabaseType.FileProvider(app, "tachiyomi.db"),
-                        schema = Database.Schema,
-                        configuration = AndroidxSqliteConfiguration(
-                            isForeignKeyConstraintsEnabled = true,
-                        ),
-                    ).also {
+                    migrationBackup = schemaBridge.prepare()
+                    fun createInitializedDriver(): AndroidxSqliteDriver {
+                        val driver = AndroidxSqliteDriver(
+                            driver = BundledSQLiteDriver(),
+                            databaseType = AndroidxSqliteDatabaseType.FileProvider(app, "tachiyomi.db"),
+                            schema = Database.Schema,
+                            configuration = AndroidxSqliteConfiguration(
+                                isForeignKeyConstraintsEnabled = true,
+                            ),
+                        )
+                        try {
+                            // AndroidxSqliteDriver opens lazily. Force the first query here so
+                            // migration failures stay inside this guarded startup sequence.
+                            runBlocking {
+                                driver.executeQuery(
+                                    identifier = null,
+                                    sql = "SELECT 1",
+                                    mapper = { QueryResult.Unit },
+                                    parameters = 0,
+                                    binders = null,
+                                ).await()
+                            }
+                            return driver
+                        } catch (exception: Throwable) {
+                            driver.close()
+                            throw exception
+                        }
+                    }
+
+                    val migrationDriver = createInitializedDriver()
+                    val driver = if (migrationBackup != null) {
+                        // Do not open the file with Android SQLite while the bundled SQLite
+                        // connection is alive; the engines must not share a WAL concurrently.
+                        migrationDriver.close()
                         schemaBridge.complete(migrationBackup)
+                        migrationBackup = null
+                        createInitializedDriver()
+                    } else {
+                        migrationDriver
+                    }
+                    driver.also {
                         sqlDriverRef = WeakReference(it)
                     }
                 } catch (exception: Throwable) {
