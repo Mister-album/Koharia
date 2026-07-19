@@ -1194,15 +1194,18 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     private fun openMangaScreen() {
         lifecycleScope.launch {
-            val detailsMangaId = viewModel.resolveDetailsMangaId() ?: return@launch
+            val detailsRoute = viewModel.resolveDetailsRoute() ?: return@launch
             logcat(LogPriority.DEBUG) {
-                val sourceId = intent.extras?.getLong("source", -1L)
-                "EPUB openMangaScreen detailsMangaId=$detailsMangaId readerMangaId=${viewModel.state.value.mangaId} chapterId=${viewModel.state.value.chapterId} sourceId=$sourceId"
+                "EPUB openMangaScreen detailsMangaId=${detailsRoute.mangaId} " +
+                    "readerMangaId=${viewModel.state.value.mangaId} " +
+                    "chapterId=${viewModel.state.value.chapterId} sourceId=${detailsRoute.sourceId}"
             }
             startActivity(
                 Intent(this@EpubReaderActivity, MainActivity::class.java).apply {
                     action = Constants.SHORTCUT_MANGA
-                    putExtra(Constants.MANGA_EXTRA, detailsMangaId)
+                    putExtra(Constants.MANGA_EXTRA, detailsRoute.mangaId)
+                    putExtra(Constants.MANGA_SOURCE_EXTRA, detailsRoute.sourceId)
+                    putExtra(Constants.MANGA_URL_EXTRA, detailsRoute.mangaUrl)
                     putExtra(Constants.FROM_SOURCE_EXTRA, true)
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 },

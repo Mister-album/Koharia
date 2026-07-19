@@ -613,14 +613,28 @@ class EpubReaderViewModel @JvmOverloads constructor(
         return mangaId to chapterId
     }
 
-    suspend fun resolveDetailsMangaId(): Long? {
-        val sourceId = currentSourceId.takeIf { it > 0 } ?: return mangaId.takeIf { it > 0 }
+    suspend fun resolveDetailsRoute(): DetailsRoute? {
+        val fallbackMangaId = mangaId.takeIf { it > 0 } ?: return null
+        val sourceId = currentSourceId.takeIf { it > 0 }
         val chapterUrl = currentChapterUrl?.substringBefore('#')?.removeSuffix("/")
-        val matchedBookMangaId = chapterUrl
-            ?.let { getMangaByUrlAndSourceId.await(it, sourceId)?.id }
-            ?.takeIf { it > 0 }
-        return matchedBookMangaId ?: mangaId.takeIf { it > 0 }
+        val matchedBook = if (sourceId != null) {
+            chapterUrl?.let { getMangaByUrlAndSourceId.await(it, sourceId) }
+        } else {
+            null
+        }
+        val detailsManga = matchedBook ?: getManga.await(fallbackMangaId) ?: return null
+        return DetailsRoute(
+            mangaId = detailsManga.id,
+            sourceId = detailsManga.source,
+            mangaUrl = detailsManga.url,
+        )
     }
+
+    data class DetailsRoute(
+        val mangaId: Long,
+        val sourceId: Long,
+        val mangaUrl: String,
+    )
 
     fun showMenus(visible: Boolean) {
         mutableState.update { it.copy(menuVisible = visible) }

@@ -10,6 +10,8 @@ object Constants {
 
     const val MANGA_EXTRA = "manga"
     const val FROM_SOURCE_EXTRA = "from_source"
+    const val MANGA_SOURCE_EXTRA = "manga_source"
+    const val MANGA_URL_EXTRA = "manga_url"
 
     const val MAIN_ACTIVITY = "eu.kanade.tachiyomi.ui.main.MainActivity"
 

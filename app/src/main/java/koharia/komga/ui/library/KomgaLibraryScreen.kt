@@ -126,7 +126,7 @@ data class KomgaLibraryScreen(
         val getIncognitoState: GetIncognitoState = Injekt.get()
         val libraryClassificationManager: KomgaLibraryClassificationManager = Injekt.get()
 
-        val screenModel = rememberScreenModel {
+        val screenModel = rememberScreenModel(tag = "$sourceId:$libraryScope:$listingQuery") {
             KomgaLibraryScreenModel(
                 sourceId = sourceId,
                 listingQuery = listingQuery,
@@ -284,7 +284,16 @@ data class KomgaLibraryScreen(
                         showLibraryBadges = false,
                         onWebViewClick = onWebViewClick,
                         onHelpClick = onHelpClick,
-                        onMangaClick = { navigator.push((MangaScreen(it.id, true))) },
+                        onMangaClick = {
+                            navigator.push(
+                                MangaScreen(
+                                    mangaId = it.id,
+                                    fromSource = true,
+                                    sourceId = it.source,
+                                    mangaUrl = it.url,
+                                ),
+                            )
+                        },
                         onMangaLongClick = {},
                         modifier = Modifier.offset { IntOffset(x = 0, y = pullOffsetPx.roundToInt()) },
                     )

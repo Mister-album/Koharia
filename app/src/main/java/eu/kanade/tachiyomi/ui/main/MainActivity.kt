@@ -78,6 +78,7 @@ import eu.kanade.tachiyomi.util.system.updaterEnabled
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.core.migration.Migrator
 import koharia.komga.ui.library.KomgaLibraryScreen
+import koharia.source.komga.KomgaServerPreferences
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -109,6 +110,7 @@ class MainActivity : BaseActivity() {
     private val chapterCache: ChapterCache by injectLazy()
 
     private val getIncognitoState: GetIncognitoState by injectLazy()
+    private val komgaServerPreferences: KomgaServerPreferences by injectLazy()
 
     // To be checked by splash screen. If true then splash screen will be removed.
     var ready = false
@@ -178,6 +180,18 @@ class MainActivity : BaseActivity() {
                     (navigator.lastItem as? KomgaLibraryScreen)?.sourceId
                         .let(getIncognitoState::subscribe)
                         .collectLatest { incognito = it }
+                }
+                LaunchedEffect(navigator) {
+                    komgaServerPreferences.activeServerId.changes()
+                        .drop(1)
+                        .collectLatest {
+                            // Only discard screens whose content is keyed by the previous
+                            // server. Server-management screens can change the active server
+                            // while adding/editing a profile and must remain on the stack.
+                            when (navigator.lastItem) {
+                                is MangaScreen, is KomgaLibraryScreen -> navigator.popUntilRoot()
+                            }
+                        }
                 }
 
                 val scaffoldInsets = WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal)
@@ -371,8 +385,10 @@ class MainActivity : BaseActivity() {
             Constants.SHORTCUT_MANGA -> {
                 val idToOpen = intent.extras?.getLong(Constants.MANGA_EXTRA) ?: return false
                 val fromSource = intent.extras?.getBoolean(Constants.FROM_SOURCE_EXTRA, false) ?: false
+                val sourceId = intent.extras?.getLong(Constants.MANGA_SOURCE_EXTRA)?.takeUnless { it == 0L }
+                val mangaUrl = intent.extras?.getString(Constants.MANGA_URL_EXTRA)
                 navigator.popUntilRoot()
-                HomeScreen.Tab.Library(idToOpen, fromSource)
+                HomeScreen.Tab.Library(idToOpen, fromSource, sourceId, mangaUrl)
             }
             Constants.SHORTCUT_UPDATES -> HomeScreen.Tab.Updates
             Constants.SHORTCUT_HISTORY -> HomeScreen.Tab.History

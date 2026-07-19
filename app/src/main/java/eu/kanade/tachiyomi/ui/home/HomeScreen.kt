@@ -171,7 +171,14 @@ object HomeScreen : Screen() {
                         }
 
                         if (it is Tab.Library && it.mangaIdToOpen != null) {
-                            navigator.push(MangaScreen(it.mangaIdToOpen, it.fromSource))
+                            navigator.push(
+                                MangaScreen(
+                                    mangaId = it.mangaIdToOpen,
+                                    fromSource = it.fromSource,
+                                    sourceId = it.sourceId,
+                                    mangaUrl = it.mangaUrl,
+                                ),
+                            )
                         }
                         if (it is Tab.More && it.toDownloads) {
                             navigator.push(DownloadQueueScreen)
@@ -266,6 +273,8 @@ object HomeScreen : Screen() {
         data class Library(
             val mangaIdToOpen: Long? = null,
             val fromSource: Boolean = false,
+            val sourceId: Long? = null,
+            val mangaUrl: String? = null,
         ) : Tab
         data object Updates : Tab
         data object History : Tab
