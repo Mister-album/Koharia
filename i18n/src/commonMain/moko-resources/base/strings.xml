@@ -223,6 +223,7 @@
     <string name="action_add_server">Add server</string>
     <string name="delete_server">Delete server</string>
     <string name="delete_server_confirmation">Do you wish to delete the server "%s"?</string>
+    <string name="komga_server_delete_failed">Couldn\'t delete the server. Your server settings were kept; please try again.</string>
     <string name="komga_no_servers_title">No servers added</string>
     <string name="komga_no_servers_summary">Add a Komga server to browse your library and edit server-scoped settings.</string>
     <string name="komga_local_config_mode">Local configuration mode</string>

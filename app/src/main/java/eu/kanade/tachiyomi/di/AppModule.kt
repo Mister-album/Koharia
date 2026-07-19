@@ -181,6 +181,7 @@ class AppModule(val app: Application) : InjektModule {
         }
         addSingletonFactory {
             KomgaServerPreferences(
+                context = app,
                 preferenceStore = get<PreferenceStore>(),
                 json = get<Json>(),
             ).also(KomgaServerPreferences::ensureProfilesInitialized)

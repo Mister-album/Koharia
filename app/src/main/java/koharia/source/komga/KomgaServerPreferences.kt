@@ -1,5 +1,6 @@
 package koharia.source.komga
 
+import android.content.Context
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -28,6 +29,7 @@ enum class DownloadDirectoryMode {
 }
 
 class KomgaServerPreferences(
+    private val context: Context,
     preferenceStore: PreferenceStore,
     private val json: Json,
 ) {
@@ -71,20 +73,45 @@ class KomgaServerPreferences(
     fun setProfiles(profiles: Collection<KomgaServerProfile>) {
         val normalizedProfiles = normalizeProfiles(profiles.toList())
         serializedProfiles.set(normalizedProfiles.mapTo(linkedSetOf(), json::encodeToString))
+        // An explicit profile update (including deleting the last profile) is no longer
+        // an initialization attempt. This prevents legacy recovery from recreating a
+        // profile the user deliberately removed.
+        hasInitializedProfiles.set(true)
         ensureActiveServerExists(normalizedProfiles)
     }
 
     fun ensureProfilesInitialized() {
-        if (hasInitializedProfiles.get()) {
-            ensureActiveServerExists(getProfiles())
-            return
+        val persistedProfiles = decodeProfiles(serializedProfiles.get())
+        val isFirstInitialization = !hasInitializedProfiles.get()
+        val profiles = buildList {
+            addAll(persistedProfiles)
+
+            // 0.1.x stored the only Komga server in source_<KomgaSource.ID>.
+            // Keep that stable ID as the first profile when an interrupted or
+            // partial upgrade left the new profile list incomplete. The
+            // source preference file is intentionally left untouched: the
+            // existing address and credentials are already keyed by this ID.
+            if (isFirstInitialization && hasLegacySourcePreferences() && none { it.id == KomgaSource.ID }) {
+                add(defaultProfile())
+            }
+
+            // A fresh install has no legacy source preference to inspect.
+            if (isFirstInitialization && isEmpty()) add(defaultProfile())
         }
 
-        val profiles = decodeProfiles(serializedProfiles.get())
-            .ifEmpty { listOf(defaultProfile()) }
-        serializedProfiles.set(profiles.mapTo(linkedSetOf(), json::encodeToString))
-        hasInitializedProfiles.set(true)
+        if (isFirstInitialization || profiles != persistedProfiles) {
+            serializedProfiles.set(profiles.mapTo(linkedSetOf(), json::encodeToString))
+            hasInitializedProfiles.set(true)
+        }
         ensureActiveServerExists(profiles)
+    }
+
+    private fun hasLegacySourcePreferences(): Boolean {
+        val preferences = context.getSharedPreferences(
+            "source_${KomgaSource.ID}",
+            Context.MODE_PRIVATE,
+        )
+        return preferences.contains(PREF_LEGACY_ADDRESS)
     }
 
     private fun ensureActiveServerExists(profiles: List<KomgaServerProfile>) {
@@ -124,6 +151,7 @@ class KomgaServerPreferences(
         private const val PREF_LOCAL_CONFIG_MODE = "komga_local_config_mode"
         private const val PREF_DOWNLOAD_DIRECTORY_MODE = "komga_download_directory_mode"
         private const val PREF_HAS_INITIALIZED_PROFILES = "komga_has_initialized_profiles"
+        private const val PREF_LEGACY_ADDRESS = "Address"
 
         const val NO_ACTIVE_SERVER = -1L
     }

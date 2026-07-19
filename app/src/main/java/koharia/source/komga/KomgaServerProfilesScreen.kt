@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -43,6 +44,7 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.more.settings.widget.ListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.PreferenceGroupHeader
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -62,6 +64,7 @@ class KomgaServerProfilesScreen : Screen() {
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
+        val context = LocalContext.current
         val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
         val localConfigManager = remember { Injekt.get<KomgaLocalConfigManager>() }
         val classificationManager = remember { Injekt.get<KomgaLibraryClassificationManager>() }
@@ -273,8 +276,12 @@ class KomgaServerProfilesScreen : Screen() {
                 onDismissRequest = { profileToDelete = null },
                 onDelete = {
                     scope.launch {
-                        serverRemovalManager.removeServer(profile.id)
-                        profileToDelete = null
+                        val result = serverRemovalManager.removeServer(profile.id)
+                        if (result.isSuccess) {
+                            profileToDelete = null
+                        } else {
+                            context.toast(MR.strings.komga_server_delete_failed)
+                        }
                     }
                 },
             )

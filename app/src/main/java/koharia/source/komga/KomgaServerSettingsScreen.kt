@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.util.Screen
@@ -24,6 +25,7 @@ import eu.kanade.tachiyomi.data.preference.DeferredSharedPreferencesDataStore
 import eu.kanade.tachiyomi.source.sourcePreferences
 import eu.kanade.tachiyomi.ui.source.DataStoreHolder
 import eu.kanade.tachiyomi.ui.source.SourcePreferencesScreen
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.launch
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
@@ -42,6 +44,7 @@ class KomgaServerSettingsScreen(
         var showHelpDialog by rememberSaveable { mutableStateOf(false) }
         var showUnsavedDialog by rememberSaveable { mutableStateOf(false) }
         val navigator = LocalNavigator.currentOrThrow
+        val context = LocalContext.current
         val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
         val scope = rememberCoroutineScope()
 
@@ -64,7 +67,10 @@ class KomgaServerSettingsScreen(
         fun discardAndPop() {
             scope.launch {
                 if (isNew) {
-                    serverRemovalManager.removeServer(sourceId)
+                    val result = serverRemovalManager.removeServer(sourceId)
+                    if (result.isFailure) {
+                        context.toast(MR.strings.komga_server_delete_failed)
+                    }
                 }
                 navigator.pop()
             }
