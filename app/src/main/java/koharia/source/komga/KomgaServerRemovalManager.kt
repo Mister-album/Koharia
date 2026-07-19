@@ -45,7 +45,7 @@ class KomgaServerRemovalManager(
                 epubCacheManager.clearServer(serverId)
                 libraryClassificationManager.clearServer(serverId)
                 localConfigManager.clearScopeForServer(serverId)
-                clearServerSettingsIfNeeded(serverId)
+                clearServerSettings(serverId)
             }
             // Read the profiles again after cleanup. The settings screen can edit or add
             // another profile while disk/network cleanup is in progress; filtering by ID
@@ -76,19 +76,14 @@ class KomgaServerRemovalManager(
         }
     }
 
-    private fun clearServerSettingsIfNeeded(serverId: Long) {
-        if (serverPreferences.localConfigMode.get() == LocalConfigMode.Shared) {
-            logcat(LogPriority.DEBUG) {
-                "Skipping persisted source settings cleanup for Komga server id=$serverId because local config mode is shared"
-            }
-            return
-        }
-
+    private fun clearServerSettings(serverId: Long) {
+        // Connection settings always live in source_<id>; local config mode only controls
+        // reader/app preferences and must not decide whether credentials are removed.
         eu.kanade.tachiyomi.source.sourcePreferences("source_$serverId")
             .edit { clear() }
 
         logcat(LogPriority.DEBUG) {
-            "Cleared persisted source settings for Komga server id=$serverId (downloads preserved)"
+            "Cleared persisted source connection settings for Komga server id=$serverId"
         }
     }
 

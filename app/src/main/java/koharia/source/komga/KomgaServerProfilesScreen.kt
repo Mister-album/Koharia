@@ -57,7 +57,6 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import kotlin.random.Random
 
 class KomgaServerProfilesScreen : Screen() {
 
@@ -87,7 +86,7 @@ class KomgaServerProfilesScreen : Screen() {
 
         fun createServer(name: String) {
             val newProfile = KomgaServerProfile(
-                id = nextServerId(profiles),
+                id = serverPreferences.allocateServerId(),
                 name = name,
             )
             serverPreferences.setProfiles(profiles + newProfile)
@@ -552,25 +551,6 @@ private fun LocalConfigModeOption(
         Column {
             Text(text = title)
             Text(text = summary)
-        }
-    }
-}
-
-private fun nextServerId(profiles: List<KomgaServerProfile>): Long {
-    val existingIds = profiles.mapTo(mutableSetOf(), KomgaServerProfile::id)
-    val maxId = existingIds.maxOrNull()
-
-    if (maxId != null && maxId < Long.MAX_VALUE) {
-        val candidate = maxId + 1
-        if (candidate !in existingIds) {
-            return candidate
-        }
-    }
-
-    while (true) {
-        val candidate = Random.nextLong(1, Long.MAX_VALUE)
-        if (candidate !in existingIds) {
-            return candidate
         }
     }
 }
