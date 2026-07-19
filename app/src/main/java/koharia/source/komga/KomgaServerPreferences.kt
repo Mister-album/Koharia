@@ -73,11 +73,16 @@ class KomgaServerPreferences(
     fun setProfiles(profiles: Collection<KomgaServerProfile>) {
         val normalizedProfiles = normalizeProfiles(profiles.toList())
         serializedProfiles.set(normalizedProfiles.mapTo(linkedSetOf(), json::encodeToString))
+        // An explicit profile update (including deleting the last profile) is no longer
+        // an initialization attempt. This prevents legacy recovery from recreating a
+        // profile the user deliberately removed.
+        hasInitializedProfiles.set(true)
         ensureActiveServerExists(normalizedProfiles)
     }
 
     fun ensureProfilesInitialized() {
         val persistedProfiles = decodeProfiles(serializedProfiles.get())
+        val isFirstInitialization = !hasInitializedProfiles.get()
         val profiles = buildList {
             addAll(persistedProfiles)
 
@@ -86,15 +91,15 @@ class KomgaServerPreferences(
             // partial upgrade left the new profile list incomplete. The
             // source preference file is intentionally left untouched: the
             // existing address and credentials are already keyed by this ID.
-            if (hasLegacySourcePreferences() && none { it.id == KomgaSource.ID }) {
+            if (isFirstInitialization && hasLegacySourcePreferences() && none { it.id == KomgaSource.ID }) {
                 add(defaultProfile())
             }
 
             // A fresh install has no legacy source preference to inspect.
-            if (isEmpty()) add(defaultProfile())
+            if (isFirstInitialization && isEmpty()) add(defaultProfile())
         }
 
-        if (!hasInitializedProfiles.get() || profiles != persistedProfiles) {
+        if (isFirstInitialization || profiles != persistedProfiles) {
             serializedProfiles.set(profiles.mapTo(linkedSetOf(), json::encodeToString))
             hasInitializedProfiles.set(true)
         }

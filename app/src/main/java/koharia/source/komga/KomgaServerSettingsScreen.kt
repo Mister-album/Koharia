@@ -70,7 +70,6 @@ class KomgaServerSettingsScreen(
                     val result = serverRemovalManager.removeServer(sourceId)
                     if (result.isFailure) {
                         context.toast(MR.strings.komga_server_delete_failed)
-                        return@launch
                     }
                 }
                 navigator.pop()

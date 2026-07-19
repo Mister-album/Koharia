@@ -38,7 +38,11 @@ class KomgaServerRemovalManager(
                 localConfigManager.clearScopeForServer(serverId)
                 clearServerSettingsIfNeeded(serverId)
             }
-            serverPreferences.setProfiles(currentProfiles - profile)
+            // Read the profiles again after cleanup. The settings screen can edit or add
+            // another profile while disk/network cleanup is in progress; filtering by ID
+            // preserves those concurrent changes instead of writing the stale snapshot.
+            val latestProfiles = serverPreferences.getProfiles()
+            serverPreferences.setProfiles(latestProfiles.filterNot { it.id == serverId })
 
             logcat(LogPriority.DEBUG) {
                 "Removed Komga server id=$serverId name=${profile.name} " +
