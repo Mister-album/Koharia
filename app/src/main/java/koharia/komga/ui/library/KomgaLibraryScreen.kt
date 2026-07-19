@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.IntOffset
@@ -63,7 +64,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
-import tachiyomi.core.common.Constants
+import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.source.interactor.GetRemoteManga
@@ -165,6 +166,7 @@ data class KomgaLibraryScreen(
         }
 
         val uriHandler = LocalUriHandler.current
+        val context = LocalContext.current
         val snackbarHostState = remember { SnackbarHostState() }
         val mangaList = screenModel.mangaPagerFlow.collectAsLazyPagingItems()
         val isRefreshing =
@@ -182,7 +184,7 @@ data class KomgaLibraryScreen(
             }
         }
 
-        val onHelpClick = { uriHandler.openUri(Constants.URL_HELP) }
+        val onHelpClick = { uriHandler.openUri(DocumentationUrls.troubleshooting(context)) }
         val onWebViewClick = f@{
             val source = screenModel.source as? HttpSource ?: return@f
             navigator.push(
