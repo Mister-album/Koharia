@@ -69,6 +69,7 @@ class KomgaServerProfilesScreen : Screen() {
         val localConfigManager = remember { Injekt.get<KomgaLocalConfigManager>() }
         val classificationManager = remember { Injekt.get<KomgaLibraryClassificationManager>() }
         val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
+        val serverProfileManager = remember { Injekt.get<KomgaServerProfileManager>() }
         val profiles by serverPreferences.profilesChanges().collectAsState(initial = serverPreferences.getProfiles())
         val activeServerId by serverPreferences.activeServerId.collectAsState()
         val localConfigMode by serverPreferences.localConfigMode.collectAsState()
@@ -243,6 +244,8 @@ class KomgaServerProfilesScreen : Screen() {
 
         if (showAddDialog) {
             AddServerDialog(
+                directoryNameFor = serverProfileManager::directoryNameFor,
+                isNameAvailable = { name -> serverProfileManager.isDirectoryNameAvailable(name) },
                 onDismissRequest = {
                     showAddDialog = false
                     pendingServerName = null
@@ -400,18 +403,22 @@ private fun EmptyServerState(
 
 @Composable
 private fun AddServerDialog(
+    directoryNameFor: (String) -> String,
+    isNameAvailable: (String) -> Boolean,
     onDismissRequest: () -> Unit,
     onAddServer: (String) -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     val trimmedName = name.trim()
+    val directoryName = directoryNameFor(trimmedName)
+    val available = trimmedName.isNotEmpty() && isNameAvailable(trimmedName)
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = {
             TextButton(
-                enabled = trimmedName.isNotEmpty(),
+                enabled = available,
                 onClick = { onAddServer(trimmedName) },
             ) {
                 Text(text = stringResource(MR.strings.action_add))
@@ -432,7 +439,15 @@ private fun AddServerDialog(
                 modifier = Modifier.focusRequester(focusRequester),
                 label = { Text(text = stringResource(MR.strings.name)) },
                 supportingText = {
-                    Text(text = stringResource(MR.strings.information_required_plain))
+                    Text(
+                        text = if (trimmedName.isEmpty()) {
+                            stringResource(MR.strings.information_required_plain)
+                        } else if (!available) {
+                            stringResource(MR.strings.komga_server_name_directory_conflict)
+                        } else {
+                            stringResource(MR.strings.komga_server_directory_preview, directoryName)
+                        },
+                    )
                 },
                 singleLine = true,
             )

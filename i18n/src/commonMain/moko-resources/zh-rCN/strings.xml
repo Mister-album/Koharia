@@ -80,8 +80,8 @@
     <string name="delete_server">删除服务器</string>
     <string name="delete_server_confirmation">确定要删除服务器“%s”吗？</string>
     <string name="komga_server_delete_failed">无法删除服务器，服务器设置已保留，请重试。</string>
-    <string name="komga_pref_address_title">Komga服务器地址</string>
-    <string name="komga_pref_address_summary">Komga 服务器地址</string>
+    <string name="komga_pref_address_title">服务器地址</string>
+    <string name="komga_pref_address_summary">服务器地址</string>
     <string name="komga_pref_address_dialog">地址末尾不能带斜杠。</string>
     <string name="komga_pref_address_validation">URL 必须以 http:// 或 https:// 开头</string>
     <string name="komga_pref_api_key_title">API Key</string>
@@ -1155,6 +1155,12 @@
     <string name="komga_action_discard">放弃</string>
     <string name="komga_server_settings_add_title">添加服务器</string>
     <string name="komga_server_settings_edit_title">修改服务器</string>
+    <string name="komga_server_name_title">服务器名称</string>
+    <string name="komga_server_name_help">用于服务器显示名称和下载目录名称，不支持作为文件名的字符会被自动替换。</string>
+    <string name="komga_server_name_validation">请输入名称，并确保对应下载目录没有被其他服务器使用。</string>
+    <string name="komga_server_rename_failed">服务器重命名失败，请检查名称是否重复以及下载目录是否可用。</string>
+    <string name="komga_server_directory_preview">下载目录：%1$s</string>
+    <string name="komga_server_name_directory_conflict">该名称对应的下载目录已被其他服务器使用。</string>
     <string name="komga_pref_auth_mode_title">验证模式</string>
     <string name="komga_pref_auth_mode_api_key">API Key</string>
     <string name="komga_pref_auth_mode_credentials">用户名和密码</string>

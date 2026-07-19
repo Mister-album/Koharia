@@ -43,9 +43,12 @@ class KomgaServerSettingsScreen(
     override fun Content() {
         var showHelpDialog by rememberSaveable { mutableStateOf(false) }
         var showUnsavedDialog by rememberSaveable { mutableStateOf(false) }
+        var isSaving by rememberSaveable { mutableStateOf(false) }
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
+        val serverProfileManager = remember { Injekt.get<KomgaServerProfileManager>() }
+        val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
         val scope = rememberCoroutineScope()
 
         val komgaSource = remember(sourceId) {
@@ -99,10 +102,39 @@ class KomgaServerSettingsScreen(
                         contentDescription = stringResource(MR.strings.komga_server_settings_help_title),
                     )
                 }
-                IconButton(onClick = {
-                    deferredDataStore?.applyChanges()
-                    navigator.pop()
-                }) {
+                IconButton(
+                    enabled = !isSaving,
+                    onClick = {
+                        if (isSaving) return@IconButton
+                        isSaving = true
+                        scope.launch {
+                            try {
+                                val currentName = serverPreferences.getProfiles()
+                                    .find { it.id == sourceId }
+                                    ?.name
+                                    .orEmpty()
+                                val requestedName = deferredDataStore
+                                    ?.getString(KomgaSource.PREF_SERVER_PROFILE_NAME, currentName)
+                                    ?.trim()
+                                    ?: currentName
+                                val result = serverProfileManager.renameServer(sourceId, requestedName)
+                                if (result.isFailure) {
+                                    context.toast(MR.strings.komga_server_rename_failed)
+                                    return@launch
+                                }
+
+                                deferredDataStore?.putString(
+                                    KomgaSource.PREF_SERVER_PROFILE_NAME,
+                                    requestedName,
+                                )
+                                deferredDataStore?.applyChanges()
+                                navigator.pop()
+                            } finally {
+                                isSaving = false
+                            }
+                        }
+                    },
+                ) {
                     Icon(
                         imageVector = Icons.Default.Save,
                         contentDescription = stringResource(MR.strings.action_save),

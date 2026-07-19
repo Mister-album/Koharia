@@ -97,11 +97,16 @@ class DownloadProvider(
      * @param source the source of the manga.
      */
     fun findMangaDir(mangaTitle: String, source: Source): UniFile? {
+        return findMangaDirs(mangaTitle, source).firstOrNull()
+    }
+
+    fun findMangaDirs(mangaTitle: String, source: Source): List<UniFile> {
         val mangaDirName = getMangaDirName(mangaTitle)
         return findSourceDirs(source)
             .asSequence()
             .mapNotNull { it.findFile(mangaDirName) }
-            .firstOrNull()
+            .distinctBy { it.uri.toString() }
+            .toList()
     }
 
     /**
@@ -159,11 +164,18 @@ class DownloadProvider(
      * @param manga the manga of the chapter.
      * @param source the source of the chapter.
      */
-    fun findChapterDirs(chapters: List<Chapter>, manga: Manga, source: Source): Pair<UniFile?, List<UniFile>> {
-        val mangaDir = findMangaDir(manga.title, source)
-        return mangaDir to chapters.mapNotNull { chapter ->
-            findChapterDir(chapter.name, chapter.scanlator, chapter.url, manga.title, source)
-        }
+    fun findChapterDirs(chapters: List<Chapter>, manga: Manga, source: Source): Pair<List<UniFile>, List<UniFile>> {
+        val mangaDirs = findMangaDirs(manga.title, source)
+        val chapterDirs = chapters.flatMap { chapter ->
+            val validNames = getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
+            val directMatches = mangaDirs.flatMap { mangaDir ->
+                validNames.mapNotNull(mangaDir::findFile)
+            }
+            directMatches.ifEmpty {
+                listOfNotNull(findChapterDir(chapter.name, chapter.scanlator, chapter.url, manga.title, source))
+            }
+        }.distinctBy { it.uri.toString() }
+        return mangaDirs to chapterDirs
     }
 
     /**
@@ -172,30 +184,57 @@ class DownloadProvider(
      * @param source the source to query.
      */
     fun getSourceDirName(source: Source): String {
-        val sourceName = when {
-            source is KomgaSource &&
+        return when {
+            isKomgaSource(source) &&
                 komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared -> {
-                KomgaSource.SOURCE_NAME
+                getKomgaSharedDirName()
             }
-            else -> source.toString()
+            isKomgaSource(source) -> getKomgaServerDirName(source.name)
+            else -> DiskUtil.buildValidFilename(
+                source.toString(),
+                disallowNonAscii = disallowNonAsciiFilenames,
+            )
         }
-        return DiskUtil.buildValidFilename(
-            sourceName,
-            disallowNonAscii = disallowNonAsciiFilenames,
-        )
     }
 
     fun getSourceDirNames(source: Source): List<String> {
         val primaryName = getSourceDirName(source)
-        if (!shouldIncludeLegacySharedDirsInLookup(source)) {
+        if (!isKomgaSource(source)) {
             return listOf(primaryName)
         }
 
         return buildList {
             add(primaryName)
-            addAll(legacyKomgaSharedSourceDirNames())
-            add(legacyKomgaSourceDirName(source.name))
+            if (shouldIncludeLegacySharedDirsInLookup(source)) {
+                addAll(legacyKomgaSharedSourceDirNames(source))
+            } else {
+                // Mihon-style source directories included the language suffix. Keep them in
+                // lookup until they can be atomically renamed to the sanitized server name.
+                addAll(legacyKomgaSourceDirNames(source.name))
+                komgaServerPreferences.getDirectoryAliases(source.id).forEach { alias ->
+                    add(getKomgaServerDirName(alias))
+                    addAll(legacyKomgaSourceDirNames(alias))
+                }
+                // Downloads created while shared mode was active remain readable after
+                // switching back to per-server directories, but are never used for new files.
+                add(getKomgaSharedDirName())
+            }
         }.distinct()
+    }
+
+    fun getKomgaServerDirName(serverName: String): String {
+        // Server directories must remain stable if the separate non-ASCII filename preference
+        // changes. FAT-invalid characters are still replaced by DiskUtil.
+        val sanitizedName = DiskUtil.buildValidFilename(serverName)
+        return if (sanitizedName.equals(getKomgaSharedDirName(), ignoreCase = true)) {
+            DiskUtil.buildValidFilename("$serverName (Server)")
+        } else {
+            sanitizedName
+        }
+    }
+
+    private fun getKomgaSharedDirName(): String {
+        return DiskUtil.buildValidFilename("${KomgaSource.SOURCE_NAME} (Shared)")
     }
 
     /**
@@ -328,35 +367,78 @@ class DownloadProvider(
         }
     }
 
-    private fun findSourceDirs(source: Source): List<UniFile> {
+    internal fun findSourceDirs(source: Source): List<UniFile> {
         val downloadsDir = downloadsDir ?: return emptyList()
         val cacheKey = buildSourceDirsCacheKey(downloadsDir, source)
         return synchronized(sourceDirsCache) {
             sourceDirsCache[cacheKey]
                 ?.takeUnless { it.isExpired() }
                 ?.value
-                ?: getSourceDirNames(source)
-                    .mapNotNull(downloadsDir::findFile)
-                    .distinctBy { it.uri.toString() }
+                ?: findExistingSourceDirs(downloadsDir, source)
                     .also { dirs ->
                         sourceDirsCache[cacheKey] = CacheEntry(dirs)
                     }
         }
     }
 
+    internal fun findOwnedSourceDirs(source: Source): List<UniFile> {
+        val ownedNames = buildList {
+            add(getSourceDirName(source))
+            if (isKomgaSource(source) &&
+                komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.PerServer
+            ) {
+                addAll(legacyKomgaSourceDirNames(source.name))
+                komgaServerPreferences.getDirectoryAliases(source.id).forEach { alias ->
+                    add(getKomgaServerDirName(alias))
+                    addAll(legacyKomgaSourceDirNames(alias))
+                }
+            }
+        }.toSet()
+        return findSourceDirs(source).filter { it.name in ownedNames }
+    }
+
+    private fun findExistingSourceDirs(downloadsDir: UniFile, source: Source): List<UniFile> {
+        val names = getSourceDirNames(source)
+        val primaryName = names.first()
+        val primaryDir = downloadsDir.findFile(primaryName)
+        if (
+            primaryDir == null &&
+            isKomgaSource(source) &&
+            komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.PerServer
+        ) {
+            val legacyDir = names.drop(1)
+                .mapNotNull(downloadsDir::findFile)
+                .distinctBy { it.uri.toString() }
+                .singleOrNull()
+            val legacyName = legacyDir?.name
+            if (legacyDir != null && legacyDir.renameTo(primaryName)) {
+                downloadsDir.findFile(primaryName)?.let { migratedDir ->
+                    logcat(LogPriority.INFO) {
+                        "Migrated legacy Komga server directory from $legacyName to $primaryName"
+                    }
+                    return listOf(migratedDir)
+                }
+            }
+        }
+
+        return names
+            .mapNotNull(downloadsDir::findFile)
+            .distinctBy { it.uri.toString() }
+    }
+
     private fun resolveSourceDir(downloadsDir: UniFile, source: Source, sourceDirName: String): UniFile? {
         downloadsDir.findFile(sourceDirName)?.let { return it }
 
-        val legacyDir = when {
-            source is KomgaSource &&
-                komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared -> {
-                val legacyDirs = legacyKomgaSharedSourceDirNames()
-                    .mapNotNull(downloadsDir::findFile)
-                    .distinctBy { it.uri.toString() }
-                legacyDirs.singleOrNull()
-            }
-            else -> null
+        val legacyDirNames = when {
+            !isKomgaSource(source) -> emptyList()
+            komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared ->
+                legacyKomgaSharedSourceDirNames(source)
+            else -> legacyKomgaSourceDirNames(source.name)
         }
+        val legacyDir = legacyDirNames
+            .mapNotNull(downloadsDir::findFile)
+            .distinctBy { it.uri.toString() }
+            .singleOrNull()
 
         if (legacyDir != null) {
             if (legacyDir.name != sourceDirName && legacyDir.renameTo(sourceDirName)) {
@@ -378,32 +460,135 @@ class DownloadProvider(
             ?.also { invalidateSourceDirCache() }
     }
 
-    private fun legacyKomgaSharedSourceDirNames(): List<String> {
-        return buildList {
-            add(legacyKomgaSourceDirName(KomgaSource.SOURCE_NAME))
+    fun migrateLegacyKomgaDirectories(): Result<Boolean> = runCatching {
+        val downloadsDir = downloadsDir ?: throw IOException("Downloads directory is unavailable")
+        var migrated = false
+        val sharedName = getKomgaSharedDirName()
+        val legacySharedName = DiskUtil.buildValidFilename(KomgaSource.SOURCE_NAME)
+        if (downloadsDir.findFile(sharedName) == null) {
+            downloadsDir.findFile(legacySharedName)?.let { legacySharedDir ->
+                if (!legacySharedDir.renameTo(sharedName)) {
+                    throw IOException("Failed to migrate shared Komga directory: $legacySharedName")
+                }
+                migrated = true
+                logcat(LogPriority.INFO) {
+                    "Migrated shared Komga directory from $legacySharedName to $sharedName"
+                }
+            }
+        }
+
+        if (komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.PerServer) {
             komgaServerPreferences.getProfiles().forEach { profile ->
-                add(legacyKomgaSourceDirName(profile.name))
+                migrated = migrateLegacyKomgaServerDir(
+                    downloadsDir = downloadsDir,
+                    source = KomgaSource(profile.id, profile.name),
+                ) || migrated
+            }
+        }
+
+        if (migrated) invalidateSourceDirCache()
+        migrated
+    }
+
+    private fun migrateLegacyKomgaServerDir(downloadsDir: UniFile, source: KomgaSource): Boolean {
+        val primaryName = getKomgaServerDirName(source.name)
+        if (downloadsDir.findFile(primaryName) != null) {
+            return false
+        }
+
+        val legacyDir = legacyKomgaSourceDirNames(source.name)
+            .mapNotNull(downloadsDir::findFile)
+            .distinctBy { it.uri.toString() }
+            .singleOrNull() ?: return false
+        val legacyName = legacyDir.name
+        if (!legacyDir.renameTo(primaryName)) {
+            throw IOException("Failed to migrate legacy Komga server directory ${legacyDir.name} to $primaryName")
+        }
+
+        logcat(LogPriority.INFO) {
+            "Migrated legacy Komga server directory from $legacyName to $primaryName"
+        }
+        return true
+    }
+
+    fun renameKomgaServerDir(source: KomgaSource, newServerName: String): Result<UniFile?> = runCatching {
+        if (komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared) {
+            return@runCatching null
+        }
+
+        val downloadsDir = downloadsDir ?: throw IOException("Downloads directory is unavailable")
+        val oldDir = findOwnedSourceDirs(source).firstOrNull() ?: return@runCatching null
+        val oldName = oldDir.name ?: return@runCatching null
+        val newName = getKomgaServerDirName(newServerName)
+        if (oldName == newName) return@runCatching oldDir
+
+        val existingTarget = downloadsDir.findFile(newName)
+        if (existingTarget != null && existingTarget.uri != oldDir.uri) {
+            throw IOException("Download directory already exists: $newName")
+        }
+
+        var currentDir = oldDir
+        val capitalizationChanged = oldName.equals(newName, ignoreCase = true)
+        if (capitalizationChanged) {
+            val tempName = newName + Downloader.TMP_DIR_SUFFIX
+            if (!currentDir.renameTo(tempName)) {
+                throw IOException("Failed to prepare download directory rename: $oldName")
+            }
+            currentDir = downloadsDir.findFile(tempName)
+                ?: throw IOException("Failed to resolve temporary download directory: $tempName")
+        }
+
+        if (!currentDir.renameTo(newName)) {
+            if (capitalizationChanged) {
+                currentDir.renameTo(oldName)
+            }
+            throw IOException("Failed to rename download directory from $oldName to $newName")
+        }
+
+        invalidateSourceDirCache()
+        downloadsDir.findFile(newName)
+            ?: throw IOException("Renamed download directory is unavailable: $newName")
+    }
+
+    private fun legacyKomgaSharedSourceDirNames(source: Source): List<String> {
+        return buildList {
+            add(DiskUtil.buildValidFilename(KomgaSource.SOURCE_NAME))
+            addAll(legacyKomgaSourceDirNames(KomgaSource.SOURCE_NAME))
+            komgaServerPreferences.getProfiles().forEach { profile ->
+                add(getKomgaServerDirName(profile.name))
+                addAll(legacyKomgaSourceDirNames(profile.name))
+            }
+            add(getKomgaServerDirName(source.name))
+            addAll(legacyKomgaSourceDirNames(source.name))
+            komgaServerPreferences.getDirectoryAliases(source.id).forEach { alias ->
+                add(getKomgaServerDirName(alias))
+                addAll(legacyKomgaSourceDirNames(alias))
             }
         }.distinct()
     }
 
-    private fun legacyKomgaSourceDirName(sourceName: String): String {
-        return DiskUtil.buildValidFilename(
-            "$sourceName (${KomgaSource.SOURCE_LANG.uppercase()})",
-            disallowNonAscii = disallowNonAsciiFilenames,
-        )
+    private fun legacyKomgaSourceDirNames(sourceName: String): List<String> {
+        val legacyName = "$sourceName (${KomgaSource.SOURCE_LANG.uppercase()})"
+        return listOf(
+            DiskUtil.buildValidFilename(legacyName),
+            DiskUtil.buildValidFilename(legacyName, disallowNonAscii = true),
+        ).distinct()
     }
 
     private fun shouldIncludeLegacySharedDirsInLookup(source: Source): Boolean {
-        return source is KomgaSource &&
+        return isKomgaSource(source) &&
             komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
+    }
+
+    private fun isKomgaSource(source: Source): Boolean {
+        return source is KomgaSource || komgaServerPreferences.isKnownServerId(source.id)
     }
 
     private fun buildSourceDirsCacheKey(downloadsDir: UniFile, source: Source): String {
         return "${downloadsDir.uri}|${getSourceDirNames(source).joinToString(separator = "|")}"
     }
 
-    private fun invalidateSourceDirCache() {
+    fun invalidateSourceDirCache() {
         synchronized(sourceDirsCache) {
             sourceDirsCache.clear()
         }
