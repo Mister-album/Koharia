@@ -36,7 +36,7 @@ class LegacyDatabaseSchemaBridge(
             val tableNames = database.readTableNames().toSet()
             if (version == 0 && tableNames.isEmpty()) return null
 
-            val isLegacyJavaSchema = database.isLegacyJavaSchema(version)
+            val isLegacyJavaSchema = database.isLegacyJavaSchema()
             val inspection = database.inspectSchema(version, isLegacyJavaSchema)
             val requiresWork = version != expectedSchemaVersion ||
                 isLegacyJavaSchema ||
@@ -85,7 +85,7 @@ class LegacyDatabaseSchemaBridge(
         }
     }
 
-    /** Called only after Database.Schema and all SQLDelight migrations succeed. */
+    /** Called only after the migration driver has completed and closed. */
     fun complete(backup: MigrationBackup?) {
         val effectiveBackup = backup ?: pendingBackup ?: return
         val databaseFile = context.getDatabasePath(databaseName)
@@ -209,9 +209,10 @@ class LegacyDatabaseSchemaBridge(
         )
     }
 
-    private fun SQLiteDatabase.isLegacyJavaSchema(version: Int): Boolean {
-        if (version > 1) return false
+    private fun SQLiteDatabase.isLegacyJavaSchema(): Boolean {
         val tables = readTableNames().toSet()
+        // Some affected installs carry a stale SQLDelight-looking user_version even though
+        // their actual tables are still the legacy Java schema. Structure is authoritative.
         return LEGACY_CORE_TABLES.all(tables::contains) && (
             "history" !in tables ||
                 !hasColumn("mangas", "next_update") ||
@@ -439,24 +440,40 @@ class LegacyDatabaseSchemaBridge(
     }
 
     private fun SQLiteDatabase.checkpointWal() {
-        rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { cursor ->
-            check(cursor.moveToFirst()) { "Unable to checkpoint database WAL" }
-            val busy = cursor.getInt(0)
-            val logFrames = cursor.getInt(1)
-            val checkpointedFrames = cursor.getInt(2)
-            check(busy == 0 && (logFrames < 0 || checkpointedFrames >= logFrames)) {
-                "Database WAL checkpoint incomplete " +
-                    "(busy=$busy, logFrames=$logFrames, checkpointedFrames=$checkpointedFrames)"
+        runCatching {
+            rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { cursor ->
+                if (!cursor.moveToFirst()) {
+                    logcat(LogPriority.WARN) { "Unable to read database WAL checkpoint result" }
+                    return@use
+                }
+                val busy = cursor.getInt(0)
+                val logFrames = cursor.getInt(1)
+                val checkpointedFrames = cursor.getInt(2)
+                if (busy != 0 || (logFrames >= 0 && checkpointedFrames < logFrames)) {
+                    logcat(LogPriority.WARN) {
+                        "Database WAL checkpoint incomplete; preserving sidecars with migration backup " +
+                            "(busy=$busy, logFrames=$logFrames, checkpointedFrames=$checkpointedFrames)"
+                    }
+                }
+            }
+        }.onFailure { exception ->
+            logcat(LogPriority.WARN, exception) {
+                "Database WAL checkpoint failed; preserving sidecars with migration backup"
             }
         }
     }
 
     class MigrationBackup internal constructor(
         internal val file: File,
+        private val sidecarFiles: List<File>,
     ) {
         internal fun delete() {
-            if (!file.delete() && file.exists()) {
-                logcat(LogPriority.WARN) { "Unable to delete database migration backup ${file.path}" }
+            (listOf(file) + sidecarFiles).forEach { backupFile ->
+                if (!backupFile.delete() && backupFile.exists()) {
+                    logcat(LogPriority.WARN) {
+                        "Unable to delete database migration backup ${backupFile.path}"
+                    }
+                }
             }
         }
 
@@ -472,7 +489,12 @@ class LegacyDatabaseSchemaBridge(
                     suffix++
                 } while (backup.exists())
                 databaseFile.copyTo(backup, overwrite = false)
-                return MigrationBackup(backup)
+                val sidecarBackups = listOf("-wal", "-shm").mapNotNull { suffix ->
+                    val sidecar = File(databaseFile.path + suffix)
+                    if (!sidecar.exists()) return@mapNotNull null
+                    File(backup.path + suffix).also { sidecar.copyTo(it, overwrite = false) }
+                }
+                return MigrationBackup(backup, sidecarBackups)
             }
         }
     }

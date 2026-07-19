@@ -102,6 +102,20 @@ class LegacyDatabaseSchemaBridgeTest {
     }
 
     @Test
+    fun migratesLegacyJavaSchemaWithStaleSqlDelightVersion() {
+        context.deleteDatabase(databaseName)
+        createLegacyJavaDatabase(userVersion = 12)
+
+        migratePreparedDatabase()
+
+        readableDatabase().use { database ->
+            assertCurrentSchema(database)
+            assertEquals("Legacy title", database.singleString("SELECT title FROM mangas WHERE _id = 1"))
+            assertEquals("Legacy chapter", database.singleString("SELECT name FROM chapters WHERE _id = 2"))
+        }
+    }
+
+    @Test
     fun migratesPublishedSqlDelightVersionTwelve() {
         writableDatabase().use { database ->
             (auxiliaryTables - "extension_repos").forEach { table -> database.execSQL("DROP TABLE $table") }
@@ -226,7 +240,7 @@ class LegacyDatabaseSchemaBridgeTest {
         return driver
     }
 
-    private fun createLegacyJavaDatabase() {
+    private fun createLegacyJavaDatabase(userVersion: Int = 1) {
         SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(databaseName), null).use { database ->
             legacyJavaCreateStatements.forEach(database::execSQL)
             database.execSQL(
@@ -254,7 +268,7 @@ class LegacyDatabaseSchemaBridgeTest {
                 ) VALUES (5, 1, 1, 1, 'Legacy title', 1, 1, 1, 0)
                 """.trimIndent(),
             )
-            database.execSQL("PRAGMA user_version = 1")
+            database.execSQL("PRAGMA user_version = $userVersion")
         }
     }
 
