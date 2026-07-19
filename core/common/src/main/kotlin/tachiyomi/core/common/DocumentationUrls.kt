@@ -23,5 +23,20 @@ object DocumentationUrls {
     }
 
     private const val BASE_URL = "https://koharia.org"
-    private val CHINESE_LANGUAGE_CODES = setOf("zh", "zho", "chi")
+
+    // Include common ISO codes for Chinese macrolanguage varieties in addition to
+    // Simplified/Traditional BCP 47 tags, whose normalized language is `zh`.
+    private val CHINESE_LANGUAGE_CODES = setOf(
+        "zh",
+        "zho",
+        "chi",
+        "cmn",
+        "yue",
+        "wuu",
+        "hak",
+        "nan",
+        "gan",
+        "hsn",
+        "lzh",
+    )
 }
