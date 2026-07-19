@@ -4,17 +4,24 @@ import androidx.core.graphics.ColorUtils
 import org.readium.r2.navigator.epub.EpubPreferences
 import org.readium.r2.navigator.preferences.ReadingProgression
 import org.readium.r2.shared.ExperimentalReadiumApi
+import org.readium.r2.shared.publication.Metadata
 import org.readium.r2.navigator.preferences.Color as ReadiumColor
 import org.readium.r2.navigator.preferences.FontFamily as ReadiumFontFamily
 import org.readium.r2.navigator.preferences.Theme as ReadiumTheme
+import org.readium.r2.shared.publication.ReadingProgression as PublicationReadingProgression
 
 @OptIn(ExperimentalReadiumApi::class)
 class EpubPreferencesBridge {
 
-    fun toReadiumPreferences(preferences: EpubLayoutPreferences): EpubPreferences {
+    fun toReadiumPreferences(
+        preferences: EpubLayoutPreferences,
+        publicationMetadata: Metadata? = null,
+    ): EpubPreferences {
         return toReadiumPreferences(
             readingMode = preferences.readingMode.get(),
             pageDirection = preferences.pageDirection.get(),
+            pageDirectionExplicit = preferences.pageDirection.isSet(),
+            publicationMetadata = publicationMetadata,
             theme = preferences.theme.get(),
             fontSize = preferences.fontSize.get(),
             lineHeight = preferences.lineHeight.get(),
@@ -39,8 +46,15 @@ class EpubPreferencesBridge {
         fontFamily: EpubLayoutPreferences.FontFamily,
         publisherStyles: Boolean,
         customBackgroundColor: Int = EpubLayoutPreferences.DEFAULT_CUSTOM_BACKGROUND_COLOR,
+        pageDirectionExplicit: Boolean = true,
+        publicationMetadata: Metadata? = null,
     ): EpubPreferences {
-        val flowPreferences = resolveReadiumFlowPreferences(readingMode, pageDirection)
+        val flowPreferences = resolveReadiumFlowPreferences(
+            readingMode = readingMode,
+            pageDirection = pageDirection,
+            pageDirectionExplicit = pageDirectionExplicit,
+            publicationMetadata = publicationMetadata,
+        )
         return EpubPreferences(
             scroll = flowPreferences.scroll,
             readingProgression = flowPreferences.readingProgression,
@@ -116,14 +130,30 @@ internal data class ReadiumFlowPreferences(
 internal fun resolveReadiumFlowPreferences(
     readingMode: EpubLayoutPreferences.ReadingMode,
     pageDirection: EpubLayoutPreferences.PageDirection,
+    pageDirectionExplicit: Boolean = true,
+    publicationMetadata: Metadata? = null,
 ): ReadiumFlowPreferences {
+    val nativeVerticalPublication = publicationMetadata?.isNativeVerticalPublication() == true
+    val effectivePageDirection = if (nativeVerticalPublication && !pageDirectionExplicit) {
+        EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
+    } else {
+        pageDirection
+    }
     return ReadiumFlowPreferences(
         scroll = readingMode == EpubLayoutPreferences.ReadingMode.SCROLL,
-        readingProgression = pageDirection.toReadiumReadingProgression(),
-        // Page direction controls navigation only. Without an explicit value, Readium treats
-        // CJK + RTL as vertical writing and also forces the navigator into scroll mode.
-        verticalText = false,
+        readingProgression = effectivePageDirection.toReadiumReadingProgression(),
+        // Preserve a publication's native CJK vertical layout only when the user has not
+        // explicitly overridden its direction. Ordinary books using RTL for page navigation
+        // remain horizontal.
+        verticalText = nativeVerticalPublication &&
+            effectivePageDirection == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT,
     )
+}
+
+private fun Metadata.isNativeVerticalPublication(): Boolean {
+    val language = languages.firstOrNull()?.lowercase() ?: return false
+    val isCjk = language == "ja" || language == "ko" || language.substringBefore('-') == "zh"
+    return isCjk && readingProgression == PublicationReadingProgression.RTL
 }
 
 internal fun EpubLayoutPreferences.PageDirection.toReadiumReadingProgression(): ReadingProgression {

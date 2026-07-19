@@ -3,6 +3,8 @@ package koharia.epub.settings
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.readium.r2.navigator.preferences.ReadingProgression
+import org.readium.r2.shared.publication.Metadata
+import org.readium.r2.shared.publication.ReadingProgression as PublicationReadingProgression
 
 class EpubPreferencesBridgeTest {
 
@@ -41,6 +43,38 @@ class EpubPreferencesBridgeTest {
 
         assertEquals(ReadingProgression.RTL, preferences.readingProgression)
         assertEquals(true, preferences.scroll)
+        assertEquals(false, preferences.verticalText)
+    }
+
+    @Test
+    fun `native CJK vertical publication keeps its original direction when not overridden`() {
+        val preferences = resolveReadiumFlowPreferences(
+            readingMode = EpubLayoutPreferences.ReadingMode.PAGINATED,
+            pageDirection = EpubLayoutPreferences.PageDirection.LEFT_TO_RIGHT,
+            pageDirectionExplicit = false,
+            publicationMetadata = Metadata(
+                languages = listOf("ja"),
+                readingProgression = PublicationReadingProgression.RTL,
+            ),
+        )
+
+        assertEquals(ReadingProgression.RTL, preferences.readingProgression)
+        assertEquals(true, preferences.verticalText)
+    }
+
+    @Test
+    fun `explicit LTR overrides native CJK vertical publication`() {
+        val preferences = resolveReadiumFlowPreferences(
+            readingMode = EpubLayoutPreferences.ReadingMode.PAGINATED,
+            pageDirection = EpubLayoutPreferences.PageDirection.LEFT_TO_RIGHT,
+            pageDirectionExplicit = true,
+            publicationMetadata = Metadata(
+                languages = listOf("ja"),
+                readingProgression = PublicationReadingProgression.RTL,
+            ),
+        )
+
+        assertEquals(ReadingProgression.LTR, preferences.readingProgression)
         assertEquals(false, preferences.verticalText)
     }
 }

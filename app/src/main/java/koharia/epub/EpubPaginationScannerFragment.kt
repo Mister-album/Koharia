@@ -93,7 +93,10 @@ internal class EpubPaginationScannerFragment : Fragment() {
         }
         childFragmentManager.fragmentFactory = session?.navigatorFactory?.createFragmentFactory(
             initialLocator = firstLocator,
-            initialPreferences = epubPreferencesBridge.toReadiumPreferences(epubLayoutPreferences),
+            initialPreferences = epubPreferencesBridge.toReadiumPreferences(
+                preferences = epubLayoutPreferences,
+                publicationMetadata = session.publication.metadata,
+            ),
             paginationListener = paginationListener,
             configuration = EpubNavigatorFragment.Configuration(
                 shouldApplyInsetsPadding = false,
