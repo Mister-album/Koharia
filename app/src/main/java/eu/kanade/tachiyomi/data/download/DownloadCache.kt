@@ -430,8 +430,9 @@ class DownloadCache(
         val generation = renewalGeneration.incrementAndGet()
         val renewalActive = synchronized(renewalStateLock) {
             lastRenew = 0L
+            val active = renewalJob?.isActive == true
             renewalJob?.cancel()
-            renewalJob?.isActive == true
+            active
         }
         logcat(LogPriority.DEBUG) {
             "DownloadCache: invalidate requested reason=$reason " +
