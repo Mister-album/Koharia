@@ -17,7 +17,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.core.net.toUri
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -84,11 +83,9 @@ class MangaScreen(
         val haptic = LocalHapticFeedback.current
         val scope = rememberCoroutineScope()
         val epubReaderLauncher = remember { EpubReaderLauncher() }
-        val lifecycleOwner = LocalLifecycleOwner.current
         val screenModel = rememberScreenModel(tag = "$mangaId:$sourceId:$mangaUrl") {
             MangaScreenModel(
-                context = context,
-                lifecycle = lifecycleOwner.lifecycle,
+                context = context.applicationContext,
                 mangaId = mangaId,
                 isFromSource = fromSource,
                 routeSourceId = sourceId,

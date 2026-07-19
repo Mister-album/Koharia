@@ -7,8 +7,6 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.util.fastAny
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.flowWithLifecycle
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.asState
@@ -127,8 +125,7 @@ private fun mergeEpubProgressions(
 
 class MangaScreenModel(
     private val context: Context,
-    private val lifecycle: Lifecycle,
-    private var mangaId: Long,
+    private val mangaId: Long,
     private val isFromSource: Boolean,
     private val routeSourceId: Long? = null,
     private val routeUrl: String? = null,
@@ -165,6 +162,9 @@ class MangaScreenModel(
 
     private val successState: State.Success?
         get() = state.value as? State.Success
+
+    private val currentMangaId: Long
+        get() = successState?.manga?.id ?: mangaId
 
     val manga: Manga?
         get() = successState?.manga
@@ -219,23 +219,23 @@ class MangaScreenModel(
                 mutableState.update { State.Error }
                 return@launchIO
             }
-            mangaId = manga.id
+            val resolvedMangaId = manga.id
 
             val chaptersDeferred = async {
-                getMangaAndChapters.awaitChapters(mangaId, applyScanlatorFilter = true)
+                getMangaAndChapters.awaitChapters(resolvedMangaId, applyScanlatorFilter = true)
             }
-            val localProgressDeferred = async { getEpubProgress.awaitByMangaId(mangaId) }
+            val localProgressDeferred = async { getEpubProgress.awaitByMangaId(resolvedMangaId) }
             val remoteProgressDeferred = async {
                 runCatching {
-                    getEpubRemoteProgressCache.awaitByMangaId(mangaId)
+                    getEpubRemoteProgressCache.awaitByMangaId(resolvedMangaId)
                 }.onFailure { error ->
                     logcat(LogPriority.WARN, error) {
-                        "Failed to load cached EPUB remote progress for mangaId=$mangaId"
+                        "Failed to load cached EPUB remote progress for mangaId=$resolvedMangaId"
                     }
                 }.getOrDefault(emptyList())
             }
-            val availableScanlatorsDeferred = async { getAvailableScanlators.await(mangaId) }
-            val excludedScanlatorsDeferred = async { getExcludedScanlators.await(mangaId) }
+            val availableScanlatorsDeferred = async { getAvailableScanlators.await(resolvedMangaId) }
+            val excludedScanlatorsDeferred = async { getExcludedScanlators.await(resolvedMangaId) }
 
             val epubProgresses = mergeEpubProgressions(
                 localProgresses = localProgressDeferred.await(),
@@ -251,15 +251,14 @@ class MangaScreenModel(
 
             launch {
                 combine(
-                    getMangaAndChapters.subscribe(mangaId, applyScanlatorFilter = true).distinctUntilChanged(),
-                    getEpubProgress.subscribeByMangaId(mangaId),
-                    getEpubRemoteProgressCache.subscribeByMangaId(mangaId),
+                    getMangaAndChapters.subscribe(resolvedMangaId, applyScanlatorFilter = true).distinctUntilChanged(),
+                    getEpubProgress.subscribeByMangaId(resolvedMangaId),
+                    getEpubRemoteProgressCache.subscribeByMangaId(resolvedMangaId),
                     downloadCache.changes,
                     downloadManager.queueState,
                 ) { mangaAndChapters, localProgresses, remoteProgresses, _, _ ->
                     Triple(mangaAndChapters, localProgresses, remoteProgresses)
                 }
-                    .flowWithLifecycle(lifecycle)
                     .collectLatest { (mangaAndChapters, localProgresses, remoteProgresses) ->
                         val (updatedManga, chapters) = mangaAndChapters
                         updateSuccessState {
@@ -275,8 +274,7 @@ class MangaScreenModel(
             }
 
             launch {
-                getExcludedScanlators.subscribe(mangaId)
-                    .flowWithLifecycle(lifecycle)
+                getExcludedScanlators.subscribe(resolvedMangaId)
                     .distinctUntilChanged()
                     .collectLatest { excludedScanlators ->
                         updateSuccessState { it.copy(excludedScanlators = excludedScanlators) }
@@ -284,8 +282,7 @@ class MangaScreenModel(
             }
 
             launch {
-                getAvailableScanlators.subscribe(mangaId)
-                    .flowWithLifecycle(lifecycle)
+                getAvailableScanlators.subscribe(resolvedMangaId)
                     .distinctUntilChanged()
                     .collectLatest { availableScanlators ->
                         updateSuccessState { it.copy(availableScanlators = availableScanlators) }
@@ -361,7 +358,12 @@ class MangaScreenModel(
 
     private suspend fun resolveManga(): Manga? {
         val byId = getMangaAndChapters.awaitMangaOrNull(mangaId)
-        if (byId != null && (routeSourceId == null || byId.source == routeSourceId)) return byId
+        if (byId != null &&
+            (routeSourceId == null || byId.source == routeSourceId) &&
+            (routeUrl.isNullOrBlank() || byId.url == routeUrl)
+        ) {
+            return byId
+        }
 
         return if (!routeUrl.isNullOrBlank() && routeSourceId != null) {
             mangaRepository.getMangaByUrlAndSourceId(routeUrl, routeSourceId)
@@ -400,17 +402,17 @@ class MangaScreenModel(
             if (!force) delay(EPUB_REMOTE_PROGRESS_DELAY_MS)
             val remote = runCatching {
                 epubRemoteProgressCoordinator.syncManga(
-                    mangaId = mangaId,
+                    mangaId = currentMangaId,
                     sourceId = source.id,
                     chapters = chapters,
                     force = force,
                 )
             }.onFailure { error ->
                 logcat(LogPriority.WARN, error) {
-                    "Failed to refresh EPUB remote progress for mangaId=$mangaId"
+                    "Failed to refresh EPUB remote progress for mangaId=$currentMangaId"
                 }
             }.getOrDefault(emptyList()).associateBy { it.chapterId }
-            val local = getEpubProgress.awaitByMangaId(mangaId).associateBy { it.chapterId }
+            val local = getEpubProgress.awaitByMangaId(currentMangaId).associateBy { it.chapterId }
             updateSuccessState { state ->
                 state.copy(
                     chapters = state.chapters.map { item ->
@@ -440,11 +442,13 @@ class MangaScreenModel(
 
         screenModelScope.launchIO {
             runCatching {
-                val latestManga = getMangaAndChapters.awaitManga(mangaId)
+                val latestManga = getMangaAndChapters.awaitManga(currentMangaId)
                 addTracks.bindEnhancedTrackers(latestManga, source)
                 komgaProgressSyncService.syncFromServer(latestManga)
             }.onFailure { error ->
-                logcat(LogPriority.WARN, error) { "Failed to sync Komga progress in background for mangaId=$mangaId" }
+                logcat(LogPriority.WARN, error) {
+                    "Failed to sync Komga progress in background for mangaId=$currentMangaId"
+                }
             }
         }
     }
@@ -664,7 +668,7 @@ class MangaScreenModel(
 
     private fun moveMangaToCategory(categoryIds: List<Long>) {
         screenModelScope.launchIO {
-            setMangaCategories.await(mangaId, categoryIds)
+            setMangaCategories.await(currentMangaId, categoryIds)
         }
     }
 
@@ -686,7 +690,6 @@ class MangaScreenModel(
             downloadManager.statusFlow()
                 .filter { it.manga.id == successState?.manga?.id }
                 .catch { error -> logcat(LogPriority.ERROR, error) }
-                .flowWithLifecycle(lifecycle)
                 .collect {
                     withUIContext {
                         updateDownloadState(it)
@@ -698,7 +701,6 @@ class MangaScreenModel(
             downloadManager.progressFlow()
                 .filter { it.manga.id == successState?.manga?.id }
                 .catch { error -> logcat(LogPriority.ERROR, error) }
-                .flowWithLifecycle(lifecycle)
                 .collect {
                     withUIContext {
                         updateDownloadState(it)
@@ -788,7 +790,7 @@ class MangaScreenModel(
             screenModelScope.launch {
                 snackbarHostState.showSnackbar(message = message)
             }
-            val newManga = mangaRepository.getMangaById(mangaId)
+            val newManga = mangaRepository.getMangaById(currentMangaId)
             updateSuccessState { it.copy(manga = newManga, isRefreshingData = false) }
         }
     }
@@ -954,13 +956,13 @@ class MangaScreenModel(
 
             refreshTrackers()
 
-            val tracks = getTracks.await(mangaId)
+            val tracks = getTracks.await(currentMangaId)
             val maxChapterNumber = chapters.maxOf { it.chapterNumber }
             val shouldPromptTrackingUpdate = tracks.any { track -> maxChapterNumber > track.lastChapterRead }
 
             if (!shouldPromptTrackingUpdate) return@launchIO
             if (autoTrackState == AutoTrackState.ALWAYS) {
-                trackChapter.await(context, mangaId, maxChapterNumber)
+                trackChapter.await(context, currentMangaId, maxChapterNumber)
                 withUIContext {
                     context.toast(context.stringResource(MR.strings.trackers_updated_summary, maxChapterNumber.toInt()))
                 }
@@ -975,7 +977,7 @@ class MangaScreenModel(
             )
 
             if (result == SnackbarResult.ActionPerformed) {
-                trackChapter.await(context, mangaId, maxChapterNumber)
+                trackChapter.await(context, currentMangaId, maxChapterNumber)
             }
         }
     }
@@ -983,11 +985,11 @@ class MangaScreenModel(
     private suspend fun refreshTrackers(
         refreshTracks: RefreshTracks = Injekt.get(),
     ) {
-        refreshTracks.await(mangaId)
+        refreshTracks.await(currentMangaId)
             .filter { it.first != null }
             .forEach { (track, e) ->
                 logcat(LogPriority.ERROR, e) {
-                    "Failed to refresh track data mangaId=$mangaId for service ${track!!.id}"
+                    "Failed to refresh track data mangaId=$currentMangaId for service ${track!!.id}"
                 }
                 withUIContext {
                     context.toast(
@@ -1265,7 +1267,6 @@ class MangaScreenModel(
                 val supportedTrackerTracks = mangaTracks.filter { it.trackerId in supportedTrackerIds }
                 supportedTrackerTracks.size to supportedTrackers.isNotEmpty()
             }
-                .flowWithLifecycle(lifecycle)
                 .distinctUntilChanged()
                 .collectLatest { (trackingCount, hasLoggedInTrackers) ->
                     updateSuccessState {
@@ -1321,7 +1322,7 @@ class MangaScreenModel(
 
     fun setExcludedScanlators(excludedScanlators: Set<String>) {
         screenModelScope.launchIO {
-            setExcludedScanlators.await(mangaId, excludedScanlators)
+            setExcludedScanlators.await(currentMangaId, excludedScanlators)
         }
     }
 

@@ -185,10 +185,12 @@ class MainActivity : BaseActivity() {
                     komgaServerPreferences.activeServerId.changes()
                         .drop(1)
                         .collectLatest {
-                            // Details and browse state are keyed by the
-                            // previous server. Return to the home tabs before
-                            // the new source renders.
-                            navigator.popUntilRoot()
+                            // Only discard screens whose content is keyed by the previous
+                            // server. Server-management screens can change the active server
+                            // while adding/editing a profile and must remain on the stack.
+                            when (navigator.lastItem) {
+                                is MangaScreen, is KomgaLibraryScreen -> navigator.popUntilRoot()
+                            }
                         }
                 }
 
