@@ -21,23 +21,21 @@ Koharia 是一款面向 [Komga](https://komga.org/) 服务器的第三方 Androi
 
 <table>
   <tr>
-    <td align="center" width="50%">
-      <img src="./.github/assets/screenshots/library.png" alt="Koharia 主界面" width="260"/><br/>
-      <sub>主界面：分别浏览漫画与书籍</sub>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/library.png" alt="Koharia 主界面" width="150"/><br/>
+      <sub>主界面</sub>
     </td>
-    <td align="center" width="50%">
-      <img src="./.github/assets/screenshots/series-details.png" alt="Koharia 作品详情页" width="260"/><br/>
-      <sub>作品详情：简介、章节与阅读入口</sub>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/series-details.png" alt="Koharia 作品详情页" width="150"/><br/>
+      <sub>作品详情</sub>
     </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <img src="./.github/assets/screenshots/comic-reader.png" alt="Koharia 漫画阅读界面" width="260"/><br/>
-      <sub>漫画阅读：分页、进度与阅读方向</sub>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/comic-reader.png" alt="Koharia 漫画阅读界面" width="150"/><br/>
+      <sub>漫画阅读</sub>
     </td>
-    <td align="center" width="50%">
-      <img src="./.github/assets/screenshots/epub-reader.png" alt="Koharia EPUB 书籍阅读界面" width="260"/><br/>
-      <sub>书籍阅读：字体、间距、背景与排版</sub>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/epub-reader.png" alt="Koharia EPUB 书籍阅读界面" width="150"/><br/>
+      <sub>书籍阅读</sub>
     </td>
   </tr>
 </table>

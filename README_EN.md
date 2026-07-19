@@ -21,23 +21,21 @@ The project is built on the mature Android reading foundation of [Mihon](https:/
 
 <table>
   <tr>
-    <td align="center" width="50%">
-      <img src="./.github/assets/screenshots/library.png" alt="Koharia library screen" width="260"/><br/>
-      <sub>Library: browse comics and books separately</sub>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/library.png" alt="Koharia library screen" width="150"/><br/>
+      <sub>Library</sub>
     </td>
-    <td align="center" width="50%">
-      <img src="./.github/assets/screenshots/series-details.png" alt="Koharia series details screen" width="260"/><br/>
-      <sub>Series details: synopsis, chapters, and reading entry</sub>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/series-details.png" alt="Koharia series details screen" width="150"/><br/>
+      <sub>Series details</sub>
     </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <img src="./.github/assets/screenshots/comic-reader.png" alt="Koharia comic reader" width="260"/><br/>
-      <sub>Comic reader: paging, progress, and reading direction</sub>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/comic-reader.png" alt="Koharia comic reader" width="150"/><br/>
+      <sub>Comic reader</sub>
     </td>
-    <td align="center" width="50%">
-      <img src="./.github/assets/screenshots/epub-reader.png" alt="Koharia EPUB reader" width="260"/><br/>
-      <sub>Book reader: fonts, spacing, backgrounds, and layout</sub>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/epub-reader.png" alt="Koharia EPUB reader" width="150"/><br/>
+      <sub>Book reader</sub>
     </td>
   </tr>
 </table>
