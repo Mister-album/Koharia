@@ -89,7 +89,7 @@ class KomgaServerProfilesScreen : Screen() {
                 id = serverPreferences.allocateServerId(),
                 name = name,
             )
-            serverPreferences.setProfiles(profiles + newProfile)
+            serverPreferences.setProfiles(serverPreferences.getProfiles() + newProfile)
             localConfigManager.initializeScopeForNewServer(newProfile.id)
             serverPreferences.activeServerId.set(newProfile.id)
             navigator.push(

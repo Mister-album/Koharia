@@ -180,6 +180,7 @@ class KomgaServerPreferences(
         serializedDirectoryAliases.set(updated.mapTo(linkedSetOf(), json::encodeToString))
     }
 
+    @Synchronized
     private fun rememberServerIds(profiles: Collection<KomgaServerProfile>) {
         val updated = knownServerIds.get().toMutableSet().apply {
             add(KomgaSource.ID.toString())
