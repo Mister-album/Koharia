@@ -3,6 +3,13 @@ package eu.kanade.tachiyomi.ui.reader.setting
 import android.os.Build
 import androidx.compose.ui.graphics.BlendMode
 import dev.icerock.moko.resources.StringResource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
@@ -51,9 +58,11 @@ class ReaderPreferences(
         ReadingMode.RIGHT_TO_LEFT.flagValue,
     )
 
-    val defaultOrientationType: Preference<Int> = preferenceStore.getInt(
-        "pref_default_orientation_type_key",
-        ReaderOrientation.FREE.flagValue,
+    val defaultOrientationType: Preference<Int> = DefaultOrientationPreference(
+        preferenceStore.getInt(
+            "pref_default_orientation_type_key",
+            ReaderOrientation.DEFAULT.flagValue,
+        ),
     )
 
     val webtoonDoubleTapZoomEnabled: Preference<Boolean> = preferenceStore.getBoolean(
@@ -255,6 +264,44 @@ class ReaderPreferences(
                     ),
                 )
             }
+        }
+    }
+}
+
+/**
+ * FREE was previously stored as the global default even though DEFAULT has the same
+ * system-following behavior. Normalize reads for every dynamic Komga preference scope;
+ * per-title orientation preferences still retain FREE as a distinct selection.
+ */
+private class DefaultOrientationPreference(
+    private val delegate: Preference<Int>,
+) : Preference<Int> {
+
+    override fun key(): String = delegate.key()
+
+    override fun get(): Int = normalize(delegate.get())
+
+    override fun set(value: Int) = delegate.set(normalize(value))
+
+    override fun isSet(): Boolean = delegate.isSet()
+
+    override fun delete() = delegate.delete()
+
+    override fun defaultValue(): Int = normalize(delegate.defaultValue())
+
+    override fun changes(): Flow<Int> = delegate.changes()
+        .map(::normalize)
+        .distinctUntilChanged()
+
+    override fun stateIn(scope: CoroutineScope): StateFlow<Int> {
+        return changes().stateIn(scope, SharingStarted.Eagerly, get())
+    }
+
+    private fun normalize(value: Int): Int {
+        return if (value == ReaderOrientation.FREE.flagValue) {
+            ReaderOrientation.DEFAULT.flagValue
+        } else {
+            value
         }
     }
 }
