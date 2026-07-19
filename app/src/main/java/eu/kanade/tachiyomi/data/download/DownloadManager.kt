@@ -313,17 +313,28 @@ class DownloadManager(
 
             removeFromDownloadQueue(filteredChapters)
 
-            val (mangaDir, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
+            val (mangaDirs, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
             chapterDirs.distinctBy { it.uri.toString() }.forEach {
                 komgaSharedDownloadIndexManager.deleteIndexedPath(it)
                 it.delete()
             }
-            cache.removeChapters(filteredChapters, manga)
+            val remainingMangaDirs = mangaDirs.filterNot { mangaDir ->
+                if (mangaDir.listFiles()?.isEmpty() != true) return@filterNot false
 
-            // Delete manga directory if empty
-            if (mangaDir?.listFiles()?.isEmpty() == true) {
-                deleteManga(manga, source, removeQueued = false)
+                val relativePath = komgaSharedDownloadIndexManager.relativePathOf(mangaDir)
+                val deleted = mangaDir.delete()
+                if (deleted) {
+                    relativePath?.let { komgaSharedDownloadIndexManager.deleteIndexedPathPrefix(it) }
+                }
+                deleted
             }
+            if (mangaDirs.isNotEmpty() && remainingMangaDirs.isEmpty()) {
+                cache.removeManga(manga)
+            } else {
+                cache.removeChapters(filteredChapters, manga)
+            }
+
+            removeEmptyOwnedSourceDirs(source)
         }
     }
 
@@ -349,20 +360,29 @@ class DownloadManager(
             ) {
                 komgaSharedDownloadIndexManager.deleteMangaIndexedDownloads(manga.id, source.id)
             }
-            provider.findMangaDir(manga.title, source)?.let { mangaDir ->
+            provider.findMangaDirs(manga.title, source).forEach { mangaDir ->
                 komgaSharedDownloadIndexManager.relativePathOf(mangaDir)?.let {
                     komgaSharedDownloadIndexManager.deleteIndexedPathPrefix(it)
                 }
                 mangaDir.delete()
             }
             cache.removeManga(manga)
+            removeEmptyOwnedSourceDirs(source)
+        }
+    }
 
-            // Delete source directory if empty
-            val sourceDir = provider.findSourceDir(source)
-            if (sourceDir?.listFiles()?.isEmpty() == true) {
-                sourceDir.delete()
-                cache.removeSource(source)
-            }
+    private suspend fun removeEmptyOwnedSourceDirs(source: Source) {
+        val ownedSourceDirs = provider.findOwnedSourceDirs(source)
+        ownedSourceDirs
+            .filter { it.listFiles()?.isEmpty() == true }
+            .forEach { it.delete() }
+
+        provider.invalidateSourceDirCache()
+        val remainingSourceDirs = provider.findSourceDirs(source)
+        if (remainingSourceDirs.isEmpty()) {
+            cache.removeSource(source)
+        } else {
+            cache.refreshSourceDirectories(source.id, remainingSourceDirs)
         }
     }
 
@@ -446,35 +466,50 @@ class DownloadManager(
      */
     suspend fun renameManga(manga: Manga, newTitle: String) {
         val source = sourceManager.getOrStub(manga.source)
-        val oldFolder = provider.findMangaDir(manga.title, source) ?: return
+        val oldFolders = provider.findMangaDirs(manga.title, source)
+        if (oldFolders.isEmpty()) return
         val newName = provider.getMangaDirName(newTitle)
 
-        if (oldFolder.name == newName) return
+        if (oldFolders.all { it.name == newName }) return
 
         // just to be safe, don't allow downloads for this manga while renaming it
         downloader.removeFromQueue(manga)
 
-        val capitalizationChanged = oldFolder.name.equals(newName, ignoreCase = true)
-        val oldRelativePathPrefix = komgaSharedDownloadIndexManager.relativePathOf(oldFolder)
-        if (capitalizationChanged) {
-            val tempName = newName + Downloader.TMP_DIR_SUFFIX
-            if (!oldFolder.renameTo(tempName)) {
-                logcat(LogPriority.ERROR) { "Failed to rename manga download folder: ${oldFolder.name}" }
-                return
+        oldFolders.forEach { oldFolder ->
+            val oldName = oldFolder.name ?: return@forEach
+            if (oldName == newName) return@forEach
+
+            val parent = oldFolder.parentFile
+            val oldRelativePathPrefix = komgaSharedDownloadIndexManager.relativePathOf(oldFolder)
+            var currentFolder = oldFolder
+            val capitalizationChanged = oldName.equals(newName, ignoreCase = true)
+            if (capitalizationChanged) {
+                val tempName = newName + Downloader.TMP_DIR_SUFFIX
+                if (!currentFolder.renameTo(tempName)) {
+                    logcat(LogPriority.ERROR) { "Failed to prepare manga download folder rename: $oldName" }
+                    return@forEach
+                }
+                currentFolder = parent?.findFile(tempName) ?: run {
+                    logcat(LogPriority.ERROR) { "Failed to resolve temporary manga download folder: $tempName" }
+                    return@forEach
+                }
+            }
+
+            if (currentFolder.renameTo(newName)) {
+                val renamedFolder = parent?.findFile(newName) ?: currentFolder
+                oldRelativePathPrefix?.let { oldPrefix ->
+                    komgaSharedDownloadIndexManager.relativePathOf(renamedFolder)?.let { newPrefix ->
+                        komgaSharedDownloadIndexManager.updateIndexedPathPrefix(oldPrefix, newPrefix)
+                    }
+                }
+            } else {
+                logcat(LogPriority.ERROR) { "Failed to rename manga download folder: $oldName" }
             }
         }
 
-        if (oldFolder.renameTo(newName)) {
-            val renamedFolder = provider.findMangaDir(newTitle, source) ?: oldFolder
-            oldRelativePathPrefix?.let { oldPrefix ->
-                komgaSharedDownloadIndexManager.relativePathOf(renamedFolder)?.let { newPrefix ->
-                    komgaSharedDownloadIndexManager.updateIndexedPathPrefix(oldPrefix, newPrefix)
-                }
-            }
-            cache.renameManga(manga, renamedFolder, newTitle)
-        } else {
-            logcat(LogPriority.ERROR) { "Failed to rename manga download folder: ${oldFolder.name}" }
-        }
+        // Multiple current and historical source directories can represent one logical manga.
+        // Re-scan their merged contents so a partial SAF rename cannot leave stale cache entries.
+        cache.refreshSourceDirectories(source.id, provider.findSourceDirs(source))
     }
 
     /**

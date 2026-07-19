@@ -97,11 +97,16 @@ class DownloadProvider(
      * @param source the source of the manga.
      */
     fun findMangaDir(mangaTitle: String, source: Source): UniFile? {
+        return findMangaDirs(mangaTitle, source).firstOrNull()
+    }
+
+    fun findMangaDirs(mangaTitle: String, source: Source): List<UniFile> {
         val mangaDirName = getMangaDirName(mangaTitle)
         return findSourceDirs(source)
             .asSequence()
             .mapNotNull { it.findFile(mangaDirName) }
-            .firstOrNull()
+            .distinctBy { it.uri.toString() }
+            .toList()
     }
 
     /**
@@ -159,11 +164,18 @@ class DownloadProvider(
      * @param manga the manga of the chapter.
      * @param source the source of the chapter.
      */
-    fun findChapterDirs(chapters: List<Chapter>, manga: Manga, source: Source): Pair<UniFile?, List<UniFile>> {
-        val mangaDir = findMangaDir(manga.title, source)
-        return mangaDir to chapters.mapNotNull { chapter ->
-            findChapterDir(chapter.name, chapter.scanlator, chapter.url, manga.title, source)
-        }
+    fun findChapterDirs(chapters: List<Chapter>, manga: Manga, source: Source): Pair<List<UniFile>, List<UniFile>> {
+        val mangaDirs = findMangaDirs(manga.title, source)
+        val chapterDirs = chapters.flatMap { chapter ->
+            val validNames = getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
+            val directMatches = mangaDirs.flatMap { mangaDir ->
+                validNames.mapNotNull(mangaDir::findFile)
+            }
+            directMatches.ifEmpty {
+                listOfNotNull(findChapterDir(chapter.name, chapter.scanlator, chapter.url, manga.title, source))
+            }
+        }.distinctBy { it.uri.toString() }
+        return mangaDirs to chapterDirs
     }
 
     /**
@@ -515,17 +527,20 @@ class DownloadProvider(
             throw IOException("Download directory already exists: $newName")
         }
 
+        var currentDir = oldDir
         val capitalizationChanged = oldName.equals(newName, ignoreCase = true)
         if (capitalizationChanged) {
             val tempName = newName + Downloader.TMP_DIR_SUFFIX
-            if (!oldDir.renameTo(tempName)) {
+            if (!currentDir.renameTo(tempName)) {
                 throw IOException("Failed to prepare download directory rename: $oldName")
             }
+            currentDir = downloadsDir.findFile(tempName)
+                ?: throw IOException("Failed to resolve temporary download directory: $tempName")
         }
 
-        if (!oldDir.renameTo(newName)) {
+        if (!currentDir.renameTo(newName)) {
             if (capitalizationChanged) {
-                oldDir.renameTo(oldName)
+                currentDir.renameTo(oldName)
             }
             throw IOException("Failed to rename download directory from $oldName to $newName")
         }

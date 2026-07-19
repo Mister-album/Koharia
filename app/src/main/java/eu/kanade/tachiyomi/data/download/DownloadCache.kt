@@ -11,7 +11,6 @@ import koharia.source.komga.KomgaServerProfile
 import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -466,7 +465,7 @@ class DownloadCache(
                 return
             }
 
-            scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            scope.launch(Dispatchers.IO) {
                 val startedAt = System.currentTimeMillis()
                 logcat(LogPriority.DEBUG) {
                     "DownloadCache: full scan started trigger=$trigger"
@@ -554,8 +553,6 @@ class DownloadCache(
             _isInitializing.value = false
             notifyChanges()
         }
-        job.start()
-
         // Mainly to notify the indexing notifier UI
         notifyChanges()
     }
