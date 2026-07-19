@@ -43,6 +43,7 @@ class KomgaServerSettingsScreen(
     override fun Content() {
         var showHelpDialog by rememberSaveable { mutableStateOf(false) }
         var showUnsavedDialog by rememberSaveable { mutableStateOf(false) }
+        var isSaving by rememberSaveable { mutableStateOf(false) }
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
@@ -102,28 +103,35 @@ class KomgaServerSettingsScreen(
                     )
                 }
                 IconButton(
+                    enabled = !isSaving,
                     onClick = {
+                        if (isSaving) return@IconButton
+                        isSaving = true
                         scope.launch {
-                            val currentName = serverPreferences.getProfiles()
-                                .find { it.id == sourceId }
-                                ?.name
-                                .orEmpty()
-                            val requestedName = deferredDataStore
-                                ?.getString(KomgaSource.PREF_SERVER_PROFILE_NAME, currentName)
-                                ?.trim()
-                                ?: currentName
-                            val result = serverProfileManager.renameServer(sourceId, requestedName)
-                            if (result.isFailure) {
-                                context.toast(MR.strings.komga_server_rename_failed)
-                                return@launch
-                            }
+                            try {
+                                val currentName = serverPreferences.getProfiles()
+                                    .find { it.id == sourceId }
+                                    ?.name
+                                    .orEmpty()
+                                val requestedName = deferredDataStore
+                                    ?.getString(KomgaSource.PREF_SERVER_PROFILE_NAME, currentName)
+                                    ?.trim()
+                                    ?: currentName
+                                val result = serverProfileManager.renameServer(sourceId, requestedName)
+                                if (result.isFailure) {
+                                    context.toast(MR.strings.komga_server_rename_failed)
+                                    return@launch
+                                }
 
-                            deferredDataStore?.putString(
-                                KomgaSource.PREF_SERVER_PROFILE_NAME,
-                                requestedName,
-                            )
-                            deferredDataStore?.applyChanges()
-                            navigator.pop()
+                                deferredDataStore?.putString(
+                                    KomgaSource.PREF_SERVER_PROFILE_NAME,
+                                    requestedName,
+                                )
+                                deferredDataStore?.applyChanges()
+                                navigator.pop()
+                            } finally {
+                                isSaving = false
+                            }
                         }
                     },
                 ) {

@@ -59,6 +59,16 @@ class KomgaServerPreferences(
         false,
     )
 
+    private val knownServerIds: Preference<Set<String>> = preferenceStore.getStringSet(
+        PREF_KNOWN_SERVER_IDS,
+        emptySet(),
+    )
+
+    private val downloadDirectoryLayoutVersion: Preference<Int> = preferenceStore.getInt(
+        PREF_DOWNLOAD_DIRECTORY_LAYOUT_VERSION,
+        0,
+    )
+
     fun profilesChanges(): Flow<List<KomgaServerProfile>> {
         return serializedProfiles.changes()
             .map(::decodeProfiles)
@@ -72,6 +82,7 @@ class KomgaServerPreferences(
 
     fun setProfiles(profiles: Collection<KomgaServerProfile>) {
         val normalizedProfiles = normalizeProfiles(profiles.toList())
+        rememberServerIds(normalizedProfiles)
         serializedProfiles.set(normalizedProfiles.mapTo(linkedSetOf(), json::encodeToString))
         // An explicit profile update (including deleting the last profile) is no longer
         // an initialization attempt. This prevents legacy recovery from recreating a
@@ -103,7 +114,28 @@ class KomgaServerPreferences(
             serializedProfiles.set(profiles.mapTo(linkedSetOf(), json::encodeToString))
             hasInitializedProfiles.set(true)
         }
+        rememberServerIds(profiles)
         ensureActiveServerExists(profiles)
+    }
+
+    fun isKnownServerId(serverId: Long): Boolean {
+        return serverId == KomgaSource.ID || serverId.toString() in knownServerIds.get()
+    }
+
+    fun needsDownloadDirectoryLayoutMigration(): Boolean {
+        return downloadDirectoryLayoutVersion.get() < DOWNLOAD_DIRECTORY_LAYOUT_VERSION
+    }
+
+    fun markDownloadDirectoryLayoutMigrated() {
+        downloadDirectoryLayoutVersion.set(DOWNLOAD_DIRECTORY_LAYOUT_VERSION)
+    }
+
+    private fun rememberServerIds(profiles: Collection<KomgaServerProfile>) {
+        val updated = knownServerIds.get().toMutableSet().apply {
+            add(KomgaSource.ID.toString())
+            profiles.mapTo(this) { it.id.toString() }
+        }
+        knownServerIds.set(updated)
     }
 
     private fun hasLegacySourcePreferences(): Boolean {
@@ -151,7 +183,10 @@ class KomgaServerPreferences(
         private const val PREF_LOCAL_CONFIG_MODE = "komga_local_config_mode"
         private const val PREF_DOWNLOAD_DIRECTORY_MODE = "komga_download_directory_mode"
         private const val PREF_HAS_INITIALIZED_PROFILES = "komga_has_initialized_profiles"
+        private const val PREF_KNOWN_SERVER_IDS = "komga_known_server_ids"
+        private const val PREF_DOWNLOAD_DIRECTORY_LAYOUT_VERSION = "komga_download_directory_layout_version"
         private const val PREF_LEGACY_ADDRESS = "Address"
+        private const val DOWNLOAD_DIRECTORY_LAYOUT_VERSION = 1
 
         const val NO_ACTIVE_SERVER = -1L
     }

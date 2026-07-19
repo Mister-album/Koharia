@@ -11,6 +11,7 @@ import koharia.source.komga.KomgaServerProfile
 import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -91,9 +92,16 @@ class DownloadCache(
     /**
      * The last time the cache was refreshed.
      */
+    private val renewalStateLock = Any()
+
+    @Volatile
     private var lastRenew = 0L
+
+    @Volatile
     private var renewalJob: Job? = null
     private val renewalGeneration = AtomicLong(0L)
+
+    private val profileRefreshLock = Any()
 
     @Volatile
     private var suppressedProfileIds: Set<Long>? = null
@@ -127,17 +135,19 @@ class DownloadCache(
                 }
             }
 
-            if (komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.PerServer) {
-                val migrated = komgaServerPreferences.getProfiles()
-                    .map { profile ->
-                        provider.migrateLegacyKomgaServerDir(
-                            KomgaSource(profile.id, profile.name),
-                        )
+            if (komgaServerPreferences.needsDownloadDirectoryLayoutMigration()) {
+                provider.migrateLegacyKomgaDirectories()
+                    .onSuccess { migrated ->
+                        komgaServerPreferences.markDownloadDirectoryLayoutMigrated()
+                        if (migrated) {
+                            invalidateCache("legacy_komga_directories_migrated")
+                        }
                     }
-                    .any { it }
-                if (migrated) {
-                    invalidateCache("legacy_komga_server_directories_migrated")
-                }
+                    .onFailure { error ->
+                        logcat(LogPriority.WARN, error) {
+                            "Failed to migrate legacy Komga download directories; will retry"
+                        }
+                    }
             }
         }
 
@@ -154,8 +164,12 @@ class DownloadCache(
             .drop(1)
             .onEach { profiles ->
                 val profileIds = profiles.mapTo(mutableSetOf(), KomgaServerProfile::id)
-                if (suppressedProfileIds == profileIds) {
+                val suppressRefresh = synchronized(profileRefreshLock) {
+                    val expectedProfileIds = suppressedProfileIds
                     suppressedProfileIds = null
+                    expectedProfileIds == profileIds
+                }
+                if (suppressRefresh) {
                     logcat(LogPriority.DEBUG) {
                         "DownloadCache: profile refresh suppressed ids=${profileIds.joinToString(",")}"
                     }
@@ -404,7 +418,9 @@ class DownloadCache(
      * that has already updated the download cache explicitly.
      */
     fun suppressNextProfileRefresh(expectedProfileIds: Set<Long>) {
-        suppressedProfileIds = expectedProfileIds
+        synchronized(profileRefreshLock) {
+            suppressedProfileIds = expectedProfileIds
+        }
         logcat(LogPriority.DEBUG) {
             "DownloadCache: suppressing next profile refresh ids=${expectedProfileIds.joinToString(",")}"
         }
@@ -412,15 +428,18 @@ class DownloadCache(
 
     fun invalidateCache(reason: String = "unspecified") {
         val generation = renewalGeneration.incrementAndGet()
+        val renewalActive = synchronized(renewalStateLock) {
+            lastRenew = 0L
+            renewalJob?.cancel()
+            renewalJob?.isActive == true
+        }
         logcat(LogPriority.DEBUG) {
             "DownloadCache: invalidate requested reason=$reason " +
                 "generation=$generation lastRenew=$lastRenew " +
-                "renewalActive=${renewalJob?.isActive == true}"
+                "renewalActive=$renewalActive"
         }
-        lastRenew = 0L
-        renewalJob?.cancel()
         diskCacheFile.delete()
-        if (renewalJob?.isActive != true) {
+        if (!renewalActive) {
             renewCache("invalidate:$reason", generation)
         }
     }
@@ -439,93 +458,101 @@ class DownloadCache(
         trigger: String = "periodic_or_lookup",
         generation: Long = renewalGeneration.get(),
     ) {
-        // Avoid renewing cache if in the process nor too often
-        if (lastRenew + renewInterval >= System.currentTimeMillis() || renewalJob?.isActive == true) {
-            return
+        val job = synchronized(renewalStateLock) {
+            // Avoid renewing cache if in the process nor too often.
+            if (lastRenew + renewInterval >= System.currentTimeMillis() || renewalJob?.isActive == true) {
+                return
+            }
+
+            scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+                val startedAt = System.currentTimeMillis()
+                logcat(LogPriority.DEBUG) {
+                    "DownloadCache: full scan started trigger=$trigger"
+                }
+                if (lastRenew == 0L) {
+                    _isInitializing.emit(true)
+                }
+
+                // Try to wait until extensions and sources have loaded
+                var sources = emptyList<Source>()
+                withTimeoutOrNull(30.seconds) {
+                    sourceManager.isInitialized.first { it }
+
+                    sources = getSources()
+                }
+                logcat(LogPriority.DEBUG) {
+                    "DownloadCache: full scan enumerating sources=${sources.size} " +
+                        "sourceIds=${sources.joinToString(",") { it.id.toString() }} trigger=$trigger"
+                }
+
+                rootDownloadsDirMutex.withLock {
+                    val updatedRootDir = RootDirectory(storageManager.getDownloadsDirectory())
+
+                    val directoriesByKey = linkedMapOf<String, List<UniFile>>()
+                    val sourceDirectoryKeys = sources.mapNotNull { source ->
+                        val directories = provider.findSourceDirs(source)
+                        if (directories.isEmpty()) return@mapNotNull null
+                        val key = directories.joinToString(separator = "|") { it.uri.toString() }
+                        directoriesByKey.putIfAbsent(key, directories)
+                        source.id to key
+                    }
+                    val scansByKey = directoriesByKey.mapValues { (_, directories) ->
+                        async { scanSourceDirectories(directories) }
+                    }
+                    val scannedDirectories = scansByKey.mapValues { (_, scan) -> scan.await() }
+                    updatedRootDir.sourceDirs = sourceDirectoryKeys.associate { (sourceId, key) ->
+                        sourceId to scannedDirectories.getValue(key)
+                    }
+
+                    rootDownloadsDir = updatedRootDir
+                }
+
+                _isInitializing.emit(false)
+                logcat(LogPriority.DEBUG) {
+                    "DownloadCache: full scan body completed trigger=$trigger " +
+                        "elapsedMs=${System.currentTimeMillis() - startedAt}"
+                }
+            }.also { renewalJob = it }
         }
 
-        renewalJob = scope.launchIO {
-            val startedAt = System.currentTimeMillis()
-            logcat(LogPriority.DEBUG) {
-                "DownloadCache: full scan started trigger=$trigger"
+        // Run after cancellation has fully completed so a newer invalidation can safely
+        // start the replacement scan without being blocked by the old active Job.
+        job.invokeOnCompletion { exception ->
+            synchronized(renewalStateLock) {
+                if (renewalJob === job) renewalJob = null
             }
-            if (lastRenew == 0L) {
-                _isInitializing.emit(true)
-            }
-
-            // Try to wait until extensions and sources have loaded
-            var sources = emptyList<Source>()
-            withTimeoutOrNull(30.seconds) {
-                sourceManager.isInitialized.first { it }
-
-                sources = getSources()
-            }
-            logcat(LogPriority.DEBUG) {
-                "DownloadCache: full scan enumerating sources=${sources.size} " +
-                    "sourceIds=${sources.joinToString(",") { it.id.toString() }} trigger=$trigger"
-            }
-
-            rootDownloadsDirMutex.withLock {
-                val updatedRootDir = RootDirectory(storageManager.getDownloadsDirectory())
-
-                val sourceDirsByUri = mutableMapOf<String, SourceDirectory>()
-                updatedRootDir.sourceDirs = sources.mapNotNull { source ->
-                    val dir = provider.findSourceDir(source) ?: return@mapNotNull null
-                    val uriStr = dir.uri.toString()
-                    val sourceDir = sourceDirsByUri.getOrPut(uriStr) { SourceDirectory(dir) }
-                    source.id to sourceDir
-                }.toMap()
-
-                sourceDirsByUri.values
-                    .map { sourceDir ->
-                        async {
-                            scanSourceDirectory(sourceDir)
-                        }
-                    }
-                    .awaitAll()
-
-                rootDownloadsDir = updatedRootDir
-            }
-
-            _isInitializing.emit(false)
-            logcat(LogPriority.DEBUG) {
-                "DownloadCache: full scan body completed trigger=$trigger " +
-                    "elapsedMs=${System.currentTimeMillis() - startedAt}"
-            }
-        }.also {
-            // Run after cancellation has fully completed so a newer invalidation can safely
-            // start the replacement scan without being blocked by the old active Job.
-            it.invokeOnCompletion { exception ->
-                val isLatestGeneration = generation == renewalGeneration.get()
-                if (exception != null && exception !is CancellationException) {
-                    logcat(LogPriority.ERROR, exception) { "DownloadCache: failed to create cache" }
-                } else if (exception is CancellationException) {
-                    logcat(LogPriority.DEBUG) {
-                        "DownloadCache: full scan cancelled trigger=$trigger " +
-                            "generation=$generation latestGeneration=${renewalGeneration.get()}"
-                    }
+            val isLatestGeneration = generation == renewalGeneration.get()
+            if (exception != null && exception !is CancellationException) {
+                logcat(LogPriority.ERROR, exception) { "DownloadCache: failed to create cache" }
+            } else if (exception is CancellationException) {
+                logcat(LogPriority.DEBUG) {
+                    "DownloadCache: full scan cancelled trigger=$trigger " +
+                        "generation=$generation latestGeneration=${renewalGeneration.get()}"
                 }
+            }
 
-                if (!isLatestGeneration) {
-                    // An invalidation arrived while this scan was running. The cancellation
-                    // callback is the first reliable point at which the old Job is no longer
-                    // active, so restart the latest requested generation here.
-                    logcat(LogPriority.DEBUG) {
-                        "DownloadCache: restarting superseded full scan " +
-                            "generation=${renewalGeneration.get()}"
-                    }
-                    renewCache(
-                        trigger = "superseded:$trigger",
-                        generation = renewalGeneration.get(),
-                    )
-                    return@invokeOnCompletion
+            if (!isLatestGeneration) {
+                // An invalidation arrived while this scan was running. The cancellation
+                // callback is the first reliable point at which the old Job is no longer
+                // active, so restart the latest requested generation here.
+                logcat(LogPriority.DEBUG) {
+                    "DownloadCache: restarting superseded full scan " +
+                        "generation=${renewalGeneration.get()}"
                 }
+                renewCache(
+                    trigger = "superseded:$trigger",
+                    generation = renewalGeneration.get(),
+                )
+                return@invokeOnCompletion
+            }
 
+            synchronized(renewalStateLock) {
                 lastRenew = System.currentTimeMillis()
-                _isInitializing.value = false
-                notifyChanges()
             }
+            _isInitializing.value = false
+            notifyChanges()
         }
+        job.start()
 
         // Mainly to notify the indexing notifier UI
         notifyChanges()
@@ -560,6 +587,25 @@ class DownloadCache(
             mangaDir.chapterDirs = chapterDirs
         }
         return sourceDir
+    }
+
+    private fun scanSourceDirectories(directories: List<UniFile>): SourceDirectory {
+        val mergedMangaDirs = linkedMapOf<String, MangaDirectory>()
+        directories.forEach { directory ->
+            val scannedDirectory = scanSourceDirectory(SourceDirectory(directory))
+            scannedDirectory.mangaDirs.forEach { (name, mangaDir) ->
+                val existing = mergedMangaDirs[name]
+                if (existing == null) {
+                    mergedMangaDirs[name] = mangaDir
+                } else {
+                    existing.chapterDirs += mangaDir.chapterDirs
+                }
+            }
+        }
+        return SourceDirectory(
+            dir = directories.firstOrNull(),
+            mangaDirs = mergedMangaDirs,
+        )
     }
 
     private fun notifyChanges() {
