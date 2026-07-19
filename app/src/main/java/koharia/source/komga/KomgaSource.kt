@@ -688,6 +688,7 @@ class KomgaSource(
         private const val BROWSE_REFRESH_WINDOW_MILLIS = 30_000L
 
         private val SERVER_SETTING_KEYS = setOf(
+            PREF_SERVER_PROFILE_NAME,
             PREF_ADDRESS,
             PREF_USERNAME,
             PREF_PASSWORD,

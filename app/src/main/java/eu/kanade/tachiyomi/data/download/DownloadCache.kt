@@ -401,14 +401,15 @@ class DownloadCache(
         notifyChanges()
     }
 
-    suspend fun refreshSourceDirectory(sourceId: Long, directory: UniFile) {
-        val refreshedDirectory = scanSourceDirectory(SourceDirectory(directory))
+    suspend fun refreshSourceDirectories(sourceId: Long, directories: List<UniFile>) {
+        val refreshedDirectory = scanSourceDirectories(directories)
         rootDownloadsDirMutex.withLock {
             rootDownloadsDir.sourceDirs += sourceId to refreshedDirectory
         }
 
         logcat(LogPriority.DEBUG) {
-            "DownloadCache: refreshed source directory sourceId=$sourceId directory=${directory.name}"
+            "DownloadCache: refreshed source directories sourceId=$sourceId " +
+                "directories=${directories.joinToString { it.name.orEmpty() }}"
         }
         notifyChanges()
     }

@@ -124,7 +124,11 @@ class KomgaServerRemovalManager(
                         "KomgaServerRemoval: deleting per-server download directory " +
                             "serverId=${profile.id} source=${source.name} cleanupMode=$mode"
                     }
-                    downloadProvider.findSourceDir(source)?.delete()
+                    downloadProvider.findOwnedSourceDirs(source).forEach { directory ->
+                        check(directory.delete()) {
+                            "Failed to delete Komga download directory: ${directory.name}"
+                        }
+                    }
                     downloadProvider.invalidateSourceDirCache()
                     downloadCache.removeSource(source)
                     komgaSharedDownloadIndexManager.removeServerIndexes(profile.id)

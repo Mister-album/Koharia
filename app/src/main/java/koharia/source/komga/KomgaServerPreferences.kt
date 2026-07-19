@@ -18,6 +18,12 @@ data class KomgaServerProfile(
     val name: String,
 )
 
+@Serializable
+private data class KomgaServerDirectoryAlias(
+    val serverId: Long,
+    val serverName: String,
+)
+
 enum class LocalConfigMode {
     Shared,
     Separate,
@@ -67,6 +73,11 @@ class KomgaServerPreferences(
     private val downloadDirectoryLayoutVersion: Preference<Int> = preferenceStore.getInt(
         PREF_DOWNLOAD_DIRECTORY_LAYOUT_VERSION,
         0,
+    )
+
+    private val serializedDirectoryAliases: Preference<Set<String>> = preferenceStore.getStringSet(
+        PREF_DIRECTORY_ALIASES,
+        emptySet(),
     )
 
     fun profilesChanges(): Flow<List<KomgaServerProfile>> {
@@ -130,6 +141,21 @@ class KomgaServerPreferences(
         downloadDirectoryLayoutVersion.set(DOWNLOAD_DIRECTORY_LAYOUT_VERSION)
     }
 
+    fun getDirectoryAliases(serverId: Long): Set<String> {
+        return decodeDirectoryAliases(serializedDirectoryAliases.get())
+            .asSequence()
+            .filter { it.serverId == serverId }
+            .mapTo(linkedSetOf(), KomgaServerDirectoryAlias::serverName)
+    }
+
+    fun rememberDirectoryAlias(serverId: Long, serverName: String) {
+        val alias = KomgaServerDirectoryAlias(serverId, serverName)
+        val updated = decodeDirectoryAliases(serializedDirectoryAliases.get())
+            .filterNot { it.serverId == serverId && it.serverName == serverName }
+            .plus(alias)
+        serializedDirectoryAliases.set(updated.mapTo(linkedSetOf(), json::encodeToString))
+    }
+
     private fun rememberServerIds(profiles: Collection<KomgaServerProfile>) {
         val updated = knownServerIds.get().toMutableSet().apply {
             add(KomgaSource.ID.toString())
@@ -170,6 +196,12 @@ class KomgaServerPreferences(
             .distinctBy(KomgaServerProfile::id)
     }
 
+    private fun decodeDirectoryAliases(values: Set<String>): List<KomgaServerDirectoryAlias> {
+        return values.mapNotNull { value ->
+            runCatching { json.decodeFromString<KomgaServerDirectoryAlias>(value) }.getOrNull()
+        }
+    }
+
     private fun defaultProfile(): KomgaServerProfile {
         return KomgaServerProfile(
             id = KomgaSource.ID,
@@ -185,6 +217,7 @@ class KomgaServerPreferences(
         private const val PREF_HAS_INITIALIZED_PROFILES = "komga_has_initialized_profiles"
         private const val PREF_KNOWN_SERVER_IDS = "komga_known_server_ids"
         private const val PREF_DOWNLOAD_DIRECTORY_LAYOUT_VERSION = "komga_download_directory_layout_version"
+        private const val PREF_DIRECTORY_ALIASES = "komga_server_directory_aliases"
         private const val PREF_LEGACY_ADDRESS = "Address"
         private const val DOWNLOAD_DIRECTORY_LAYOUT_VERSION = 1
 

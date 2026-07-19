@@ -43,6 +43,7 @@ class KomgaServerProfileManager(
                 source = KomgaSource(currentProfile.id, currentProfile.name),
                 newServerName = newName,
             ).getOrThrow()
+            serverPreferences.rememberDirectoryAlias(serverId, currentProfile.name)
 
             val latestProfiles = serverPreferences.getProfiles()
             val updatedProfiles = latestProfiles.map { profile ->
@@ -55,7 +56,13 @@ class KomgaServerProfileManager(
 
             if (renamedDirectory != null) {
                 runCatching {
-                    downloadCache.refreshSourceDirectory(serverId, renamedDirectory)
+                    val renamedSource = KomgaSource(serverId, newName)
+                    val directories = downloadProvider.findSourceDirs(renamedSource)
+                    check(directories.isNotEmpty()) { "Renamed server download directories are unavailable" }
+                    downloadCache.refreshSourceDirectories(
+                        sourceId = serverId,
+                        directories = directories,
+                    )
                 }.onFailure { error ->
                     logcat(LogPriority.ERROR, error) {
                         "Failed to refresh download cache after renaming Komga server id=$serverId"
