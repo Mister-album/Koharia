@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -30,7 +31,7 @@ import koharia.feature.upcoming.components.calendar.Calendar
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.coroutines.launch
-import tachiyomi.core.common.Constants
+import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
@@ -90,13 +91,14 @@ fun UpcomingScreenContent(
 @Composable
 private fun UpcomingToolbar() {
     val navigator = LocalNavigator.currentOrThrow
+    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
 
     AppBar(
         title = stringResource(MR.strings.label_upcoming),
         navigateUp = navigator::pop,
         actions = {
-            IconButton(onClick = { uriHandler.openUri(Constants.URL_HELP_UPCOMING) }) {
+            IconButton(onClick = { uriHandler.openUri(DocumentationUrls.library(context)) }) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
                     contentDescription = stringResource(MR.strings.upcoming_guide),

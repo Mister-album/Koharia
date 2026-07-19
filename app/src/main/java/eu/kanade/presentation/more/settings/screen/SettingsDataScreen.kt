@@ -67,6 +67,7 @@ import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
 import tachiyomi.core.common.util.lang.launchNonCancellable
@@ -88,7 +89,7 @@ import uy.kohesive.injekt.api.get
 object SettingsDataScreen : SearchableSettings {
 
     val restorePreferenceKeyString = MR.strings.label_backup
-    const val HELP_URL = "https://koharia.app/docs/faq/storage"
+    fun helpUrl(context: Context) = DocumentationUrls.storage(context)
 
     @ReadOnlyComposable
     @Composable
@@ -96,8 +97,9 @@ object SettingsDataScreen : SearchableSettings {
 
     @Composable
     override fun RowScope.AppBarAction() {
+        val context = LocalContext.current
         val uriHandler = LocalUriHandler.current
-        IconButton(onClick = { uriHandler.openUri(HELP_URL) }) {
+        IconButton(onClick = { uriHandler.openUri(helpUrl(context)) }) {
             Icon(
                 imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
                 contentDescription = stringResource(MR.strings.tracking_guide),

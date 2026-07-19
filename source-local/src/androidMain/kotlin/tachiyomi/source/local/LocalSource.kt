@@ -20,6 +20,7 @@ import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import nl.adaptivity.xmlutil.core.AndroidXmlReader
 import nl.adaptivity.xmlutil.serialization.XML
+import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.storage.nameWithoutExtension
@@ -363,7 +364,7 @@ actual class LocalSource(
 
     companion object {
         const val ID = 0L
-        const val HELP_URL = "https://koharia.app/docs/guides/local-source/"
+        fun helpUrl(context: Context) = DocumentationUrls.storage(context)
 
         private val LATEST_THRESHOLD = 7.days.inWholeMilliseconds
     }

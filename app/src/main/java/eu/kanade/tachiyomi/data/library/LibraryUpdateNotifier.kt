@@ -29,6 +29,7 @@ import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
 import tachiyomi.core.common.Constants
+import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.core.common.i18n.pluralStringResource
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.chapter.model.Chapter
@@ -133,7 +134,7 @@ class LibraryUpdateNotifier(
             )
             setSmallIcon(R.drawable.ic_warning_white_24dp)
             setTimeoutAfter(Downloader.WARNING_NOTIF_TIMEOUT_MS)
-            setContentIntent(NotificationHandler.openUrl(context, HELP_WARNING_URL))
+            setContentIntent(NotificationHandler.openUrl(context, DocumentationUrls.library(context)))
         }
     }
 
@@ -372,11 +373,6 @@ class LibraryUpdateNotifier(
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-    }
-
-    companion object {
-        const val HELP_WARNING_URL =
-            "https://koharia.app/docs/faq/library#why-am-i-warned-about-large-bulk-updates-and-downloads"
     }
 }
 

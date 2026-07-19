@@ -10,10 +10,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
+import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -26,6 +28,7 @@ internal class GuidesStep(
 
     @Composable
     override fun Content() {
+        val context = LocalContext.current
         val handler = LocalUriHandler.current
 
         Column(
@@ -35,7 +38,7 @@ internal class GuidesStep(
             Text(stringResource(MR.strings.onboarding_guides_new_user, stringResource(MR.strings.app_name)))
             Button(
                 modifier = Modifier.fillMaxWidth(),
-                onClick = { handler.openUri(GETTING_STARTED_URL) },
+                onClick = { handler.openUri(DocumentationUrls.gettingStarted(context)) },
             ) {
                 Text(stringResource(MR.strings.getting_started_guide))
             }
@@ -55,8 +58,6 @@ internal class GuidesStep(
         }
     }
 }
-
-const val GETTING_STARTED_URL = "https://koharia.app/docs/guides/getting-started"
 
 @PreviewLightDark
 @Composable
