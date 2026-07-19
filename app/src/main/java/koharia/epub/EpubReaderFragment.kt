@@ -113,7 +113,10 @@ class EpubReaderFragment : Fragment() {
         }
         childFragmentManager.fragmentFactory = session?.navigatorFactory?.createFragmentFactory(
             initialLocator = session.initialLocator,
-            initialPreferences = epubPreferencesBridge.toReadiumPreferences(epubLayoutPreferences),
+            initialPreferences = epubPreferencesBridge.toReadiumPreferences(
+                preferences = epubLayoutPreferences,
+                publicationMetadata = session.publication.metadata,
+            ),
             listener = navigatorListener,
             paginationListener = paginationListener,
             configuration = EpubNavigatorFragment.Configuration(

@@ -1043,7 +1043,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             .distinctUntilChanged()
             .onEach {
                 epubReaderFragment()?.submitPreferences(
-                    epubPreferencesBridge.toReadiumPreferences(epubLayoutPreferences),
+                    epubPreferencesBridge.toReadiumPreferences(
+                        preferences = epubLayoutPreferences,
+                        publicationMetadata = currentPublicationMetadata(),
+                    ),
                 )
             }
             .launchIn(lifecycleScope)
@@ -1091,7 +1094,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private fun applyCurrentReadiumPreferences(fragment: EpubReaderFragment? = epubReaderFragment()) {
         val activeFragment = fragment?.takeIf { it.isAdded && it.view != null } ?: return
         val viewport = paginationViewport ?: return
-        val preferences = epubPreferencesBridge.toReadiumPreferences(epubLayoutPreferences)
+        val preferences = epubPreferencesBridge.toReadiumPreferences(
+            preferences = epubLayoutPreferences,
+            publicationMetadata = currentPublicationMetadata(),
+        )
         activeFragment.submitPreferences(preferences)
         paginationJob?.cancel()
         paginationJob = lifecycleScope.launch {
@@ -1121,6 +1127,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 }
             }
         }
+    }
+
+    private fun currentPublicationMetadata(): org.readium.r2.shared.publication.Metadata? {
+        return sessionRepository.get(viewModel.state.value.chapterId)?.publication?.metadata
     }
 
     private fun reloadEpubSessionForPublisherStyles(enabled: Boolean) {
