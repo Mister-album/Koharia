@@ -42,6 +42,7 @@ import eu.kanade.tachiyomi.di.PreferenceModule
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.base.delegate.SecureActivityDelegate
+import eu.kanade.tachiyomi.util.system.AppShortcutManager
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.GLUtil
 import eu.kanade.tachiyomi.util.system.WebViewUtil
@@ -50,6 +51,7 @@ import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notify
 import koharia.core.migration.Migrator
 import koharia.core.migration.migrations.migrations
+import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
 import koharia.telemetry.TelemetryConfig
@@ -161,6 +163,11 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         val uiPreferences = Injekt.get<UiPreferences>()
         val komgaServerPreferences = Injekt.get<KomgaServerPreferences>()
         val localConfigManager = Injekt.get<KomgaLocalConfigManager>()
+        val libraryClassificationManager = Injekt.get<KomgaLibraryClassificationManager>()
+
+        libraryClassificationManager.enabled.changes()
+            .onEach { enabled -> AppShortcutManager.updateLibraryShortcuts(this, enabled) }
+            .launchIn(scope)
 
         uiPreferences.themeMode.changes()
             .onEach { themeMode ->

@@ -28,11 +28,20 @@ class KomgaServerRemovalManager(
         val currentProfiles = serverPreferences.getProfiles()
         val profile = currentProfiles.find { it.id == serverId } ?: return Result.success(Unit)
 
+        logcat(LogPriority.DEBUG) {
+            "KomgaServerRemoval: requested serverId=$serverId name=${profile.name} " +
+                "cleanupMode=$options directoryMode=${serverPreferences.downloadDirectoryMode.get()}"
+        }
+
         return try {
             withContext(Dispatchers.IO) {
                 // Keep credentials and scoped settings until every retryable
                 // cleanup step succeeds, so a failure cannot orphan the profile.
                 cleanupDownloads(profile, options)
+                logcat(LogPriority.DEBUG) {
+                    "KomgaServerRemoval: download cleanup completed serverId=$serverId " +
+                        "cleanupMode=$options"
+                }
                 epubCacheManager.clearServer(serverId)
                 libraryClassificationManager.clearServer(serverId)
                 localConfigManager.clearScopeForServer(serverId)
@@ -42,7 +51,13 @@ class KomgaServerRemovalManager(
             // another profile while disk/network cleanup is in progress; filtering by ID
             // preserves those concurrent changes instead of writing the stale snapshot.
             val latestProfiles = serverPreferences.getProfiles()
-            serverPreferences.setProfiles(latestProfiles.filterNot { it.id == serverId })
+            val remainingProfiles = latestProfiles.filterNot { it.id == serverId }
+            downloadCache.suppressNextProfileRefresh(remainingProfiles.mapTo(mutableSetOf()) { it.id })
+            serverPreferences.setProfiles(remainingProfiles)
+            logcat(LogPriority.DEBUG) {
+                "KomgaServerRemoval: profile removed serverId=$serverId " +
+                    "remainingProfiles=${remainingProfiles.size}"
+            }
 
             logcat(LogPriority.DEBUG) {
                 "Removed Komga server id=$serverId name=${profile.name} " +
@@ -81,21 +96,50 @@ class KomgaServerRemovalManager(
         profile: KomgaServerProfile,
         mode: DownloadCleanupMode,
     ) {
+        val directoryMode = serverPreferences.downloadDirectoryMode.get()
+        var requiresFullScan = false
         when (mode) {
             DownloadCleanupMode.Preserve -> {
+                logcat(LogPriority.DEBUG) {
+                    "KomgaServerRemoval: preserving files and removing shared indexes " +
+                        "serverId=${profile.id}"
+                }
                 komgaSharedDownloadIndexManager.removeServerIndexes(profile.id)
+                // Keep the existing source entry as well as its files. Manga records can still
+                // resolve this source through the persisted stub after the server is removed.
             }
             else -> {
-                if (serverPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared) {
+                if (directoryMode == DownloadDirectoryMode.Shared) {
+                    logcat(LogPriority.DEBUG) {
+                        "KomgaServerRemoval: cleaning shared download files serverId=${profile.id} " +
+                            "cleanupMode=$mode"
+                    }
                     komgaSharedDownloadIndexManager.cleanupServerDownloads(profile.id, mode)
+                    // Shared files can belong to more than one server, so deleting them
+                    // requires rebuilding the filesystem-backed index.
+                    requiresFullScan = true
                 } else {
                     val source = KomgaSource(profile.id, profile.name)
+                    logcat(LogPriority.DEBUG) {
+                        "KomgaServerRemoval: deleting per-server download directory " +
+                            "serverId=${profile.id} source=${source.name} cleanupMode=$mode"
+                    }
                     downloadProvider.findSourceDir(source)?.delete()
+                    downloadProvider.invalidateSourceDirCache()
                     downloadCache.removeSource(source)
                     komgaSharedDownloadIndexManager.removeServerIndexes(profile.id)
                 }
             }
         }
-        downloadCache.invalidateCache()
+        if (requiresFullScan) {
+            downloadCache.invalidateCache(
+                "server_removal:serverId=${profile.id},mode=$mode,directoryMode=$directoryMode",
+            )
+        } else {
+            logcat(LogPriority.DEBUG) {
+                "KomgaServerRemoval: skipped full download scan serverId=${profile.id} " +
+                    "mode=$mode directoryMode=$directoryMode"
+            }
+        }
     }
 }

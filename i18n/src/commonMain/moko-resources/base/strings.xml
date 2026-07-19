@@ -247,8 +247,8 @@
     <string name="komga_server_management_mode_help_title">Mode descriptions</string>
     <string name="komga_server_management_delete_hint">To delete a server, swipe the server row left to reveal the delete action, then confirm the deletion.</string>
     <string name="komga_scoped_settings_disabled_summary">Add or select a server to change server-scoped settings.</string>
-    <string name="komga_pref_address_title">Komga server address</string>
-    <string name="komga_pref_address_summary">The Komga server address</string>
+    <string name="komga_pref_address_title">Server address</string>
+    <string name="komga_pref_address_summary">The server address</string>
     <string name="komga_pref_address_dialog">The address must not end with a forward slash.</string>
     <string name="komga_pref_address_validation">The URL must start with http:// or https://</string>
     <string name="komga_pref_api_key_title">API key</string>
@@ -1294,6 +1294,12 @@
     <string name="komga_action_discard">Discard</string>
     <string name="komga_server_settings_add_title">Add Server</string>
     <string name="komga_server_settings_edit_title">Edit Server</string>
+    <string name="komga_server_name_title">Server name</string>
+    <string name="komga_server_name_help">Used as the server label and its download folder name. Unsupported filename characters are replaced automatically.</string>
+    <string name="komga_server_name_validation">Enter a name whose download folder is not used by another server.</string>
+    <string name="komga_server_rename_failed">The server could not be renamed. Check that the name is unique and the download directory is available.</string>
+    <string name="komga_server_directory_preview">Download folder: %1$s</string>
+    <string name="komga_server_name_directory_conflict">This name maps to a download folder already used by another server.</string>
     <string name="komga_pref_auth_mode_title">Authentication Mode</string>
     <string name="komga_pref_auth_mode_api_key">API Key</string>
     <string name="komga_pref_auth_mode_credentials">Username and Password</string>

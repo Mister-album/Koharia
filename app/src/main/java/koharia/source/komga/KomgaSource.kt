@@ -356,6 +356,27 @@ class KomgaSource(
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         fetchFilterOptions()
 
+        val serverProfileManager = Injekt.get<KomgaServerProfileManager>()
+        val serverName = Injekt.get<KomgaServerPreferences>()
+            .getProfiles()
+            .find { it.id == id }
+            ?.name
+            ?: name
+        screen.addEditTextPreference(
+            title = screen.context.stringResource(MR.strings.komga_server_name_title),
+            default = serverName,
+            summary = serverName,
+            dialogMessage = screen.context.stringResource(MR.strings.komga_server_name_help),
+            validate = { value ->
+                value.trim().isNotEmpty() &&
+                    serverProfileManager.isDirectoryNameAvailable(value, id)
+            },
+            validationMessage = screen.context.stringResource(MR.strings.komga_server_name_validation),
+            key = PREF_SERVER_PROFILE_NAME,
+            allowBlank = false,
+            showValueAsSummary = true,
+        )
+
         screen.addEditTextPreference(
             title = screen.context.stringResource(MR.strings.komga_pref_address_title),
             default = "",
@@ -659,6 +680,7 @@ class KomgaSource(
     companion object {
         const val SOURCE_NAME = "Komga"
         const val SOURCE_LANG = "all"
+        internal const val PREF_SERVER_PROFILE_NAME = "Koharia server profile name"
         const val SOURCE_VERSION = 1
         const val TYPE_SERIES = "Series"
         const val TYPE_READ_LISTS = "Read lists"
@@ -828,14 +850,23 @@ private fun PreferenceScreen.addEditTextPreference(
     validate: ((String) -> Boolean)? = null,
     validationMessage: String? = null,
     key: String = title,
+    allowBlank: Boolean = true,
+    showValueAsSummary: Boolean = false,
 ): EditTextPreference {
     return EditTextPreference(context).apply {
         this.key = key
         this.title = title
         this.summary = summary
+        if (showValueAsSummary) {
+            summaryProvider = EditTextPreference.SimpleSummaryProvider.getInstance()
+        }
         setDefaultValue(default)
         dialogTitle = title
         this.dialogMessage = dialogMessage
+
+        fun isValidValue(text: String): Boolean {
+            return if (text.isBlank()) allowBlank else validate?.invoke(text) ?: true
+        }
 
         setOnBindEditTextListener { editText ->
             if (inputType != null) {
@@ -848,7 +879,7 @@ private fun PreferenceScreen.addEditTextPreference(
                         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
                         override fun afterTextChanged(editable: Editable?) {
                             val text = editable?.toString().orEmpty()
-                            val isValid = text.isBlank() || validate(text)
+                            val isValid = isValidValue(text)
                             editText.error = if (!isValid) validationMessage else null
                             editText.rootView.findViewById<Button>(android.R.id.button1)?.isEnabled =
                                 editText.error == null
@@ -860,8 +891,7 @@ private fun PreferenceScreen.addEditTextPreference(
 
         setOnPreferenceChangeListener { _, newValue ->
             val text = newValue as String
-            val isValid = text.isBlank() || validate?.invoke(text) ?: true
-            isValid
+            isValidValue(text)
         }
     }.also(::addPreference)
 }

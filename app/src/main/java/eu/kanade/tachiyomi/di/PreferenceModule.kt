@@ -16,6 +16,7 @@ import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaServerPreferences
+import koharia.source.komga.KomgaServerProfileManager
 import koharia.source.komga.KomgaServerRemovalManager
 import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
@@ -76,6 +77,13 @@ class PreferenceModule(val app: Application) : InjektModule {
                 downloadCache = get(),
                 komgaSharedDownloadIndexManager = get(),
                 epubCacheManager = get(),
+            )
+        }
+        addSingletonFactory {
+            KomgaServerProfileManager(
+                serverPreferences = get<KomgaServerPreferences>(),
+                downloadProvider = get(),
+                downloadCache = get(),
             )
         }
         addSingletonFactory {
