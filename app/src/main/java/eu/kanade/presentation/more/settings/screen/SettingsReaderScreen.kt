@@ -285,7 +285,7 @@ object SettingsReaderScreen : SearchableSettings {
                     add(
                         epubLayoutSliderPreference(
                             value = lineHeight,
-                            valueRange = 100..200 step 10,
+                            valueRange = 100..200 step 5,
                             title = stringResource(MR.strings.pref_epub_line_height),
                             onValueChanged = epubLayoutPreferences.lineHeight::set,
                         ),
@@ -293,7 +293,7 @@ object SettingsReaderScreen : SearchableSettings {
                     add(
                         epubLayoutSliderPreference(
                             value = paragraphSpacing,
-                            valueRange = 0..200 step 10,
+                            valueRange = 0..200 step 5,
                             title = stringResource(MR.strings.pref_epub_paragraph_spacing),
                             onValueChanged = epubLayoutPreferences.paragraphSpacing::set,
                         ),
