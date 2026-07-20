@@ -52,7 +52,7 @@ class EpubLayoutPreferences(
         preferenceStore.getEnum("epub_layout_font_family", FontFamily.ORIGINAL)
 
     val publisherStyles: Preference<Boolean> =
-        preferenceStore.getBoolean("epub_layout_publisher_styles", false)
+        preferenceStore.getBoolean("epub_layout_publisher_styles", true)
 
     val readWithVolumeKeys: Preference<Boolean> =
         preferenceStore.getBoolean("epub_layout_volume_keys", true)

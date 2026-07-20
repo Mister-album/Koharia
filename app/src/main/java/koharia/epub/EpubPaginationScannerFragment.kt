@@ -98,9 +98,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
                 publicationMetadata = session.publication.metadata,
             ),
             paginationListener = paginationListener,
-            configuration = EpubNavigatorFragment.Configuration(
-                shouldApplyInsetsPadding = false,
-            ),
+            configuration = epubNavigatorConfiguration(),
         ) ?: EpubNavigatorFragment.createDummyFactory()
         super.onCreate(savedInstanceState)
     }
