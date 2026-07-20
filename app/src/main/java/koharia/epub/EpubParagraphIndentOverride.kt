@@ -40,13 +40,14 @@ internal const val APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT =
             if (isStructuralParagraph) {
                 paragraph.setAttribute('$EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE', '');
                 Array.from(paragraph.children).forEach(function(child) {
+                    if (child.tagName.toLowerCase() !== 'span') return;
                     var childStyle = window.getComputedStyle(child);
-                    var paragraphStyle = window.getComputedStyle(paragraph);
                     var horizontalPadding = parseFloat(childStyle.paddingLeft) + parseFloat(childStyle.paddingRight);
-                    var hasOrphanedPadding = child.tagName.toLowerCase() === 'span' &&
-                        childStyle.display === 'inline' && horizontalPadding > 0 &&
-                        childStyle.backgroundColor === 'rgba(0, 0, 0, 0)' &&
-                        childStyle.color === paragraphStyle.color;
+                    var hasTransparentBackground =
+                        childStyle.backgroundColor === 'rgba(0, 0, 0, 0)' ||
+                        childStyle.backgroundColor === 'transparent';
+                    var hasOrphanedPadding = childStyle.display === 'inline' && horizontalPadding > 0 &&
+                        hasTransparentBackground && childStyle.color === computed.color;
                     if (hasOrphanedPadding) {
                         child.setAttribute('$EPUB_ORPHANED_INLINE_PADDING_ATTRIBUTE', '');
                     }
