@@ -122,5 +122,5 @@ private fun String.sha256(): String {
         .joinToString("") { byte -> "%02x".format(byte) }
 }
 
-private const val PAGINATION_ALGORITHM_VERSION = 3
+private const val PAGINATION_ALGORITHM_VERSION = 5
 private const val READIUM_VERSION = "3.3.0"

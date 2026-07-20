@@ -119,9 +119,7 @@ class EpubReaderFragment : Fragment() {
             ),
             listener = navigatorListener,
             paginationListener = paginationListener,
-            configuration = EpubNavigatorFragment.Configuration(
-                shouldApplyInsetsPadding = false,
-            ),
+            configuration = epubNavigatorConfiguration(),
         ) ?: EpubNavigatorFragment.createDummyFactory()
         super.onCreate(savedInstanceState)
     }

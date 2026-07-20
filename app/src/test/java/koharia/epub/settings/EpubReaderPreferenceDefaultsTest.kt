@@ -23,13 +23,13 @@ class EpubReaderPreferenceDefaultsTest {
     }
 
     @Test
-    fun `EPUB typography defaults to standard spacing without publisher styles`() {
+    fun `EPUB typography defaults to standard spacing with publisher styles`() {
         val preferences = EpubLayoutPreferences(InMemoryPreferenceStore())
 
         assertEquals(EpubLayoutPreferences.SpacingMode.STANDARD, preferences.spacingMode.get())
         assertEquals(1.7f, preferences.lineHeight.get())
         assertEquals(0.05f, preferences.paragraphSpacing.get())
-        assertFalse(preferences.publisherStyles.get())
+        assertTrue(preferences.publisherStyles.get())
     }
 
     @Test
