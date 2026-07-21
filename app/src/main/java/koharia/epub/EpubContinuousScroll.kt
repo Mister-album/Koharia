@@ -60,6 +60,7 @@ internal fun buildEpubContinuousScrollInstallScript(
             const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
             const measuredHeights = new Map();
             const liveFrames = new Map();
+            const failedResources = new Set();
             let activeIndex = currentIndex;
             let locationFrame = 0;
             let lastLocationSentAt = 0;
@@ -205,6 +206,7 @@ internal fun buildEpubContinuousScrollInstallScript(
                 iframe.setAttribute('title', resources[index].href || '');
                 iframe.style.height = (measuredHeights.get(index) || viewportHeight) + 'px';
                 iframe.addEventListener('load', function() {
+                    failedResources.delete(index);
                     measureFrame(index, iframe);
                     try {
                         const doc = iframe.contentDocument;
@@ -244,6 +246,8 @@ internal fun buildEpubContinuousScrollInstallScript(
                     .catch(function() {
                         if (liveFrames.get(index) === iframe) section.replaceChildren();
                         liveFrames.delete(index);
+                        failedResources.add(index);
+                        scheduleLocation();
                     });
             }
 
@@ -297,6 +301,12 @@ internal fun buildEpubContinuousScrollInstallScript(
                 if (nextIndex !== activeIndex) {
                     activeIndex = nextIndex;
                     updateWindow(activeIndex);
+                }
+                if (failedResources.delete(activeIndex)) {
+                    if (window.KohariaContinuousScroll && window.KohariaContinuousScroll.onResourceLoadFailed) {
+                        window.KohariaContinuousScroll.onResourceLoadFailed(activeIndex);
+                    }
+                    return;
                 }
                 const bounds = sectionBounds(activeIndex);
                 if (!bounds) return;
