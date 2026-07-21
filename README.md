@@ -118,6 +118,10 @@ Koharia 基于 [Mihon](https://github.com/mihonapp/mihon) 开发，并遵循 Apa
 
 Koharia 建立在 Javier Tomas 最初完成的工作、Mihon 项目贡献者的持续投入，以及 Komga 社区提供的服务器生态之上。感谢所有继续改进这一衍生版本的贡献者。
 
+## 交流与反馈
+
+可加入 [Komga Discord 频道](https://discord.gg/komga-678794935368941569)，前往其中的 `Koharia` 子频道交流应用使用、阅读体验及相关话题，也可以反馈使用过程中遇到的问题。
+
 ## 支持
 
 Koharia 是一个个人维护的开源项目。持续维护需要投入时间处理上游变更、阅读器体验、下载与同步、Android 版本兼容，以及日常测试和发布工作。
