@@ -245,10 +245,6 @@ class KomgaSource(
         fetchFilterOptions()
 
         val filters = mutableListOf<Filter<*>>(
-            UnreadFilter(),
-            InProgressFilter(),
-            ReadFilter(),
-            OneshotFilter(),
             TypeSelect(),
             CollectionSelect(
                 buildList {
@@ -257,6 +253,7 @@ class KomgaSource(
                 },
             ),
             LibraryFilter(libraries, defaultLibraries),
+            ReadingStateGroup(),
             UriMultiSelectFilter(
                 "Status",
                 listOf("Ongoing", "Ended", "Abandoned", "Hiatus").map {
@@ -292,44 +289,94 @@ class KomgaSource(
         }
     }
 
-    fun isPersistentFilteringEnabled(): Boolean {
-        return preferences.getBoolean(PREF_PERSISTENT_FILTERS_ENABLED, false)
+    fun isPersistentFilteringEnabled(libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL): Boolean {
+        return preferences.getBoolean(persistentFilteringEnabledKey(libraryScope), false)
     }
 
-    fun setPersistentFilteringEnabled(enabled: Boolean, filters: FilterList) {
+    fun setPersistentFilteringEnabled(
+        enabled: Boolean,
+        filters: FilterList,
+        libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
+    ) {
         preferences.edit()
-            .putBoolean(PREF_PERSISTENT_FILTERS_ENABLED, enabled)
+            .putBoolean(persistentFilteringEnabledKey(libraryScope), enabled)
             .apply()
 
         if (enabled) {
-            savePersistentFilterState(filters)
+            savePersistentFilterState(filters, libraryScope)
         } else {
             preferences.edit()
-                .remove(PREF_PERSISTENT_FILTERS_STATE)
+                .remove(persistentFilterStateKey(libraryScope))
                 .apply()
         }
     }
 
-    fun resetPersistentFilters() {
+    fun resetPersistentFilters(libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL) {
+        val editor = preferences.edit()
+        if (libraryScope == KomgaLibraryScope.ALL) {
+            editor.remove(PREF_PERSISTENT_FILTERS_STATE)
+        } else {
+            // A scoped default prevents the legacy unscoped state from being restored again.
+            editor.putString(
+                persistentFilterStateKey(libraryScope),
+                json.encodeToString(defaultLibraryPersistentFilterState()),
+            )
+        }
+        editor.apply()
+    }
+
+    fun savePersistentFilterState(
+        filters: FilterList,
+        libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
+    ) {
+        if (!isPersistentFilteringEnabled(libraryScope)) return
+
         preferences.edit()
-            .remove(PREF_PERSISTENT_FILTERS_STATE)
+            .putString(
+                persistentFilterStateKey(libraryScope),
+                json.encodeToString(filters.toPersistentFilterState()),
+            )
             .apply()
     }
 
-    fun savePersistentFilterState(filters: FilterList) {
-        if (!isPersistentFilteringEnabled()) return
-
-        preferences.edit()
-            .putString(PREF_PERSISTENT_FILTERS_STATE, json.encodeToString(filters.toPersistentFilterState()))
-            .apply()
+    fun saveSessionFilterState(
+        filters: FilterList,
+        libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
+    ) {
+        synchronized(sessionFilterStates) {
+            sessionFilterStates[libraryScope] = filters.toPersistentFilterState()
+        }
     }
 
-    private fun applyPersistentFilterState(filters: FilterList) {
-        val saved = preferences.getString(PREF_PERSISTENT_FILTERS_STATE, null)
+    fun resetSessionFilterState(libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL) {
+        synchronized(sessionFilterStates) {
+            sessionFilterStates.remove(libraryScope)
+        }
+    }
+
+    private fun applyPersistentFilterState(
+        filters: FilterList,
+        libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
+    ): Boolean {
+        val scopedState = preferences.getString(persistentFilterStateKey(libraryScope), null)
+        val legacyState = if (libraryScope != KomgaLibraryScope.ALL) {
+            preferences.getString(PREF_PERSISTENT_FILTERS_STATE, null)
+        } else {
+            null
+        }
+        val saved = (scopedState ?: legacyState)
             ?.let { runCatching { json.decodeFromString<PersistentFilterState>(it) }.getOrNull() }
-            ?: return
+            ?: return false
 
-        filters.forEach { filter ->
+        if (scopedState != null && libraryScope != KomgaLibraryScope.ALL) {
+            filters.resetFilterState()
+        }
+        filters.applyPersistentFilterState(saved)
+        return true
+    }
+
+    private fun FilterList.applyPersistentFilterState(saved: PersistentFilterState) {
+        forEach { filter ->
             when (filter) {
                 is Filter.CheckBox -> saved.checkBoxes[filter.name]?.let { filter.state = it }
                 is Filter.Select<*> -> saved.selects[filter.name]?.let { index ->
@@ -343,13 +390,36 @@ class KomgaSource(
                     }
                 }
                 is Filter.Group<*> -> {
-                    val selected = saved.groups[filter.name] ?: return@forEach
+                    val selected = saved.groups[filter.name]
                     filter.state
                         .filterIsInstance<Filter.CheckBox>()
-                        .forEach { it.state = it.persistentOptionKey() in selected }
+                        .forEach { option ->
+                            option.state = if (selected != null) {
+                                option.persistentOptionKey() in selected
+                            } else {
+                                // Preserve filters saved before standalone checkboxes were grouped in the UI.
+                                saved.checkBoxes[option.name] ?: option.state
+                            }
+                        }
                 }
                 else -> {}
             }
+        }
+    }
+
+    private fun persistentFilterStateKey(libraryScope: KomgaLibraryScope): String {
+        return when (libraryScope) {
+            KomgaLibraryScope.ALL -> PREF_PERSISTENT_FILTERS_STATE
+            KomgaLibraryScope.COMIC -> PREF_PERSISTENT_FILTERS_STATE_COMIC
+            KomgaLibraryScope.BOOK -> PREF_PERSISTENT_FILTERS_STATE_BOOK
+        }
+    }
+
+    private fun persistentFilteringEnabledKey(libraryScope: KomgaLibraryScope): String {
+        return when (libraryScope) {
+            KomgaLibraryScope.ALL -> PREF_PERSISTENT_FILTERS_ENABLED
+            KomgaLibraryScope.COMIC -> PREF_PERSISTENT_FILTERS_ENABLED_COMIC
+            KomgaLibraryScope.BOOK -> PREF_PERSISTENT_FILTERS_ENABLED_BOOK
         }
     }
 
@@ -593,25 +663,54 @@ class KomgaSource(
         libraryId: String?,
         preservePersistentFilters: Boolean = false,
         allowedLibraryIds: Set<String>? = null,
+        libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
+        currentFilters: FilterList? = null,
+        preserveSessionFilters: Boolean = false,
     ): FilterList {
-        val filters = getFilterList().restrictLibraries(allowedLibraryIds)
-        if (libraryId == null && preservePersistentFilters && isPersistentFilteringEnabled()) {
-            if (allowedLibraryIds == null) return filters
+        val filters = getFilterList()
+        val currentState = currentFilters
+            ?.takeIf { it.isNotEmpty() }
+            ?.toPersistentFilterState()
+        val sessionState = if (preserveSessionFilters) {
+            synchronized(sessionFilterStates) { sessionFilterStates[libraryScope] }
+        } else {
+            null
         }
+        val hasPreservedState = when {
+            currentState != null -> {
+                filters.applyPersistentFilterState(currentState)
+                true
+            }
+            sessionState != null -> {
+                filters.applyPersistentFilterState(sessionState)
+                true
+            }
+            preservePersistentFilters && isPersistentFilteringEnabled(libraryScope) -> {
+                applyPersistentFilterState(filters, libraryScope)
+            }
+            else -> false
+        }
+        val scopedFilters = filters.restrictLibraries(allowedLibraryIds)
 
-        filters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.forEach { option ->
-            option.state = if (libraryId == null) {
-                allowedLibraryIds != null || option.state
-            } else {
-                option.id == libraryId
+        if (!hasPreservedState) {
+            scopedFilters.resetFilterState()
+            scopedFilters.filterIsInstance<TypeSelect>().firstOrNull()?.state = 0
+            scopedFilters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(1, true)
+        }
+        scopedFilters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.let { options ->
+            when {
+                libraryId != null -> options.forEach { option -> option.state = option.id == libraryId }
+                allowedLibraryIds != null && options.none { it.state } -> options.forEach { it.state = true }
             }
         }
-        filters.filterIsInstance<TypeSelect>().firstOrNull()?.state = 0
-        filters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(1, true)
-        return filters
+        return scopedFilters
     }
 
-    fun buildFilterListForTagSearch(tag: String, allowedLibraryIds: Set<String>? = null): FilterList {
+    fun buildFilterListForTagSearch(
+        tag: String,
+        allowedLibraryIds: Set<String>? = null,
+        libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
+    ): FilterList {
         val targetGroup = when {
             tags.any { it.equals(tag, true) } -> "Tags"
             genres.any { it.equals(tag, true) } -> "Genres"
@@ -619,14 +718,15 @@ class KomgaSource(
         }
         Log.d("KomgaSource", "buildFilterListForTagSearch: tag=$tag targetGroup=$targetGroup")
 
-        val filters = getFilterList()
-            .restrictLibraries(allowedLibraryIds)
+        val filters = buildFilterListForLibrary(
+            libraryId = null,
+            preservePersistentFilters = true,
+            allowedLibraryIds = allowedLibraryIds,
+            libraryScope = libraryScope,
+            preserveSessionFilters = true,
+        )
             .withSelectedMultiOption(targetGroup, tag)
-        if (allowedLibraryIds != null) {
-            filters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.forEach { it.state = true }
-        }
         filters.filterIsInstance<TypeSelect>().firstOrNull()?.state = 0
-        filters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(1, true)
         return filters
     }
 
@@ -636,6 +736,7 @@ class KomgaSource(
     private var tags = emptySet<String>()
     private var publishers = emptySet<String>()
     private var authors = emptyMap<String, List<koharia.komga.api.dto.AuthorDto>>()
+    private val sessionFilterStates = mutableMapOf<KomgaLibraryScope, PersistentFilterState>()
 
     private var fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
     private var fetchFiltersAttempts = 0
@@ -725,6 +826,13 @@ private data class PersistentSortState(
     val ascending: Boolean,
 )
 
+private fun defaultLibraryPersistentFilterState(): PersistentFilterState {
+    return PersistentFilterState(
+        selects = mapOf("Search for" to 0),
+        sorts = mapOf("Sort" to PersistentSortState(index = 1, ascending = true)),
+    )
+}
+
 private enum class FetchFilterStatus {
     NOT_FETCHED,
     FETCHING,
@@ -774,11 +882,14 @@ private fun FilterList.restrictLibraries(allowedLibraryIds: Set<String>?): Filte
     return FilterList(
         map { filter ->
             if (filter is LibraryFilter) {
+                val selectedLibraryIds = filter.state
+                    .filter { it.state && it.id in allowedLibraryIds }
+                    .mapTo(linkedSetOf(), UriMultiSelectOption::id)
                 LibraryFilter(
                     libraries = filter.state
                         .filter { it.id in allowedLibraryIds }
                         .map { LibraryDto(id = it.id, name = it.name) },
-                    defaultLibraries = emptySet(),
+                    defaultLibraries = selectedLibraryIds,
                 )
             } else {
                 filter
@@ -819,6 +930,21 @@ private fun FilterList.toPersistentFilterState(): PersistentFilterState {
     )
 }
 
+private fun FilterList.resetFilterState() {
+    forEach { filter ->
+        when (filter) {
+            is Filter.CheckBox -> filter.state = false
+            is Filter.Select<*> -> filter.state = 0
+            is Filter.Sort -> filter.state = null
+            is Filter.Group<*> ->
+                filter.state
+                    .filterIsInstance<Filter.CheckBox>()
+                    .forEach { it.state = false }
+            else -> {}
+        }
+    }
+}
+
 private fun Filter.CheckBox.persistentOptionKey(): String {
     return when (this) {
         is UriMultiSelectOption -> id
@@ -840,7 +966,11 @@ private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
 private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({size})"
 private const val PREF_PERSISTENT_FILTERS_ENABLED = "Persistent filters enabled"
+private const val PREF_PERSISTENT_FILTERS_ENABLED_COMIC = "Persistent filters enabled comic"
+private const val PREF_PERSISTENT_FILTERS_ENABLED_BOOK = "Persistent filters enabled book"
 private const val PREF_PERSISTENT_FILTERS_STATE = "Persistent filters state"
+private const val PREF_PERSISTENT_FILTERS_STATE_COMIC = "Persistent filters state comic"
+private const val PREF_PERSISTENT_FILTERS_STATE_BOOK = "Persistent filters state book"
 
 private fun PreferenceScreen.addEditTextPreference(
     title: String,

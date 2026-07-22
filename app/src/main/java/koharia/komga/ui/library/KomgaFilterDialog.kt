@@ -13,11 +13,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
+import koharia.source.komga.CollectionSelect
+import koharia.source.komga.LibraryFilter
+import koharia.source.komga.OneshotFilter
+import koharia.source.komga.ReadingStateGroup
+import koharia.source.komga.SeriesSort
+import koharia.source.komga.TypeSelect
+import koharia.source.komga.UriMultiSelectFilter
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
@@ -40,7 +51,12 @@ fun KomgaFilterDialog(
     onUpdate: (FilterList) -> Unit,
     onPersistentFilteringChange: (Boolean) -> Unit,
 ) {
-    val updateFilters = { onUpdate(filters) }
+    var filterRevision by remember(filters) { mutableIntStateOf(0) }
+    val updateFilters = {
+        filterRevision += 1
+        onUpdate(filters)
+    }
+    val visibleFilters = remember(filters, filterRevision) { filters.visibleFilters() }
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         LazyColumn {
@@ -71,8 +87,8 @@ fun KomgaFilterDialog(
                 HorizontalDivider()
             }
 
-            items(filters) {
-                FilterItem(it, updateFilters)
+            items(visibleFilters) {
+                FilterItem(it, filters, updateFilters)
             }
 
             item {
@@ -89,7 +105,7 @@ fun KomgaFilterDialog(
 }
 
 @Composable
-private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
+private fun FilterItem(filter: Filter<*>, filters: FilterList, onUpdate: () -> Unit) {
     when (filter) {
         is Filter.Header -> {
             HeadingItem(komgaFilterLabel(filter.name))
@@ -131,6 +147,9 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
                 selectedIndex = filter.state,
             ) {
                 filter.state = it
+                if (filter is TypeSelect && it != TYPE_SERIES_INDEX) {
+                    filters.filterIsInstance<CollectionSelect>().firstOrNull()?.state = 0
+                }
                 onUpdate()
             }
         }
@@ -169,7 +188,10 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit) {
                 Column {
                     filter.state
                         .filterIsInstance<Filter<*>>()
-                        .map { FilterItem(filter = it, onUpdate = onUpdate) }
+                        .filter {
+                            filters.selectedContentType() == TYPE_SERIES_INDEX || it !is OneshotFilter
+                        }
+                        .map { FilterItem(filter = it, filters = filters, onUpdate = onUpdate) }
                 }
             }
         }
@@ -193,9 +215,10 @@ private fun komgaFilterLabel(label: String): String {
         "In Progress" -> stringResource(MR.strings.komga_filter_in_progress)
         "Read" -> stringResource(MR.strings.komga_filter_read)
         "Oneshot" -> stringResource(MR.strings.komga_filter_oneshot)
+        "Reading status and type" -> stringResource(MR.strings.komga_filter_reading_status_and_type)
         "Libraries" -> stringResource(MR.strings.komga_filter_libraries)
         "Collection" -> stringResource(MR.strings.komga_filter_collection)
-        "None" -> stringResource(MR.strings.none)
+        "None" -> stringResource(MR.strings.komga_filter_no_collection)
         "Status" -> stringResource(MR.strings.status)
         "Ongoing" -> stringResource(MR.strings.ongoing)
         "Ended" -> stringResource(MR.strings.komga_filter_status_ended)
@@ -213,9 +236,51 @@ private fun komgaFilterLabel(label: String): String {
         "Editor" -> stringResource(MR.strings.komga_filter_author_editor)
         "Translator" -> stringResource(MR.strings.komga_filter_author_translator)
         "Conceptor" -> stringResource(MR.strings.komga_filter_author_conceptor)
+        "Illustrator" -> stringResource(MR.strings.komga_filter_author_illustrator)
+        "Artist" -> stringResource(MR.strings.komga_filter_author_artist)
+        "Author" -> stringResource(MR.strings.author)
+        "Narrator" -> stringResource(MR.strings.komga_filter_author_narrator)
+        "Contributor" -> stringResource(MR.strings.komga_filter_author_contributor)
         else -> label
     }
 }
+
+private fun FilterList.visibleFilters(): List<Filter<*>> {
+    val type = selectedContentType()
+    val hasCollection = (filterIsInstance<CollectionSelect>().firstOrNull()?.state ?: 0) != 0
+    return filter { filter ->
+        when (type) {
+            TYPE_READ_LISTS_INDEX -> filter.isReadListFilter()
+            TYPE_BOOKS_INDEX -> filter.isBookFilter()
+            else -> filter !is SeriesSort || !hasCollection
+        }
+    }
+}
+
+private fun Filter<*>.isReadListFilter(): Boolean {
+    return this is TypeSelect ||
+        this is LibraryFilter ||
+        this is SeriesSort ||
+        this is Filter.Header ||
+        this is Filter.Separator
+}
+
+private fun Filter<*>.isBookFilter(): Boolean {
+    return this is TypeSelect ||
+        this is LibraryFilter ||
+        this is ReadingStateGroup ||
+        (this is UriMultiSelectFilter && name == "Tags") ||
+        this is SeriesSort ||
+        this is Filter.Header ||
+        this is Filter.Separator
+}
+
+private fun FilterList.selectedContentType(): Int =
+    filterIsInstance<TypeSelect>().firstOrNull()?.state ?: TYPE_SERIES_INDEX
+
+private const val TYPE_SERIES_INDEX = 0
+private const val TYPE_READ_LISTS_INDEX = 1
+private const val TYPE_BOOKS_INDEX = 2
 
 private fun Int.toTriStateFilter(): TriState {
     return when (this) {

@@ -91,7 +91,10 @@ class KomgaLibraryClassificationManager(
                 name = library.name,
             )
         }
-        serializedSnapshots.set((existingSnapshots + refreshedSnapshots).encodeSnapshots())
+        val updatedSnapshots = (existingSnapshots + refreshedSnapshots).encodeSnapshots()
+        if (updatedSnapshots != serializedSnapshots.get()) {
+            serializedSnapshots.set(updatedSnapshots)
+        }
     }
 
     fun setKind(serverId: Long, libraryId: String, kind: KomgaLibraryKind) {

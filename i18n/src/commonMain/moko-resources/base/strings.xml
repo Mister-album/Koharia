@@ -265,10 +265,10 @@
     <string name="komga_pref_chapter_name_template_dialog">Supported placeholders:\n- {title}\n- {seriesTitle}\n- {number}\n- {createdDate}\n- {releaseDate}\n- {size}\n- {sizeBytes}</string>
     <string name="komga_filter_fetch_failed">Failed to fetch filtering options from the server</string>
     <string name="komga_filter_fetch_hint">Press \"Reset\" to show filtering options</string>
-    <string name="komga_filter_search_for">Search for</string>
+    <string name="komga_filter_search_for">Content type</string>
     <string name="komga_filter_series">Series</string>
     <string name="komga_filter_read_lists">Read lists</string>
-    <string name="komga_filter_books">Books</string>
+    <string name="komga_filter_books">Single books</string>
     <string name="komga_filter_sort_relevance">Relevance</string>
     <string name="komga_filter_sort_alphabetically">Alphabetically</string>
     <string name="komga_filter_sort_date_added">Date added</string>
@@ -276,8 +276,10 @@
     <string name="komga_filter_in_progress">In progress</string>
     <string name="komga_filter_read">Read</string>
     <string name="komga_filter_oneshot">Oneshot</string>
+    <string name="komga_filter_reading_status_and_type">Reading status and type</string>
     <string name="komga_filter_libraries">Libraries</string>
-    <string name="komga_filter_collection">Collection</string>
+    <string name="komga_filter_collection">Series collection</string>
+    <string name="komga_filter_no_collection">Any</string>
     <string name="komga_filter_status_ended">Ended</string>
     <string name="komga_filter_status_abandoned">Abandoned</string>
     <string name="komga_filter_genres">Genres</string>
@@ -292,6 +294,10 @@
     <string name="komga_filter_author_editor">Editor</string>
     <string name="komga_filter_author_translator">Translator</string>
     <string name="komga_filter_author_conceptor">Conceptor</string>
+    <string name="komga_filter_author_illustrator">Illustrator</string>
+    <string name="komga_filter_author_artist">Artist</string>
+    <string name="komga_filter_author_narrator">Narrator</string>
+    <string name="komga_filter_author_contributor">Contributor</string>
     <string name="komga_filter_persist">Persist filters</string>
 
     <string name="pref_appearance_summary">Theme, date &amp; time format</string>

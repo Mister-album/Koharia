@@ -24,6 +24,7 @@ import koharia.source.komga.KomgaCachePolicy
 import koharia.source.komga.LibraryFilter
 import koharia.source.komga.OneshotFilter
 import koharia.source.komga.ReadFilter
+import koharia.source.komga.ReadingStateGroup
 import koharia.source.komga.SeriesSort
 import koharia.source.komga.TypeSelect
 import koharia.source.komga.UnreadFilter
@@ -216,10 +217,12 @@ private fun FilterList.searchType(): KomgaApiClient.SearchType = when {
     else -> KomgaApiClient.SearchType.SERIES
 }
 
-private fun FilterList.collectionId(): String? =
-    filterIsInstance<CollectionSelect>().firstOrNull()?.collections?.getOrNull(
+private fun FilterList.collectionId(): String? {
+    if (filterIsInstance<TypeSelect>().firstOrNull()?.state != 0) return null
+    return filterIsInstance<CollectionSelect>().firstOrNull()?.collections?.getOrNull(
         filterIsInstance<CollectionSelect>().firstOrNull()?.state ?: 0,
     )?.id
+}
 
 private fun FilterList.sortSelection(): Pair<Int, Boolean> {
     val sort = filterIsInstance<SeriesSort>().firstOrNull()?.state ?: return 0 to true
@@ -228,20 +231,27 @@ private fun FilterList.sortSelection(): Pair<Int, Boolean> {
 
 private fun FilterList.readStatuses(): Set<String> {
     val statuses = mutableSetOf<String>()
-    if (filterIsInstance<UnreadFilter>().firstOrNull()?.state == true) {
+    val readingFilters = filterIsInstance<ReadingStateGroup>().firstOrNull()?.state.orEmpty()
+    if (readingFilters.filterIsInstance<UnreadFilter>().firstOrNull()?.state == true) {
         statuses += setOf("UNREAD", "IN_PROGRESS")
     }
-    if (filterIsInstance<InProgressFilter>().firstOrNull()?.state == true) {
+    if (readingFilters.filterIsInstance<InProgressFilter>().firstOrNull()?.state == true) {
         statuses += "IN_PROGRESS"
     }
-    if (filterIsInstance<ReadFilter>().firstOrNull()?.state == true) {
+    if (readingFilters.filterIsInstance<ReadFilter>().firstOrNull()?.state == true) {
         statuses += "READ"
     }
     return statuses
 }
 
 private fun FilterList.oneshot(): Boolean? =
-    filterIsInstance<OneshotFilter>().firstOrNull()?.state?.takeIf { it }
+    filterIsInstance<ReadingStateGroup>()
+        .firstOrNull()
+        ?.state
+        ?.filterIsInstance<OneshotFilter>()
+        ?.firstOrNull()
+        ?.state
+        ?.takeIf { it }
 
 private fun FilterList.selectedLibraries(): Set<String> =
     filterIsInstance<LibraryFilter>().firstOrNull()?.state?.filter { it.state }?.map { it.id }?.toSet().orEmpty()
