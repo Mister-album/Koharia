@@ -3,6 +3,7 @@ package koharia.epub
 import android.content.Context
 import android.os.Bundle
 import android.view.View
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.widget.FrameLayout
 import androidx.fragment.app.Fragment
@@ -17,6 +18,7 @@ import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -29,6 +31,9 @@ import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.util.AbsoluteUrl
+import org.readium.r2.shared.util.RelativeUrl
+import org.readium.r2.shared.util.Url
+import org.readium.r2.shared.util.mediatype.MediaType
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -79,6 +84,9 @@ class EpubReaderFragment : Fragment() {
     private var navigatorInputListener: InputListener? = null
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
+    private var continuousScrollInstallJob: Job? = null
+    private var continuousScrollInstalledHref: String? = null
+    private var continuousScrollLocator: Locator? = null
 
     private val navigatorListener = object : EpubNavigatorFragment.Listener {
         override fun onExternalLinkActivated(url: AbsoluteUrl) {
@@ -111,6 +119,11 @@ class EpubReaderFragment : Fragment() {
         logcat(LogPriority.DEBUG) {
             "EPUB fragment onCreate chapterId=$chapterId hasSession=${session != null}"
         }
+        val navigatorConfiguration = epubNavigatorConfiguration().apply {
+            registerJavascriptInterface(CONTINUOUS_SCROLL_BRIDGE_NAME) {
+                ContinuousScrollJavascriptBridge()
+            }
+        }
         childFragmentManager.fragmentFactory = session?.navigatorFactory?.createFragmentFactory(
             initialLocator = session.initialLocator,
             initialPreferences = epubPreferencesBridge.toReadiumPreferences(
@@ -119,7 +132,7 @@ class EpubReaderFragment : Fragment() {
             ),
             listener = navigatorListener,
             paginationListener = paginationListener,
-            configuration = epubNavigatorConfiguration(),
+            configuration = navigatorConfiguration,
         ) ?: EpubNavigatorFragment.createDummyFactory()
         super.onCreate(savedInstanceState)
     }
@@ -206,36 +219,55 @@ class EpubReaderFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        clearContinuousScrollState()
         clearNavigatorInputListener()
         super.onDestroyView()
     }
 
     fun goTo(link: Link): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
+        clearContinuousScrollState()
         return navigator.go(link)
     }
 
     fun goTo(locator: Locator): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
         val publication = sessionRepository.get(chapterId)?.publication ?: return false
+        clearContinuousScrollState()
         return navigator.go(publication.toNavigatorLocator(locator))
     }
 
     fun goForward(): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
+        navigateContinuousScroll(forward = true)?.let { return it }
+        clearContinuousScrollState()
         return navigator.goForward()
     }
 
     fun goBackward(): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
+        navigateContinuousScroll(forward = false)?.let { return it }
+        clearContinuousScrollState()
         return navigator.goBackward()
     }
 
     fun submitPreferences(preferences: EpubPreferences) {
         if (!isAdded || view == null) return
+        val navigator = readyNavigatorFragment()
+        val keepContinuousScrollPosition =
+            preferences.scroll != false &&
+                epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.SCROLL
+        if (!keepContinuousScrollPosition) {
+            clearContinuousScrollState()
+        }
         paragraphIndentOverrideEnabled = preferences.publisherStyles == false
-        navigatorFragment()?.submitPreferences(preferences)
+        navigator?.submitPreferences(preferences)
         applyParagraphIndentOverride()
+        if (keepContinuousScrollPosition) {
+            // Keep the JS-reported Locator when the visible resource is an adjacent iframe. The
+            // native navigator still points at the XHTML that owns the continuous-scroll window.
+            scheduleContinuousScrollInstall(navigator)
+        }
         logcat(LogPriority.DEBUG) {
             "EPUB paragraph indent submitted chapterId=$chapterId " +
                 "publisherStyles=${preferences.publisherStyles} " +
@@ -333,7 +365,13 @@ class EpubReaderFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 navigator.currentLocator.collect { locator ->
-                    host?.onLocatorChanged(locator)
+                    val installedHref = continuousScrollInstalledHref
+                    if (installedHref == null || !locator.href.toString().sameEpubResource(installedHref)) {
+                        continuousScrollLocator = null
+                        continuousScrollInstalledHref = null
+                        host?.onLocatorChanged(locator)
+                        scheduleContinuousScrollInstall(navigator, locator)
+                    }
                     applyParagraphIndentOverride()
                 }
             }
@@ -352,7 +390,206 @@ class EpubReaderFragment : Fragment() {
         navigator.viewLifecycleOwnerLiveData.observe(viewLifecycleOwner) { owner ->
             if (owner == null || !isAdded || view == null) return@observe
             host?.onNavigatorReady(this)
+            scheduleContinuousScrollInstall(navigator)
         }
+    }
+
+    private fun scheduleContinuousScrollInstall(
+        navigator: EpubNavigatorFragment?,
+        locator: Locator? = navigator?.currentLocator?.value,
+    ) {
+        continuousScrollInstallJob?.cancel()
+        if (navigator == null || locator == null ||
+            epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
+        ) {
+            return
+        }
+        continuousScrollInstallJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(CONTINUOUS_SCROLL_INSTALL_DELAY_MS)
+            if (!isAdded || view == null || readyNavigatorFragment() !== navigator ||
+                epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
+            ) {
+                return@launch
+            }
+            val session = sessionRepository.get(chapterId) ?: return@launch
+            val currentIndex = session.publication.readingOrder.indexOfFirst {
+                it.href.toString().sameEpubResource(locator.href.toString())
+            }
+            if (currentIndex < 0) return@launch
+            val resources = session.publication.readingOrder.mapIndexedNotNull { index, link ->
+                link.readiumServedUrl(session.publication.baseUrl)?.let { servedUrl ->
+                    EpubContinuousScrollResource(
+                        index = index,
+                        href = link.href.toString(),
+                        url = servedUrl,
+                    )
+                }
+            }
+            if (resources.size != session.publication.readingOrder.size) return@launch
+            val result = runCatching {
+                navigator.evaluateJavascript(
+                    buildEpubContinuousScrollInstallScript(
+                        resources = resources,
+                        currentIndex = currentIndex,
+                        initialProgression = locator.locations.progression ?: 0.0,
+                        paragraphIndentScript = if (paragraphIndentOverrideEnabled) {
+                            APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
+                        } else {
+                            REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT
+                        },
+                    ),
+                )
+            }.getOrNull()
+            if (result == "\"installed\"" || result == "\"ready\"") {
+                if (result == "\"installed\"") {
+                    continuousScrollInstalledHref = locator.href.toString()
+                    continuousScrollLocator = locator
+                } else {
+                    // A preference refresh reuses the existing JS window. Do not replace a newer
+                    // iframe Locator with the stale native Locator for the window's owner XHTML.
+                    continuousScrollInstalledHref = continuousScrollInstalledHref ?: locator.href.toString()
+                    continuousScrollLocator = continuousScrollLocator ?: locator
+                }
+                logcat(LogPriority.DEBUG) {
+                    "EPUB continuous resource flow installed chapterId=$chapterId " +
+                        "resourceIndex=$currentIndex resources=${resources.size}"
+                }
+            }
+        }
+    }
+
+    private fun clearContinuousScrollState() {
+        continuousScrollInstallJob?.cancel()
+        continuousScrollInstallJob = null
+        continuousScrollInstalledHref = null
+        continuousScrollLocator = null
+    }
+
+    /** Returns null when native navigation should handle the request, otherwise its result. */
+    private fun navigateContinuousScroll(forward: Boolean): Boolean? {
+        if (epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL ||
+            continuousScrollInstalledHref == null
+        ) {
+            return null
+        }
+        val current = continuousScrollLocator ?: return null
+        val publication = sessionRepository.get(chapterId)?.publication ?: return null
+        val currentIndex = publication.readingOrder.indexOfFirst {
+            it.href.toString().sameEpubResource(current.href.toString())
+        }
+        if (currentIndex < 0) return false
+        val targetIndex = currentIndex + if (forward) 1 else -1
+        val target = publication.readingOrder.getOrNull(targetIndex) ?: return false
+        val locator = createContinuousScrollLocator(
+            link = target,
+            progression = if (forward) 0.0 else 1.0,
+            positions = sessionRepository.get(chapterId)?.positionsController?.currentPositions().orEmpty(),
+        ) ?: return false
+        return goTo(locator)
+    }
+
+    @Suppress("unused")
+    private inner class ContinuousScrollJavascriptBridge {
+        @JavascriptInterface
+        fun onLocationChanged(resourceIndex: Int, progression: Double) {
+            view?.post {
+                if (!isAdded || view == null || continuousScrollInstalledHref == null ||
+                    epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
+                ) {
+                    return@post
+                }
+                val session = sessionRepository.get(chapterId) ?: return@post
+                val link = session.publication.readingOrder.getOrNull(resourceIndex) ?: return@post
+                val locator = createContinuousScrollLocator(
+                    link = link,
+                    progression = progression.coerceIn(0.0, 1.0),
+                    positions = session.positionsController.currentPositions(),
+                ) ?: return@post
+                continuousScrollLocator = locator
+                host?.onLocatorChanged(locator)
+            }
+        }
+
+        @JavascriptInterface
+        fun onResourceLoadFailed(resourceIndex: Int) {
+            view?.post {
+                if (!isAdded || view == null || continuousScrollInstalledHref == null ||
+                    epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
+                ) {
+                    return@post
+                }
+                val session = sessionRepository.get(chapterId) ?: return@post
+                val link = session.publication.readingOrder.getOrNull(resourceIndex) ?: return@post
+                val locator = createContinuousScrollLocator(
+                    link = link,
+                    progression = 0.0,
+                    positions = session.positionsController.currentPositions(),
+                ) ?: return@post
+                logcat(LogPriority.WARN) {
+                    "EPUB continuous resource load failed chapterId=$chapterId resourceIndex=$resourceIndex; " +
+                        "falling back to native navigation"
+                }
+                goTo(locator)
+            }
+        }
+    }
+
+    private fun createContinuousScrollLocator(
+        link: Link,
+        progression: Double,
+        positions: List<Locator>,
+    ): Locator? {
+        val publication = sessionRepository.get(chapterId)?.publication ?: return null
+        val resourcePositions = positions.filter {
+            it.href.toString().sameEpubResource(link.href.toString())
+        }
+        val scaledPosition = progression * (resourcePositions.size - 1).coerceAtLeast(0)
+        val lowerIndex = kotlin.math.floor(scaledPosition).toInt()
+        val lowerLocator = resourcePositions.getOrNull(lowerIndex)
+        val readingOrderIndex = publication.readingOrder.indexOfFirst {
+            it.href.toString().sameEpubResource(link.href.toString())
+        }
+        val resourceStartProgression = resourcePositions.firstOrNull()?.locations?.totalProgression
+        val nextResource = if (readingOrderIndex >= 0) {
+            publication.readingOrder.getOrNull(readingOrderIndex + 1)
+        } else {
+            null
+        }
+        val resourceEndProgression = nextResource?.let { nextLink ->
+            positions.firstOrNull {
+                it.href.toString().sameEpubResource(nextLink.href.toString())
+            }?.locations?.totalProgression
+        } ?: 1.0
+        val interpolatedTotalProgression = resourceStartProgression?.let { start ->
+            start + (resourceEndProgression - start).coerceAtLeast(0.0) * progression
+        }
+        val baseLocator = publication.locatorFromLink(link) ?: return null
+        return baseLocator.copy(
+            title = link.title ?: lowerLocator?.title ?: baseLocator.title,
+            mediaType = link.mediaType ?: MediaType.XHTML,
+            locations = (lowerLocator?.locations ?: baseLocator.locations).copy(
+                progression = progression,
+                totalProgression = interpolatedTotalProgression
+                    ?: lowerLocator?.locations?.totalProgression
+                    ?: baseLocator.locations.totalProgression,
+            ),
+            text = lowerLocator?.text ?: baseLocator.text,
+        )
+    }
+
+    /** Mirrors Readium WebViewServer.linkToServedUrl; requests stay intercepted by Publication.get. */
+    private fun Link.readiumServedUrl(baseUrl: AbsoluteUrl?): String? {
+        val url: Url = url()
+        return when (url) {
+            is AbsoluteUrl -> url.toString()
+            is RelativeUrl -> (baseUrl ?: READIUM_PACKAGE_BASE_URL).resolve(url).toString()
+        }
+    }
+
+    private fun String.sameEpubResource(other: String): Boolean {
+        val first = substringBefore('#').substringBefore('?').trimStart('/')
+        val second = other.substringBefore('#').substringBefore('?').trimStart('/')
+        return first == second || first.endsWith("/$second") || second.endsWith("/$first")
     }
 
     private fun navigatorFragment(): EpubNavigatorFragment? {
@@ -374,6 +611,9 @@ class EpubReaderFragment : Fragment() {
         private const val NAVIGATOR_TAG = "epub_navigator"
         private const val PAGINATION_SCANNER_TAG = "epub_pagination_scanner"
         private const val PARAGRAPH_INDENT_DEBUG_DELAY_MS = 600L
+        private const val CONTINUOUS_SCROLL_BRIDGE_NAME = "KohariaContinuousScroll"
+        private const val CONTINUOUS_SCROLL_INSTALL_DELAY_MS = 180L
+        private val READIUM_PACKAGE_BASE_URL = AbsoluteUrl("https://readium_package/")!!
         private val PARAGRAPH_INDENT_DEBUG_SCRIPT =
             """
             (function() {
