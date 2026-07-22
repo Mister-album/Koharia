@@ -290,7 +290,11 @@ class KomgaSource(
     }
 
     fun isPersistentFilteringEnabled(libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL): Boolean {
-        return preferences.getBoolean(persistentFilteringEnabledKey(libraryScope), false)
+        val scopedKey = persistentFilteringEnabledKey(libraryScope)
+        if (libraryScope != KomgaLibraryScope.ALL && !preferences.contains(scopedKey)) {
+            return preferences.getBoolean(PREF_PERSISTENT_FILTERS_ENABLED, false)
+        }
+        return preferences.getBoolean(scopedKey, false)
     }
 
     fun setPersistentFilteringEnabled(
@@ -666,8 +670,10 @@ class KomgaSource(
         libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
         currentFilters: FilterList? = null,
         preserveSessionFilters: Boolean = false,
+        fallbackLibraries: List<LibraryDto>? = null,
+        resetLibrarySelection: Boolean = false,
     ): FilterList {
-        val filters = getFilterList()
+        val filters = getFilterList().withFallbackLibraries(fallbackLibraries)
         val currentState = currentFilters
             ?.takeIf { it.isNotEmpty() }
             ?.toPersistentFilterState()
@@ -700,6 +706,9 @@ class KomgaSource(
         scopedFilters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.let { options ->
             when {
                 libraryId != null -> options.forEach { option -> option.state = option.id == libraryId }
+                resetLibrarySelection -> options.forEach { option ->
+                    option.state = allowedLibraryIds != null || option.id in defaultLibraries
+                }
                 allowedLibraryIds != null && options.none { it.state } -> options.forEach { it.state = true }
             }
         }
@@ -891,6 +900,19 @@ private fun FilterList.restrictLibraries(allowedLibraryIds: Set<String>?): Filte
                         .map { LibraryDto(id = it.id, name = it.name) },
                     defaultLibraries = selectedLibraryIds,
                 )
+            } else {
+                filter
+            }
+        },
+    )
+}
+
+private fun FilterList.withFallbackLibraries(fallbackLibraries: List<LibraryDto>?): FilterList {
+    if (fallbackLibraries.isNullOrEmpty()) return this
+    return FilterList(
+        map { filter ->
+            if (filter is LibraryFilter && filter.state.isEmpty()) {
+                LibraryFilter(fallbackLibraries, emptySet())
             } else {
                 filter
             }

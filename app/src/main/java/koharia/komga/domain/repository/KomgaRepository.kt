@@ -28,6 +28,7 @@ import koharia.source.komga.ReadingStateGroup
 import koharia.source.komga.SeriesSort
 import koharia.source.komga.TypeSelect
 import koharia.source.komga.UnreadFilter
+import okhttp3.Request
 import tachiyomi.core.common.util.lang.withIOContext
 import java.text.ParseException
 import java.text.SimpleDateFormat
@@ -57,25 +58,29 @@ class KomgaRepository(
         filters: FilterList,
         defaultLibraries: Set<String>,
         cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
-    ) =
-        apiClient.searchRequest(
+    ): Request {
+        val type = filters.searchType()
+        val supportsBookFilters = type != KomgaApiClient.SearchType.READ_LISTS
+        val supportsSeriesFilters = type == KomgaApiClient.SearchType.SERIES
+        return apiClient.searchRequest(
             page = page,
             query = query,
-            type = filters.searchType(),
+            type = type,
             defaultLibraries = defaultLibraries,
             selectedLibraries = filters.selectedLibraries(),
             collectionId = filters.collectionId(),
             sortIndex = filters.sortSelection().first,
             sortAscending = filters.sortSelection().second,
-            readStatuses = filters.readStatuses(),
-            statuses = filters.multiSelectIds("Status"),
-            genres = filters.multiSelectIds("Genres"),
-            tags = filters.multiSelectIds("Tags"),
-            publishers = filters.multiSelectIds("Publishers"),
-            authors = filters.selectedAuthors(),
-            oneshot = filters.oneshot(),
+            readStatuses = filters.readStatuses().takeIf { supportsBookFilters }.orEmpty(),
+            statuses = filters.multiSelectIds("Status").takeIf { supportsSeriesFilters }.orEmpty(),
+            genres = filters.multiSelectIds("Genres").takeIf { supportsSeriesFilters }.orEmpty(),
+            tags = filters.multiSelectIds("Tags").takeIf { supportsBookFilters }.orEmpty(),
+            publishers = filters.multiSelectIds("Publishers").takeIf { supportsSeriesFilters }.orEmpty(),
+            authors = filters.selectedAuthors().takeIf { supportsSeriesFilters }.orEmpty(),
+            oneshot = filters.oneshot().takeIf { supportsSeriesFilters },
             cachePolicy = cachePolicy,
         )
+    }
 
     fun parseMangasPage(response: okhttp3.Response): MangasPage {
         val data = response.use {

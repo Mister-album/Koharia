@@ -320,6 +320,7 @@ class KomgaLibraryScreenModel(
             allowedLibraryIds = currentAllowedLibraryIds(),
             libraryScope = libraryScope,
             currentFilters = state.value.filters,
+            resetLibrarySelection = libraryId == null,
         )
         mutableState.update {
             it.copy(
@@ -434,13 +435,10 @@ class KomgaLibraryScreenModel(
         libraries: List<KomgaClassifiedLibrary>,
     ) {
         if (libraryScope == KomgaLibraryScope.ALL) return
-        // The cached classification can arrive before Komga's filter metadata. Building filters at
-        // that point produces an empty library group which would override the persisted selection.
-        if (!filtersInitialized) return
         val visibleLibraries = libraries
             .filter { it.kind == libraryScope.kind }
             .map { LibraryDto(it.id, it.name) }
-        if (state.value.komgaLibraries == visibleLibraries) return
+        if (filtersInitialized && state.value.komgaLibraries == visibleLibraries) return
         val selectedLibraryId = state.value.selectedKomgaLibraryId
             ?.takeIf { selectedId -> visibleLibraries.any { it.id == selectedId } }
         val filters = komgaSource.buildFilterListForLibrary(
@@ -450,6 +448,7 @@ class KomgaLibraryScreenModel(
             libraryScope = libraryScope,
             currentFilters = currentFiltersForReload(),
             preserveSessionFilters = true,
+            fallbackLibraries = visibleLibraries,
         )
         mutableState.update {
             it.copy(
@@ -461,6 +460,7 @@ class KomgaLibraryScreenModel(
                 isLibraryScopeEmpty = visibleLibraries.isEmpty(),
             )
         }
+        filtersInitialized = true
         komgaSource.saveSessionFilterState(filters, libraryScope)
         refreshSignal.value += 1
     }

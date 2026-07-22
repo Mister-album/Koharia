@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
+import koharia.source.komga.AuthorGroup
 import koharia.source.komga.CollectionSelect
 import koharia.source.komga.LibraryFilter
 import koharia.source.komga.OneshotFilter
@@ -147,8 +148,8 @@ private fun FilterItem(filter: Filter<*>, filters: FilterList, onUpdate: () -> U
                 selectedIndex = filter.state,
             ) {
                 filter.state = it
-                if (filter is TypeSelect && it != TYPE_SERIES_INDEX) {
-                    filters.filterIsInstance<CollectionSelect>().firstOrNull()?.state = 0
+                if (filter is TypeSelect) {
+                    filters.clearFiltersHiddenFor(it)
                 }
                 onUpdate()
             }
@@ -277,6 +278,29 @@ private fun Filter<*>.isBookFilter(): Boolean {
 
 private fun FilterList.selectedContentType(): Int =
     filterIsInstance<TypeSelect>().firstOrNull()?.state ?: TYPE_SERIES_INDEX
+
+private fun FilterList.clearFiltersHiddenFor(type: Int) {
+    if (type == TYPE_SERIES_INDEX) return
+
+    filterIsInstance<CollectionSelect>().firstOrNull()?.state = 0
+    forEach { filter ->
+        when {
+            type == TYPE_READ_LISTS_INDEX && filter is ReadingStateGroup -> filter.clearSelections()
+            type == TYPE_READ_LISTS_INDEX && filter is UriMultiSelectFilter && filter !is LibraryFilter ->
+                filter.clearSelections()
+            type == TYPE_READ_LISTS_INDEX && filter is AuthorGroup -> filter.clearSelections()
+            type == TYPE_BOOKS_INDEX && filter is ReadingStateGroup ->
+                filter.state.filterIsInstance<OneshotFilter>().forEach { it.state = false }
+            type == TYPE_BOOKS_INDEX && filter is UriMultiSelectFilter &&
+                filter !is LibraryFilter && filter.name != "Tags" -> filter.clearSelections()
+            type == TYPE_BOOKS_INDEX && filter is AuthorGroup -> filter.clearSelections()
+        }
+    }
+}
+
+private fun Filter.Group<*>.clearSelections() {
+    state.filterIsInstance<Filter.CheckBox>().forEach { it.state = false }
+}
 
 private const val TYPE_SERIES_INDEX = 0
 private const val TYPE_READ_LISTS_INDEX = 1
