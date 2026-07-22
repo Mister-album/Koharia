@@ -113,7 +113,11 @@ class KomgaApiClient(
 
         val sortCriteria = when (sortIndex) {
             0 -> "relevance"
-            1 -> if (typePath == "series") "metadata.titleSort" else "name"
+            1 -> when (typePath) {
+                "series" -> "metadata.titleSort"
+                "books" -> "metadata.title"
+                else -> "name"
+            }
             2 -> "createdDate"
             3 -> "lastModifiedDate"
             4 -> "random"

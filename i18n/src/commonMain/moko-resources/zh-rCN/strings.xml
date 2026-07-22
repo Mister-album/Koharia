@@ -98,10 +98,10 @@
     <string name="komga_pref_chapter_name_template_dialog">支持的占位符：\n- {title}\n- {seriesTitle}\n- {number}\n- {createdDate}\n- {releaseDate}\n- {size}\n- {sizeBytes}</string>
     <string name="komga_filter_fetch_failed">从服务器获取筛选选项失败</string>
     <string name="komga_filter_fetch_hint">点击“重置”后显示筛选选项</string>
-    <string name="komga_filter_search_for">搜索类型</string>
+    <string name="komga_filter_search_for">显示内容</string>
     <string name="komga_filter_series">系列</string>
     <string name="komga_filter_read_lists">阅读列表</string>
-    <string name="komga_filter_books">图书</string>
+    <string name="komga_filter_books">单本文件</string>
     <string name="komga_filter_sort_relevance">相关性</string>
     <string name="komga_filter_sort_alphabetically">名称</string>
     <string name="komga_filter_sort_date_added">添加时间</string>
@@ -109,8 +109,10 @@
     <string name="komga_filter_in_progress">继续阅读</string>
     <string name="komga_filter_read">已读</string>
     <string name="komga_filter_oneshot">单行本</string>
+    <string name="komga_filter_reading_status_and_type">阅读状态与类型</string>
     <string name="komga_filter_libraries">书库</string>
-    <string name="komga_filter_collection">合集</string>
+    <string name="komga_filter_collection">系列合集</string>
+    <string name="komga_filter_no_collection">不限</string>
     <string name="komga_filter_status_ended">完结</string>
     <string name="komga_filter_status_abandoned">已放弃</string>
     <string name="komga_filter_genres">题材</string>
@@ -125,6 +127,10 @@
     <string name="komga_filter_author_editor">主编</string>
     <string name="komga_filter_author_translator">翻译者</string>
     <string name="komga_filter_author_conceptor">原案</string>
+    <string name="komga_filter_author_illustrator">插画师</string>
+    <string name="komga_filter_author_artist">画师</string>
+    <string name="komga_filter_author_narrator">旁白</string>
+    <string name="komga_filter_author_contributor">贡献者</string>
     <string name="komga_filter_persist">持久化筛选</string>
     <string name="pref_library_columns">每行数目</string>
     <string name="portrait">竖屏</string>

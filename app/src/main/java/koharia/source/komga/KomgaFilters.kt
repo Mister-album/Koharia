@@ -29,6 +29,17 @@ class ReadFilter : Filter.CheckBox("Read", false)
 
 class OneshotFilter : Filter.CheckBox("Oneshot", false)
 
+class ReadingStateGroup :
+    Filter.Group<Filter.CheckBox>(
+        "Reading status and type",
+        listOf(
+            UnreadFilter(),
+            InProgressFilter(),
+            ReadFilter(),
+            OneshotFilter(),
+        ),
+    )
+
 class LibraryFilter(
     libraries: List<LibraryDto>,
     defaultLibraries: Set<String>,

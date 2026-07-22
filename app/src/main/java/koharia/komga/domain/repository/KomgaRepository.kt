@@ -24,9 +24,11 @@ import koharia.source.komga.KomgaCachePolicy
 import koharia.source.komga.LibraryFilter
 import koharia.source.komga.OneshotFilter
 import koharia.source.komga.ReadFilter
+import koharia.source.komga.ReadingStateGroup
 import koharia.source.komga.SeriesSort
 import koharia.source.komga.TypeSelect
 import koharia.source.komga.UnreadFilter
+import okhttp3.Request
 import tachiyomi.core.common.util.lang.withIOContext
 import java.text.ParseException
 import java.text.SimpleDateFormat
@@ -56,25 +58,29 @@ class KomgaRepository(
         filters: FilterList,
         defaultLibraries: Set<String>,
         cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
-    ) =
-        apiClient.searchRequest(
+    ): Request {
+        val type = filters.searchType()
+        val supportsBookFilters = type != KomgaApiClient.SearchType.READ_LISTS
+        val supportsSeriesFilters = type == KomgaApiClient.SearchType.SERIES
+        return apiClient.searchRequest(
             page = page,
             query = query,
-            type = filters.searchType(),
+            type = type,
             defaultLibraries = defaultLibraries,
             selectedLibraries = filters.selectedLibraries(),
             collectionId = filters.collectionId(),
             sortIndex = filters.sortSelection().first,
             sortAscending = filters.sortSelection().second,
-            readStatuses = filters.readStatuses(),
-            statuses = filters.multiSelectIds("Status"),
-            genres = filters.multiSelectIds("Genres"),
-            tags = filters.multiSelectIds("Tags"),
-            publishers = filters.multiSelectIds("Publishers"),
-            authors = filters.selectedAuthors(),
-            oneshot = filters.oneshot(),
+            readStatuses = filters.readStatuses().takeIf { supportsBookFilters }.orEmpty(),
+            statuses = filters.multiSelectIds("Status").takeIf { supportsSeriesFilters }.orEmpty(),
+            genres = filters.multiSelectIds("Genres").takeIf { supportsSeriesFilters }.orEmpty(),
+            tags = filters.multiSelectIds("Tags").takeIf { supportsBookFilters }.orEmpty(),
+            publishers = filters.multiSelectIds("Publishers").takeIf { supportsSeriesFilters }.orEmpty(),
+            authors = filters.selectedAuthors().takeIf { supportsSeriesFilters }.orEmpty(),
+            oneshot = filters.oneshot().takeIf { supportsSeriesFilters },
             cachePolicy = cachePolicy,
         )
+    }
 
     fun parseMangasPage(response: okhttp3.Response): MangasPage {
         val data = response.use {
@@ -216,10 +222,12 @@ private fun FilterList.searchType(): KomgaApiClient.SearchType = when {
     else -> KomgaApiClient.SearchType.SERIES
 }
 
-private fun FilterList.collectionId(): String? =
-    filterIsInstance<CollectionSelect>().firstOrNull()?.collections?.getOrNull(
+private fun FilterList.collectionId(): String? {
+    if (filterIsInstance<TypeSelect>().firstOrNull()?.state != 0) return null
+    return filterIsInstance<CollectionSelect>().firstOrNull()?.collections?.getOrNull(
         filterIsInstance<CollectionSelect>().firstOrNull()?.state ?: 0,
     )?.id
+}
 
 private fun FilterList.sortSelection(): Pair<Int, Boolean> {
     val sort = filterIsInstance<SeriesSort>().firstOrNull()?.state ?: return 0 to true
@@ -228,20 +236,27 @@ private fun FilterList.sortSelection(): Pair<Int, Boolean> {
 
 private fun FilterList.readStatuses(): Set<String> {
     val statuses = mutableSetOf<String>()
-    if (filterIsInstance<UnreadFilter>().firstOrNull()?.state == true) {
+    val readingFilters = filterIsInstance<ReadingStateGroup>().firstOrNull()?.state.orEmpty()
+    if (readingFilters.filterIsInstance<UnreadFilter>().firstOrNull()?.state == true) {
         statuses += setOf("UNREAD", "IN_PROGRESS")
     }
-    if (filterIsInstance<InProgressFilter>().firstOrNull()?.state == true) {
+    if (readingFilters.filterIsInstance<InProgressFilter>().firstOrNull()?.state == true) {
         statuses += "IN_PROGRESS"
     }
-    if (filterIsInstance<ReadFilter>().firstOrNull()?.state == true) {
+    if (readingFilters.filterIsInstance<ReadFilter>().firstOrNull()?.state == true) {
         statuses += "READ"
     }
     return statuses
 }
 
 private fun FilterList.oneshot(): Boolean? =
-    filterIsInstance<OneshotFilter>().firstOrNull()?.state?.takeIf { it }
+    filterIsInstance<ReadingStateGroup>()
+        .firstOrNull()
+        ?.state
+        ?.filterIsInstance<OneshotFilter>()
+        ?.firstOrNull()
+        ?.state
+        ?.takeIf { it }
 
 private fun FilterList.selectedLibraries(): Set<String> =
     filterIsInstance<LibraryFilter>().firstOrNull()?.state?.filter { it.state }?.map { it.id }?.toSet().orEmpty()

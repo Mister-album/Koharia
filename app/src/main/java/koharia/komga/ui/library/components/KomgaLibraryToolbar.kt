@@ -41,6 +41,7 @@ fun KomgaLibraryToolbar(
 ) {
     var selectingDisplayMode by remember { mutableStateOf(false) }
     var selectingServer by remember { mutableStateOf(false) }
+    val canSwitchServer = serverProfiles.size > 1
 
     SearchToolbar(
         navigateUp = navigateUp,
@@ -64,13 +65,15 @@ fun KomgaLibraryToolbar(
                                 onClick = { selectingDisplayMode = true },
                             ),
                         )
-                        add(
-                            AppBar.Action(
-                                title = stringResource(MR.strings.pref_komga_server),
-                                icon = Icons.Outlined.Storage,
-                                onClick = { selectingServer = true },
-                            ),
-                        )
+                        if (canSwitchServer) {
+                            add(
+                                AppBar.Action(
+                                    title = stringResource(MR.strings.pref_komga_server),
+                                    icon = Icons.Outlined.Storage,
+                                    onClick = { selectingServer = true },
+                                ),
+                            )
+                        }
                         if (showFilterAction) {
                             add(
                                 AppBar.Action(
@@ -84,17 +87,19 @@ fun KomgaLibraryToolbar(
                     .build(),
             )
 
-            DropdownMenu(
-                expanded = selectingServer,
-                onDismissRequest = { selectingServer = false },
-            ) {
-                serverProfiles.forEach { profile ->
-                    RadioMenuItem(
-                        text = { Text(text = profile.name) },
-                        isChecked = activeServerId == profile.id,
-                    ) {
-                        selectingServer = false
-                        onServerSelect(profile.id)
+            if (canSwitchServer) {
+                DropdownMenu(
+                    expanded = selectingServer,
+                    onDismissRequest = { selectingServer = false },
+                ) {
+                    serverProfiles.forEach { profile ->
+                        RadioMenuItem(
+                            text = { Text(text = profile.name) },
+                            isChecked = activeServerId == profile.id,
+                        ) {
+                            selectingServer = false
+                            onServerSelect(profile.id)
+                        }
                     }
                 }
             }
