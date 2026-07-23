@@ -330,7 +330,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     .takeUnless { resolvedCompleteCache && cachedBookFile == null }
                 val preferredLocalUri = reusableResolvedLocalUri ?: downloadedUri ?: cachedBookUri
                 val needsRemoteDetails = !hasLauncherResolution &&
-                    (memoIsEpub == null || (memoIsEpub && memoIsDivinaCompatible == null))
+                    !KomgaChapterMemo.hasCompleteEpubClassification(chapter.memo)
                 val bookDetails = if (needsRemoteDetails) {
                     runCatching { source.getBookDetails(chapter.url) }
                         .getOrNull()

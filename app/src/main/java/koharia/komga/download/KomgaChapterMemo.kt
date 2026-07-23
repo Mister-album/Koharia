@@ -31,6 +31,7 @@ object KomgaChapterMemo {
     const val ISBN = "isbn"
     const val IS_EPUB = "isEpub"
     const val EPUB_DIVINA_COMPATIBLE = "epubDivinaCompatible"
+    const val EPUB_PAGE_PROGRESS_MIGRATED = "epubPageProgressMigrated"
     const val FILE_LAST_MODIFIED = "fileLastModified"
     const val FILE_NAME = "fileName"
     const val PAGES_COUNT = "pagesCount"
@@ -119,6 +120,7 @@ object KomgaChapterMemo {
         sizeBytes: Long,
         fileName: String?,
         isEpub: Boolean,
+        epubDivinaCompatible: Boolean? = null,
         pagesCount: Int,
     ): JsonObject {
         return buildJsonObject {
@@ -129,6 +131,7 @@ object KomgaChapterMemo {
             if (sizeBytes > 0L) put(SIZE_BYTES, sizeBytes)
             fileName?.takeIf(String::isNotBlank)?.let { put(FILE_NAME, it) }
             put(IS_EPUB, isEpub)
+            epubDivinaCompatible?.let { put(EPUB_DIVINA_COMPATIBLE, it) }
             if (pagesCount > 0) put(PAGES_COUNT, pagesCount)
         }
     }
@@ -153,6 +156,27 @@ object KomgaChapterMemo {
 
     fun isEpubDivinaCompatible(memo: JsonObject): Boolean? =
         memo[EPUB_DIVINA_COMPATIBLE]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+
+    fun hasCompleteEpubClassification(memo: JsonObject): Boolean {
+        val isEpub = isEpub(memo) ?: return false
+        if (!isEpub) return true
+        val isDivinaCompatible = isEpubDivinaCompatible(memo) ?: return false
+        return !isDivinaCompatible || pagesCount(memo) != null
+    }
+
+    fun canOpenEpubAsPages(memo: JsonObject): Boolean {
+        return isEpub(memo) == true &&
+            isEpubDivinaCompatible(memo) == true &&
+            pagesCount(memo) != null
+    }
+
+    fun isEpubPageProgressMigrated(memo: JsonObject): Boolean =
+        memo[EPUB_PAGE_PROGRESS_MIGRATED]?.jsonPrimitive?.content?.toBooleanStrictOrNull() == true
+
+    fun markEpubPageProgressMigrated(memo: JsonObject): JsonObject = buildJsonObject {
+        memo.forEach { (key, value) -> put(key, value) }
+        put(EPUB_PAGE_PROGRESS_MIGRATED, true)
+    }
 
     fun fileLastModified(memo: JsonObject): String? = memo.string(FILE_LAST_MODIFIED)
 

@@ -89,8 +89,7 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             else -> null
         }
 
-        val needsRemoteClassification = memoIsEpub == null ||
-            (memoIsEpub && memoIsDivinaCompatible == null)
+        val needsRemoteClassification = !KomgaChapterMemo.hasCompleteEpubClassification(chapter.memo)
         val willRequestRemoteClassification = needsRemoteClassification && application.isOnline()
         val remoteLookup = if (!willRequestRemoteClassification) {
             Result.success(null)

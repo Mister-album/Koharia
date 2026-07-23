@@ -120,6 +120,8 @@ class KomgaApi(
                             url = "$baseUrl/api/v1/books/${book.id}",
                             readProgress = book.readProgress,
                             isEpub = book.media?.mediaProfile == "EPUB",
+                            isDivinaCompatibleEpub = book.media?.epubDivinaCompatible == true &&
+                                (book.media?.pagesCount ?: 0) > 0,
                         )
                     }
             }
@@ -143,6 +145,8 @@ class KomgaApi(
                     completed = book.readProgress?.completed ?: false,
                     readDate = book.readProgress?.readDate,
                     isEpub = book.media?.mediaProfile == "EPUB",
+                    isDivinaCompatibleEpub = book.media?.epubDivinaCompatible == true &&
+                        (book.media?.pagesCount ?: 0) > 0,
                     fileHash = book.fileHash,
                     fileLastModified = book.fileLastModified,
                     sizeBytes = book.sizeBytes,
@@ -176,6 +180,8 @@ class KomgaApi(
                                 url = "$baseUrl/api/v1/books/${book.id}",
                                 readProgress = book.readProgress,
                                 isEpub = book.media?.mediaProfile == "EPUB",
+                                isDivinaCompatibleEpub = book.media?.epubDivinaCompatible == true &&
+                                    (book.media?.pagesCount ?: 0) > 0,
                             )
                         }
                 }
@@ -264,6 +270,7 @@ class KomgaApi(
         val url: String,
         val readProgress: BookReadProgressDto?,
         val isEpub: Boolean = false,
+        val isDivinaCompatibleEpub: Boolean = false,
     )
 
     data class BookProgressSnapshot(
@@ -273,6 +280,7 @@ class KomgaApi(
         val completed: Boolean,
         val readDate: String?,
         val isEpub: Boolean,
+        val isDivinaCompatibleEpub: Boolean,
         val fileHash: String?,
         val fileLastModified: String?,
         val sizeBytes: Long,

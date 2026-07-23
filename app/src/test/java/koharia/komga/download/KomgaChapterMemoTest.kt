@@ -42,6 +42,45 @@ class KomgaChapterMemoTest {
         }
 
         assertEquals(null, KomgaChapterMemo.isEpubDivinaCompatible(memo))
+        assertEquals(false, KomgaChapterMemo.hasCompleteEpubClassification(memo))
+    }
+
+    @Test
+    fun `divina classification remains incomplete until page count is available`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.IS_EPUB, true)
+            put(KomgaChapterMemo.EPUB_DIVINA_COMPATIBLE, true)
+        }
+
+        assertEquals(false, KomgaChapterMemo.hasCompleteEpubClassification(memo))
+        assertEquals(false, KomgaChapterMemo.canOpenEpubAsPages(memo))
+    }
+
+    @Test
+    fun `regular epub classification does not require image page count`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.IS_EPUB, true)
+            put(KomgaChapterMemo.EPUB_DIVINA_COMPATIBLE, false)
+        }
+
+        assertEquals(true, KomgaChapterMemo.hasCompleteEpubClassification(memo))
+        assertEquals(false, KomgaChapterMemo.canOpenEpubAsPages(memo))
+    }
+
+    @Test
+    fun `image epub page progress migration is recorded in memo`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.IS_EPUB, true)
+            put(KomgaChapterMemo.EPUB_DIVINA_COMPATIBLE, true)
+            put(KomgaChapterMemo.PAGES_COUNT, 42)
+        }
+
+        assertEquals(false, KomgaChapterMemo.isEpubPageProgressMigrated(memo))
+
+        val migrated = KomgaChapterMemo.markEpubPageProgressMigrated(memo)
+
+        assertEquals(true, KomgaChapterMemo.isEpubPageProgressMigrated(migrated))
+        assertEquals(42, KomgaChapterMemo.pagesCount(migrated))
     }
 
     @Test

@@ -6,12 +6,19 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import koharia.epub.cache.EpubCacheManager
+import koharia.epub.cache.EpubCachePolicy
+import koharia.komga.download.KomgaChapterMemo
+import koharia.source.komga.KomgaSource
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.io.File
 
 /**
  * Loader used to retrieve the [PageLoader] for a given chapter.
@@ -22,6 +29,7 @@ class ChapterLoader(
     private val downloadProvider: DownloadProvider,
     private val manga: Manga,
     private val source: Source,
+    private val epubCacheManager: EpubCacheManager = Injekt.get(),
 ) {
 
     /**
@@ -84,12 +92,13 @@ class ChapterLoader(
             manga.source,
             skipCache = true,
         )
+        val completeEpubCache = if (!isDownloaded) findCompleteEpubCache(dbChapter) else null
         logcat {
             "KohariaOfflineDebug: chapter loader selected " +
                 "mangaId=${manga.id} mangaTitle=${manga.title} " +
                 "chapterId=${dbChapter.id} chapterName=${dbChapter.name} " +
                 "chapterUrl=${dbChapter.url} source=${source.name} " +
-                "downloadedOnDisk=$isDownloaded"
+                "downloadedOnDisk=$isDownloaded completeEpubCache=${completeEpubCache != null}"
         }
         return when {
             isDownloaded -> DownloadPageLoader(
@@ -99,9 +108,23 @@ class ChapterLoader(
                 downloadManager,
                 downloadProvider,
             )
+            completeEpubCache != null -> CompleteEpubCachePageLoader(completeEpubCache, epubCacheManager)
             source is HttpSource -> HttpPageLoader(chapter, source)
             source is StubSource -> error(context.stringResource(MR.strings.source_not_installed, source.toString()))
             else -> error(context.stringResource(MR.strings.loader_not_implemented_error))
         }
+    }
+
+    private fun findCompleteEpubCache(chapter: eu.kanade.tachiyomi.data.database.models.Chapter): File? {
+        val komgaSource = source as? KomgaSource ?: return null
+        if (!KomgaChapterMemo.canOpenEpubAsPages(chapter.memo)) return null
+        val fingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
+        val publicationKey = EpubCachePolicy.publicationKey(
+            fileHash = fingerprint?.fileHash,
+            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
+            sizeBytes = fingerprint?.sizeBytes ?: 0L,
+            fallback = "book:${chapter.id}:${chapter.url}",
+        )
+        return epubCacheManager.completeBookFile(komgaSource.id, publicationKey)
     }
 }
