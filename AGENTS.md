@@ -10,6 +10,7 @@ Koharia is a Komga-focused Android reader forked from Mihon `0.19.9`. It uses Ko
 - Do not use destructive Git commands, force-push, commit, or push unless explicitly requested.
 - Treat `local.properties`, `keystore.properties`, `*.jks`, API keys, and tokens as secrets. Never print, log, or commit them.
 - Confirm the destination before pushing: `github` targets GitHub, while `origin` targets the self-hosted repository.
+- Pull request titles and descriptions must be written bilingually in Chinese and English.
 
 ### Formatting And Verification
 
