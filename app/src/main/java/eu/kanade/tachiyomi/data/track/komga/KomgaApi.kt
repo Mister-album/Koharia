@@ -120,8 +120,7 @@ class KomgaApi(
                             url = "$baseUrl/api/v1/books/${book.id}",
                             readProgress = book.readProgress,
                             isEpub = book.media?.mediaProfile == "EPUB",
-                            isDivinaCompatibleEpub = book.media?.epubDivinaCompatible == true &&
-                                (book.media?.pagesCount ?: 0) > 0,
+                            isDivinaCompatibleEpub = book.media?.isDivinaCompatibleEpub == true,
                         )
                     }
             }
@@ -145,8 +144,7 @@ class KomgaApi(
                     completed = book.readProgress?.completed ?: false,
                     readDate = book.readProgress?.readDate,
                     isEpub = book.media?.mediaProfile == "EPUB",
-                    isDivinaCompatibleEpub = book.media?.epubDivinaCompatible == true &&
-                        (book.media?.pagesCount ?: 0) > 0,
+                    isDivinaCompatibleEpub = book.media?.isDivinaCompatibleEpub == true,
                     fileHash = book.fileHash,
                     fileLastModified = book.fileLastModified,
                     sizeBytes = book.sizeBytes,
@@ -180,8 +178,7 @@ class KomgaApi(
                                 url = "$baseUrl/api/v1/books/${book.id}",
                                 readProgress = book.readProgress,
                                 isEpub = book.media?.mediaProfile == "EPUB",
-                                isDivinaCompatibleEpub = book.media?.epubDivinaCompatible == true &&
-                                    (book.media?.pagesCount ?: 0) > 0,
+                                isDivinaCompatibleEpub = book.media?.isDivinaCompatibleEpub == true,
                             )
                         }
                 }

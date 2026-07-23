@@ -115,7 +115,11 @@ data class PageWrapperDto<T>(
 data class BookMediaDto(
     val mediaProfile: String = "",
     val pagesCount: Int = 0,
-)
+    val epubDivinaCompatible: Boolean = false,
+) {
+    val isDivinaCompatibleEpub: Boolean
+        get() = mediaProfile == "EPUB" && epubDivinaCompatible && pagesCount > 0
+}
 
 @Serializable
 data class BookDto(

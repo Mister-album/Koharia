@@ -5,12 +5,15 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import koharia.core.archive.ArchiveReader
 import koharia.core.archive.EpubReader
 import koharia.epub.cache.EpubCacheManager
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import java.io.File
 
 /** Uses the independent EPUB book cache without exposing it as a manual download. */
 internal class CompleteEpubCachePageLoader(
     private val file: File,
     private val cacheManager: EpubCacheManager,
+    private val expectedPageCount: Int,
 ) : PageLoader() {
 
     private var delegate: EpubPageLoader? = null
@@ -30,8 +33,24 @@ internal class CompleteEpubCachePageLoader(
             releaseLease()
             throw error
         }
-        delegate = loader
-        return loader.getPages()
+        return try {
+            val pages = loader.getPages()
+            if (pages.size != expectedPageCount) {
+                logcat(LogPriority.WARN) {
+                    "Cached EPUB page list rejected expected=$expectedPageCount actual=${pages.size}"
+                }
+                loader.recycle()
+                releaseLease()
+                emptyList()
+            } else {
+                delegate = loader
+                pages
+            }
+        } catch (error: Throwable) {
+            loader.recycle()
+            releaseLease()
+            throw error
+        }
     }
 
     override suspend fun loadPage(page: ReaderPage) {
