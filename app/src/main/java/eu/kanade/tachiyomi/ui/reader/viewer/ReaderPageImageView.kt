@@ -20,6 +20,7 @@ import androidx.core.os.postDelayed
 import androidx.core.view.isVisible
 import coil3.BitmapImage
 import coil3.asDrawable
+import coil3.decode.Decoder
 import coil3.dispose
 import coil3.imageLoader
 import coil3.request.CachePolicy
@@ -177,10 +178,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     /** Uses Coil and the zoomable image view for formats that cannot be decoded by SSIV. */
-    fun setImageWithCoil(source: BufferedSource, config: Config) {
+    fun setImageWithCoil(
+        source: BufferedSource,
+        config: Config,
+        decoderFactory: Decoder.Factory? = null,
+    ) {
         this.config = config
         prepareAnimatedImageView()
-        setAnimatedImage(source, config)
+        setAnimatedImage(source, config, decoderFactory)
     }
 
     fun recycle() = pageView?.let {
@@ -412,6 +417,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private fun setAnimatedImage(
         data: Any,
         config: Config,
+        forcedDecoderFactory: Decoder.Factory? = null,
     ) = (pageView as? AppCompatImageView)?.apply {
         if (this is PhotoView) {
             setZoomTransitionDuration(config.zoomDuration.getSystemScaledDuration())
@@ -436,6 +442,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 },
             )
             .crossfade(false)
+            .apply {
+                forcedDecoderFactory?.let(::decoderFactory)
+            }
             .build()
         context.imageLoader.enqueue(request)
     }

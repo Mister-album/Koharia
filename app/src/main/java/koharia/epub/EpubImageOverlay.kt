@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import coil3.svg.SvgDecoder
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import okio.Buffer
@@ -183,7 +184,7 @@ private fun EpubZoomableImage(
                 cropBorders = false,
             )
             if (content.isSvg) {
-                setImageWithCoil(source, config)
+                setImageWithCoil(source, config, SvgDecoder.Factory())
             } else {
                 setImage(source, content.isAnimated, config)
             }

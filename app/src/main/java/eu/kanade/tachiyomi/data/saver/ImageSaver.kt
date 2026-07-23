@@ -77,13 +77,7 @@ class ImageSaver(
         filename: String,
         data: () -> InputStream,
     ): Uri {
-        val useImageCollection = format.mimeType != SVG_MIME_TYPE
-
-        val pictureDir = if (useImageCollection) {
-            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        }
+        val pictureDir = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
 
         val imageLocation = (image.location as Location.Pictures).relativePath
         val relativePath = listOf(

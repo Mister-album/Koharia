@@ -1745,7 +1745,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
     override fun onCleared() {
         imageLoadJob?.cancel()
         imageRequestTracker.invalidate()
-        lastEpubShareFile?.delete()
         lastEpubShareFile = null
         searchIterator?.close()
         searchIterator = null
