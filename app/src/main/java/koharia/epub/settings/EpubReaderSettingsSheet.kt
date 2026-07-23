@@ -285,11 +285,7 @@ private fun BrightnessRow(readerPreferences: ReaderPreferences) {
         Spacer(modifier = Modifier.width(8.dp))
         if (!followsSystem) {
             Text(
-                text = if (brightnessValue == 0) {
-                    stringResource(MR.strings.epub_reader_system_brightness_short)
-                } else {
-                    "$brightnessValue%"
-                },
+                text = "$brightnessValue%",
                 style = MaterialTheme.typography.labelMedium,
                 maxLines = 1,
                 modifier = Modifier.widthIn(min = 40.dp),
