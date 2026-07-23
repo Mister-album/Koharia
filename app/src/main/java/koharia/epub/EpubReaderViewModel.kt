@@ -314,6 +314,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
                 val memoFingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
                 val memoIsEpub = KomgaChapterMemo.isEpub(chapter.memo)
+                val memoIsDivinaCompatible = KomgaChapterMemo.isEpubDivinaCompatible(chapter.memo)
+                val memoPagesCount = KomgaChapterMemo.pagesCount(chapter.memo) ?: 0
                 val memoBookUrl = memoFingerprint?.bookUrl
                     ?: chapter.url.substringBefore('#').removeSuffix("/")
                 val remotePublicationKey = EpubCachePolicy.publicationKey(
@@ -328,13 +330,23 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     .takeUnless { resolvedCompleteCache && cachedBookFile == null }
                 val preferredLocalUri = reusableResolvedLocalUri ?: downloadedUri ?: cachedBookUri
                 val needsRemoteDetails = !hasLauncherResolution &&
-                    (preferredLocalUri == null || memoIsEpub == null)
+                    (memoIsEpub == null || (memoIsEpub && memoIsDivinaCompatible == null))
                 val bookDetails = if (needsRemoteDetails) {
                     runCatching { source.getBookDetails(chapter.url) }
                         .getOrNull()
                         ?.takeIf { it.isEpub }
                 } else {
                     null
+                }
+                if (bookDetails != null) {
+                    val updatedMemo = KomgaChapterMemo.mergeInto(
+                        existing = chapter.memo,
+                        baseUrl = source.baseUrl.trimEnd('/'),
+                        book = bookDetails,
+                    )
+                    if (updatedMemo != chapter.memo) {
+                        updateChapter.await(ChapterUpdate(id = chapter.id, memo = updatedMemo))
+                    }
                 }
                 val remoteBookUrl = when {
                     hasLauncherResolution -> resolvedRemoteBookUrl
@@ -347,7 +359,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 } else {
                     bookDetails?.media?.let { media ->
                         media.isDivinaCompatibleEpub && media.pagesCount > 0
-                    } == true
+                    } ?: (memoIsEpub == true && memoIsDivinaCompatible == true && memoPagesCount > 0)
                 }
 
                 check(preferredLocalUri != null || remoteBookUrl != null) {

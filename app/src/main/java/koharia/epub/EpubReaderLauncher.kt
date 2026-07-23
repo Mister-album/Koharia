@@ -57,10 +57,13 @@ class EpubReaderLauncher @JvmOverloads constructor(
                     mangaId = mangaId,
                     chapterId = chapterId,
                 )
-                if (resolution.isNativeSupported) {
-                    EpubReaderActivity.newIntent(context, mangaId, chapterId, resolution.sourceId, resolution)
-                } else {
-                    ReaderActivity.newIntent(context, mangaId, chapterId, resolution.sourceId)
+                when {
+                    resolution.shouldOpenAsPages ->
+                        ReaderActivity.newIntent(context, mangaId, chapterId, resolution.sourceId)
+                    resolution.isNativeSupported ->
+                        EpubReaderActivity.newIntent(context, mangaId, chapterId, resolution.sourceId, resolution)
+                    else ->
+                        ReaderActivity.newIntent(context, mangaId, chapterId, resolution.sourceId)
                 }
             }.getOrElse { error ->
                 logcat(LogPriority.WARN, error) {

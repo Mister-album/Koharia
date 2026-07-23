@@ -70,6 +70,8 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
 
         val memoFingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
         val memoIsEpub = KomgaChapterMemo.isEpub(chapter.memo)
+        val memoIsDivinaCompatible = KomgaChapterMemo.isEpubDivinaCompatible(chapter.memo)
+        val memoPagesCount = KomgaChapterMemo.pagesCount(chapter.memo) ?: 0
         val memoBookUrl = memoFingerprint?.bookUrl
             ?: chapter.url.substringBefore('#').removeSuffix("/")
         val remotePublicationKey = EpubCachePolicy.publicationKey(
@@ -87,7 +89,10 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             else -> null
         }
 
-        val remoteLookup = if (memoIsEpub != null || localUri != null || !application.isOnline()) {
+        val needsRemoteClassification = memoIsEpub == null ||
+            (memoIsEpub && memoIsDivinaCompatible == null)
+        val willRequestRemoteClassification = needsRemoteClassification && application.isOnline()
+        val remoteLookup = if (!willRequestRemoteClassification) {
             Result.success(null)
         } else {
             runCatching { source.getBookDetails(chapter.url) }
@@ -117,7 +122,9 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             else -> null
         }
 
-        val isDivinaCompatible = remoteBook?.media?.isDivinaCompatibleEpub == true
+        val isDivinaCompatible = remoteBook?.media?.let { media ->
+            media.isDivinaCompatibleEpub && media.pagesCount > 0
+        } ?: (memoIsEpub == true && memoIsDivinaCompatible == true && memoPagesCount > 0)
 
         val preferredOpenSource = when {
             localUri != null -> EpubOpenRequest.OpenSource.LOCAL
@@ -162,7 +169,8 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
         )
         logcat {
             "MangaStartup: reader route resolved chapterId=${chapter.id} " +
-                "memoType=$memoIsEpub metadataRequested=${memoIsEpub == null && localUri == null} " +
+                "memoType=$memoIsEpub memoDivina=$memoIsDivinaCompatible " +
+                "metadataRequested=$willRequestRemoteClassification divina=${resolution.shouldOpenAsPages} " +
                 "nativeEpub=${resolution.isNativeSupported}"
         }
         resolution
@@ -191,6 +199,9 @@ data class EpubReaderSupportResolution(
 
     val isNativeSupported: Boolean
         get() = preferredOpenSource != null
+
+    val shouldOpenAsPages: Boolean
+        get() = isNativeSupported && isDivinaCompatible
 
     fun toOpenRequest(): EpubOpenRequest? {
         val openSource = preferredOpenSource ?: return null

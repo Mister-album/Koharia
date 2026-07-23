@@ -30,6 +30,7 @@ object KomgaChapterMemo {
     const val NUMBER_SORT = "numberSort"
     const val ISBN = "isbn"
     const val IS_EPUB = "isEpub"
+    const val EPUB_DIVINA_COMPATIBLE = "epubDivinaCompatible"
     const val FILE_LAST_MODIFIED = "fileLastModified"
     const val FILE_NAME = "fileName"
     const val PAGES_COUNT = "pagesCount"
@@ -54,6 +55,7 @@ object KomgaChapterMemo {
         return buildJsonObject {
             fingerprint.forEach { (key, value) -> put(key, value) }
             put(IS_EPUB, book.isEpub)
+            put(EPUB_DIVINA_COMPATIBLE, book.media.epubDivinaCompatible)
             if (book.fileLastModified.isNotBlank()) put(FILE_LAST_MODIFIED, book.fileLastModified)
             if (book.name.isNotBlank()) put(FILE_NAME, book.name)
             if (book.media.pagesCount > 0) put(PAGES_COUNT, book.media.pagesCount)
@@ -148,6 +150,9 @@ object KomgaChapterMemo {
     }
 
     fun isEpub(memo: JsonObject): Boolean? = memo[IS_EPUB]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+
+    fun isEpubDivinaCompatible(memo: JsonObject): Boolean? =
+        memo[EPUB_DIVINA_COMPATIBLE]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
 
     fun fileLastModified(memo: JsonObject): String? = memo.string(FILE_LAST_MODIFIED)
 
