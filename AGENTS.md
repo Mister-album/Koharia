@@ -11,6 +11,7 @@ Koharia is a Komga-focused Android reader forked from Mihon `0.19.9`. It uses Ko
 - Treat `local.properties`, `keystore.properties`, `*.jks`, API keys, and tokens as secrets. Never print, log, or commit them.
 - Confirm the destination before pushing: `github` targets GitHub, while `origin` targets the self-hosted repository.
 - Pull request titles and descriptions must be written bilingually in Chinese and English.
+- When debugging an emulator or physical device, prefer ADB commands. Do not use the `computer-use` skill unless the user explicitly requests device operation for validation or debugging; otherwise, provide manual validation and debugging instructions.
 
 ### Formatting And Verification
 

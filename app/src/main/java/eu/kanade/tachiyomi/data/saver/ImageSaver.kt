@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.webkit.MimeTypeMap
 import androidx.annotation.RequiresApi
 import androidx.core.content.contentValuesOf
 import androidx.core.net.toUri
@@ -32,15 +31,27 @@ class ImageSaver(
 
     fun save(image: Image): Uri {
         val data = image.data
-
-        val type = ImageUtil.findImageType(data) ?: throw IllegalArgumentException("Not an image")
-        val filename = DiskUtil.buildValidFilename("${image.name}.${type.extension}")
+        val format = resolveFormat(image, data)
+        val filename = DiskUtil.buildValidFilename("${image.name}.${format.extension}")
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || image.location !is Location.Pictures) {
             return save(data(), image.location.directory(context), filename)
         }
 
-        return saveApi29(image, type, filename, data)
+        return saveApi29(image, format, filename, data)
+    }
+
+    private fun resolveFormat(image: Image, data: () -> InputStream): EncodedFormat {
+        image.encodedFormat?.let { declared ->
+            if (declared.mimeType == SVG_MIME_TYPE) {
+                require(declared.extension.equals(SVG_EXTENSION, ignoreCase = true)) { "Invalid SVG extension" }
+                require(data().use(::isSvg)) { "Not an SVG image" }
+                return EncodedFormat(SVG_MIME_TYPE, SVG_EXTENSION)
+            }
+        }
+
+        val type = ImageUtil.findImageType(data) ?: throw IllegalArgumentException("Not an image")
+        return EncodedFormat(type.mime, type.extension)
     }
 
     private fun save(inputStream: InputStream, directory: File, filename: String): Uri {
@@ -62,13 +73,13 @@ class ImageSaver(
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun saveApi29(
         image: Image,
-        type: ImageUtil.ImageType,
+        format: EncodedFormat,
         filename: String,
         data: () -> InputStream,
     ): Uri {
-        val isMimeTypeSupported = MimeTypeMap.getSingleton().hasMimeType(type.mime)
+        val useImageCollection = format.mimeType != SVG_MIME_TYPE
 
-        val pictureDir = if (isMimeTypeSupported) {
+        val pictureDir = if (useImageCollection) {
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         } else {
             MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -76,19 +87,19 @@ class ImageSaver(
 
         val imageLocation = (image.location as Location.Pictures).relativePath
         val relativePath = listOf(
-            if (isMimeTypeSupported) Environment.DIRECTORY_PICTURES else Environment.DIRECTORY_DOCUMENTS,
+            Environment.DIRECTORY_PICTURES,
             context.stringResource(MR.strings.app_name),
             imageLocation,
         ).joinToString(File.separator)
 
         val contentValues = contentValuesOf(
             MediaStore.MediaColumns.RELATIVE_PATH to relativePath,
-            MediaStore.MediaColumns.DISPLAY_NAME to if (isMimeTypeSupported) image.name else filename,
-            MediaStore.MediaColumns.MIME_TYPE to type.mime,
+            MediaStore.MediaColumns.DISPLAY_NAME to filename,
+            MediaStore.MediaColumns.MIME_TYPE to format.mimeType,
             MediaStore.MediaColumns.DATE_MODIFIED to Instant.now().epochSecond,
         )
 
-        val picture = findUriOrDefault(relativePath, filename) {
+        val picture = findUriOrDefault(pictureDir, relativePath, filename) {
             context.contentResolver.insert(
                 pictureDir,
                 contentValues,
@@ -112,7 +123,7 @@ class ImageSaver(
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun findUriOrDefault(path: String, filename: String, default: () -> Uri): Uri {
+    private fun findUriOrDefault(collection: Uri, path: String, filename: String, default: () -> Uri): Uri {
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
@@ -125,7 +136,7 @@ class ImageSaver(
         val normalizedPath = "${path.removeSuffix(File.separator)}${File.separator}"
 
         context.contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            collection,
             projection,
             selection,
             arrayOf(normalizedPath, filename),
@@ -134,18 +145,28 @@ class ImageSaver(
             if (cursor != null && cursor.count >= 1) {
                 if (cursor.moveToFirst()) {
                     val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
-                    return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                    return ContentUris.withAppendedId(collection, id)
                 }
             }
         }
 
         return default()
     }
+
+    private fun isSvg(input: InputStream): Boolean {
+        val prefix = input.bufferedReader().use { reader ->
+            val buffer = CharArray(SVG_PREFIX_CHARS)
+            val length = reader.read(buffer)
+            if (length <= 0) "" else String(buffer, 0, length)
+        }
+        return SVG_ROOT_PATTERN.containsMatchIn(prefix.trimStart('\uFEFF'))
+    }
 }
 
 sealed class Image(
     open val name: String,
     open val location: Location,
+    open val encodedFormat: EncodedFormat? = null,
 ) {
     data class Cover(
         val bitmap: Bitmap,
@@ -157,7 +178,8 @@ sealed class Image(
         val inputStream: () -> InputStream,
         override val name: String,
         override val location: Location,
-    ) : Image(name, location)
+        override val encodedFormat: EncodedFormat? = null,
+    ) : Image(name, location, encodedFormat)
 
     val data: () -> InputStream
         get() {
@@ -186,9 +208,12 @@ sealed interface Location {
 
     data object Cache : Location
 
+    data object EpubShareCache : Location
+
     fun directory(context: Context): File {
         return when (this) {
             Cache -> context.cacheImageDir
+            EpubShareCache -> File(context.cacheImageDir, "epub_share")
             is Pictures -> {
                 val file = File(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
@@ -205,3 +230,13 @@ sealed interface Location {
         }
     }
 }
+
+data class EncodedFormat(
+    val mimeType: String,
+    val extension: String,
+)
+
+private const val SVG_MIME_TYPE = "image/svg+xml"
+private const val SVG_EXTENSION = "svg"
+private const val SVG_PREFIX_CHARS = 16 * 1024
+private val SVG_ROOT_PATTERN = Regex("""<svg(?:\s|>)""", RegexOption.IGNORE_CASE)

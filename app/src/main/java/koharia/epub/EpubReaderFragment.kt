@@ -2,7 +2,9 @@ package koharia.epub
 
 import android.content.Context
 import android.os.Bundle
+import android.view.HapticFeedbackConstants
 import android.view.View
+import android.view.ViewConfiguration
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.widget.FrameLayout
@@ -58,6 +60,8 @@ class EpubReaderFragment : Fragment() {
 
         fun onExternalLinkActivated(url: AbsoluteUrl)
 
+        fun onImageInteraction(reference: EpubImageReference, interaction: EpubImageInteraction)
+
         fun onNavigatorReady(fragment: EpubReaderFragment)
 
         fun onSessionMissing(chapterId: Long)
@@ -85,6 +89,7 @@ class EpubReaderFragment : Fragment() {
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
     private var continuousScrollInstallJob: Job? = null
+    private var imageInteractionInstallJob: Job? = null
     private var continuousScrollInstalledHref: String? = null
     private var continuousScrollLocator: Locator? = null
 
@@ -106,6 +111,7 @@ class EpubReaderFragment : Fragment() {
         override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
             host?.onPageChanged(pageIndex, totalPages, locator)
             applyParagraphIndentOverride()
+            scheduleImageInteractionsInstall()
         }
     }
 
@@ -122,6 +128,9 @@ class EpubReaderFragment : Fragment() {
         val navigatorConfiguration = epubNavigatorConfiguration().apply {
             registerJavascriptInterface(CONTINUOUS_SCROLL_BRIDGE_NAME) {
                 ContinuousScrollJavascriptBridge()
+            }
+            registerJavascriptInterface(EPUB_IMAGE_BRIDGE_NAME) { resource ->
+                EpubImageJavascriptBridge(resource)
             }
         }
         childFragmentManager.fragmentFactory = session?.navigatorFactory?.createFragmentFactory(
@@ -220,6 +229,8 @@ class EpubReaderFragment : Fragment() {
 
     override fun onDestroyView() {
         clearContinuousScrollState()
+        imageInteractionInstallJob?.cancel()
+        imageInteractionInstallJob = null
         clearNavigatorInputListener()
         super.onDestroyView()
     }
@@ -263,6 +274,7 @@ class EpubReaderFragment : Fragment() {
         paragraphIndentOverrideEnabled = preferences.publisherStyles == false
         navigator?.submitPreferences(preferences)
         applyParagraphIndentOverride()
+        scheduleImageInteractionsInstall(navigator)
         if (keepContinuousScrollPosition) {
             // Keep the JS-reported Locator when the visible resource is an adjacent iframe. The
             // native navigator still points at the XHTML that owns the continuous-scroll window.
@@ -373,6 +385,7 @@ class EpubReaderFragment : Fragment() {
                         scheduleContinuousScrollInstall(navigator, locator)
                     }
                     applyParagraphIndentOverride()
+                    scheduleImageInteractionsInstall(navigator)
                 }
             }
         }
@@ -390,7 +403,31 @@ class EpubReaderFragment : Fragment() {
         navigator.viewLifecycleOwnerLiveData.observe(viewLifecycleOwner) { owner ->
             if (owner == null || !isAdded || view == null) return@observe
             host?.onNavigatorReady(this)
+            scheduleImageInteractionsInstall(navigator)
             scheduleContinuousScrollInstall(navigator)
+        }
+    }
+
+    private fun scheduleImageInteractionsInstall(
+        navigator: EpubNavigatorFragment? = readyNavigatorFragment(),
+    ) {
+        imageInteractionInstallJob?.cancel()
+        if (navigator == null || !isAdded || view == null) return
+        imageInteractionInstallJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(IMAGE_INTERACTION_INSTALL_DELAY_MS)
+            if (!isAdded || view == null || readyNavigatorFragment() !== navigator) return@launch
+            val configuration = ViewConfiguration.get(requireContext())
+            val density = resources.displayMetrics.density.takeIf { it > 0f } ?: 1f
+            runCatching {
+                navigator.evaluateJavascript(
+                    buildEpubImageInteractionInstallScript(
+                        longPressTimeoutMs = ViewConfiguration.getLongPressTimeout(),
+                        touchSlopCssPx = configuration.scaledTouchSlop / density,
+                    ),
+                )
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) { "Failed to install EPUB image interactions" }
+            }
         }
     }
 
@@ -432,6 +469,11 @@ class EpubReaderFragment : Fragment() {
                         resources = resources,
                         currentIndex = currentIndex,
                         initialProgression = locator.locations.progression ?: 0.0,
+                        imageInteractionScript = buildEpubImageInteractionInstallScript(
+                            longPressTimeoutMs = ViewConfiguration.getLongPressTimeout(),
+                            touchSlopCssPx = ViewConfiguration.get(requireContext()).scaledTouchSlop /
+                                (requireContext().resources.displayMetrics.density.takeIf { it > 0f } ?: 1f),
+                        ),
                         paragraphIndentScript = if (paragraphIndentOverrideEnabled) {
                             APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
                         } else {
@@ -534,6 +576,51 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
+    @Suppress("unused")
+    private inner class EpubImageJavascriptBridge(
+        private val ownerResource: Link,
+    ) {
+        @JavascriptInterface
+        fun onImageInteraction(
+            action: String,
+            resourceIndex: Int,
+            currentSource: String,
+            rawSource: String,
+            altText: String,
+            title: String,
+        ) {
+            view?.post {
+                if (!isAdded || view == null || (currentSource.isBlank() && rawSource.isBlank())) return@post
+                val publication = sessionRepository.get(chapterId)?.publication ?: return@post
+                val resolvedIndex = resourceIndex.takeIf { it in publication.readingOrder.indices }
+                    ?: publication.readingOrder.indexOfFirst { link ->
+                        link.href.toString().sameEpubResource(ownerResource.href.toString())
+                    }
+                val documentHref = publication.readingOrder.getOrNull(resolvedIndex)?.href?.toString()
+                    ?: ownerResource.href.toString()
+                val interaction = when (action) {
+                    "preview" -> EpubImageInteraction.PREVIEW
+                    "actions" -> EpubImageInteraction.ACTIONS
+                    else -> return@post
+                }
+                if (interaction == EpubImageInteraction.ACTIONS) {
+                    view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                }
+                host?.onImageInteraction(
+                    reference = EpubImageReference(
+                        documentHref = documentHref,
+                        resourceIndex = resolvedIndex,
+                        currentSource = currentSource,
+                        rawSource = rawSource,
+                        altText = altText.takeIf(String::isNotBlank),
+                        title = title.takeIf(String::isNotBlank),
+                    ),
+                    interaction = interaction,
+                )
+            }
+        }
+    }
+
     private fun createContinuousScrollLocator(
         link: Link,
         progression: Double,
@@ -613,6 +700,7 @@ class EpubReaderFragment : Fragment() {
         private const val PARAGRAPH_INDENT_DEBUG_DELAY_MS = 600L
         private const val CONTINUOUS_SCROLL_BRIDGE_NAME = "KohariaContinuousScroll"
         private const val CONTINUOUS_SCROLL_INSTALL_DELAY_MS = 180L
+        private const val IMAGE_INTERACTION_INSTALL_DELAY_MS = 80L
         private val READIUM_PACKAGE_BASE_URL = AbsoluteUrl("https://readium_package/")!!
         private val PARAGRAPH_INDENT_DEBUG_SCRIPT =
             """

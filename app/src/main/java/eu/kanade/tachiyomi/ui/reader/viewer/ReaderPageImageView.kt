@@ -73,6 +73,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     var onImageLoadError: ((Throwable?) -> Unit)? = null
     var onScaleChanged: ((newScale: Float) -> Unit)? = null
     var onViewClicked: (() -> Unit)? = null
+    var onViewTapped: ((isInsideImage: Boolean) -> Unit)? = null
 
     /**
      * For automatic background. Will be set as background color when [onImageLoaded] is called.
@@ -98,6 +99,11 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @CallSuper
     open fun onViewClicked() {
         onViewClicked?.invoke()
+    }
+
+    private fun dispatchViewTapped(isInsideImage: Boolean) {
+        onViewTapped?.invoke(isInsideImage)
+        onViewClicked()
     }
 
     open fun onPageSelected(forward: Boolean) {
@@ -168,6 +174,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
             prepareNonAnimatedImageView()
             setNonAnimatedImage(source, config)
         }
+    }
+
+    /** Uses Coil and the zoomable image view for formats that cannot be decoded by SSIV. */
+    fun setImageWithCoil(source: BufferedSource, config: Config) {
+        this.config = config
+        prepareAnimatedImageView()
+        setAnimatedImage(source, config)
     }
 
     fun recycle() = pageView?.let {
@@ -256,7 +269,25 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     }
                 },
             )
-            setOnClickListener { this@ReaderPageImageView.onViewClicked() }
+            val tapDetector = GestureDetector(
+                context,
+                object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(e: MotionEvent): Boolean = true
+
+                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        val sourcePoint = viewToSourceCoord(e.x, e.y)
+                        val isInsideImage = sourcePoint != null &&
+                            sourcePoint.x in 0f..sWidth.toFloat() &&
+                            sourcePoint.y in 0f..sHeight.toFloat()
+                        this@ReaderPageImageView.dispatchViewTapped(isInsideImage)
+                        return true
+                    }
+                },
+            )
+            setOnTouchListener { _, event ->
+                tapDetector.onTouchEvent(event)
+                false
+            }
         }
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
     }
@@ -365,8 +396,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         }
 
                         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                            this@ReaderPageImageView.onViewClicked()
-                            return super.onSingleTapConfirmed(e)
+                            this@ReaderPageImageView.dispatchViewTapped(displayRect?.contains(e.x, e.y) == true)
+                            return true
                         }
                     },
                 )

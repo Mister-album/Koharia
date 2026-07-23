@@ -9,6 +9,7 @@ import androidx.compose.material.icons.outlined.Photo
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,6 +36,10 @@ fun ReaderPageActionsDialog(
     var showSetCoverDialog by remember { mutableStateOf(false) }
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
+        val actionColors = ButtonDefaults.textButtonColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
         Row(
             modifier = Modifier.padding(vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
@@ -43,12 +48,14 @@ fun ReaderPageActionsDialog(
                 modifier = Modifier.weight(1f),
                 title = stringResource(MR.strings.set_as_cover),
                 icon = Icons.Outlined.Photo,
+                colors = actionColors,
                 onClick = { showSetCoverDialog = true },
             )
             ActionButton(
                 modifier = Modifier.weight(1f),
-                title = stringResource(MR.strings.action_copy_to_clipboard),
+                title = stringResource(MR.strings.action_copy),
                 icon = Icons.Outlined.ContentCopy,
+                colors = actionColors,
                 onClick = {
                     onShare(true)
                     onDismissRequest()
@@ -58,6 +65,7 @@ fun ReaderPageActionsDialog(
                 modifier = Modifier.weight(1f),
                 title = stringResource(MR.strings.action_share),
                 icon = Icons.Outlined.Share,
+                colors = actionColors,
                 onClick = {
                     onShare(false)
                     onDismissRequest()
@@ -67,6 +75,7 @@ fun ReaderPageActionsDialog(
                 modifier = Modifier.weight(1f),
                 title = stringResource(MR.strings.action_save),
                 icon = Icons.Outlined.Save,
+                colors = actionColors,
                 onClick = {
                     onSave()
                     onDismissRequest()

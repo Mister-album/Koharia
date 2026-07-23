@@ -112,6 +112,7 @@
     <string name="action_resume">Resume</string>
     <string name="action_open_in_browser">Open in browser</string>
     <string name="action_show_manga">Show entry</string>
+    <string name="action_copy">Copy</string>
     <string name="action_copy_to_clipboard">Copy to clipboard</string>
     <string name="action_copy_link">Copy link</string>
     <!-- Do not translate "WebView" -->
@@ -1031,6 +1032,10 @@
     <string name="epub_reader_search_no_results">No results found</string>
     <string name="epub_reader_search_not_supported">Search is not available for this EPUB.</string>
     <string name="epub_reader_search_error">Search failed</string>
+    <string name="epub_reader_image_preview">Preview</string>
+    <string name="epub_reader_image_actions">Image actions</string>
+    <string name="epub_reader_image_load_failed">The image couldn’t be loaded.</string>
+    <string name="epub_reader_image_action_failed">Unable to save or share this image.</string>
     <string name="action_reload_reader">Reload reader</string>
     <string name="error_no_match">No match found</string>
     <string name="track_error">%1$s error: %2$s</string>
