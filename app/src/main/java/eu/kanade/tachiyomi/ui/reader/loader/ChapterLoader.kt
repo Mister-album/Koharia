@@ -6,12 +6,22 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import koharia.epub.cache.EpubCacheManager
+import koharia.epub.cache.EpubCachePolicy
+import koharia.komga.download.KomgaChapterMemo
+import koharia.source.komga.KomgaSource
+import kotlinx.coroutines.CancellationException
+import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.io.File
 
 /**
  * Loader used to retrieve the [PageLoader] for a given chapter.
@@ -22,6 +32,7 @@ class ChapterLoader(
     private val downloadProvider: DownloadProvider,
     private val manga: Manga,
     private val source: Source,
+    private val epubCacheManager: EpubCacheManager = Injekt.get(),
 ) {
 
     /**
@@ -37,10 +48,12 @@ class ChapterLoader(
         withIOContext {
             logcat { "Loading pages for ${chapter.chapter.name}" }
             try {
-                val loader = getPageLoader(chapter)
+                val initialLoader = getPageLoader(chapter)
+                chapter.pageLoader = initialLoader
+                val (loader, loadedPages) = loadPagesWithCacheFallback(chapter, initialLoader)
                 chapter.pageLoader = loader
 
-                val pages = loader.getPages()
+                val pages = loadedPages
                     .onEach { it.chapter = chapter }
 
                 if (pages.isEmpty()) {
@@ -64,6 +77,44 @@ class ChapterLoader(
         }
     }
 
+    private suspend fun loadPagesWithCacheFallback(
+        chapter: ReaderChapter,
+        initialLoader: PageLoader,
+    ): Pair<PageLoader, List<ReaderPage>> {
+        val pages = try {
+            initialLoader.getPages()
+        } catch (error: Throwable) {
+            if (error is CancellationException || initialLoader !is CompleteEpubCachePageLoader ||
+                source !is HttpSource
+            ) {
+                throw error
+            }
+            logcat(LogPriority.WARN, error) {
+                "Unable to read cached EPUB pages; falling back to the network"
+            }
+            return loadPagesFromNetwork(chapter, initialLoader, source)
+        }
+
+        if (pages.isEmpty() && initialLoader is CompleteEpubCachePageLoader && source is HttpSource) {
+            logcat(LogPriority.WARN) {
+                "Cached EPUB pages were rejected; falling back to the network"
+            }
+            return loadPagesFromNetwork(chapter, initialLoader, source)
+        }
+        return initialLoader to pages
+    }
+
+    private suspend fun loadPagesFromNetwork(
+        chapter: ReaderChapter,
+        cacheLoader: CompleteEpubCachePageLoader,
+        httpSource: HttpSource,
+    ): Pair<PageLoader, List<ReaderPage>> {
+        cacheLoader.recycle()
+        val networkLoader = HttpPageLoader(chapter, httpSource)
+        chapter.pageLoader = networkLoader
+        return networkLoader to networkLoader.getPages()
+    }
+
     /**
      * Checks [chapter] to be loaded based on present pages and loader in addition to state.
      */
@@ -84,12 +135,13 @@ class ChapterLoader(
             manga.source,
             skipCache = true,
         )
+        val completeEpubCache = if (!isDownloaded) findCompleteEpubCache(dbChapter) else null
         logcat {
             "KohariaOfflineDebug: chapter loader selected " +
                 "mangaId=${manga.id} mangaTitle=${manga.title} " +
                 "chapterId=${dbChapter.id} chapterName=${dbChapter.name} " +
                 "chapterUrl=${dbChapter.url} source=${source.name} " +
-                "downloadedOnDisk=$isDownloaded"
+                "downloadedOnDisk=$isDownloaded completeEpubCache=${completeEpubCache != null}"
         }
         return when {
             isDownloaded -> DownloadPageLoader(
@@ -99,9 +151,27 @@ class ChapterLoader(
                 downloadManager,
                 downloadProvider,
             )
+            completeEpubCache != null -> CompleteEpubCachePageLoader(
+                file = completeEpubCache,
+                cacheManager = epubCacheManager,
+                expectedPageCount = checkNotNull(KomgaChapterMemo.pagesCount(dbChapter.memo)),
+            )
             source is HttpSource -> HttpPageLoader(chapter, source)
             source is StubSource -> error(context.stringResource(MR.strings.source_not_installed, source.toString()))
             else -> error(context.stringResource(MR.strings.loader_not_implemented_error))
         }
+    }
+
+    private fun findCompleteEpubCache(chapter: eu.kanade.tachiyomi.data.database.models.Chapter): File? {
+        val komgaSource = source as? KomgaSource ?: return null
+        if (!KomgaChapterMemo.canOpenEpubAsPages(chapter.memo)) return null
+        val fingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
+        val publicationKey = EpubCachePolicy.publicationKey(
+            fileHash = fingerprint?.fileHash,
+            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
+            sizeBytes = fingerprint?.sizeBytes ?: 0L,
+            fallback = "book:${chapter.id}:${chapter.url}",
+        )
+        return epubCacheManager.completeBookFile(komgaSource.id, publicationKey)
     }
 }

@@ -11,6 +11,7 @@ data class MangaRemoteProgressConflict(
     val remotePageIndex: Int,
     val remoteTotalPages: Int,
     val remoteVersion: String,
+    val migratesLegacyEpubProgress: Boolean = false,
 ) {
     val localPercent: Int
         get() = pageProgressPercent(localPageIndex, localTotalPages)

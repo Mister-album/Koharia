@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.track.komga
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.track.TrackerManager
+import koharia.komga.download.KomgaChapterMemo
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
 import logcat.LogPriority
@@ -155,7 +156,8 @@ class KomgaProgressSyncService(
             }
             matchedChapterCount++
             val newRead = remoteProgress.completed
-            val newLastPageRead = ((remoteProgress.page ?: 1) - 1).coerceAtLeast(0).toLong()
+            val newLastPageRead = remoteProgress.page
+                ?.let { (it - 1).coerceAtLeast(0).toLong() }
 
             remoteProgress.readDate
                 ?.let(::parseReadDate)
@@ -167,14 +169,18 @@ class KomgaProgressSyncService(
                     )
                 }
 
-            val shouldUpdatePage = !remote.isEpub &&
+            val usesPageProgress = !remote.isEpub ||
+                remote.isDivinaCompatibleEpub ||
+                KomgaChapterMemo.canOpenEpubAsPages(localChapter.memo)
+            val shouldUpdatePage = usesPageProgress &&
+                newLastPageRead != null &&
                 newLastPageRead != localChapter.lastPageRead
 
             if (newRead != localChapter.read || shouldUpdatePage) {
                 chapterUpdates += ChapterUpdate(
                     id = localChapter.id,
                     read = newRead,
-                    lastPageRead = newLastPageRead.takeUnless { remote.isEpub },
+                    lastPageRead = newLastPageRead.takeIf { usesPageProgress },
                 )
             }
         }

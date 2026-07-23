@@ -1,5 +1,8 @@
 package koharia.komga.download
 
+import koharia.komga.api.dto.BookDto
+import koharia.komga.api.dto.BookMetadataDto
+import koharia.komga.api.dto.MediaDto
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -8,6 +11,77 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class KomgaChapterMemoTest {
+
+    @Test
+    fun `book memo keeps epub page compatibility classification`() {
+        val book = BookDto(
+            id = "book-id",
+            name = "comic.epub",
+            fileLastModified = "2026-07-22T00:00:00Z",
+            media = MediaDto(
+                mediaType = "application/epub+zip",
+                mediaProfile = "EPUB",
+                epubDivinaCompatible = true,
+                pagesCount = 42,
+            ),
+            metadata = BookMetadataDto(title = "Image EPUB"),
+        )
+
+        val memo = KomgaChapterMemo.buildMemo("https://komga.test", book)
+
+        assertEquals(true, KomgaChapterMemo.isEpub(memo))
+        assertEquals(true, KomgaChapterMemo.isEpubDivinaCompatible(memo))
+        assertEquals(42, KomgaChapterMemo.pagesCount(memo))
+    }
+
+    @Test
+    fun `legacy memo without page compatibility remains unknown`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.IS_EPUB, true)
+            put(KomgaChapterMemo.PAGES_COUNT, 42)
+        }
+
+        assertEquals(null, KomgaChapterMemo.isEpubDivinaCompatible(memo))
+        assertEquals(false, KomgaChapterMemo.hasCompleteEpubClassification(memo))
+    }
+
+    @Test
+    fun `divina classification remains incomplete until page count is available`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.IS_EPUB, true)
+            put(KomgaChapterMemo.EPUB_DIVINA_COMPATIBLE, true)
+        }
+
+        assertEquals(false, KomgaChapterMemo.hasCompleteEpubClassification(memo))
+        assertEquals(false, KomgaChapterMemo.canOpenEpubAsPages(memo))
+    }
+
+    @Test
+    fun `regular epub classification does not require image page count`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.IS_EPUB, true)
+            put(KomgaChapterMemo.EPUB_DIVINA_COMPATIBLE, false)
+        }
+
+        assertEquals(true, KomgaChapterMemo.hasCompleteEpubClassification(memo))
+        assertEquals(false, KomgaChapterMemo.canOpenEpubAsPages(memo))
+    }
+
+    @Test
+    fun `image epub page progress migration is recorded in memo`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.IS_EPUB, true)
+            put(KomgaChapterMemo.EPUB_DIVINA_COMPATIBLE, true)
+            put(KomgaChapterMemo.PAGES_COUNT, 42)
+        }
+
+        assertEquals(false, KomgaChapterMemo.isEpubPageProgressMigrated(memo))
+
+        val migrated = KomgaChapterMemo.markEpubPageProgressMigrated(memo)
+
+        assertEquals(true, KomgaChapterMemo.isEpubPageProgressMigrated(migrated))
+        assertEquals(42, KomgaChapterMemo.pagesCount(migrated))
+    }
 
     @Test
     fun `publication version prefers file hash`() {

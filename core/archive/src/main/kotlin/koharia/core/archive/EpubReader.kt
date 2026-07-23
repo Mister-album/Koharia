@@ -6,6 +6,7 @@ import org.jsoup.parser.Parser
 import java.io.Closeable
 import java.io.File
 import java.io.InputStream
+import java.net.URLDecoder
 
 /**
  * Wrapper over ArchiveReader to load files in epub format.
@@ -24,9 +25,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         return reader.getInputStream(entryName)
     }
 
-    /**
-     * Returns the path of all the images found in the epub file.
-     */
+    /** Returns the single image represented by each spine item of a Divina-compatible EPUB. */
     fun getImagesFromPages(): List<String> {
         val ref = getPackageHref()
         val doc = getPackageDocument(ref)
@@ -56,38 +55,53 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         return getInputStream(ref)!!.use { Jsoup.parse(it, null, "", Parser.xmlParser()) }
     }
 
-    /**
-     * Returns all the pages from the epub.
-     */
-    private fun getPagesFromDocument(document: Document): List<String> {
-        val pages = document.select("manifest > item")
-            .filter { node -> "application/xhtml+xml" == node.attr("media-type") }
-            .associateBy { it.attr("id") }
+    private fun getPagesFromDocument(document: Document): List<ManifestItem> {
+        val manifest = document.select("*|manifest > *|item")
+            .associate { item ->
+                item.attr("id") to ManifestItem(
+                    href = item.attr("href"),
+                    mediaType = item.attr("media-type"),
+                )
+            }
 
-        val spine = document.select("spine > itemref").map { it.attr("idref") }
-        return spine.mapNotNull { pages[it] }.map { it.attr("href") }
+        return document.select("*|spine > *|itemref")
+            .mapNotNull { itemRef -> manifest[itemRef.attr("idref")] }
     }
 
-    /**
-     * Returns all the images contained in every page from the epub.
-     */
-    private fun getImagesFromPages(pages: List<String>, packageHref: String): List<String> {
-        val result = mutableListOf<String>()
+    private fun getImagesFromPages(pages: List<ManifestItem>, packageHref: String): List<String> {
+        if (pages.isEmpty()) return emptyList()
         val basePath = getParentDirectory(packageHref)
+        val result = ArrayList<String>(pages.size)
         pages.forEach { page ->
-            val entryPath = resolveZipPath(basePath, page)
-            val document = getInputStream(entryPath)!!.use { Jsoup.parse(it, null, "") }
-            val imageBasePath = getParentDirectory(entryPath)
-
-            document.allElements.forEach {
-                when (it.tagName()) {
-                    "img" -> result.add(resolveZipPath(imageBasePath, it.attr("src")))
-                    "image" -> result.add(resolveZipPath(imageBasePath, it.attr("xlink:href")))
-                }
+            val entryPath = resolveZipPath(basePath, decodePathHref(page.href))
+            if (page.mediaType.startsWith("image/", ignoreCase = true)) {
+                result += entryPath
+                return@forEach
             }
+
+            val document = getInputStream(entryPath)?.use { Jsoup.parse(it, null, "") }
+                ?: return emptyList()
+            val imageBasePath = getParentDirectory(entryPath)
+            val imagePaths = buildList {
+                document.select("img[src]")
+                    .mapTo(this) { image -> image.attr("src") }
+                document.select("svg > image")
+                    .mapNotNullTo(this) { image ->
+                        image.attr("xlink:href").ifBlank { image.attr("href") }.ifBlank { null }
+                    }
+            }
+                .map { imageHref -> resolveZipPath(imageBasePath, imageHref) }
+                .distinct()
+            if (imagePaths.size != 1) return emptyList()
+            result += imagePaths.single()
         }
 
-        return result
+        return result.takeIf { it.size == pages.size }.orEmpty()
+    }
+
+    /** Decodes percent escapes without applying form semantics where a literal '+' means a space. */
+    private fun decodePathHref(href: String): String {
+        return URLDecoder.decode(href.replace("+", "%2B"), Charsets.UTF_8.name())
     }
 
     /**
@@ -133,4 +147,9 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
             ""
         }
     }
+
+    private data class ManifestItem(
+        val href: String,
+        val mediaType: String,
+    )
 }
