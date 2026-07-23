@@ -248,6 +248,8 @@ private fun BrightnessRow(readerPreferences: ReaderPreferences) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 96.dp),
         )
         Spacer(modifier = Modifier.width(8.dp))
         Slider(
@@ -283,7 +285,11 @@ private fun BrightnessRow(readerPreferences: ReaderPreferences) {
         Spacer(modifier = Modifier.width(8.dp))
         if (!followsSystem) {
             Text(
-                text = "$brightnessValue%",
+                text = if (brightnessValue == 0) {
+                    stringResource(MR.strings.epub_reader_system_brightness_short)
+                } else {
+                    "$brightnessValue%"
+                },
                 style = MaterialTheme.typography.labelMedium,
                 maxLines = 1,
                 modifier = Modifier.widthIn(min = 40.dp),
