@@ -210,7 +210,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var completionMarkedThisSession = false
     private var searchIterator: SearchIterator? = null
     private var imageLoadJob: Job? = null
-    private var lastEpubShareFile: File? = null
     private var incognitoSession = basePreferences.incognitoMode.get()
     private val locatorPersistenceJob = viewModelScope.launch {
         locatorUpdates
@@ -756,14 +755,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
             mutableImageState.update { it.copy(isLoading = true) }
             runCatching {
                 withIOContext {
-                    lastEpubShareFile?.delete()
+                    Location.EpubShareCache.directory(application)
+                        .listFiles()
+                        ?.filter(File::isFile)
+                        ?.forEach { file -> file.delete() }
                     val image = content.toImage(location = Location.EpubShareCache)
-                    imageSaver.save(image).also {
-                        lastEpubShareFile = File(
-                            Location.EpubShareCache.directory(application),
-                            DiskUtil.buildValidFilename("${image.name}.${content.extension}"),
-                        )
-                    }
+                    imageSaver.save(image)
                 }
             }.onSuccess { uri ->
                 finishImageAction()
@@ -1745,7 +1742,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
     override fun onCleared() {
         imageLoadJob?.cancel()
         imageRequestTracker.invalidate()
-        lastEpubShareFile = null
         searchIterator?.close()
         searchIterator = null
         releaseCacheLeases()
