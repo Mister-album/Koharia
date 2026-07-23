@@ -237,7 +237,19 @@ private fun BrightnessRow(readerPreferences: ReaderPreferences) {
         .collectAsState(readerPreferences.customBrightnessValue.get())
     val followsSystem = !customBrightness
 
-    CompactSettingRow(label = stringResource(MR.strings.epub_reader_brightness)) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(MR.strings.epub_reader_brightness),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
         Slider(
             value = brightnessValue.toFloat(),
             onValueChange = { readerPreferences.customBrightnessValue.set(it.roundToInt()) },
@@ -268,15 +280,16 @@ private fun BrightnessRow(readerPreferences: ReaderPreferences) {
                 )
             },
         )
-        Text(
-            text = if (followsSystem || brightnessValue == 0) {
-                stringResource(MR.strings.epub_reader_system_brightness_short)
-            } else {
-                "$brightnessValue%"
-            },
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.widthIn(min = 40.dp),
-        )
+        Spacer(modifier = Modifier.width(8.dp))
+        if (!followsSystem) {
+            Text(
+                text = "$brightnessValue%",
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                modifier = Modifier.widthIn(min = 40.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
         FilterChip(
             selected = followsSystem,
             onClick = {
@@ -478,10 +491,21 @@ fun EpubThemePreference(
         }
     }
 
-    CompactSettingRow(label = stringResource(MR.strings.pref_epub_theme)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+    ) {
+        Text(
+            text = stringResource(MR.strings.pref_epub_theme),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
         Row(
             modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
+                .padding(top = 8.dp)
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1160,8 +1184,9 @@ private fun CompactSettingRow(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(64.dp),
+            maxLines = 1,
         )
+        Spacer(modifier = Modifier.width(8.dp))
         content()
     }
 }
