@@ -73,7 +73,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         val basePath = getParentDirectory(packageHref)
         val result = ArrayList<String>(pages.size)
         pages.forEach { page ->
-            val entryPath = resolveZipPath(basePath, URLDecoder.decode(page.href, Charsets.UTF_8.name()))
+            val entryPath = resolveZipPath(basePath, decodePathHref(page.href))
             if (page.mediaType.startsWith("image/", ignoreCase = true)) {
                 result += entryPath
                 return@forEach
@@ -97,6 +97,11 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         }
 
         return result.takeIf { it.size == pages.size }.orEmpty()
+    }
+
+    /** Decodes percent escapes without applying form semantics where a literal '+' means a space. */
+    private fun decodePathHref(href: String): String {
+        return URLDecoder.decode(href.replace("+", "%2B"), Charsets.UTF_8.name())
     }
 
     /**

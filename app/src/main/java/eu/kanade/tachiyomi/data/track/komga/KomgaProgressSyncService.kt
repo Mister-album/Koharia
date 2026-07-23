@@ -156,7 +156,8 @@ class KomgaProgressSyncService(
             }
             matchedChapterCount++
             val newRead = remoteProgress.completed
-            val newLastPageRead = ((remoteProgress.page ?: 1) - 1).coerceAtLeast(0).toLong()
+            val newLastPageRead = remoteProgress.page
+                ?.let { (it - 1).coerceAtLeast(0).toLong() }
 
             remoteProgress.readDate
                 ?.let(::parseReadDate)
@@ -172,6 +173,7 @@ class KomgaProgressSyncService(
                 remote.isDivinaCompatibleEpub ||
                 KomgaChapterMemo.canOpenEpubAsPages(localChapter.memo)
             val shouldUpdatePage = usesPageProgress &&
+                newLastPageRead != null &&
                 newLastPageRead != localChapter.lastPageRead
 
             if (newRead != localChapter.read || shouldUpdatePage) {
