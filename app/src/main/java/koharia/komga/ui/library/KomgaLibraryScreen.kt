@@ -22,6 +22,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -223,6 +224,9 @@ data class KomgaLibraryScreen(
                         onFilterClick = screenModel::openFilterSheet,
                         navigateUp = navigateUp.takeIf { showNavigationUp },
                         onSearch = screenModel::search,
+                        onClickCloseSearch = screenModel::exitSearch,
+                        searchType = state.searchType,
+                        onSearchTypeSelect = screenModel::setSearchType,
                     )
 
                     Row(
@@ -231,7 +235,20 @@ data class KomgaLibraryScreen(
                             .padding(horizontal = MaterialTheme.padding.small),
                         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
                     ) {
-                        if (state.komgaLibraries.isNotEmpty()) {
+                        if (state.isUserQuery) {
+                            Surface(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            ) {
+                                Text(
+                                    text = stringResource(MR.strings.search_results),
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                            }
+                        } else if (state.komgaLibraries.isNotEmpty()) {
                             FilterChip(
                                 selected = state.selectedKomgaLibraryId == null,
                                 onClick = {

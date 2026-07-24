@@ -1,6 +1,8 @@
 package koharia.komga.api
 
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import koharia.komga.api.dto.AuthorDto
 import koharia.komga.api.dto.ClientSettingDto
@@ -31,7 +33,12 @@ class KomgaApiClient(
     private val headers: Headers,
     private val client: OkHttpClient,
     @PublishedApi internal val json: Json,
+    private val searchCapabilities: KomgaSearchCapabilities = KomgaSearchCapabilities(),
 ) {
+
+    init {
+        searchCapabilities.prepareFor(baseUrl)
+    }
 
     fun popularRequest(
         page: Int,
@@ -112,12 +119,8 @@ class KomgaApiClient(
         oneshot?.let { url.addQueryParameter("oneshot", it.toString()) }
 
         val sortCriteria = when (sortIndex) {
-            0 -> "relevance"
-            1 -> when (typePath) {
-                "series" -> "metadata.titleSort"
-                "books" -> "metadata.title"
-                else -> "name"
-            }
+            0 -> "relevance".takeIf { query.isNotBlank() }
+            1 -> type.alphabeticalSortField()
             2 -> "createdDate"
             3 -> "lastModifiedDate"
             4 -> "random"
@@ -134,6 +137,86 @@ class KomgaApiClient(
             .komgaCachePolicy(cachePolicy)
             .build()
     }
+
+    fun searchListRequest(
+        page: Int,
+        query: String,
+        type: SearchType,
+        defaultLibraries: Set<String>,
+        selectedLibraries: Set<String> = emptySet(),
+        collectionId: String? = null,
+        sortIndex: Int = 0,
+        sortAscending: Boolean = true,
+        readStatuses: Set<String> = emptySet(),
+        statuses: Set<String> = emptySet(),
+        genres: Set<String> = emptySet(),
+        tags: Set<String> = emptySet(),
+        publishers: Set<String> = emptySet(),
+        authors: List<Pair<String, String>> = emptyList(),
+        oneshot: Boolean? = null,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
+    ): Request {
+        require(type == SearchType.SERIES || type == SearchType.BOOKS)
+        val libraries = if (selectedLibraries.isEmpty()) defaultLibraries else selectedLibraries
+        val request = KomgaSearchRequest(
+            condition = buildSearchCondition(
+                type = type,
+                libraries = libraries,
+                collectionId = collectionId,
+                readStatuses = readStatuses,
+                statuses = statuses,
+                genres = genres,
+                tags = tags,
+                publishers = publishers,
+                authors = authors,
+                oneshot = oneshot,
+            ),
+            fullTextSearch = query.takeIf { it.isNotBlank() },
+        )
+        val url = "$baseUrl/api/v1/${type.pathSegment}/list".toHttpUrl().newBuilder()
+            .addQueryParameter("page", (page - 1).toString())
+        val sortCriteria = when (sortIndex) {
+            0 -> "relevance".takeIf { query.isNotBlank() }
+            1 -> type.alphabeticalSortField()
+            2 -> "createdDate"
+            3 -> "lastModifiedDate"
+            4 -> "random"
+            else -> null
+        }?.let { "$it,${if (sortAscending) "asc" else "desc"}" }
+        sortCriteria?.let { url.addQueryParameter("sort", it) }
+
+        return POST(
+            url = url.build().toString(),
+            headers = headers,
+            body = json.encodeToString(request).toRequestBody(JSON_MEDIA_TYPE),
+        )
+            .newBuilder()
+            .komgaCachePolicy(cachePolicy)
+            .build()
+    }
+
+    suspend fun executeSearch(
+        type: SearchType,
+        modernRequest: Request,
+        legacyRequest: Request,
+        legacyCompatible: Boolean,
+    ): Response {
+        if (searchCapabilities.usesLegacy(type)) {
+            check(legacyCompatible) { "This search requires Komga 1.19 or newer" }
+            return execute(legacyRequest)
+        }
+
+        return try {
+            execute(modernRequest)
+        } catch (error: HttpException) {
+            if (error.code != 404 && error.code != 405) throw error
+            searchCapabilities.markLegacy(type)
+            check(legacyCompatible) { "This search requires Komga 1.19 or newer" }
+            execute(legacyRequest)
+        }
+    }
+
+    suspend fun execute(request: Request): Response = client.newCall(request).awaitSuccess()
 
     fun detailsRequest(url: String, cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Request =
         GET(url, headers)
@@ -297,5 +380,26 @@ class KomgaApiClient(
         SERIES,
         READ_LISTS,
         BOOKS,
+        ALL,
+        ;
+
+        val pathSegment: String
+            get() = when (this) {
+                SERIES -> "series"
+                READ_LISTS -> "readlists"
+                BOOKS -> "books"
+                ALL -> error("All searches use separate series and book requests")
+            }
+
+        fun alphabeticalSortField(): String = when (this) {
+            SERIES -> "metadata.titleSort"
+            BOOKS -> "metadata.title"
+            READ_LISTS -> "name"
+            ALL -> error("All searches only support relevance sorting")
+        }
+    }
+
+    companion object {
+        private val JSON_MEDIA_TYPE = "application/json".toMediaType()
     }
 }

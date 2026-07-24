@@ -25,9 +25,12 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import koharia.source.komga.AuthorGroup
 import koharia.source.komga.CollectionSelect
 import koharia.source.komga.LibraryFilter
-import koharia.source.komga.OneshotFilter
 import koharia.source.komga.ReadingStateGroup
 import koharia.source.komga.SeriesSort
+import koharia.source.komga.TYPE_ALL_INDEX
+import koharia.source.komga.TYPE_BOOKS_INDEX
+import koharia.source.komga.TYPE_READ_LISTS_INDEX
+import koharia.source.komga.TYPE_SERIES_INDEX
 import koharia.source.komga.TypeSelect
 import koharia.source.komga.UriMultiSelectFilter
 import tachiyomi.core.common.preference.TriState
@@ -147,9 +150,10 @@ private fun FilterItem(filter: Filter<*>, filters: FilterList, onUpdate: () -> U
                 options = filter.values.map { komgaFilterLabel(it.toString()) }.toTypedArray(),
                 selectedIndex = filter.state,
             ) {
-                filter.state = it
                 if (filter is TypeSelect) {
-                    filters.clearFiltersHiddenFor(it)
+                    filters.selectContentType(it)
+                } else {
+                    filter.state = it
                 }
                 onUpdate()
             }
@@ -189,9 +193,6 @@ private fun FilterItem(filter: Filter<*>, filters: FilterList, onUpdate: () -> U
                 Column {
                     filter.state
                         .filterIsInstance<Filter<*>>()
-                        .filter {
-                            filters.selectedContentType() == TYPE_SERIES_INDEX || it !is OneshotFilter
-                        }
                         .map { FilterItem(filter = it, filters = filters, onUpdate = onUpdate) }
                 }
             }
@@ -206,6 +207,7 @@ private fun komgaFilterLabel(label: String): String {
         "Series" -> stringResource(MR.strings.komga_filter_series)
         "Read lists" -> stringResource(MR.strings.komga_filter_read_lists)
         "Books" -> stringResource(MR.strings.komga_filter_books)
+        "All" -> stringResource(MR.strings.all)
         "Sort" -> stringResource(MR.strings.action_sort)
         "Relevance" -> stringResource(MR.strings.komga_filter_sort_relevance)
         "Alphabetically" -> stringResource(MR.strings.komga_filter_sort_alphabetically)
@@ -253,6 +255,7 @@ private fun FilterList.visibleFilters(): List<Filter<*>> {
         when (type) {
             TYPE_READ_LISTS_INDEX -> filter.isReadListFilter()
             TYPE_BOOKS_INDEX -> filter.isBookFilter()
+            TYPE_ALL_INDEX -> filter.isAllFilter()
             else -> filter !is SeriesSort || !hasCollection
         }
     }
@@ -271,13 +274,29 @@ private fun Filter<*>.isBookFilter(): Boolean {
         this is LibraryFilter ||
         this is ReadingStateGroup ||
         (this is UriMultiSelectFilter && name == "Tags") ||
+        this is AuthorGroup ||
         this is SeriesSort ||
         this is Filter.Header ||
         this is Filter.Separator
 }
 
+private fun Filter<*>.isAllFilter(): Boolean {
+    return this is TypeSelect ||
+        this is LibraryFilter ||
+        this is ReadingStateGroup ||
+        (this is UriMultiSelectFilter && name == "Tags") ||
+        this is AuthorGroup ||
+        this is Filter.Header ||
+        this is Filter.Separator
+}
+
 private fun FilterList.selectedContentType(): Int =
-    filterIsInstance<TypeSelect>().firstOrNull()?.state ?: TYPE_SERIES_INDEX
+    filterIsInstance<TypeSelect>().firstOrNull()?.state ?: TYPE_ALL_INDEX
+
+internal fun FilterList.selectContentType(type: Int) {
+    filterIsInstance<TypeSelect>().firstOrNull()?.state = type
+    clearFiltersHiddenFor(type)
+}
 
 private fun FilterList.clearFiltersHiddenFor(type: Int) {
     if (type == TYPE_SERIES_INDEX) return
@@ -289,22 +308,18 @@ private fun FilterList.clearFiltersHiddenFor(type: Int) {
             type == TYPE_READ_LISTS_INDEX && filter is UriMultiSelectFilter && filter !is LibraryFilter ->
                 filter.clearSelections()
             type == TYPE_READ_LISTS_INDEX && filter is AuthorGroup -> filter.clearSelections()
-            type == TYPE_BOOKS_INDEX && filter is ReadingStateGroup ->
-                filter.state.filterIsInstance<OneshotFilter>().forEach { it.state = false }
-            type == TYPE_BOOKS_INDEX && filter is UriMultiSelectFilter &&
+            (type == TYPE_BOOKS_INDEX || type == TYPE_ALL_INDEX) && filter is UriMultiSelectFilter &&
                 filter !is LibraryFilter && filter.name != "Tags" -> filter.clearSelections()
-            type == TYPE_BOOKS_INDEX && filter is AuthorGroup -> filter.clearSelections()
         }
+    }
+    if (type == TYPE_ALL_INDEX) {
+        filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(0, true)
     }
 }
 
 private fun Filter.Group<*>.clearSelections() {
     state.filterIsInstance<Filter.CheckBox>().forEach { it.state = false }
 }
-
-private const val TYPE_SERIES_INDEX = 0
-private const val TYPE_READ_LISTS_INDEX = 1
-private const val TYPE_BOOKS_INDEX = 2
 
 private fun Int.toTriStateFilter(): TriState {
     return when (this) {

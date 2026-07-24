@@ -1,6 +1,5 @@
 package koharia.komga.domain.repository
 
-import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -26,8 +25,13 @@ import koharia.source.komga.OneshotFilter
 import koharia.source.komga.ReadFilter
 import koharia.source.komga.ReadingStateGroup
 import koharia.source.komga.SeriesSort
+import koharia.source.komga.TYPE_ALL_INDEX
+import koharia.source.komga.TYPE_BOOKS_INDEX
+import koharia.source.komga.TYPE_READ_LISTS_INDEX
 import koharia.source.komga.TypeSelect
 import koharia.source.komga.UnreadFilter
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import okhttp3.Request
 import tachiyomi.core.common.util.lang.withIOContext
 import java.text.ParseException
@@ -60,6 +64,7 @@ class KomgaRepository(
         cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
     ): Request {
         val type = filters.searchType()
+        require(type != KomgaApiClient.SearchType.ALL)
         val supportsBookFilters = type != KomgaApiClient.SearchType.READ_LISTS
         val supportsSeriesFilters = type == KomgaApiClient.SearchType.SERIES
         return apiClient.searchRequest(
@@ -80,6 +85,130 @@ class KomgaRepository(
             oneshot = filters.oneshot().takeIf { supportsSeriesFilters },
             cachePolicy = cachePolicy,
         )
+    }
+
+    suspend fun getSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+        defaultLibraries: Set<String>,
+        cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
+    ): MangasPage {
+        val type = filters.searchType()
+        if (type == KomgaApiClient.SearchType.READ_LISTS) {
+            return apiClient.execute(
+                searchMangaRequest(page, query, filters, defaultLibraries, cachePolicy),
+            ).let(::parseMangasPage)
+        }
+
+        val normalizedQuery = normalizeSearchQuery(query)
+        if (query.isNotBlank() && normalizedQuery.isBlank()) {
+            return MangasPage(emptyList(), false)
+        }
+
+        return when (type) {
+            KomgaApiClient.SearchType.ALL -> coroutineScope {
+                val books = async {
+                    getSearchMangaPage(
+                        page = page,
+                        query = normalizedQuery,
+                        type = KomgaApiClient.SearchType.BOOKS,
+                        filters = filters,
+                        defaultLibraries = defaultLibraries,
+                        forceRelevanceSort = true,
+                        cachePolicy = cachePolicy,
+                    )
+                }
+                val series = async {
+                    getSearchMangaPage(
+                        page = page,
+                        query = normalizedQuery,
+                        type = KomgaApiClient.SearchType.SERIES,
+                        filters = filters,
+                        defaultLibraries = defaultLibraries,
+                        forceRelevanceSort = true,
+                        cachePolicy = cachePolicy,
+                    )
+                }
+                mergeSearchPages(books.await(), series.await())
+            }
+            KomgaApiClient.SearchType.BOOKS,
+            KomgaApiClient.SearchType.SERIES,
+            -> getSearchMangaPage(
+                page = page,
+                query = normalizedQuery,
+                type = type,
+                filters = filters,
+                defaultLibraries = defaultLibraries,
+                forceRelevanceSort = false,
+                cachePolicy = cachePolicy,
+            )
+            KomgaApiClient.SearchType.READ_LISTS -> error("Handled above")
+        }
+    }
+
+    private suspend fun getSearchMangaPage(
+        page: Int,
+        query: String,
+        type: KomgaApiClient.SearchType,
+        filters: FilterList,
+        defaultLibraries: Set<String>,
+        forceRelevanceSort: Boolean,
+        cachePolicy: KomgaCachePolicy,
+    ): MangasPage {
+        val isSeries = type == KomgaApiClient.SearchType.SERIES
+        val selectedLibraries = filters.selectedLibraries()
+        val sortSelection = if (forceRelevanceSort) 0 to true else filters.sortSelection()
+        val readStatuses = filters.readStatuses()
+        val statuses = filters.multiSelectIds("Status").takeIf { isSeries }.orEmpty()
+        val genres = filters.multiSelectIds("Genres").takeIf { isSeries }.orEmpty()
+        val tags = filters.multiSelectIds("Tags")
+        val publishers = filters.multiSelectIds("Publishers").takeIf { isSeries }.orEmpty()
+        val authors = filters.selectedAuthors()
+        val oneshot = filters.oneshot()
+        val collectionId = filters.collectionId().takeIf { isSeries }
+        val modernRequest = apiClient.searchListRequest(
+            page = page,
+            query = query,
+            type = type,
+            defaultLibraries = defaultLibraries,
+            selectedLibraries = selectedLibraries,
+            collectionId = collectionId,
+            sortIndex = sortSelection.first,
+            sortAscending = sortSelection.second,
+            readStatuses = readStatuses,
+            statuses = statuses,
+            genres = genres,
+            tags = tags,
+            publishers = publishers,
+            authors = authors,
+            oneshot = oneshot,
+            cachePolicy = cachePolicy,
+        )
+        val legacyRequest = apiClient.searchRequest(
+            page = page,
+            query = query,
+            type = type,
+            defaultLibraries = defaultLibraries,
+            selectedLibraries = selectedLibraries,
+            collectionId = collectionId,
+            sortIndex = sortSelection.first,
+            sortAscending = sortSelection.second,
+            readStatuses = readStatuses,
+            statuses = statuses,
+            genres = genres,
+            tags = tags,
+            publishers = publishers,
+            authors = authors.takeIf { isSeries }.orEmpty(),
+            oneshot = oneshot.takeIf { isSeries },
+            cachePolicy = cachePolicy,
+        )
+        return apiClient.executeSearch(
+            type = type,
+            modernRequest = modernRequest,
+            legacyRequest = legacyRequest,
+            legacyCompatible = isSeries || (authors.isEmpty() && oneshot == null),
+        ).let(::parseMangasPage)
     }
 
     fun parseMangasPage(response: okhttp3.Response): MangasPage {
@@ -215,10 +344,28 @@ class KomgaRepository(
     }
 }
 
+internal fun normalizeSearchQuery(query: String): String = query
+    .replace(SEARCH_DELIMITERS, " ")
+    .replace(REPEATED_WHITESPACE, " ")
+    .trim()
+
+internal fun mergeSearchPages(books: MangasPage, series: MangasPage): MangasPage {
+    val mangas = buildList(books.mangas.size + series.mangas.size) {
+        val maxSize = maxOf(books.mangas.size, series.mangas.size)
+        repeat(maxSize) { index ->
+            books.mangas.getOrNull(index)?.let(::add)
+            series.mangas.getOrNull(index)?.let(::add)
+        }
+    }
+    return MangasPage(mangas, books.hasNextPage || series.hasNextPage)
+}
+
 private fun FilterList.searchType(): KomgaApiClient.SearchType = when {
     collectionId() != null -> KomgaApiClient.SearchType.SERIES
-    filterIsInstance<TypeSelect>().firstOrNull()?.state == 1 -> KomgaApiClient.SearchType.READ_LISTS
-    filterIsInstance<TypeSelect>().firstOrNull()?.state == 2 -> KomgaApiClient.SearchType.BOOKS
+    filterIsInstance<TypeSelect>().firstOrNull()?.state == TYPE_READ_LISTS_INDEX ->
+        KomgaApiClient.SearchType.READ_LISTS
+    filterIsInstance<TypeSelect>().firstOrNull()?.state == TYPE_BOOKS_INDEX -> KomgaApiClient.SearchType.BOOKS
+    filterIsInstance<TypeSelect>().firstOrNull()?.state == TYPE_ALL_INDEX -> KomgaApiClient.SearchType.ALL
     else -> KomgaApiClient.SearchType.SERIES
 }
 
@@ -270,3 +417,6 @@ private fun FilterList.multiSelectIds(name: String): Set<String> {
     val filter = firstOrNull { it.name == name } as? koharia.source.komga.UriMultiSelectFilter ?: return emptySet()
     return filter.state.filter { it.state }.map { it.id }.toSet()
 }
+
+private val SEARCH_DELIMITERS = Regex("[()（）【】]")
+private val REPEATED_WHITESPACE = Regex("\\s+")

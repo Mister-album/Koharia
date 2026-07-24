@@ -1,17 +1,24 @@
 package koharia.komga.ui.library.components
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
@@ -19,6 +26,10 @@ import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
 import koharia.source.komga.KomgaServerProfile
+import koharia.source.komga.TYPE_ALL_INDEX
+import koharia.source.komga.TYPE_BOOKS_INDEX
+import koharia.source.komga.TYPE_READ_LISTS_INDEX
+import koharia.source.komga.TYPE_SERIES_INDEX
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.i18n.MR
@@ -37,10 +48,14 @@ fun KomgaLibraryToolbar(
     onFilterClick: () -> Unit,
     navigateUp: (() -> Unit)?,
     onSearch: (String) -> Unit,
+    onClickCloseSearch: () -> Unit,
+    searchType: Int,
+    onSearchTypeSelect: (Int) -> Unit,
     scrollBehavior: TopAppBarScrollBehavior? = null,
 ) {
     var selectingDisplayMode by remember { mutableStateOf(false) }
     var selectingServer by remember { mutableStateOf(false) }
+    var selectingSearchType by remember { mutableStateOf(false) }
     val canSwitchServer = serverProfiles.size > 1
 
     SearchToolbar(
@@ -49,8 +64,43 @@ fun KomgaLibraryToolbar(
         searchQuery = searchQuery,
         onChangeSearchQuery = onSearchQueryChange,
         onSearch = onSearch,
-        onClickCloseSearch = { onSearchQueryChange(null) },
-        actions = {
+        onClickCloseSearch = onClickCloseSearch,
+        actions = actions@{
+            if (searchQuery != null) {
+                Box {
+                    TextButton(
+                        onClick = { selectingSearchType = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) {
+                        Text(
+                            text = searchTypeLabel(searchType),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Icon(
+                            imageVector = Icons.Outlined.ArrowDropDown,
+                            contentDescription = null,
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = selectingSearchType,
+                        onDismissRequest = { selectingSearchType = false },
+                    ) {
+                        SEARCH_TYPES.forEach { type ->
+                            RadioMenuItem(
+                                text = { Text(text = searchTypeLabel(type)) },
+                                isChecked = searchType == type,
+                            ) {
+                                selectingSearchType = false
+                                onSearchTypeSelect(type)
+                            }
+                        }
+                    }
+                }
+                return@actions
+            }
+
             AppBarActions(
                 actions = persistentListOf<AppBar.AppBarAction>().builder()
                     .apply {
@@ -140,4 +190,21 @@ fun KomgaLibraryToolbar(
         },
         scrollBehavior = scrollBehavior,
     )
+}
+
+private val SEARCH_TYPES = listOf(
+    TYPE_ALL_INDEX,
+    TYPE_SERIES_INDEX,
+    TYPE_READ_LISTS_INDEX,
+    TYPE_BOOKS_INDEX,
+)
+
+@Composable
+private fun searchTypeLabel(type: Int): String {
+    return when (type) {
+        TYPE_SERIES_INDEX -> stringResource(MR.strings.komga_filter_series)
+        TYPE_READ_LISTS_INDEX -> stringResource(MR.strings.komga_filter_read_lists)
+        TYPE_BOOKS_INDEX -> stringResource(MR.strings.komga_filter_books)
+        else -> stringResource(MR.strings.all)
+    }
 }

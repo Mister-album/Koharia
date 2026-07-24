@@ -11,7 +11,9 @@ class TypeSelect :
             KomgaSource.TYPE_SERIES,
             KomgaSource.TYPE_READ_LISTS,
             KomgaSource.TYPE_BOOKS,
+            KomgaSource.TYPE_ALL,
         ),
+        TYPE_ALL_INDEX,
     )
 
 class SeriesSort(selection: Selection? = null) :
@@ -74,3 +76,8 @@ data class CollectionFilterEntry(
     val name: String,
     val id: String? = null,
 )
+
+internal const val TYPE_SERIES_INDEX = 0
+internal const val TYPE_READ_LISTS_INDEX = 1
+internal const val TYPE_BOOKS_INDEX = 2
+internal const val TYPE_ALL_INDEX = 3
