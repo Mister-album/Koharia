@@ -2,6 +2,7 @@ package koharia.epub
 
 import android.app.assist.AssistContent
 import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
@@ -79,6 +80,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.openInBrowser
+import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.epub.service.EpubReaderSupportResolution
@@ -201,6 +203,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private var progressionSeekGeneration = 0L
     private var currentPublisherStyles: Boolean? = null
     private var readerFragment: EpubReaderFragment? = null
+    private var imagePreviewVisible = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         registerSecureActivity(this)
@@ -229,6 +232,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
         setComposeContent {
             val state by viewModel.state.collectAsState()
+            val imageState by viewModel.imageState.collectAsState()
             val tocEntries =
                 remember(state.chapterId, state.sessionToken, state.isReady) { viewModel.tableOfContents() }
             val adjacentTocEntries = remember(tocEntries, state.currentPosition, state.currentHref) {
@@ -326,6 +330,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
             DisposableEffect(Unit) {
                 onDispose(::resetEpubBrightness)
+            }
+
+            LaunchedEffect(imageState.previewVisible) {
+                imagePreviewVisible = imageState.previewVisible
+                updateSystemBars(state.menuVisible)
             }
 
             LaunchedEffect(forceNavigationOverlay) {
@@ -755,7 +764,23 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     onDismissRequest = { showBookInfoDialog = false },
                 )
             }
+
+            EpubImageOverlay(
+                state = imageState,
+                onClosePreview = viewModel::closeImagePreview,
+                onDismissActions = viewModel::dismissImageActions,
+                onPreview = viewModel::loadSelectedImageForPreview,
+                onShowActions = viewModel::showImageActions,
+                onRetry = viewModel::retrySelectedImage,
+                onSave = { viewModel.saveSelectedImage(readerPreferences.folderPerManga.get()) },
+                onShare = { viewModel.shareSelectedImage(copyToClipboard = false) },
+                onCopy = { viewModel.shareSelectedImage(copyToClipboard = true) },
+            )
         }
+
+        viewModel.imageEvents
+            .onEach(::handleImageEvent)
+            .launchIn(lifecycleScope)
 
         if (viewModel.needsInit()) {
             val mangaId = intent.extras?.getLong("manga", -1L) ?: -1L
@@ -871,6 +896,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onTap(positionX: Float, positionY: Float): Boolean {
+        if (viewModel.imageState.value.isVisible) return true
         val isRightToLeft = epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
             epubLayoutPreferences.pageDirection.get() == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
         return when (resolveNavigationAction(positionX, positionY)) {
@@ -952,6 +978,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         openInBrowser(url.toUri(), forceDefaultBrowser = false)
     }
 
+    override fun onImageInteraction(reference: EpubImageReference, interaction: EpubImageInteraction) {
+        if (interaction == EpubImageInteraction.PREVIEW && viewModel.state.value.menuVisible) {
+            viewModel.showMenus(false)
+            return
+        }
+        viewModel.onImageInteraction(reference, interaction)
+    }
+
     override fun onNavigatorReady(fragment: EpubReaderFragment) {
         readerFragment = fragment
         if (paginationViewportJob?.isActive != true) {
@@ -968,7 +1002,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
         val state = viewModel.state.value
         if (!isVolumeKey || !epubLayoutPreferences.readWithVolumeKeys.get() ||
-            state.menuVisible || state.isSearchActive
+            state.menuVisible || state.isSearchActive || viewModel.imageState.value.isVisible
         ) {
             return super.dispatchKeyEvent(event)
         }
@@ -990,10 +1024,26 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     private fun updateSystemBars(visible: Boolean) {
-        if (visible || !readerPreferences.fullscreen.get()) {
+        if (imagePreviewVisible) {
+            windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+        } else if (visible || !readerPreferences.fullscreen.get()) {
             windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
         } else {
             windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    private fun handleImageEvent(event: EpubImageEvent) {
+        when (event) {
+            is EpubImageEvent.Share -> {
+                startActivity(event.uri.toShareIntent(applicationContext, event.mimeType))
+            }
+            is EpubImageEvent.Copy -> {
+                val clipboard = getSystemService(ClipboardManager::class.java) ?: return
+                clipboard.setPrimaryClip(ClipData.newUri(contentResolver, "", event.uri))
+            }
+            is EpubImageEvent.Saved -> toast(MR.strings.picture_saved)
+            is EpubImageEvent.Error -> toast(event.message)
         }
     }
 

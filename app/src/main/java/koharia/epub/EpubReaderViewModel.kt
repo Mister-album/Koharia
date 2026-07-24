@@ -6,6 +6,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.data.download.DownloadProvider
+import eu.kanade.tachiyomi.data.saver.EncodedFormat
+import eu.kanade.tachiyomi.data.saver.Image
+import eu.kanade.tachiyomi.data.saver.ImageSaver
+import eu.kanade.tachiyomi.data.saver.Location
+import eu.kanade.tachiyomi.ui.reader.SaveImageNotifier
+import eu.kanade.tachiyomi.util.storage.DiskUtil
 import koharia.domain.epub.interactor.AddEpubBookmark
 import koharia.domain.epub.interactor.DeleteEpubBookmark
 import koharia.domain.epub.interactor.GetEpubBookmarks
@@ -39,10 +45,12 @@ import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
@@ -116,6 +124,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private val addEpubBookmark: AddEpubBookmark = Injekt.get(),
     private val deleteEpubBookmark: DeleteEpubBookmark = Injekt.get(),
     private val updateEpubBookmarkNote: UpdateEpubBookmarkNote = Injekt.get(),
+    private val imageSaver: ImageSaver = Injekt.get(),
     globalEpubReaderPreferences: EpubReaderPreferences = Injekt.get(),
     globalBasePreferences: BasePreferences = Injekt.get(),
     private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
@@ -134,6 +143,11 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     private val mutableState = MutableStateFlow(EpubReaderUiState())
     val state = mutableState.asStateFlow()
+    private val mutableImageState = MutableStateFlow(EpubImageUiState())
+    internal val imageState = mutableImageState.asStateFlow()
+    private val mutableImageEvents = MutableSharedFlow<EpubImageEvent>(extraBufferCapacity = 1)
+    internal val imageEvents = mutableImageEvents.asSharedFlow()
+    private val imageRequestTracker = EpubImageRequestTracker()
     private val locatorUpdates = MutableSharedFlow<Locator>(
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -195,6 +209,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var historyReadStartTime: Long? = null
     private var completionMarkedThisSession = false
     private var searchIterator: SearchIterator? = null
+    private var imageLoadJob: Job? = null
     private var incognitoSession = basePreferences.incognitoMode.get()
     private val locatorPersistenceJob = viewModelScope.launch {
         locatorUpdates
@@ -650,6 +665,192 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun showMenus(visible: Boolean) {
         mutableState.update { it.copy(menuVisible = visible) }
+    }
+
+    internal fun onImageInteraction(
+        reference: EpubImageReference,
+        interaction: EpubImageInteraction,
+    ) {
+        imageLoadJob?.cancel()
+        imageRequestTracker.invalidate()
+        mutableImageState.value = EpubImageUiState(
+            reference = reference,
+            previewVisible = interaction == EpubImageInteraction.PREVIEW,
+            actionsVisible = interaction == EpubImageInteraction.ACTIONS,
+        )
+        showMenus(false)
+        if (interaction == EpubImageInteraction.PREVIEW) {
+            loadSelectedImageForPreview()
+        }
+    }
+
+    internal fun showImageActions() {
+        mutableImageState.update { state ->
+            if (state.reference == null) state else state.copy(actionsVisible = true)
+        }
+    }
+
+    internal fun dismissImageActions() {
+        if (!mutableImageState.value.previewVisible) {
+            imageLoadJob?.cancel()
+            imageRequestTracker.invalidate()
+        }
+        mutableImageState.update { state ->
+            if (state.previewVisible) {
+                state.copy(actionsVisible = false, isLoading = false)
+            } else {
+                EpubImageUiState()
+            }
+        }
+    }
+
+    internal fun closeImagePreview() {
+        imageLoadJob?.cancel()
+        imageLoadJob = null
+        imageRequestTracker.invalidate()
+        mutableImageState.value = EpubImageUiState()
+    }
+
+    internal fun loadSelectedImageForPreview() {
+        mutableImageState.update { state ->
+            state.copy(previewVisible = true, actionsVisible = false, errorMessage = null)
+        }
+        withSelectedImage { }
+    }
+
+    internal fun retrySelectedImage() {
+        withSelectedImage(forceReload = true) { }
+    }
+
+    internal fun saveSelectedImage(folderPerManga: Boolean) {
+        withSelectedImage { content ->
+            mutableImageState.update { it.copy(isLoading = true) }
+            val notifier = SaveImageNotifier(application).apply { onClear() }
+            runCatching {
+                withIOContext {
+                    val relativePath = if (folderPerManga) {
+                        DiskUtil.buildValidFilename(state.value.mangaTitle.orEmpty())
+                    } else {
+                        ""
+                    }
+                    imageSaver.save(
+                        image = content.toImage(
+                            location = Location.Pictures.create(relativePath),
+                        ),
+                    )
+                }
+            }.onSuccess { uri ->
+                notifier.onComplete(uri)
+                finishImageAction()
+                mutableImageEvents.emit(EpubImageEvent.Saved(uri))
+            }.onFailure { error ->
+                notifier.onError(error.message)
+                reportImageActionError(error)
+            }
+        }
+    }
+
+    internal fun shareSelectedImage(copyToClipboard: Boolean) {
+        withSelectedImage { content ->
+            mutableImageState.update { it.copy(isLoading = true) }
+            runCatching {
+                withIOContext {
+                    Location.EpubShareCache.directory(application)
+                        .listFiles()
+                        ?.filter(File::isFile)
+                        ?.forEach { file -> file.delete() }
+                    val image = content.toImage(location = Location.EpubShareCache)
+                    imageSaver.save(image)
+                }
+            }.onSuccess { uri ->
+                finishImageAction()
+                mutableImageEvents.emit(
+                    if (copyToClipboard) {
+                        EpubImageEvent.Copy(uri)
+                    } else {
+                        EpubImageEvent.Share(uri, content.mimeType)
+                    },
+                )
+            }.onFailure { error -> reportImageActionError(error) }
+        }
+    }
+
+    private fun withSelectedImage(
+        forceReload: Boolean = false,
+        action: suspend (EpubImageContent) -> Unit,
+    ) {
+        val reference = mutableImageState.value.reference ?: return
+        imageLoadJob?.cancel()
+        val request = imageRequestTracker.next()
+        imageLoadJob = viewModelScope.launch {
+            mutableImageState.update { it.copy(isLoading = true, errorMessage = null) }
+            val result = runCatching {
+                val cached = mutableImageState.value.content
+                    ?.takeIf { !forceReload && it.reference == reference }
+                cached ?: withIOContext {
+                    val publication = sessionRepository.get(chapterId)?.publication
+                        ?: error("EPUB publication session is unavailable")
+                    loadEpubImageContent(publication, reference)
+                }
+            }
+            if (!imageRequestTracker.isCurrent(request) || mutableImageState.value.reference != reference) {
+                return@launch
+            }
+            result.onSuccess { content ->
+                mutableImageState.update { it.copy(content = content, isLoading = false, errorMessage = null) }
+                action(content)
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                logcat(LogPriority.WARN, error) { "Failed to load EPUB image" }
+                val showActionError = mutableImageState.value.actionsVisible &&
+                    !mutableImageState.value.previewVisible
+                mutableImageState.update {
+                    it.copy(
+                        content = null,
+                        isLoading = false,
+                        errorMessage = application.stringResource(MR.strings.epub_reader_image_load_failed),
+                    )
+                }
+                if (showActionError) {
+                    mutableImageEvents.emit(
+                        EpubImageEvent.Error(application.stringResource(MR.strings.epub_reader_image_load_failed)),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun finishImageAction() {
+        mutableImageState.update { state ->
+            if (state.previewVisible) {
+                state.copy(actionsVisible = false, isLoading = false)
+            } else {
+                EpubImageUiState()
+            }
+        }
+    }
+
+    private suspend fun reportImageActionError(error: Throwable) {
+        logcat(LogPriority.ERROR, error) { "Failed to export EPUB image" }
+        mutableImageState.update { it.copy(isLoading = false) }
+        mutableImageEvents.emit(
+            EpubImageEvent.Error(application.stringResource(MR.strings.epub_reader_image_action_failed)),
+        )
+    }
+
+    private fun EpubImageContent.toImage(location: Location): Image.Page {
+        val baseName = DiskUtil.buildValidFilename(
+            listOfNotNull(
+                state.value.mangaTitle?.takeIf(String::isNotBlank),
+                originalFileName.takeIf(String::isNotBlank),
+            ).joinToString(" - ").ifBlank { "image" },
+        )
+        return Image.Page(
+            inputStream = { bytes.toByteArray().inputStream() },
+            name = baseName,
+            location = location,
+            encodedFormat = EncodedFormat(mimeType, extension).takeIf { isSvg },
+        )
     }
 
     fun updateLocator(locator: Locator) {
@@ -1517,6 +1718,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     fun releaseSession() {
+        closeImagePreview()
         locatorPersistenceJob.cancel()
         sessionRepository.remove(chapterId)?.close()
         releaseCacheLeases()
@@ -1538,6 +1740,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     override fun onCleared() {
+        imageLoadJob?.cancel()
+        imageRequestTracker.invalidate()
         searchIterator?.close()
         searchIterator = null
         releaseCacheLeases()

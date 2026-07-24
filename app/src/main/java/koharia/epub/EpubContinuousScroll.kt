@@ -24,6 +24,7 @@ internal fun buildEpubContinuousScrollInstallScript(
     resources: List<EpubContinuousScrollResource>,
     currentIndex: Int,
     initialProgression: Double,
+    imageInteractionScript: String,
     paragraphIndentScript: String,
 ): String {
     val resourcesJson = JSONArray().apply {
@@ -38,6 +39,7 @@ internal fun buildEpubContinuousScrollInstallScript(
         }
     }
     val indentScriptJson = JSONObject.quote(paragraphIndentScript)
+    val imageInteractionScriptJson = JSONObject.quote(imageInteractionScript)
     val clampedProgression = initialProgression.coerceIn(0.0, 1.0)
 
     return """
@@ -46,9 +48,10 @@ internal fun buildEpubContinuousScrollInstallScript(
             const currentIndex = $currentIndex;
             const initialProgression = $clampedProgression;
             const requestedParagraphIndentScript = $indentScriptJson;
+            const requestedImageInteractionScript = $imageInteractionScriptJson;
             const existing = window.__kohariaContinuousScroll;
             if (existing && existing.currentIndex === currentIndex) {
-                existing.refresh(requestedParagraphIndentScript);
+                existing.refresh(requestedParagraphIndentScript, requestedImageInteractionScript);
                 return 'ready';
             }
             if (!document.body || !resources.length || currentIndex < 0 || currentIndex >= resources.length) {
@@ -65,6 +68,15 @@ internal fun buildEpubContinuousScrollInstallScript(
             let locationFrame = 0;
             let lastLocationSentAt = 0;
             let paragraphIndentScript = requestedParagraphIndentScript;
+            let imageInteractionScript = requestedImageInteractionScript;
+
+            function installImageInteractions(targetWindow, resourceIndex) {
+                try {
+                    targetWindow.__kohariaImageResourceIndex = resourceIndex;
+                    targetWindow.eval(imageInteractionScript);
+                } catch (_) {}
+            }
+            installImageInteractions(window, currentIndex);
 
             const style = document.createElement('style');
             style.id = 'koharia-continuous-scroll-style';
@@ -184,6 +196,7 @@ internal fun buildEpubContinuousScrollInstallScript(
                         doc.body.style.setProperty('overflow', 'hidden', 'important');
                     }
                     try { iframe.contentWindow.eval(paragraphIndentScript); } catch (_) {}
+                    installImageInteractions(iframe.contentWindow, index);
                     const height = Math.max(
                         doc.documentElement.scrollHeight || 0,
                         doc.body ? doc.body.scrollHeight || 0 : 0,
@@ -329,9 +342,11 @@ internal fun buildEpubContinuousScrollInstallScript(
                 currentIndex: currentIndex,
                 resources: resources,
                 notifyLocation: notifyLocation,
-                refresh: function(nextParagraphIndentScript) {
+                refresh: function(nextParagraphIndentScript, nextImageInteractionScript) {
                     paragraphIndentScript = nextParagraphIndentScript;
+                    imageInteractionScript = nextImageInteractionScript;
                     try { window.eval(paragraphIndentScript); } catch (_) {}
+                    installImageInteractions(window, currentIndex);
                     const loadedIndexes = Array.from(liveFrames.keys());
                     loadedIndexes.forEach(unloadSection);
                     updateWindow(activeIndex);

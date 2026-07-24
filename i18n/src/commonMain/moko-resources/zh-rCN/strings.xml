@@ -671,6 +671,10 @@
     <string name="epub_reader_search_no_results">未找到结果</string>
     <string name="epub_reader_search_not_supported">这本 EPUB 不支持搜索。</string>
     <string name="epub_reader_search_error">搜索失败</string>
+    <string name="epub_reader_image_preview">预览</string>
+    <string name="epub_reader_image_actions">图片操作</string>
+    <string name="epub_reader_image_load_failed">无法加载图片。</string>
+    <string name="epub_reader_image_action_failed">无法保存或分享此图片。</string>
     <string name="action_reload_reader">重新载入阅读器</string>
     <string name="unread">未读</string>
     <string name="date">日期</string>
@@ -883,6 +887,7 @@
     <string name="track_error">%1$s 发生错误：%2$s</string>
     <string name="information_required_plain">*必填</string>
     <string name="pref_hide_in_library_items">隐藏已添加到书架的作品</string>
+    <string name="action_copy">复制</string>
     <string name="action_copy_to_clipboard">复制到剪贴板</string>
     <string name="action_update_category">更新分类</string>
     <string name="split_tall_images">分割长图</string>
