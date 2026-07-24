@@ -95,6 +95,7 @@ class MangaScreen(
 
         val state by screenModel.state.collectAsStateWithLifecycle()
         val chapterCoverGridColumns by screenModel.chapterCoverGridColumns
+        val showChapterReadProgress = screenModel.showChapterReadProgress
 
         if (state is MangaScreenModel.State.Loading) {
             LoadingScreen()
@@ -116,6 +117,7 @@ class MangaScreen(
             chapterSwipeStartAction = screenModel.chapterSwipeStartAction,
             chapterSwipeEndAction = screenModel.chapterSwipeEndAction,
             chapterCoverGridColumns = chapterCoverGridColumns,
+            showChapterReadProgress = showChapterReadProgress,
             navigateUp = navigator::pop,
             onChapterClicked = { openChapter(context, scope, epubReaderLauncher, it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
@@ -127,6 +129,7 @@ class MangaScreen(
             onWebViewLongClicked = null,
             onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
             onFilterButtonClicked = screenModel::showSettingsDialog,
+            onChapterCoverDisplayModeChange = screenModel::setChapterCoverDisplayMode,
             onRefresh = screenModel::fetchAllFromSource,
             onContinueReading = {
                 continueReading(context, scope, epubReaderLauncher, screenModel.getNextUnreadChapter())
@@ -203,7 +206,8 @@ class MangaScreen(
                 onBookmarkedFilterChanged = screenModel::setBookmarkedFilter,
                 onSortModeChanged = screenModel::setSorting,
                 onDisplayModeChanged = screenModel::setDisplayMode,
-                onChapterCoverDisplayModeChanged = screenModel::setChapterCoverDisplayMode,
+                showChapterReadProgress = showChapterReadProgress,
+                onShowChapterReadProgressChanged = screenModel::updateShowChapterReadProgress,
                 onSetAsDefault = screenModel::setCurrentSettingsAsDefault,
                 onResetToDefault = screenModel::resetToDefaultSettings,
                 scanlatorFilterActive = successState.scanlatorFilterActive,

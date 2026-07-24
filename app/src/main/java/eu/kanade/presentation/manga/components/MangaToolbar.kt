@@ -1,12 +1,15 @@
 package eu.kanade.presentation.manga.components
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FlipToBack
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -20,8 +23,11 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.DownloadDropdownMenu
+import eu.kanade.presentation.components.DropdownMenu
+import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.manga.DownloadAction
 import kotlinx.collections.immutable.persistentListOf
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.theme.active
@@ -31,8 +37,10 @@ fun MangaToolbar(
     title: String,
     hasFilters: Boolean,
     isKomgaCacheMode: Boolean,
+    chapterCoverDisplayMode: Long?,
     navigateUp: () -> Unit,
     onClickFilter: () -> Unit,
+    onChapterCoverDisplayModeChange: (Long) -> Unit,
     onClickShare: (() -> Unit)?,
     onClickDownload: ((DownloadAction) -> Unit)?,
     onClickEditCategory: (() -> Unit)?,
@@ -66,6 +74,7 @@ fun MangaToolbar(
         navigateUp = navigateUp,
         actions = {
             var downloadExpanded by remember { mutableStateOf(false) }
+            var displayModeExpanded by remember { mutableStateOf(false) }
             if (onClickDownload != null) {
                 val onDismissRequest = { downloadExpanded = false }
                 DownloadDropdownMenu(
@@ -96,14 +105,16 @@ fun MangaToolbar(
                         )
                         return@apply
                     }
-                    if (onClickDownload != null) {
+                    if (chapterCoverDisplayMode != null) {
                         add(
                             AppBar.Action(
-                                title = stringResource(
-                                    if (isKomgaCacheMode) MR.strings.komga_action_cache else MR.strings.manga_download,
-                                ),
-                                icon = Icons.Outlined.Download,
-                                onClick = { downloadExpanded = !downloadExpanded },
+                                title = stringResource(MR.strings.action_display_mode),
+                                icon = if (chapterCoverDisplayMode == Manga.CHAPTER_COVER_DISPLAY_TEXT) {
+                                    Icons.AutoMirrored.Filled.ViewList
+                                } else {
+                                    Icons.Filled.ViewModule
+                                },
+                                onClick = { displayModeExpanded = true },
                             ),
                         )
                     }
@@ -115,6 +126,17 @@ fun MangaToolbar(
                             onClick = onClickFilter,
                         ),
                     )
+                    if (onClickDownload != null) {
+                        add(
+                            AppBar.Action(
+                                title = stringResource(
+                                    if (isKomgaCacheMode) MR.strings.komga_action_cache else MR.strings.manga_download,
+                                ),
+                                icon = Icons.Outlined.Download,
+                                onClick = { downloadExpanded = !downloadExpanded },
+                            ),
+                        )
+                    }
                     add(
                         AppBar.OverflowAction(
                             title = stringResource(MR.strings.action_webview_refresh),
@@ -154,6 +176,29 @@ fun MangaToolbar(
                 }
                     .build(),
             )
+
+            if (!isActionMode && chapterCoverDisplayMode != null) {
+                DropdownMenu(
+                    expanded = displayModeExpanded,
+                    onDismissRequest = { displayModeExpanded = false },
+                ) {
+                    listOf(
+                        MR.strings.action_display_comfortable_grid to
+                            Manga.CHAPTER_COVER_DISPLAY_COMFORTABLE,
+                        MR.strings.action_display_grid to Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE,
+                        MR.strings.action_display_cover_only_grid to Manga.CHAPTER_COVER_DISPLAY_COVER,
+                        MR.strings.action_display_list to Manga.CHAPTER_COVER_DISPLAY_TEXT,
+                    ).forEach { (titleRes, mode) ->
+                        RadioMenuItem(
+                            text = { Text(text = stringResource(titleRes)) },
+                            isChecked = chapterCoverDisplayMode == mode,
+                        ) {
+                            displayModeExpanded = false
+                            onChapterCoverDisplayModeChange(mode)
+                        }
+                    }
+                }
+            }
         },
         isActionMode = isActionMode,
         onCancelActionMode = onCancelActionMode,

@@ -112,6 +112,7 @@ data class Manga(
         const val CHAPTER_COVER_DISPLAY_TEXT = 0x00000000L
         const val CHAPTER_COVER_DISPLAY_COVER = 0x00200000L
         const val CHAPTER_COVER_DISPLAY_COVER_AND_TITLE = 0x00400000L
+        const val CHAPTER_COVER_DISPLAY_COMFORTABLE = 0x00600000L
         const val CHAPTER_COVER_DISPLAY_MASK = 0x00600000L
 
         fun create() = Manga(

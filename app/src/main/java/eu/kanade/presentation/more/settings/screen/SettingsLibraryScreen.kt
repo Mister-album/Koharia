@@ -241,10 +241,11 @@ object SettingsLibraryScreen : SearchableSettings {
         )
         val displayChapterByNameOrNumber by libraryPreferences.displayChapterByNameOrNumber.collectAsState()
         val chapterCoverDisplayModeEntries = persistentMapOf(
-            Manga.CHAPTER_COVER_DISPLAY_TEXT to stringResource(MR.strings.action_display_chapter_text_only),
-            Manga.CHAPTER_COVER_DISPLAY_COVER to stringResource(MR.strings.action_display_chapter_cover_only),
-            Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE to
-                stringResource(MR.strings.action_display_chapter_cover_and_title),
+            Manga.CHAPTER_COVER_DISPLAY_COMFORTABLE to
+                stringResource(MR.strings.action_display_comfortable_grid),
+            Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE to stringResource(MR.strings.action_display_grid),
+            Manga.CHAPTER_COVER_DISPLAY_COVER to stringResource(MR.strings.action_display_cover_only_grid),
+            Manga.CHAPTER_COVER_DISPLAY_TEXT to stringResource(MR.strings.action_display_list),
         )
         val chapterCoverDisplayMode by libraryPreferences.chapterCoverDisplayMode.collectAsState()
         val chapterCoverGridColumnsPref = libraryPreferences.chapterCoverGridColumns
@@ -272,6 +273,11 @@ object SettingsLibraryScreen : SearchableSettings {
                     valueRange = 2..6,
                     enabled = chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT,
                     onValueChanged = { chapterCoverGridColumnsPref.set(it) },
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = libraryPreferences.showChapterReadProgress,
+                    title = stringResource(MR.strings.pref_show_chapter_read_progress),
+                    subtitle = stringResource(MR.strings.pref_show_chapter_read_progress_summary),
                 ),
             ),
         )
