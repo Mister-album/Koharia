@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -79,6 +80,7 @@ fun MangaCompactGridItem(
     coverAlpha: Float = 1f,
     coverBadgeStart: @Composable (RowScope.() -> Unit)? = null,
     coverBadgeEnd: @Composable (RowScope.() -> Unit)? = null,
+    coverOverlay: (@Composable BoxScope.() -> Unit)? = null,
 ) {
     GridItemSelectable(
         isSelected = isSelected,
@@ -96,6 +98,7 @@ fun MangaCompactGridItem(
             },
             badgesStart = coverBadgeStart,
             badgesEnd = coverBadgeEnd,
+            overlay = coverOverlay,
             content = {
                 if (title != null) {
                     CoverTextOverlay(
@@ -184,6 +187,7 @@ fun MangaComfortableGridItem(
     coverAlpha: Float = 1f,
     coverBadgeStart: (@Composable RowScope.() -> Unit)? = null,
     coverBadgeEnd: (@Composable RowScope.() -> Unit)? = null,
+    coverOverlay: (@Composable BoxScope.() -> Unit)? = null,
     onClickContinueReading: (() -> Unit)? = null,
 ) {
     GridItemSelectable(
@@ -203,6 +207,7 @@ fun MangaComfortableGridItem(
                 },
                 badgesStart = coverBadgeStart,
                 badgesEnd = coverBadgeEnd,
+                overlay = coverOverlay,
                 content = {
                     if (onClickContinueReading != null) {
                         ContinueReadingButton(
@@ -237,6 +242,7 @@ private fun MangaGridCover(
     badgesStart: (@Composable RowScope.() -> Unit)? = null,
     badgesEnd: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable (BoxScope.() -> Unit)? = null,
+    overlay: @Composable (BoxScope.() -> Unit)? = null,
 ) {
     Box(
         modifier = modifier
@@ -260,6 +266,14 @@ private fun MangaGridCover(
                     .padding(4.dp)
                     .align(Alignment.TopEnd),
                 content = badgesEnd,
+            )
+        }
+        if (overlay != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(MaterialTheme.shapes.extraSmall),
+                content = overlay,
             )
         }
     }

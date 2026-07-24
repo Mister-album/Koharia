@@ -6,6 +6,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.util.fastAny
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
@@ -184,6 +186,8 @@ class MangaScreenModel(
     val chapterSwipeStartAction = libraryPreferences.swipeToEndAction.get()
     val chapterSwipeEndAction = libraryPreferences.swipeToStartAction.get()
     val chapterCoverGridColumns = libraryPreferences.chapterCoverGridColumns.asState(screenModelScope)
+    var showChapterReadProgress by mutableStateOf(libraryPreferences.showChapterReadProgress.get())
+        private set
     var autoTrackState = trackPreferences.autoUpdateTrackOnMarkRead.get()
 
     private val skipFiltered by readerPreferences.skipFiltered.asState(screenModelScope)
@@ -1132,6 +1136,10 @@ class MangaScreenModel(
         }
     }
 
+    fun updateShowChapterReadProgress(show: Boolean) {
+        showChapterReadProgress = show
+    }
+
     /**
      * Sets the sorting method and requests an UI update.
      * @param sort the sorting mode.
@@ -1146,8 +1154,10 @@ class MangaScreenModel(
 
     fun setCurrentSettingsAsDefault(applyToExisting: Boolean) {
         val manga = successState?.manga ?: return
+        val showReadProgress = showChapterReadProgress
         screenModelScope.launchNonCancellable {
             libraryPreferences.setChapterSettingsDefault(manga)
+            libraryPreferences.showChapterReadProgress.set(showReadProgress)
             if (applyToExisting) {
                 setMangaDefaultChapterFlags.awaitAll()
             }
@@ -1157,6 +1167,7 @@ class MangaScreenModel(
 
     fun resetToDefaultSettings() {
         val manga = successState?.manga ?: return
+        showChapterReadProgress = libraryPreferences.showChapterReadProgress.get()
         screenModelScope.launchNonCancellable {
             setMangaDefaultChapterFlags.await(manga)
         }

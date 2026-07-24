@@ -2,8 +2,10 @@ package eu.kanade.presentation.manga
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -12,9 +14,11 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -27,8 +31,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallExtendedFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -42,18 +48,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastAll
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastMap
 import eu.kanade.presentation.components.relativeDateText
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
+import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaCompactGridItem
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ChapterHeader
@@ -70,7 +87,9 @@ import eu.kanade.tachiyomi.source.getNameForMangaInfo
 import eu.kanade.tachiyomi.source.isKomgaSource
 import eu.kanade.tachiyomi.ui.manga.ChapterList
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel
+import eu.kanade.tachiyomi.ui.reader.pageProgressPercent
 import eu.kanade.tachiyomi.util.system.copyToClipboard
+import koharia.komga.download.KomgaChapterMemo
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.missingChaptersCount
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -94,6 +113,7 @@ fun MangaScreen(
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     chapterCoverGridColumns: Int,
+    showChapterReadProgress: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
@@ -105,6 +125,7 @@ fun MangaScreen(
     onTagSearch: (String) -> Unit,
 
     onFilterButtonClicked: () -> Unit,
+    onChapterCoverDisplayModeChange: (Long) -> Unit,
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
@@ -148,6 +169,7 @@ fun MangaScreen(
             chapterSwipeStartAction = chapterSwipeStartAction,
             chapterSwipeEndAction = chapterSwipeEndAction,
             chapterCoverGridColumns = chapterCoverGridColumns,
+            showChapterReadProgress = showChapterReadProgress,
             isKomgaCacheMode = isKomgaCacheMode,
             navigateUp = navigateUp,
             onChapterClicked = onChapterClicked,
@@ -158,6 +180,7 @@ fun MangaScreen(
             onTagSearch = onTagSearch,
             onCopyTagToClipboard = onCopyTagToClipboard,
             onFilterClicked = onFilterButtonClicked,
+            onChapterCoverDisplayModeChange = onChapterCoverDisplayModeChange,
             onRefresh = onRefresh,
             onContinueReading = onContinueReading,
             onSearch = onSearch,
@@ -183,6 +206,7 @@ fun MangaScreen(
             chapterSwipeStartAction = chapterSwipeStartAction,
             chapterSwipeEndAction = chapterSwipeEndAction,
             chapterCoverGridColumns = chapterCoverGridColumns,
+            showChapterReadProgress = showChapterReadProgress,
             isKomgaCacheMode = isKomgaCacheMode,
             navigateUp = navigateUp,
             onChapterClicked = onChapterClicked,
@@ -193,6 +217,7 @@ fun MangaScreen(
             onTagSearch = onTagSearch,
             onCopyTagToClipboard = onCopyTagToClipboard,
             onFilterButtonClicked = onFilterButtonClicked,
+            onChapterCoverDisplayModeChange = onChapterCoverDisplayModeChange,
             onRefresh = onRefresh,
             onContinueReading = onContinueReading,
             onSearch = onSearch,
@@ -221,6 +246,7 @@ private fun MangaScreenSmallImpl(
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     chapterCoverGridColumns: Int,
+    showChapterReadProgress: Boolean,
     isKomgaCacheMode: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
@@ -234,6 +260,7 @@ private fun MangaScreenSmallImpl(
     onCopyTagToClipboard: (tag: String) -> Unit,
 
     onFilterClicked: () -> Unit,
+    onChapterCoverDisplayModeChange: (Long) -> Unit,
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
@@ -314,8 +341,10 @@ private fun MangaScreenSmallImpl(
                 title = state.manga.title,
                 hasFilters = state.filterActive,
                 isKomgaCacheMode = isKomgaCacheMode,
+                chapterCoverDisplayMode = state.manga.chapterCoverDisplayMode.takeIf { isKomgaCacheMode },
                 navigateUp = navigateUp,
                 onClickFilter = onFilterClicked,
+                onChapterCoverDisplayModeChange = onChapterCoverDisplayModeChange,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
                 onClickEditCategory = onEditCategoryClicked,
@@ -419,6 +448,7 @@ private fun MangaScreenSmallImpl(
                         manga = state.manga,
                         isKomgaSource = state.source.isKomgaSource(),
                         chapters = listItem,
+                        showChapterReadProgress = showChapterReadProgress,
                         isAnyChapterSelected = chapters.fastAny { it.selected },
                         onChapterClicked = onChapterClicked,
                         onChapterSelected = onChapterSelected,
@@ -459,6 +489,7 @@ private fun MangaScreenSmallImpl(
                         sharedChapterItems(
                             manga = state.manga,
                             chapters = listItem,
+                            showChapterReadProgress = showChapterReadProgress,
                             isKomgaCacheMode = isKomgaCacheMode,
                             isAnyChapterSelected = chapters.fastAny { it.selected },
                             chapterSwipeStartAction = chapterSwipeStartAction,
@@ -482,6 +513,7 @@ fun MangaScreenLargeImpl(
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     chapterCoverGridColumns: Int,
+    showChapterReadProgress: Boolean,
     isKomgaCacheMode: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
@@ -495,6 +527,7 @@ fun MangaScreenLargeImpl(
     onCopyTagToClipboard: (tag: String) -> Unit,
 
     onFilterButtonClicked: () -> Unit,
+    onChapterCoverDisplayModeChange: (Long) -> Unit,
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
@@ -556,8 +589,10 @@ fun MangaScreenLargeImpl(
                 title = state.manga.title,
                 hasFilters = state.filterActive,
                 isKomgaCacheMode = isKomgaCacheMode,
+                chapterCoverDisplayMode = state.manga.chapterCoverDisplayMode.takeIf { isKomgaCacheMode },
                 navigateUp = navigateUp,
                 onClickFilter = onFilterButtonClicked,
+                onChapterCoverDisplayModeChange = onChapterCoverDisplayModeChange,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
                 onClickEditCategory = onEditCategoryClicked,
@@ -664,7 +699,6 @@ fun MangaScreenLargeImpl(
                             onEditCategory = onEditCategoryClicked,
                         )
                         ExpandableMangaDescription(
-                            defaultExpandState = true,
                             description = state.manga.description,
                             tagsProvider = { state.manga.genre },
                             notes = state.manga.notes,
@@ -699,6 +733,7 @@ fun MangaScreenLargeImpl(
                                 manga = state.manga,
                                 isKomgaSource = state.source.isKomgaSource(),
                                 chapters = listItem,
+                                showChapterReadProgress = showChapterReadProgress,
                                 isAnyChapterSelected = chapters.fastAny { it.selected },
                                 onChapterClicked = onChapterClicked,
                                 onChapterSelected = onChapterSelected,
@@ -726,6 +761,7 @@ fun MangaScreenLargeImpl(
                                 sharedChapterItems(
                                     manga = state.manga,
                                     chapters = listItem,
+                                    showChapterReadProgress = showChapterReadProgress,
                                     isKomgaCacheMode = isKomgaCacheMode,
                                     isAnyChapterSelected = chapters.fastAny { it.selected },
                                     chapterSwipeStartAction = chapterSwipeStartAction,
@@ -791,6 +827,7 @@ private fun SharedMangaBottomActionMenu(
 private fun LazyListScope.sharedChapterItems(
     manga: Manga,
     chapters: List<ChapterList>,
+    showChapterReadProgress: Boolean,
     isKomgaCacheMode: Boolean,
     isAnyChapterSelected: Boolean,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
@@ -827,27 +864,10 @@ private fun LazyListScope.sharedChapterItems(
                         item.chapter.name
                     },
                     date = relativeDateText(item.chapter.dateUpload),
-                    readProgress = when {
-                        item.chapter.read -> null
-                        item.epubProgressPercent != null ->
-                            item.epubProgressPercent
-                                .takeIf { it > 0 }
-                                ?.let {
-                                    stringResource(
-                                        MR.strings.epub_chapter_progress,
-                                        it,
-                                    )
-                                }
-                        item.chapter.lastPageRead > 0L -> {
-                            stringResource(
-                                MR.strings.chapter_progress,
-                                item.chapter.lastPageRead + 1,
-                            )
-                        }
-                        else -> null
-                    },
+                    readProgress = chapterReadProgress(item).takeIf { showChapterReadProgress },
                     scanlator = item.chapter.scanlator.takeIf { !it.isNullOrBlank() },
                     read = item.chapter.read,
+                    showReadStatus = showChapterReadProgress,
                     bookmark = item.chapter.bookmark,
                     selected = item.selected,
                     downloadIndicatorEnabled = !isAnyChapterSelected,
@@ -933,7 +953,6 @@ private fun LazyListScope.sharedMangaDetailHeaderListItems(
         contentType = MangaScreenItem.DESCRIPTION_WITH_TAG,
     ) {
         ExpandableMangaDescription(
-            defaultExpandState = state.isFromSource,
             description = state.manga.description,
             tagsProvider = { state.manga.genre },
             notes = state.manga.notes,
@@ -981,6 +1000,7 @@ private fun LazyGridScope.sharedMangaDetailHeaderGridItems(
             isStubSource = remember { state.source is StubSource },
             onCoverClick = onCoverClicked,
             doSearch = onSearch,
+            backdropHorizontalBleed = 16.dp,
         )
     }
 
@@ -1004,7 +1024,6 @@ private fun LazyGridScope.sharedMangaDetailHeaderGridItems(
         contentType = MangaScreenItem.DESCRIPTION_WITH_TAG,
     ) {
         ExpandableMangaDescription(
-            defaultExpandState = state.isFromSource,
             description = state.manga.description,
             tagsProvider = { state.manga.genre },
             notes = state.manga.notes,
@@ -1068,6 +1087,7 @@ private fun LazyGridScope.sharedChapterGridItems(
     manga: Manga,
     isKomgaSource: Boolean,
     chapters: List<ChapterList>,
+    showChapterReadProgress: Boolean,
     isAnyChapterSelected: Boolean,
     onChapterClicked: (Chapter) -> Unit,
     onChapterSelected: (ChapterList.Item, Boolean, Boolean) -> Unit,
@@ -1095,38 +1115,202 @@ private fun LazyGridScope.sharedChapterGridItems(
                 MissingChapterCountListItem(count = item.count)
             }
             is ChapterList.Item -> {
-                MangaCompactGridItem(
-                    coverData = MangaCoverModel(
-                        mangaId = item.chapter.id,
-                        sourceId = manga.source,
-                        isMangaFavorite = false,
-                        url = item.chapter.url
-                            .takeIf { isKomgaSource }
-                            ?.let { "$it/thumbnail" },
-                        lastModified = item.chapter.dateUpload,
-                    ),
-                    title = if (manga.chapterCoverDisplayMode == Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE) {
-                        chapterTitle(manga, item)
-                    } else {
-                        null
-                    },
-                    isSelected = item.selected,
-                    coverAlpha = if (item.chapter.read) 0.38f else 1f,
-                    onLongClick = {
-                        onChapterSelected(item, !item.selected, true)
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    },
-                    onClick = {
-                        onChapterItemClick(
-                            chapterItem = item,
-                            isAnyChapterSelected = isAnyChapterSelected,
-                            onToggleSelection = { onChapterSelected(item, !item.selected, false) },
-                            onChapterClicked = onChapterClicked,
-                        )
-                    },
+                val coverData = MangaCoverModel(
+                    mangaId = item.chapter.id,
+                    sourceId = manga.source,
+                    isMangaFavorite = false,
+                    url = item.chapter.url
+                        .takeIf { isKomgaSource }
+                        ?.let { "$it/thumbnail" },
+                    lastModified = item.chapter.dateUpload,
                 )
+                val onLongClick = {
+                    onChapterSelected(item, !item.selected, true)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+                val onClick = {
+                    onChapterItemClick(
+                        chapterItem = item,
+                        isAnyChapterSelected = isAnyChapterSelected,
+                        onToggleSelection = { onChapterSelected(item, !item.selected, false) },
+                        onChapterClicked = onChapterClicked,
+                    )
+                }
+                val readProgress = chapterGridProgress(item)
+                    .takeIf { showChapterReadProgress }
+                val isRead = showChapterReadProgress && item.chapter.read
+                val coverOverlay: (@Composable BoxScope.() -> Unit)? = if (readProgress != null || isRead) {
+                    {
+                        when {
+                            readProgress != null -> {
+                                ChapterProgressCorner(
+                                    progress = readProgress,
+                                    modifier = Modifier.align(Alignment.TopEnd),
+                                )
+                            }
+                            isRead -> ChapterReadCorner(modifier = Modifier.align(Alignment.TopEnd))
+                        }
+                    }
+                } else {
+                    null
+                }
+
+                if (manga.chapterCoverDisplayMode == Manga.CHAPTER_COVER_DISPLAY_COMFORTABLE) {
+                    MangaComfortableGridItem(
+                        coverData = coverData,
+                        title = chapterTitle(manga, item),
+                        isSelected = item.selected,
+                        coverOverlay = coverOverlay,
+                        onLongClick = onLongClick,
+                        onClick = onClick,
+                    )
+                } else {
+                    MangaCompactGridItem(
+                        coverData = coverData,
+                        title = if (
+                            manga.chapterCoverDisplayMode == Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE
+                        ) {
+                            chapterTitle(manga, item)
+                        } else {
+                            null
+                        },
+                        isSelected = item.selected,
+                        coverOverlay = coverOverlay,
+                        onLongClick = onLongClick,
+                        onClick = onClick,
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun ChapterProgressCorner(
+    progress: String,
+    modifier: Modifier = Modifier,
+) {
+    Layout(
+        modifier = modifier,
+        content = {
+            Text(
+                text = progress,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    shadow = Shadow(
+                        color = Color.Black,
+                        blurRadius = 4f,
+                    ),
+                ),
+            )
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(
+                        radius = 11.dp,
+                        edgeTreatment = BlurredEdgeTreatment.Unbounded,
+                    ),
+            ) {
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.58f),
+                    topLeft = Offset(size.width / 4f, size.height / 4f),
+                    size = Size(size.width / 2f, size.height / 2f),
+                )
+            }
+        },
+    ) { measurables, constraints ->
+        val textPlaceable = measurables[0].measure(
+            constraints.copy(minWidth = 0, minHeight = 0),
+        )
+        val shadowWidth = (textPlaceable.width * 2)
+            .coerceIn(constraints.minWidth, constraints.maxWidth)
+        val shadowHeight = (textPlaceable.height * 2)
+            .coerceIn(constraints.minHeight, constraints.maxHeight)
+        val shadowPlaceable = measurables[1].measure(
+            Constraints.fixed(shadowWidth, shadowHeight),
+        )
+
+        layout(shadowWidth, shadowHeight) {
+            shadowPlaceable.place(0, 0)
+            textPlaceable.place(
+                x = (shadowWidth - textPlaceable.width) / 2,
+                y = (shadowHeight - textPlaceable.height) / 2,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChapterReadCorner(modifier: Modifier = Modifier) {
+    val cornerColor = MaterialTheme.colorScheme.primaryContainer
+    val checkColor = MaterialTheme.colorScheme.primary
+    Box(modifier = modifier.size(28.dp)) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawPath(
+                path = Path().apply {
+                    moveTo(0f, 0f)
+                    lineTo(size.width, 0f)
+                    lineTo(size.width, size.height)
+                    close()
+                },
+                color = cornerColor,
+            )
+        }
+        Icon(
+            imageVector = Icons.Filled.Check,
+            contentDescription = null,
+            tint = checkColor,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 2.dp, end = 2.dp)
+                .size(14.dp),
+        )
+    }
+}
+
+@Composable
+private fun chapterReadProgress(
+    item: ChapterList.Item,
+): String? {
+    if (item.chapter.read) return null
+
+    item.epubProgressPercent
+        ?.takeIf { it > 0 }
+        ?.let { progress ->
+            return stringResource(
+                MR.strings.epub_chapter_progress,
+                progress,
+            )
+        }
+
+    return item.chapter.lastPageRead
+        .takeIf { it > 0L }
+        ?.let { lastPageRead ->
+            stringResource(
+                MR.strings.chapter_progress,
+                lastPageRead + 1,
+            )
+        }
+}
+
+@Composable
+private fun chapterGridProgress(item: ChapterList.Item): String? {
+    if (item.chapter.read) return null
+
+    val progressPercent = item.epubProgressPercent
+        ?.takeIf { it > 0 }
+        ?: run {
+            val totalPages = KomgaChapterMemo.pagesCount(item.chapter.memo) ?: return null
+            item.chapter.lastPageRead
+                .takeIf { it > 0L }
+                ?.let { pageIndex -> pageProgressPercent(pageIndex.toInt(), totalPages) }
+                ?.takeIf { it > 0 }
+        }
+
+    return progressPercent?.let { progress ->
+        stringResource(MR.strings.epub_chapter_progress_short, progress)
     }
 }
 

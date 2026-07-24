@@ -52,6 +52,7 @@ fun MangaChapterListItem(
     readProgress: String?,
     scanlator: String?,
     read: Boolean,
+    showReadStatus: Boolean,
     bookmark: Boolean,
     selected: Boolean,
     downloadIndicatorEnabled: Boolean,
@@ -108,7 +109,7 @@ fun MangaChapterListItem(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     var textHeight by remember { mutableIntStateOf(0) }
-                    if (!read) {
+                    if (showReadStatus && !read) {
                         Icon(
                             imageVector = Icons.Filled.Circle,
                             contentDescription = stringResource(MR.strings.unread),
@@ -133,7 +134,9 @@ fun MangaChapterListItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         onTextLayout = { textHeight = it.size.height },
-                        color = LocalContentColor.current.copy(alpha = if (read) DISABLED_ALPHA else 1f),
+                        color = LocalContentColor.current.copy(
+                            alpha = if (showReadStatus && read) DISABLED_ALPHA else 1f,
+                        ),
                     )
                 }
 
@@ -141,7 +144,9 @@ fun MangaChapterListItem(
                     val subtitleStyle = MaterialTheme.typography.bodySmall
                         .merge(
                             color = LocalContentColor.current
-                                .copy(alpha = if (read) DISABLED_ALPHA else SECONDARY_ALPHA),
+                                .copy(
+                                    alpha = if (showReadStatus && read) DISABLED_ALPHA else SECONDARY_ALPHA,
+                                ),
                         )
                     ProvideTextStyle(value = subtitleStyle) {
                         if (date != null) {

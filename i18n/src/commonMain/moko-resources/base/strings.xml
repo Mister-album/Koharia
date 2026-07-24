@@ -1065,7 +1065,11 @@
     <string name="cover_updated">Cover updated</string>
     <string name="share_page_info">%1$s: %2$s, page %3$d</string>
     <string name="chapter_progress">Page: %1$d</string>
+    <string name="chapter_progress_short">P. %1$d</string>
     <string name="epub_chapter_progress">Progress: %1$d%%</string>
+    <string name="epub_chapter_progress_short">%1$d%%</string>
+    <string name="pref_show_chapter_read_progress">Show reading progress and read status</string>
+    <string name="pref_show_chapter_read_progress_summary">Show progress, unread markers, and read checkmarks in chapter lists and grids</string>
     <string name="no_next_chapter">Next chapter not found</string>
     <string name="decode_image_error">The image couldn\'t be loaded</string>
     <string name="confirm_set_image_as_cover">Use this image as cover art?</string>

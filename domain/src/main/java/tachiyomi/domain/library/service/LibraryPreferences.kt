@@ -176,6 +176,11 @@ class LibraryPreferences(
         3,
     )
 
+    val showChapterReadProgress: Preference<Boolean> = preferenceStore.getBoolean(
+        "show_chapter_read_progress",
+        true,
+    )
+
     val sortChapterByAscendingOrDescending: Preference<Long> = preferenceStore.getLong(
         "default_chapter_sort_by_ascending_or_descending",
         Manga.CHAPTER_SORT_DESC,

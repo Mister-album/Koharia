@@ -67,6 +67,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.LinkAnnotation
@@ -118,6 +119,7 @@ fun MangaInfoBox(
     isStubSource: Boolean,
     onCoverClick: () -> Unit,
     doSearch: (query: String, global: Boolean) -> Unit,
+    backdropHorizontalBleed: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -135,6 +137,7 @@ fun MangaInfoBox(
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .matchParentSize()
+                .horizontalBleed(backdropHorizontalBleed)
                 .drawWithContent {
                     drawContent()
                     drawRect(
@@ -166,6 +169,32 @@ fun MangaInfoBox(
                     doSearch = doSearch,
                 )
             }
+        }
+    }
+}
+
+private fun Modifier.horizontalBleed(horizontal: Dp): Modifier {
+    if (horizontal <= 0.dp) return this
+
+    return layout { measurable, constraints ->
+        val horizontalPx = horizontal.roundToPx()
+        val extraWidth = horizontalPx * 2
+        val expandedMaxWidth = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth + extraWidth
+        } else {
+            Constraints.Infinity
+        }
+        val placeable = measurable.measure(
+            constraints.copy(
+                minWidth = (constraints.minWidth + extraWidth).coerceAtMost(expandedMaxWidth),
+                maxWidth = expandedMaxWidth,
+            ),
+        )
+        layout(
+            width = (placeable.width - extraWidth).coerceIn(constraints.minWidth, constraints.maxWidth),
+            height = placeable.height.coerceIn(constraints.minHeight, constraints.maxHeight),
+        ) {
+            placeable.placeRelative(-horizontalPx, 0)
         }
     }
 }
@@ -210,7 +239,6 @@ fun MangaActionRow(
 
 @Composable
 fun ExpandableMangaDescription(
-    defaultExpandState: Boolean,
     description: String?,
     tagsProvider: () -> List<String>?,
     notes: String,
@@ -221,7 +249,7 @@ fun ExpandableMangaDescription(
 ) {
     Column(modifier = modifier) {
         val (expanded, onExpanded) = rememberSaveable {
-            mutableStateOf(defaultExpandState)
+            mutableStateOf(false)
         }
         val desc =
             description.takeIf { !it.isNullOrBlank() } ?: stringResource(MR.strings.description_placeholder)
@@ -653,9 +681,9 @@ private fun MangaSummary(
         contents = listOf(
             {
                 Text(
-                    // Shows at least 3 lines if no notes
-                    // when there are notes show 6
-                    text = if (notes.isBlank()) "\n\n" else "\n\n\n\n\n",
+                    // Shows at least 4 lines if no notes
+                    // when there are notes show 7
+                    text = if (notes.isBlank()) "\n\n\n" else "\n\n\n\n\n\n",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },
