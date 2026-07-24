@@ -63,8 +63,8 @@ class KomgaRepository(
         defaultLibraries: Set<String>,
         cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default,
     ): Request {
-        val type = filters.searchType()
-        require(type != KomgaApiClient.SearchType.ALL)
+        val type = filters.searchType().takeUnless { it == KomgaApiClient.SearchType.ALL }
+            ?: KomgaApiClient.SearchType.SERIES
         val supportsBookFilters = type != KomgaApiClient.SearchType.READ_LISTS
         val supportsSeriesFilters = type == KomgaApiClient.SearchType.SERIES
         return apiClient.searchRequest(
@@ -344,10 +344,16 @@ class KomgaRepository(
     }
 }
 
-internal fun normalizeSearchQuery(query: String): String = query
-    .replace(SEARCH_DELIMITERS, " ")
-    .replace(REPEATED_WHITESPACE, " ")
-    .trim()
+internal fun normalizeSearchQuery(query: String): String {
+    val trimmedQuery = query.trim()
+    if (ADVANCED_FIELD_QUERY.containsMatchIn(trimmedQuery) || BOOLEAN_GROUP_QUERY.containsMatchIn(trimmedQuery)) {
+        return trimmedQuery
+    }
+    return trimmedQuery
+        .replace(SEARCH_DELIMITERS, " ")
+        .replace(REPEATED_WHITESPACE, " ")
+        .trim()
+}
 
 internal fun mergeSearchPages(books: MangasPage, series: MangasPage): MangasPage {
     val mangas = buildList(books.mangas.size + series.mangas.size) {
@@ -420,3 +426,10 @@ private fun FilterList.multiSelectIds(name: String): Set<String> {
 
 private val SEARCH_DELIMITERS = Regex("[()（）【】]")
 private val REPEATED_WHITESPACE = Regex("\\s+")
+private val ADVANCED_FIELD_QUERY = Regex(
+    "(?:^|\\s)(?:title|isbn|tag|series_tag|book_tag|author|writer|penciller|inker|colorist|letterer|" +
+        "cover|editor|translator|publisher|status|reading_direction|age_rating|language|genre|" +
+        "sharing_label|total_book_count|book_count|release_date|deleted|oneshot|complete):",
+    RegexOption.IGNORE_CASE,
+)
+private val BOOLEAN_GROUP_QUERY = Regex("\\([^)]*\\b(?:AND|OR|NOT)\\b[^)]*\\)")

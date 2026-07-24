@@ -81,6 +81,7 @@ class KomgaLibraryScreenModel(
     @Volatile
     private var filtersInitialized = false
     private var listingBeforeSearch: Listing? = null
+    private var filtersBeforeSearch: FilterList? = null
 
     init {
         if (source is CatalogueSource) {
@@ -177,6 +178,7 @@ class KomgaLibraryScreenModel(
 
     fun setListing(listing: Listing) {
         listingBeforeSearch = null
+        filtersBeforeSearch = null
         mutableState.update { it.copy(listing = listing, toolbarQuery = null) }
     }
 
@@ -209,8 +211,10 @@ class KomgaLibraryScreenModel(
         if (!query.isNullOrEmpty() && input.query.isNullOrEmpty() && listingBeforeSearch == null) {
             listingBeforeSearch = currentListing
         }
-        (source as? KomgaSource)?.saveSessionFilterState(nextFilters, libraryScope)
-        (source as? KomgaSource)?.savePersistentFilterState(nextFilters, libraryScope)
+        if (filters != null || filtersBeforeSearch == null) {
+            (source as? KomgaSource)?.saveSessionFilterState(nextFilters, libraryScope)
+            (source as? KomgaSource)?.savePersistentFilterState(nextFilters, libraryScope)
+        }
 
         mutableState.update {
             it.copy(
@@ -225,14 +229,17 @@ class KomgaLibraryScreenModel(
 
     fun exitSearch() {
         val currentListing = state.value.listing
+        val restoredFilters = filtersBeforeSearch ?: state.value.filters
         val restoredListing = listingBeforeSearch ?: when (currentListing) {
-            is Listing.Search -> currentListing.copy(query = null)
+            is Listing.Search -> currentListing.copy(query = null, filters = restoredFilters)
             else -> currentListing
         }
         listingBeforeSearch = null
+        filtersBeforeSearch = null
         mutableState.update {
             it.copy(
                 listing = restoredListing,
+                filters = restoredFilters,
                 toolbarQuery = null,
             )
         }
@@ -320,7 +327,13 @@ class KomgaLibraryScreenModel(
 
     fun setToolbarQuery(query: String?) {
         if (query != null && state.value.toolbarQuery == null) {
+            filtersBeforeSearch = state.value.filters
             setSearchType(TYPE_ALL_INDEX)
+        } else if (query == null && filtersBeforeSearch != null && !state.value.isUserQuery) {
+            val restoredFilters = filtersBeforeSearch ?: state.value.filters
+            filtersBeforeSearch = null
+            mutableState.update { it.copy(filters = restoredFilters, toolbarQuery = null) }
+            return
         }
         mutableState.update { it.copy(toolbarQuery = query) }
     }
@@ -338,9 +351,6 @@ class KomgaLibraryScreenModel(
             currentFilters = currentState.filters,
         )
         filters.selectContentType(type)
-        komgaSource.saveSessionFilterState(filters, libraryScope)
-        komgaSource.savePersistentFilterState(filters, libraryScope)
-
         val activeQuery = currentState.toolbarQuery
             ?.takeIf { currentState.isUserQuery && it.isNotBlank() }
         val listing = if (activeQuery != null) {

@@ -1,7 +1,14 @@
 package koharia.komga.domain.repository
 
+import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.komga.api.KomgaApiClient
+import koharia.komga.api.KomgaSearchCapabilities
+import koharia.source.komga.TypeSelect
+import kotlinx.serialization.json.Json
+import okhttp3.Headers
+import okhttp3.OkHttpClient
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -24,6 +31,28 @@ class KomgaSearchTest {
     @Test
     fun `search query without delimiters remains unchanged`() {
         assertEquals("A normal title", normalizeSearchQuery("A normal title"))
+    }
+
+    @Test
+    fun `advanced lucene queries keep grouping delimiters`() {
+        assertEquals("writer:(sean murphy)", normalizeSearchQuery(" writer:(sean murphy) "))
+        assertEquals("(batman OR robin)", normalizeSearchQuery("(batman OR robin)"))
+    }
+
+    @Test
+    fun `legacy request path maps all search to series`() {
+        val apiClient = KomgaApiClient(
+            baseUrl = "https://komga.test",
+            headers = Headers.Builder().build(),
+            client = OkHttpClient(),
+            json = Json,
+            searchCapabilities = KomgaSearchCapabilities(),
+        )
+        val repository = KomgaRepository("https://komga.test", apiClient)
+
+        val request = repository.searchMangaRequest(1, "title", FilterList(TypeSelect()), emptySet())
+
+        assertEquals("/api/v1/series", request.url.encodedPath)
     }
 
     @Test

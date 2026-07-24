@@ -13,7 +13,7 @@ class KomgaCacheControlInterceptor(
         val request = chain.request()
         val response = chain.proceed(request)
 
-        if (request.method != "GET" || !response.isSuccessful) {
+        if (!response.isSuccessful) {
             return response
         }
 
@@ -21,9 +21,13 @@ class KomgaCacheControlInterceptor(
             return response
         }
 
-        val cacheableResponse = response.newBuilder()
-            .header("Cache-Control", "public, max-age=$MAX_AGE_SECONDS")
-            .build()
+        val cacheableResponse = if (request.method == "GET") {
+            response.newBuilder()
+                .header("Cache-Control", "public, max-age=$MAX_AGE_SECONDS")
+                .build()
+        } else {
+            response
+        }
 
         return metadataCacheStore.save(request, cacheableResponse)
     }
