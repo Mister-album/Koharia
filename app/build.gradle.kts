@@ -57,7 +57,7 @@ android {
     defaultConfig {
         applicationId = "app.koharia"
 
-        versionCode = 4
+        versionCode = 5
         versionName = "0.2.3"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getLatestCommitCount()}\"")
