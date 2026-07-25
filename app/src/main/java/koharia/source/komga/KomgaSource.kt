@@ -376,7 +376,7 @@ class KomgaSource(
         val saved = (scopedState ?: legacyState)
             ?.let { runCatching { json.decodeFromString<PersistentFilterState>(it) }.getOrNull() }
             ?: return false
-        val migrated = saved.migrateSearchType()
+        val migrated = saved.migratePersistentFilterState()
         if (migrated != saved) {
             preferences.edit()
                 .putString(persistentFilterStateKey(libraryScope), json.encodeToString(migrated))
@@ -857,22 +857,9 @@ private fun defaultLibraryPersistentFilterState(): PersistentFilterState {
     )
 }
 
-internal fun PersistentFilterState.migrateSearchType(): PersistentFilterState {
+internal fun PersistentFilterState.migratePersistentFilterState(): PersistentFilterState {
     if (version >= CURRENT_PERSISTENT_FILTER_VERSION) return this
-    val selectedType = selects["Search for"]
-    return copy(
-        version = CURRENT_PERSISTENT_FILTER_VERSION,
-        selects = if (selectedType == TYPE_SERIES_INDEX) {
-            selects + ("Search for" to TYPE_ALL_INDEX)
-        } else {
-            selects
-        },
-        sorts = if (selectedType == TYPE_SERIES_INDEX) {
-            sorts + ("Sort" to PersistentSortState(index = 0, ascending = true))
-        } else {
-            sorts
-        },
-    )
+    return copy(version = CURRENT_PERSISTENT_FILTER_VERSION)
 }
 
 private enum class FetchFilterStatus {

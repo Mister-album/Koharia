@@ -424,7 +424,7 @@ private fun FilterList.multiSelectIds(name: String): Set<String> {
     return filter.state.filter { it.state }.map { it.id }.toSet()
 }
 
-private val SEARCH_DELIMITERS = Regex("[()（）【】]")
+private val SEARCH_DELIMITERS = Regex("""[()\[\]（）【】]""")
 private val REPEATED_WHITESPACE = Regex("\\s+")
 private val ADVANCED_FIELD_QUERY = Regex(
     "(?:^|\\s)(?:title|isbn|tag|series_tag|book_tag|author|writer|penciller|inker|colorist|letterer|" +

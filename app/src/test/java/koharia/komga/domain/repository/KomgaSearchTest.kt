@@ -18,14 +18,15 @@ class KomgaSearchTest {
 
     @Test
     fun `search query removes delimiters but keeps their content`() {
-        assertEquals("Title Edition Extra Full", normalizeSearchQuery(" Title(Edition)【Extra】（Full） "))
+        assertEquals("Title Edition Extra Full English", normalizeSearchQuery(" Title(Edition)【Extra】（Full）[English] "))
         assertEquals("Title Edition", normalizeSearchQuery("Title( Edition"))
+        assertEquals("Title Scan", normalizeSearchQuery("Title[Scan"))
         assertEquals("Title Edition", normalizeSearchQuery("Title   Edition"))
     }
 
     @Test
     fun `search query made only of delimiters becomes blank`() {
-        assertEquals("", normalizeSearchQuery("（【()】）"))
+        assertEquals("", normalizeSearchQuery("（【([])】）"))
     }
 
     @Test
@@ -37,6 +38,7 @@ class KomgaSearchTest {
     fun `advanced lucene queries keep grouping delimiters`() {
         assertEquals("writer:(sean murphy)", normalizeSearchQuery(" writer:(sean murphy) "))
         assertEquals("(batman OR robin)", normalizeSearchQuery("(batman OR robin)"))
+        assertEquals("release_date:[2020 TO 2024]", normalizeSearchQuery("release_date:[2020 TO 2024]"))
     }
 
     @Test
