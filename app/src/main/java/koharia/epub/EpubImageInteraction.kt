@@ -1,14 +1,59 @@
 package koharia.epub
 
+internal fun buildEpubImageColorPolicyScript(
+    preserveImageColors: Boolean,
+    parentColorsInverted: Boolean,
+): String =
+    """
+    (function() {
+        const preserveImageColors = $preserveImageColors;
+        const parentColorsInverted = $parentColorsInverted;
+        const styleId = '$IMAGE_COLOR_POLICY_STYLE_ID';
+        let style = document.getElementById(styleId);
+        if (!preserveImageColors) {
+            if (style) style.remove();
+            return 'removed';
+        }
+        if (!style) {
+            style = document.createElement('style');
+            style.id = styleId;
+            (document.head || document.documentElement).appendChild(style);
+        }
+        style.textContent = parentColorsInverted
+            ? `
+                :root img,
+                :root svg {
+                    -webkit-filter: invert(100%) !important;
+                    filter: invert(100%) !important;
+                }
+            `
+            : `
+                :root[style*="readium-night-on"] [epub\\:type~="titlepage"] img:only-child,
+                :root[style*="readium-night-on"] [type~="titlepage"] img:only-child,
+                :root[style*="readium-night-on"] img[class*="gaiji"],
+                :root[style*="readium-night-on"][style*="readium-darken-on"] img,
+                :root[style*="readium-night-on"][style*="readium-invert-on"] img {
+                    -webkit-filter: none !important;
+                    filter: none !important;
+                }
+            `;
+        return 'applied';
+    })()
+    """.trimIndent()
+
 internal fun buildEpubImageInteractionInstallScript(
     longPressTimeoutMs: Int,
     touchSlopCssPx: Float,
+    preserveImageColors: Boolean,
+    parentColorsInverted: Boolean,
 ): String =
     """
     (function() {
         const resourceIndex = Number.isInteger(window.__kohariaImageResourceIndex)
             ? window.__kohariaImageResourceIndex
             : -1;
+        ${buildEpubImageColorPolicyScript(preserveImageColors, parentColorsInverted)};
+
         const existing = window.__kohariaImageInteractions;
         if (existing) {
             existing.resourceIndex = resourceIndex;
@@ -148,3 +193,4 @@ internal fun buildEpubImageInteractionInstallScript(
 internal const val EPUB_IMAGE_BRIDGE_NAME = "KohariaEpubImage"
 private const val SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 private const val XLINK_NAMESPACE = "http://www.w3.org/1999/xlink"
+private const val IMAGE_COLOR_POLICY_STYLE_ID = "koharia-epub-image-color-policy"

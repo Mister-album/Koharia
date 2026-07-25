@@ -54,6 +54,9 @@ class EpubLayoutPreferences(
     val publisherStyles: Preference<Boolean> =
         preferenceStore.getBoolean("epub_layout_publisher_styles", true)
 
+    val preserveImageColors: Preference<Boolean> =
+        preferenceStore.getBoolean("epub_layout_preserve_image_colors", true)
+
     val readWithVolumeKeys: Preference<Boolean> =
         preferenceStore.getBoolean("epub_layout_volume_keys", true)
 

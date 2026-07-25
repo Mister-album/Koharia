@@ -8,6 +8,8 @@ class EpubImageInteractionTest {
     private val script = buildEpubImageInteractionInstallScript(
         longPressTimeoutMs = 500,
         touchSlopCssPx = 8f,
+        preserveImageColors = true,
+        parentColorsInverted = false,
     )
 
     @Test
@@ -29,5 +31,25 @@ class EpubImageInteractionTest {
     @Test
     fun `linked images retain their navigation behavior`() {
         assertTrue(script.contains("image.closest('a[href]')"))
+    }
+
+    @Test
+    fun `script keeps images unchanged in Readium night mode`() {
+        assertTrue(script.contains("koharia-epub-image-color-policy"))
+        assertTrue(script.contains("readium-night-on"))
+        assertTrue(script.contains("filter: none !important"))
+    }
+
+    @Test
+    fun `script counter-inverts images when the parent view is inverted`() {
+        val invertedScript = buildEpubImageInteractionInstallScript(
+            longPressTimeoutMs = 500,
+            touchSlopCssPx = 8f,
+            preserveImageColors = true,
+            parentColorsInverted = true,
+        )
+
+        assertTrue(invertedScript.contains("const parentColorsInverted = true"))
+        assertTrue(invertedScript.contains("filter: invert(100%) !important"))
     }
 }

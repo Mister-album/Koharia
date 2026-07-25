@@ -33,6 +33,13 @@ class EpubReaderPreferenceDefaultsTest {
     }
 
     @Test
+    fun `EPUB images preserve their colors by default`() {
+        val preferences = EpubLayoutPreferences(InMemoryPreferenceStore())
+
+        assertTrue(preferences.preserveImageColors.get())
+    }
+
+    @Test
     fun `legacy free global orientation is exposed as default`() {
         val store = InMemoryPreferenceStore()
         store.getInt("pref_default_orientation_type_key").set(ReaderOrientation.FREE.flagValue)
