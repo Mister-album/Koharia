@@ -51,5 +51,26 @@ class EpubImageInteractionTest {
 
         assertTrue(invertedScript.contains("const parentColorsInverted = true"))
         assertTrue(invertedScript.contains("filter: invert(100%) !important"))
+        assertTrue(invertedScript.contains("document.createElementNS(styleNamespace, 'style')"))
+        assertTrue(
+            invertedScript.contains("document.documentElement.namespaceURI === 'http://www.w3.org/2000/svg'"),
+        )
+        assertTrue(invertedScript.contains(":root svg svg"))
+    }
+
+    @Test
+    fun `continuous scroll hides frames until image policy is installed`() {
+        val continuousScript = buildEpubContinuousScrollInstallScript(
+            resources = listOf(
+                EpubContinuousScrollResource(0, "chapter.xhtml", "https://readium/chapter.xhtml"),
+            ),
+            currentIndex = 0,
+            initialProgression = 0.0,
+            imageInteractionScript = script,
+            paragraphIndentScript = "",
+        )
+
+        assertTrue(continuousScript.contains("iframe.style.visibility = 'hidden'"))
+        assertTrue(continuousScript.contains("iframe.style.visibility = 'visible'"))
     }
 }

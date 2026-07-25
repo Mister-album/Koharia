@@ -3,6 +3,7 @@ package koharia.epub
 import android.content.Context
 import android.graphics.Rect
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewConfiguration
@@ -105,6 +106,7 @@ class EpubReaderFragment : Fragment() {
     private var imageColorPolicyPreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
     private val installedImageColorPolicies = WeakHashMap<WebView, String>()
     private val pendingImageColorPolicies = WeakHashMap<WebView, String>()
+    private val imageColorPolicyDrawWaits = WeakHashMap<WebView, ImageColorPolicyDrawWait>()
     private var continuousScrollInstalledHref: String? = null
     private var continuousScrollLocator: Locator? = null
 
@@ -389,6 +391,7 @@ class EpubReaderFragment : Fragment() {
         imageColorPolicyGeneration++
         installedImageColorPolicies.clear()
         pendingImageColorPolicies.clear()
+        imageColorPolicyDrawWaits.clear()
         imageColorPolicyRoot?.postInvalidateOnAnimation()
         val navigator = readyNavigatorFragment()
         scheduleImageInteractionsInstall(navigator)
@@ -504,6 +507,7 @@ class EpubReaderFragment : Fragment() {
         imageColorPolicyPreDrawListener = null
         installedImageColorPolicies.clear()
         pendingImageColorPolicies.clear()
+        imageColorPolicyDrawWaits.clear()
     }
 
     private fun applyImageColorPolicyBeforeDraw(root: View): Boolean {
@@ -513,15 +517,19 @@ class EpubReaderFragment : Fragment() {
         root.forEachWebView { webView ->
             val url = webView.url?.substringBefore('#')?.takeIf { it.isNotBlank() } ?: return@forEachWebView
             val policyKey = "$generation:$url"
+            val isVisible = webView.isVisiblyDrawn()
             if (webView.progress < 100) {
                 installedImageColorPolicies.remove(webView)
-                if (webView.isVisiblyDrawn()) {
+                if (isVisible && shouldBlockImageColorPolicyDraw(root, webView, policyKey)) {
                     visiblePolicyPending = true
                     root.postInvalidateOnAnimation()
                 }
                 return@forEachWebView
             }
-            if (installedImageColorPolicies[webView] == policyKey) return@forEachWebView
+            if (installedImageColorPolicies[webView] == policyKey) {
+                imageColorPolicyDrawWaits.remove(webView)
+                return@forEachWebView
+            }
 
             if (pendingImageColorPolicies[webView] != policyKey) {
                 pendingImageColorPolicies[webView] = policyKey
@@ -534,6 +542,7 @@ class EpubReaderFragment : Fragment() {
                             webView.url?.substringBefore('#') == url
                         ) {
                             installedImageColorPolicies[webView] = policyKey
+                            imageColorPolicyDrawWaits.remove(webView)
                         }
                         root.postInvalidateOnAnimation()
                     }
@@ -541,7 +550,12 @@ class EpubReaderFragment : Fragment() {
                         {
                             if (pendingImageColorPolicies[webView] == policyKey) {
                                 pendingImageColorPolicies.remove(webView)
-                                installedImageColorPolicies[webView] = policyKey
+                                if (imageColorPolicyGeneration == generation &&
+                                    webView.url?.substringBefore('#') == url
+                                ) {
+                                    installedImageColorPolicies[webView] = policyKey
+                                    imageColorPolicyDrawWaits.remove(webView)
+                                }
                                 root.postInvalidateOnAnimation()
                             }
                         },
@@ -552,9 +566,39 @@ class EpubReaderFragment : Fragment() {
                     root.postInvalidateOnAnimation()
                 }
             }
-            if (webView.isVisiblyDrawn()) visiblePolicyPending = true
+            if (isVisible && shouldBlockImageColorPolicyDraw(root, webView, policyKey)) {
+                visiblePolicyPending = true
+            }
         }
         return !visiblePolicyPending
+    }
+
+    private fun shouldBlockImageColorPolicyDraw(
+        root: View,
+        webView: WebView,
+        policyKey: String,
+    ): Boolean {
+        val now = SystemClock.uptimeMillis()
+        val currentWait = imageColorPolicyDrawWaits[webView]
+        val wait = if (currentWait?.policyKey == policyKey) {
+            currentWait
+        } else {
+            ImageColorPolicyDrawWait(
+                policyKey = policyKey,
+                expiresAt = now + IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS,
+            ).also { newWait ->
+                imageColorPolicyDrawWaits[webView] = newWait
+                webView.postDelayed(
+                    {
+                        if (imageColorPolicyDrawWaits[webView] == newWait) {
+                            root.postInvalidateOnAnimation()
+                        }
+                    },
+                    IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS,
+                )
+            }
+        }
+        return now < wait.expiresAt
     }
 
     private fun View.forEachWebView(action: (WebView) -> Unit) {
@@ -886,4 +930,9 @@ class EpubReaderFragment : Fragment() {
             return EpubReaderFragment().apply { arguments = createArguments(chapterId, sourceId) }
         }
     }
+
+    private data class ImageColorPolicyDrawWait(
+        val policyKey: String,
+        val expiresAt: Long,
+    )
 }
