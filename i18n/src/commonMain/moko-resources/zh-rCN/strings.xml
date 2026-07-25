@@ -610,6 +610,8 @@
     <string name="pref_epub_layout_mode">布局模式</string>
     <string name="pref_epub_page_direction">翻页方向</string>
     <string name="pref_epub_typography_and_appearance">排版与外观</string>
+    <string name="pref_epub_preserve_image_colors">反色时保持图片原色</string>
+    <string name="pref_epub_preserve_image_colors_summary">避免 EPUB 图片被阅读器反色或深色主题反色</string>
     <string name="pref_epub_layout_paginated">分页</string>
     <string name="pref_epub_layout_scrolled">连续滚动</string>
     <string name="pref_epub_theme">背景设置</string>

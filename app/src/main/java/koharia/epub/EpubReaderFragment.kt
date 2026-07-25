@@ -1,10 +1,14 @@
 package koharia.epub
 
 import android.content.Context
+import android.graphics.Rect
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.widget.FrameLayout
@@ -39,6 +43,7 @@ import org.readium.r2.shared.util.mediatype.MediaType
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.WeakHashMap
 
 @OptIn(ExperimentalReadiumApi::class)
 class EpubReaderFragment : Fragment() {
@@ -90,6 +95,18 @@ class EpubReaderFragment : Fragment() {
     private var paragraphIndentOverrideEnabled = false
     private var continuousScrollInstallJob: Job? = null
     private var imageInteractionInstallJob: Job? = null
+    private var preserveImageColors = true
+    private var parentColorsInverted = false
+    private var imageColorPolicyScript = buildEpubImageColorPolicyScript(
+        preserveImageColors = preserveImageColors,
+        parentColorsInverted = parentColorsInverted,
+    )
+    private var imageColorPolicyGeneration = 0L
+    private var imageColorPolicyRoot: View? = null
+    private var imageColorPolicyPreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+    private val installedImageColorPolicies = WeakHashMap<WebView, String>()
+    private val pendingImageColorPolicies = WeakHashMap<WebView, String>()
+    private val imageColorPolicyDrawWaits = WeakHashMap<WebView, ImageColorPolicyDrawWait>()
     private var continuousScrollInstalledHref: String? = null
     private var continuousScrollLocator: Locator? = null
 
@@ -231,6 +248,7 @@ class EpubReaderFragment : Fragment() {
         clearContinuousScrollState()
         imageInteractionInstallJob?.cancel()
         imageInteractionInstallJob = null
+        clearImageColorPolicyDrawGuard()
         clearNavigatorInputListener()
         super.onDestroyView()
     }
@@ -355,6 +373,31 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
+    internal fun updateImageColorPolicy(
+        preserveImageColors: Boolean,
+        parentColorsInverted: Boolean,
+    ) {
+        if (this.preserveImageColors == preserveImageColors &&
+            this.parentColorsInverted == parentColorsInverted
+        ) {
+            return
+        }
+        this.preserveImageColors = preserveImageColors
+        this.parentColorsInverted = parentColorsInverted
+        imageColorPolicyScript = buildEpubImageColorPolicyScript(
+            preserveImageColors = preserveImageColors,
+            parentColorsInverted = parentColorsInverted,
+        )
+        imageColorPolicyGeneration++
+        installedImageColorPolicies.clear()
+        pendingImageColorPolicies.clear()
+        imageColorPolicyDrawWaits.clear()
+        imageColorPolicyRoot?.postInvalidateOnAnimation()
+        val navigator = readyNavigatorFragment()
+        scheduleImageInteractionsInstall(navigator)
+        scheduleContinuousScrollInstall(navigator)
+    }
+
     private fun observeNavigator(navigator: EpubNavigatorFragment) {
         logcat(LogPriority.DEBUG) {
             "EPUB fragment observe navigator chapterId=$chapterId"
@@ -401,7 +444,12 @@ class EpubReaderFragment : Fragment() {
 
     private fun observeNavigatorViewReady(navigator: EpubNavigatorFragment) {
         navigator.viewLifecycleOwnerLiveData.observe(viewLifecycleOwner) { owner ->
-            if (owner == null || !isAdded || view == null) return@observe
+            if (owner == null) {
+                clearImageColorPolicyDrawGuard()
+                return@observe
+            }
+            if (!isAdded || view == null) return@observe
+            installImageColorPolicyDrawGuard(navigator.publicationView)
             host?.onNavigatorReady(this)
             scheduleImageInteractionsInstall(navigator)
             scheduleContinuousScrollInstall(navigator)
@@ -413,6 +461,7 @@ class EpubReaderFragment : Fragment() {
     ) {
         imageInteractionInstallJob?.cancel()
         if (navigator == null || !isAdded || view == null) return
+        imageColorPolicyRoot?.postInvalidateOnAnimation()
         imageInteractionInstallJob = viewLifecycleOwner.lifecycleScope.launch {
             delay(IMAGE_INTERACTION_INSTALL_DELAY_MS)
             if (!isAdded || view == null || readyNavigatorFragment() !== navigator) return@launch
@@ -423,6 +472,8 @@ class EpubReaderFragment : Fragment() {
                     buildEpubImageInteractionInstallScript(
                         longPressTimeoutMs = ViewConfiguration.getLongPressTimeout(),
                         touchSlopCssPx = configuration.scaledTouchSlop / density,
+                        preserveImageColors = preserveImageColors,
+                        parentColorsInverted = parentColorsInverted,
                     ),
                 )
             }.onFailure { error ->
@@ -430,6 +481,139 @@ class EpubReaderFragment : Fragment() {
             }
         }
     }
+
+    private fun installImageColorPolicyDrawGuard(root: View) {
+        if (imageColorPolicyRoot === root && imageColorPolicyPreDrawListener != null) {
+            root.postInvalidateOnAnimation()
+            return
+        }
+        clearImageColorPolicyDrawGuard()
+        imageColorPolicyRoot = root
+        imageColorPolicyPreDrawListener = ViewTreeObserver.OnPreDrawListener {
+            applyImageColorPolicyBeforeDraw(root)
+        }.also { listener ->
+            root.viewTreeObserver.addOnPreDrawListener(listener)
+        }
+        root.postInvalidateOnAnimation()
+    }
+
+    private fun clearImageColorPolicyDrawGuard() {
+        val root = imageColorPolicyRoot
+        val listener = imageColorPolicyPreDrawListener
+        if (root != null && listener != null && root.viewTreeObserver.isAlive) {
+            root.viewTreeObserver.removeOnPreDrawListener(listener)
+        }
+        imageColorPolicyRoot = null
+        imageColorPolicyPreDrawListener = null
+        installedImageColorPolicies.clear()
+        pendingImageColorPolicies.clear()
+        imageColorPolicyDrawWaits.clear()
+    }
+
+    private fun applyImageColorPolicyBeforeDraw(root: View): Boolean {
+        val generation = imageColorPolicyGeneration
+        val script = imageColorPolicyScript
+        var visiblePolicyPending = false
+        root.forEachWebView { webView ->
+            val url = webView.url?.substringBefore('#')?.takeIf { it.isNotBlank() } ?: return@forEachWebView
+            val policyKey = "$generation:$url"
+            val isVisible = webView.isVisiblyDrawn()
+            if (webView.progress < 100) {
+                installedImageColorPolicies.remove(webView)
+                if (isVisible && shouldBlockImageColorPolicyDraw(root, webView, policyKey)) {
+                    visiblePolicyPending = true
+                    root.postInvalidateOnAnimation()
+                }
+                return@forEachWebView
+            }
+            if (installedImageColorPolicies[webView] == policyKey) {
+                imageColorPolicyDrawWaits.remove(webView)
+                return@forEachWebView
+            }
+
+            if (pendingImageColorPolicies[webView] != policyKey) {
+                pendingImageColorPolicies[webView] = policyKey
+                runCatching {
+                    webView.evaluateJavascript(script) {
+                        if (pendingImageColorPolicies[webView] == policyKey) {
+                            pendingImageColorPolicies.remove(webView)
+                        }
+                        if (imageColorPolicyGeneration == generation &&
+                            webView.url?.substringBefore('#') == url
+                        ) {
+                            installedImageColorPolicies[webView] = policyKey
+                            imageColorPolicyDrawWaits.remove(webView)
+                        }
+                        root.postInvalidateOnAnimation()
+                    }
+                    webView.postDelayed(
+                        {
+                            if (pendingImageColorPolicies[webView] == policyKey) {
+                                pendingImageColorPolicies.remove(webView)
+                                if (imageColorPolicyGeneration == generation &&
+                                    webView.url?.substringBefore('#') == url
+                                ) {
+                                    installedImageColorPolicies[webView] = policyKey
+                                    imageColorPolicyDrawWaits.remove(webView)
+                                }
+                                root.postInvalidateOnAnimation()
+                            }
+                        },
+                        IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS,
+                    )
+                }.onFailure {
+                    pendingImageColorPolicies.remove(webView)
+                    root.postInvalidateOnAnimation()
+                }
+            }
+            if (isVisible && shouldBlockImageColorPolicyDraw(root, webView, policyKey)) {
+                visiblePolicyPending = true
+            }
+        }
+        return !visiblePolicyPending
+    }
+
+    private fun shouldBlockImageColorPolicyDraw(
+        root: View,
+        webView: WebView,
+        policyKey: String,
+    ): Boolean {
+        val now = SystemClock.uptimeMillis()
+        val currentWait = imageColorPolicyDrawWaits[webView]
+        val wait = if (currentWait?.policyKey == policyKey) {
+            currentWait
+        } else {
+            ImageColorPolicyDrawWait(
+                policyKey = policyKey,
+                expiresAt = now + IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS,
+            ).also { newWait ->
+                imageColorPolicyDrawWaits[webView] = newWait
+                webView.postDelayed(
+                    {
+                        if (imageColorPolicyDrawWaits[webView] == newWait) {
+                            root.postInvalidateOnAnimation()
+                        }
+                    },
+                    IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS,
+                )
+            }
+        }
+        return now < wait.expiresAt
+    }
+
+    private fun View.forEachWebView(action: (WebView) -> Unit) {
+        if (this is WebView) {
+            action(this)
+            return
+        }
+        if (this !is ViewGroup) return
+        repeat(childCount) { index ->
+            getChildAt(index).forEachWebView(action)
+        }
+    }
+
+    private fun WebView.isVisiblyDrawn(): Boolean =
+        isShown && width > 0 && height > 0 && getGlobalVisibleRect(Rect())
 
     private fun scheduleContinuousScrollInstall(
         navigator: EpubNavigatorFragment?,
@@ -473,6 +657,8 @@ class EpubReaderFragment : Fragment() {
                             longPressTimeoutMs = ViewConfiguration.getLongPressTimeout(),
                             touchSlopCssPx = ViewConfiguration.get(requireContext()).scaledTouchSlop /
                                 (requireContext().resources.displayMetrics.density.takeIf { it > 0f } ?: 1f),
+                            preserveImageColors = preserveImageColors,
+                            parentColorsInverted = parentColorsInverted,
                         ),
                         paragraphIndentScript = if (paragraphIndentOverrideEnabled) {
                             APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
@@ -701,6 +887,7 @@ class EpubReaderFragment : Fragment() {
         private const val CONTINUOUS_SCROLL_BRIDGE_NAME = "KohariaContinuousScroll"
         private const val CONTINUOUS_SCROLL_INSTALL_DELAY_MS = 180L
         private const val IMAGE_INTERACTION_INSTALL_DELAY_MS = 80L
+        private const val IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS = 250L
         private val READIUM_PACKAGE_BASE_URL = AbsoluteUrl("https://readium_package/")!!
         private val PARAGRAPH_INDENT_DEBUG_SCRIPT =
             """
@@ -743,4 +930,9 @@ class EpubReaderFragment : Fragment() {
             return EpubReaderFragment().apply { arguments = createArguments(chapterId, sourceId) }
         }
     }
+
+    private data class ImageColorPolicyDrawWait(
+        val policyKey: String,
+        val expiresAt: Long,
+    )
 }

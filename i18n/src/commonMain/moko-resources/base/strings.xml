@@ -967,6 +967,8 @@
     <string name="pref_epub_layout_mode">Layout mode</string>
     <string name="pref_epub_page_direction">Page direction</string>
     <string name="pref_epub_typography_and_appearance">Typography &amp; appearance</string>
+    <string name="pref_epub_preserve_image_colors">Keep image colors when inverted</string>
+    <string name="pref_epub_preserve_image_colors_summary">Prevent EPUB images from being color-inverted by the reader or dark theme</string>
     <string name="pref_epub_layout_paginated">Paginated</string>
     <string name="pref_epub_layout_scrolled">Continuous scroll</string>
     <string name="pref_epub_theme">Background settings</string>

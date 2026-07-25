@@ -197,6 +197,7 @@ internal fun buildEpubContinuousScrollInstallScript(
                     }
                     try { iframe.contentWindow.eval(paragraphIndentScript); } catch (_) {}
                     installImageInteractions(iframe.contentWindow, index);
+                    iframe.style.visibility = 'visible';
                     const height = Math.max(
                         doc.documentElement.scrollHeight || 0,
                         doc.body ? doc.body.scrollHeight || 0 : 0,
@@ -218,6 +219,7 @@ internal fun buildEpubContinuousScrollInstallScript(
                 iframe.setAttribute('frameborder', '0');
                 iframe.setAttribute('title', resources[index].href || '');
                 iframe.style.height = (measuredHeights.get(index) || viewportHeight) + 'px';
+                iframe.style.visibility = 'hidden';
                 iframe.addEventListener('load', function() {
                     failedResources.delete(index);
                     measureFrame(index, iframe);

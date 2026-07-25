@@ -300,6 +300,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             val grayscale by readerPreferences.grayscale.changes().collectAsState(readerPreferences.grayscale.get())
             val invertedColors by readerPreferences.invertedColors.changes()
                 .collectAsState(readerPreferences.invertedColors.get())
+            val preserveImageColors by epubLayoutPreferences.preserveImageColors.changes()
+                .collectAsState(epubLayoutPreferences.preserveImageColors.get())
             val currentReaderBackgroundColor = remember(
                 currentTheme,
                 currentCustomBackgroundColor,
@@ -563,6 +565,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                     drawUnderCutout = drawUnderCutout,
                                     grayscale = grayscale,
                                     invertedColors = invertedColors,
+                                    preserveImageColors = preserveImageColors,
                                     theme = currentTheme,
                                     customBackgroundColor = currentCustomBackgroundColor,
                                     verticalMargins = currentVerticalMargins,
@@ -1306,6 +1309,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         drawUnderCutout: Boolean,
         grayscale: Boolean,
         invertedColors: Boolean,
+        preserveImageColors: Boolean,
         theme: EpubLayoutPreferences.Theme,
         customBackgroundColor: Int,
         verticalMargins: Float,
@@ -1319,6 +1323,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 arguments = arguments,
                 onUpdate = { fragment ->
                     readerFragment = fragment
+                    fragment.updateImageColorPolicy(
+                        preserveImageColors = preserveImageColors,
+                        parentColorsInverted = invertedColors,
+                    )
                     fragment.view?.let { view ->
                         view.setBackgroundColor(theme.readerBackgroundColor(customBackgroundColor))
                         view.setLayerType(View.LAYER_TYPE_HARDWARE, readerColorFilterPaint(grayscale, invertedColors))
@@ -1337,10 +1345,15 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 drawUnderCutout,
                 grayscale,
                 invertedColors,
+                preserveImageColors,
                 theme,
                 customBackgroundColor,
                 verticalMargins,
             ) {
+                readerFragment?.updateImageColorPolicy(
+                    preserveImageColors = preserveImageColors,
+                    parentColorsInverted = invertedColors,
+                )
                 // AndroidFragment.onUpdate is only invoked when the Fragment is created. Re-apply
                 // layout-affecting reader settings when Compose preferences change in the same session.
                 readerFragment?.view?.let { view ->

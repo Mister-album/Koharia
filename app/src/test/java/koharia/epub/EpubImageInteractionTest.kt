@@ -8,6 +8,8 @@ class EpubImageInteractionTest {
     private val script = buildEpubImageInteractionInstallScript(
         longPressTimeoutMs = 500,
         touchSlopCssPx = 8f,
+        preserveImageColors = true,
+        parentColorsInverted = false,
     )
 
     @Test
@@ -29,5 +31,46 @@ class EpubImageInteractionTest {
     @Test
     fun `linked images retain their navigation behavior`() {
         assertTrue(script.contains("image.closest('a[href]')"))
+    }
+
+    @Test
+    fun `script keeps images unchanged in Readium night mode`() {
+        assertTrue(script.contains("koharia-epub-image-color-policy"))
+        assertTrue(script.contains("readium-night-on"))
+        assertTrue(script.contains("filter: none !important"))
+    }
+
+    @Test
+    fun `script counter-inverts images when the parent view is inverted`() {
+        val invertedScript = buildEpubImageInteractionInstallScript(
+            longPressTimeoutMs = 500,
+            touchSlopCssPx = 8f,
+            preserveImageColors = true,
+            parentColorsInverted = true,
+        )
+
+        assertTrue(invertedScript.contains("const parentColorsInverted = true"))
+        assertTrue(invertedScript.contains("filter: invert(100%) !important"))
+        assertTrue(invertedScript.contains("document.createElementNS(styleNamespace, 'style')"))
+        assertTrue(
+            invertedScript.contains("document.documentElement.namespaceURI === 'http://www.w3.org/2000/svg'"),
+        )
+        assertTrue(invertedScript.contains(":root svg svg"))
+    }
+
+    @Test
+    fun `continuous scroll hides frames until image policy is installed`() {
+        val continuousScript = buildEpubContinuousScrollInstallScript(
+            resources = listOf(
+                EpubContinuousScrollResource(0, "chapter.xhtml", "https://readium/chapter.xhtml"),
+            ),
+            currentIndex = 0,
+            initialProgression = 0.0,
+            imageInteractionScript = script,
+            paragraphIndentScript = "",
+        )
+
+        assertTrue(continuousScript.contains("iframe.style.visibility = 'hidden'"))
+        assertTrue(continuousScript.contains("iframe.style.visibility = 'visible'"))
     }
 }

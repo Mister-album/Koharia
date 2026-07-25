@@ -160,7 +160,7 @@ object SettingsReaderScreen : SearchableSettings {
             getEpubTypographyGroup(readerPreferences, epubLayoutPreferences),
             getEpubNavigationGroup(readerPreferences, epubLayoutPreferences),
             getEpubDisplayGroup(readerPreferences),
-            getEpubFilterGroup(readerPreferences),
+            getEpubFilterGroup(readerPreferences, epubLayoutPreferences),
         )
     }
 
@@ -431,7 +431,10 @@ object SettingsReaderScreen : SearchableSettings {
     }
 
     @Composable
-    private fun getEpubFilterGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+    private fun getEpubFilterGroup(
+        readerPreferences: ReaderPreferences,
+        epubLayoutPreferences: EpubLayoutPreferences,
+    ): Preference.PreferenceGroup {
         val colorFilterEnabled by readerPreferences.colorFilter.collectAsState()
         val colorValue by readerPreferences.colorFilterValue.collectAsState()
         return Preference.PreferenceGroup(
@@ -485,6 +488,11 @@ object SettingsReaderScreen : SearchableSettings {
                 Preference.PreferenceItem.SwitchPreference(
                     preference = readerPreferences.invertedColors,
                     title = stringResource(MR.strings.pref_inverted_colors),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = epubLayoutPreferences.preserveImageColors,
+                    title = stringResource(MR.strings.pref_epub_preserve_image_colors),
+                    subtitle = stringResource(MR.strings.pref_epub_preserve_image_colors_summary),
                 ),
             ),
         )

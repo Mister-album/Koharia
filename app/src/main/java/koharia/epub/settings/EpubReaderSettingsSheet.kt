@@ -1465,7 +1465,7 @@ private fun MoreReadingSettingsSheet(
             when (page) {
                 0 -> EpubReadingSettingsPage(preferences, readerPreferences)
                 1 -> EpubGeneralSettingsPage(readerPreferences, epubReaderPreferences)
-                2 -> EpubFilterSettingsPage(readerPreferences)
+                2 -> EpubFilterSettingsPage(preferences, readerPreferences)
             }
         }
     }
@@ -1544,7 +1544,10 @@ private fun ColumnScope.EpubGeneralSettingsPage(
 }
 
 @Composable
-private fun ColumnScope.EpubFilterSettingsPage(readerPreferences: ReaderPreferences) {
+private fun ColumnScope.EpubFilterSettingsPage(
+    preferences: EpubLayoutPreferences,
+    readerPreferences: ReaderPreferences,
+) {
     val colorFilter by readerPreferences.colorFilter.changes().collectAsState(readerPreferences.colorFilter.get())
     CheckboxItem(
         label = stringResource(MR.strings.pref_custom_color_filter),
@@ -1602,6 +1605,10 @@ private fun ColumnScope.EpubFilterSettingsPage(readerPreferences: ReaderPreferen
     CheckboxItem(
         label = stringResource(MR.strings.pref_inverted_colors),
         pref = readerPreferences.invertedColors,
+    )
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_epub_preserve_image_colors),
+        pref = preferences.preserveImageColors,
     )
 }
 
