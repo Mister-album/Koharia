@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.komga.api.KomgaApiClient
+import koharia.komga.api.KomgaSearchCapabilities
 import koharia.komga.api.dto.BookDto
 import koharia.komga.api.dto.LibraryDto
 import koharia.komga.domain.repository.KomgaRepository
@@ -86,8 +87,9 @@ class KomgaSource(
     private val chapterNameTemplate: String
         get() = preferences.getString(PREF_CHAPTER_NAME_TEMPLATE, PREF_CHAPTER_NAME_TEMPLATE_DEFAULT)!!
 
+    private val searchCapabilities = KomgaSearchCapabilities()
     private val apiClient: KomgaApiClient
-        get() = KomgaApiClient(baseUrl, currentHeaders(), client, json)
+        get() = KomgaApiClient(baseUrl, currentHeaders(), client, json, searchCapabilities)
 
     private val repository: KomgaRepository
         get() = KomgaRepository(baseUrl, apiClient)
@@ -149,6 +151,9 @@ class KomgaSource(
         repository.searchMangaRequest(page, query, filters, defaultLibraries, consumeBrowseCachePolicy())
 
     override fun searchMangaParse(response: Response) = repository.parseMangasPage(response)
+
+    override suspend fun getSearchManga(page: Int, query: String, filters: FilterList) =
+        repository.getSearchManga(page, query, filters, defaultLibraries, consumeBrowseCachePolicy())
 
     override fun getMangaUrl(manga: eu.kanade.tachiyomi.source.model.SManga): String = manga.url.replace("/api/v1", "")
 
@@ -371,11 +376,17 @@ class KomgaSource(
         val saved = (scopedState ?: legacyState)
             ?.let { runCatching { json.decodeFromString<PersistentFilterState>(it) }.getOrNull() }
             ?: return false
+        val migrated = saved.migratePersistentFilterState()
+        if (migrated != saved) {
+            preferences.edit()
+                .putString(persistentFilterStateKey(libraryScope), json.encodeToString(migrated))
+                .apply()
+        }
 
         if (scopedState != null && libraryScope != KomgaLibraryScope.ALL) {
             filters.resetFilterState()
         }
-        filters.applyPersistentFilterState(saved)
+        filters.applyPersistentFilterState(migrated)
         return true
     }
 
@@ -651,6 +662,7 @@ class KomgaSource(
     ): SharedPreferences.OnSharedPreferenceChangeListener {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key in SERVER_SETTING_KEYS) {
+                searchCapabilities.clear()
                 invalidateBrowseCache()
                 onChanged()
             }
@@ -700,8 +712,8 @@ class KomgaSource(
 
         if (!hasPreservedState) {
             scopedFilters.resetFilterState()
-            scopedFilters.filterIsInstance<TypeSelect>().firstOrNull()?.state = 0
-            scopedFilters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(1, true)
+            scopedFilters.filterIsInstance<TypeSelect>().firstOrNull()?.state = TYPE_SERIES_INDEX
+            scopedFilters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(0, true)
         }
         scopedFilters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.let { options ->
             when {
@@ -795,6 +807,7 @@ class KomgaSource(
         const val TYPE_SERIES = "Series"
         const val TYPE_READ_LISTS = "Read lists"
         const val TYPE_BOOKS = "Books"
+        const val TYPE_ALL = "All"
         private const val BROWSE_REFRESH_WINDOW_MILLIS = 30_000L
 
         private val SERVER_SETTING_KEYS = setOf(
@@ -822,7 +835,8 @@ class KomgaSource(
 }
 
 @Serializable
-private data class PersistentFilterState(
+internal data class PersistentFilterState(
+    val version: Int = 0,
     val checkBoxes: Map<String, Boolean> = emptyMap(),
     val selects: Map<String, Int> = emptyMap(),
     val sorts: Map<String, PersistentSortState> = emptyMap(),
@@ -830,16 +844,22 @@ private data class PersistentFilterState(
 )
 
 @Serializable
-private data class PersistentSortState(
+internal data class PersistentSortState(
     val index: Int,
     val ascending: Boolean,
 )
 
 private fun defaultLibraryPersistentFilterState(): PersistentFilterState {
     return PersistentFilterState(
-        selects = mapOf("Search for" to 0),
-        sorts = mapOf("Sort" to PersistentSortState(index = 1, ascending = true)),
+        version = CURRENT_PERSISTENT_FILTER_VERSION,
+        selects = mapOf("Search for" to TYPE_SERIES_INDEX),
+        sorts = mapOf("Sort" to PersistentSortState(index = 0, ascending = true)),
     )
+}
+
+internal fun PersistentFilterState.migratePersistentFilterState(): PersistentFilterState {
+    if (version >= CURRENT_PERSISTENT_FILTER_VERSION) return this
+    return copy(version = CURRENT_PERSISTENT_FILTER_VERSION)
 }
 
 private enum class FetchFilterStatus {
@@ -945,6 +965,7 @@ private fun FilterList.toPersistentFilterState(): PersistentFilterState {
     }
 
     return PersistentFilterState(
+        version = CURRENT_PERSISTENT_FILTER_VERSION,
         checkBoxes = checkBoxes,
         selects = selects,
         sorts = sorts,
@@ -993,6 +1014,7 @@ private const val PREF_PERSISTENT_FILTERS_ENABLED_BOOK = "Persistent filters ena
 private const val PREF_PERSISTENT_FILTERS_STATE = "Persistent filters state"
 private const val PREF_PERSISTENT_FILTERS_STATE_COMIC = "Persistent filters state comic"
 private const val PREF_PERSISTENT_FILTERS_STATE_BOOK = "Persistent filters state book"
+private const val CURRENT_PERSISTENT_FILTER_VERSION = 1
 
 private fun PreferenceScreen.addEditTextPreference(
     title: String,

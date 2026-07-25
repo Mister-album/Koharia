@@ -6,6 +6,7 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import java.io.File
 import java.security.MessageDigest
@@ -17,14 +18,19 @@ internal class KomgaMetadataCacheStore(
     private val cacheDir = LocalTempCacheDirectoryProvider.metadataCacheDir(context)
 
     fun isEligible(request: Request): Boolean {
-        if (request.method != "GET") return false
-        return isEligibleUrl(request.url.toString())
+        return when (request.method) {
+            "GET" -> isEligibleUrl(request.url.toString())
+            "POST" -> request.body?.contentType()?.subtype == "json" &&
+                SEARCH_LIST_PATHS.any { request.url.encodedPath.endsWith(it) }
+            else -> false
+        }
     }
 
     fun load(request: Request): Response? {
         if (!isEligible(request)) return null
 
-        val entry = readEntry(request.url.toString()) ?: return null
+        val identity = request.cacheIdentity() ?: return null
+        val entry = readEntry(identity) ?: return null
         return Response.Builder()
             .request(request)
             .protocol(okhttp3.Protocol.HTTP_1_1)
@@ -39,12 +45,13 @@ internal class KomgaMetadataCacheStore(
     fun save(request: Request, response: Response): Response {
         if (!isEligible(request) || !response.isSuccessful) return response
 
+        val identity = request.cacheIdentity() ?: return response
         val body = response.body
         val contentType = body.contentType()
         val bodyBytes = body.bytes()
 
         writeEntry(
-            url = request.url.toString(),
+            identity = identity,
             body = bodyBytes,
             contentType = contentType,
         )
@@ -54,14 +61,14 @@ internal class KomgaMetadataCacheStore(
             .build()
     }
 
-    private fun readEntry(url: String): CacheEntry? {
-        val bodyFile = bodyFile(url)
-        val metaFile = metaFile(url)
+    private fun readEntry(identity: String): CacheEntry? {
+        val bodyFile = bodyFile(identity)
+        val metaFile = metaFile(identity)
         if (!bodyFile.exists() || !metaFile.exists()) return null
 
         return runCatching {
             val metadata = metaFile.readLines()
-            if (metadata.size < 3 || metadata[0] != url) {
+            if (metadata.size < 3 || metadata[0] != identity) {
                 return null
             }
 
@@ -74,15 +81,15 @@ internal class KomgaMetadataCacheStore(
         }.getOrNull()
     }
 
-    private fun writeEntry(url: String, body: ByteArray, contentType: MediaType?) {
-        val bodyFile = bodyFile(url)
-        val metaFile = metaFile(url)
+    private fun writeEntry(identity: String, body: ByteArray, contentType: MediaType?) {
+        val bodyFile = bodyFile(identity)
+        val metaFile = metaFile(identity)
         val tmpBodyFile = File(bodyFile.parentFile, "${bodyFile.name}.tmp")
         val tmpMetaFile = File(metaFile.parentFile, "${metaFile.name}.tmp")
 
         runCatching {
             val metadata = buildString {
-                appendLine(url)
+                appendLine(identity)
                 appendLine(contentType?.toString().orEmpty())
                 appendLine(System.currentTimeMillis().toString())
             }
@@ -91,10 +98,10 @@ internal class KomgaMetadataCacheStore(
             tmpMetaFile.writeText(metadata)
 
             if (!tmpBodyFile.renameTo(bodyFile)) {
-                throw IllegalStateException("Failed to write metadata cache body for $url")
+                throw IllegalStateException("Failed to write metadata cache body for $identity")
             }
             if (!tmpMetaFile.renameTo(metaFile)) {
-                throw IllegalStateException("Failed to write metadata cache metadata for $url")
+                throw IllegalStateException("Failed to write metadata cache metadata for $identity")
             }
         }.onFailure {
             tmpBodyFile.delete()
@@ -102,9 +109,9 @@ internal class KomgaMetadataCacheStore(
         }
     }
 
-    private fun bodyFile(url: String): File = File(cacheDir, "${key(url)}.body")
+    private fun bodyFile(identity: String): File = File(cacheDir, "${key(identity)}.body")
 
-    private fun metaFile(url: String): File = File(cacheDir, "${key(url)}.meta")
+    private fun metaFile(identity: String): File = File(cacheDir, "${key(identity)}.meta")
 
     private fun key(url: String): String {
         return MessageDigest.getInstance("MD5")
@@ -136,5 +143,20 @@ internal class KomgaMetadataCacheStore(
         }
 
         private val PAGE_IMAGE_REGEX = Regex("/pages/\\d+(?:\\?.*)?$")
+        private val SEARCH_LIST_PATHS = setOf("/api/v1/books/list", "/api/v1/series/list")
     }
+}
+
+private fun Request.cacheIdentity(): String? {
+    if (method == "GET") return url.toString()
+    val bodyBytes = runCatching {
+        Buffer().use { buffer ->
+            body?.writeTo(buffer) ?: return null
+            buffer.readByteArray()
+        }
+    }.getOrNull() ?: return null
+    val bodyDigest = MessageDigest.getInstance("SHA-256")
+        .digest(bodyBytes)
+        .joinToString("") { "%02x".format(it) }
+    return "$method $url $bodyDigest"
 }
