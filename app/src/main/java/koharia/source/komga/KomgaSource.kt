@@ -712,7 +712,7 @@ class KomgaSource(
 
         if (!hasPreservedState) {
             scopedFilters.resetFilterState()
-            scopedFilters.filterIsInstance<TypeSelect>().firstOrNull()?.state = TYPE_ALL_INDEX
+            scopedFilters.filterIsInstance<TypeSelect>().firstOrNull()?.state = TYPE_SERIES_INDEX
             scopedFilters.filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(0, true)
         }
         scopedFilters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.let { options ->
@@ -852,7 +852,7 @@ internal data class PersistentSortState(
 private fun defaultLibraryPersistentFilterState(): PersistentFilterState {
     return PersistentFilterState(
         version = CURRENT_PERSISTENT_FILTER_VERSION,
-        selects = mapOf("Search for" to TYPE_ALL_INDEX),
+        selects = mapOf("Search for" to TYPE_SERIES_INDEX),
         sorts = mapOf("Sort" to PersistentSortState(index = 0, ascending = true)),
     )
 }

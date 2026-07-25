@@ -13,7 +13,7 @@ class TypeSelect :
             KomgaSource.TYPE_BOOKS,
             KomgaSource.TYPE_ALL,
         ),
-        TYPE_ALL_INDEX,
+        TYPE_SERIES_INDEX,
     )
 
 class SeriesSort(selection: Selection? = null) :

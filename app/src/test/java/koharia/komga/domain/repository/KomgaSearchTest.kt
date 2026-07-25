@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SManga
 import koharia.komga.api.KomgaApiClient
 import koharia.komga.api.KomgaSearchCapabilities
+import koharia.source.komga.TYPE_ALL_INDEX
 import koharia.source.komga.TypeSelect
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
@@ -52,7 +53,8 @@ class KomgaSearchTest {
         )
         val repository = KomgaRepository("https://komga.test", apiClient)
 
-        val request = repository.searchMangaRequest(1, "title", FilterList(TypeSelect()), emptySet())
+        val filters = FilterList(TypeSelect().apply { state = TYPE_ALL_INDEX })
+        val request = repository.searchMangaRequest(1, "title", filters, emptySet())
 
         assertEquals("/api/v1/series", request.url.encodedPath)
     }

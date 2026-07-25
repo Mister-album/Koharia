@@ -6,6 +6,7 @@ import koharia.source.komga.CollectionFilterEntry
 import koharia.source.komga.CollectionSelect
 import koharia.source.komga.SeriesSort
 import koharia.source.komga.TYPE_ALL_INDEX
+import koharia.source.komga.TYPE_SERIES_INDEX
 import koharia.source.komga.TypeSelect
 import koharia.source.komga.UriMultiSelectFilter
 import koharia.source.komga.UriMultiSelectOption
@@ -17,8 +18,17 @@ import org.junit.jupiter.api.Test
 class KomgaSearchTypeTest {
 
     @Test
-    fun `search type defaults to all`() {
-        assertEquals(TYPE_ALL_INDEX, TypeSelect().state)
+    fun `browse type defaults to series`() {
+        assertEquals(TYPE_SERIES_INDEX, TypeSelect().state)
+    }
+
+    @Test
+    fun `toolbar search scope defaults to all independently`() {
+        val state = KomgaLibraryScreenModel.State(
+            listing = KomgaLibraryScreenModel.Listing.Search(query = null, filters = FilterList()),
+        )
+
+        assertEquals(TYPE_ALL_INDEX, state.searchType)
     }
 
     @Test
