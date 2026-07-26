@@ -134,6 +134,22 @@ internal fun String.normalizeEpubXhtmlForCompatibility(): EpubXhtmlCompatibility
             val result = markup.normalizeStartTagAttributes()
             normalized.append(result.content)
             repairedAttributes += result.repairedAttributes
+
+            val rawTextElement = markup.startTagName()
+                ?.lowercase()
+                ?.takeIf(RAW_TEXT_ELEMENT_NAMES::contains)
+            val contentStart = tagEnd + 1
+            if (rawTextElement != null && !markup.isSelfClosingStartTag()) {
+                val rawTextEnd = findRawTextEndTag(rawTextElement, contentStart)
+                if (rawTextEnd < 0) {
+                    normalized.append(substring(contentStart))
+                    cursor = length
+                    continue
+                }
+                normalized.append(substring(contentStart, rawTextEnd))
+                cursor = rawTextEnd
+                continue
+            }
         } else {
             normalized.append(markup)
         }
@@ -141,6 +157,27 @@ internal fun String.normalizeEpubXhtmlForCompatibility(): EpubXhtmlCompatibility
     }
     return EpubXhtmlCompatibilityResult(normalized.toString(), repairedAttributes)
 }
+
+private fun String.findRawTextEndTag(elementName: String, start: Int): Int {
+    val closingPrefix = "</$elementName"
+    var candidate = indexOf(closingPrefix, startIndex = start, ignoreCase = true)
+    while (candidate >= 0) {
+        val boundary = getOrNull(candidate + closingPrefix.length)
+        if (boundary == null || boundary.isWhitespace() || boundary == '>') return candidate
+        candidate = indexOf(closingPrefix, startIndex = candidate + closingPrefix.length, ignoreCase = true)
+    }
+    return -1
+}
+
+private fun String.startTagName(): String? {
+    if (length < 3 || first() != '<' || !this[1].isXmlNameStart()) return null
+    var end = 2
+    while (end < lastIndex && this[end].isXmlNamePart()) end++
+    return substring(1, end)
+}
+
+private fun String.isSelfClosingStartTag(): Boolean =
+    dropLast(1).trimEnd().endsWith('/')
 
 private fun String.findMarkupEnd(tagStart: Int): Int {
     return when {
@@ -248,6 +285,7 @@ private fun Char.isXmlNamePart(): Boolean =
     isXmlNameStart() || this == '-' || this == '.' || isDigit()
 
 private val HTML_FILE_EXTENSIONS = setOf("htm", "html", "xht", "xhtml")
+private val RAW_TEXT_ELEMENT_NAMES = setOf("script", "style")
 private val UTF_8_BOM = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
 private val UTF_16_BE_BOM = byteArrayOf(0xFE.toByte(), 0xFF.toByte())
 private val UTF_16_LE_BOM = byteArrayOf(0xFF.toByte(), 0xFE.toByte())

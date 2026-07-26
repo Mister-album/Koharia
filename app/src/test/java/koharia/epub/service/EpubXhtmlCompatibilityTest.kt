@@ -86,4 +86,22 @@ class EpubXhtmlCompatibilityTest {
         assertEquals(source, result.content)
         assertEquals(0, result.repairedAttributes)
     }
+
+    @Test
+    fun `tag shaped text inside script and style is not changed`() {
+        val source =
+            "<script>const template = '<input disabled>';</script>" +
+                "<style>.example::before { content: '<img alt>'; }</style>" +
+                "<input disabled>"
+
+        val result = source.normalizeEpubXhtmlForCompatibility()
+
+        assertEquals(
+            "<script>const template = '<input disabled>';</script>" +
+                "<style>.example::before { content: '<img alt>'; }</style>" +
+                "<input disabled=\"\">",
+            result.content,
+        )
+        assertEquals(1, result.repairedAttributes)
+    }
 }

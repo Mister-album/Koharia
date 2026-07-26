@@ -1,5 +1,6 @@
 package koharia.epub.locator
 
+import koharia.epub.isSameEpubResource
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
@@ -23,7 +24,7 @@ private fun Publication.findResource(href: String): ResourceHref? {
         .map(Link::toResourceHref)
         .firstOrNull { resource ->
             resource.aliases.any { alias ->
-                alias == target || alias.endsWith("/$target") || target.endsWith("/$alias")
+                alias.isSameEpubResource(target)
             }
         }
 }

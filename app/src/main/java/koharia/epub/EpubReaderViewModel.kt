@@ -1019,6 +1019,13 @@ class EpubReaderViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             runCatching { session.positionsController.refresh() }
                 .onSuccess { positions ->
+                    if (session.positionsController.hasAuthoritativePositions) {
+                        latestLocator = latestLocator
+                            ?.alignToEpubPositions(positions)
+                            ?.also { alignedLocator ->
+                                locatorJson = alignedLocator.toJSON().toString()
+                            }
+                    }
                     applyPublicationPositions(positions)
                     logcat(LogPriority.DEBUG) {
                         "EPUB positions refreshed chapterId=$chapterId " +

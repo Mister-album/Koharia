@@ -4,6 +4,7 @@ import android.os.Build
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
+import koharia.epub.alignToEpubPositions
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaSource
 import logcat.LogPriority
@@ -274,40 +275,5 @@ class KomgaEpubProgressSyncService(
 }
 
 internal fun Locator.alignToKomgaPositions(positions: List<Locator>): Locator {
-    val targetProgression = locations.progression ?: return this
-    val targetHref = href.toString()
-    val resourcePositions = positions.mapNotNull { position ->
-        if (!position.href.toString().isSameEpubResource(targetHref)) return@mapNotNull null
-        val progression = position.locations.progression ?: return@mapNotNull null
-        position to progression
-    }
-    if (resourcePositions.isEmpty()) return this
-
-    val alignedPosition = resourcePositions
-        .filter { (_, progression) -> progression <= targetProgression }
-        .maxByOrNull { (_, progression) -> progression }
-        ?: resourcePositions.minBy { (_, progression) -> progression }
-    val alignedProgression = alignedPosition.second
-    if (alignedProgression == targetProgression) return this
-
-    return copy(
-        locations = locations.copy(
-            progression = alignedProgression,
-            position = alignedPosition.first.locations.position ?: locations.position,
-            totalProgression = alignedPosition.first.locations.totalProgression
-                ?: locations.totalProgression,
-        ),
-    )
+    return alignToEpubPositions(positions)
 }
-
-private fun String.isSameEpubResource(other: String): Boolean {
-    val first = resourceKey()
-    val second = other.resourceKey()
-    if (first.isBlank() || second.isBlank()) return false
-    return first == second || first.endsWith("/$second") || second.endsWith("/$first")
-}
-
-private fun String.resourceKey(): String =
-    substringBefore('#')
-        .substringBefore('?')
-        .trimStart('/')

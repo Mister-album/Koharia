@@ -1,5 +1,6 @@
 package koharia.epub.session
 
+import koharia.epub.isSameEpubResource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.readium.r2.shared.publication.Link
@@ -44,12 +45,8 @@ class EpubPositionsController(
 
     private fun List<Locator>.groupForReadingOrder(): List<List<Locator>> =
         readingOrder.map { link ->
-            val linkHref = link.href.toString().resourceKey()
             filter { locator ->
-                val locatorHref = locator.href.toString().resourceKey()
-                linkHref == locatorHref ||
-                    linkHref.endsWith("/$locatorHref") ||
-                    locatorHref.endsWith("/$linkHref")
+                link.href.toString().isSameEpubResource(locator.href.toString())
             }
         }
 
@@ -70,9 +67,4 @@ class EpubPositionsController(
             )
         }
     }
-
-    private fun String.resourceKey(): String =
-        substringBefore('#')
-            .substringBefore('?')
-            .trimStart('/')
 }
