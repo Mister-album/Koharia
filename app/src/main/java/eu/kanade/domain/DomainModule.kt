@@ -39,7 +39,6 @@ import koharia.domain.epub.repository.EpubBookmarkRepository
 import koharia.domain.epub.repository.EpubPaginationCacheRepository
 import koharia.domain.epub.repository.EpubProgressRepository
 import koharia.domain.epub.repository.EpubRemoteProgressCacheRepository
-import koharia.domain.upcoming.interactor.GetUpcomingManga
 import tachiyomi.data.category.CategoryRepositoryImpl
 import tachiyomi.data.chapter.ChapterRepositoryImpl
 import tachiyomi.data.history.HistoryRepositoryImpl
@@ -127,7 +126,6 @@ class DomainModule : InjektModule {
         addFactory { GetMangaByUrlAndSourceId(get()) }
         addFactory { GetManga(get()) }
         addFactory { GetNextChapters(get(), get(), get()) }
-        addFactory { GetUpcomingManga(get()) }
         addFactory { ResetViewerFlags(get()) }
         addFactory { SetMangaChapterFlags(get()) }
         addFactory { FetchInterval(get()) }

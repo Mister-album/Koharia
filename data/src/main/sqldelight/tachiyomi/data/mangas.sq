@@ -158,14 +158,6 @@ FROM duplicates M
 LEFT JOIN chapter_counts CC
 ON M._id = CC.manga_id;
 
-getUpcomingManga:
-SELECT *
-FROM mangas
-WHERE next_update >= :startOfDay
-AND favorite = 1
-AND status IN :statuses
-ORDER BY next_update ASC;
-
 resetViewerFlags:
 UPDATE mangas
 SET viewer = 0;

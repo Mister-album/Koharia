@@ -18,8 +18,6 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.manga.repository.MangaRepository
-import java.time.LocalDate
-import java.time.ZoneId
 
 class MangaRepositoryImpl(
     private val database: Database,
@@ -95,13 +93,6 @@ class MangaRepositoryImpl(
         return database.mangasQueries
             .getDuplicateLibraryManga(id, title, MangaMapper::mapMangaWithChapterCount)
             .awaitAsList()
-    }
-
-    override suspend fun getUpcomingManga(statuses: Set<Long>): Flow<List<Manga>> {
-        val epochMillis = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000
-        return database.mangasQueries
-            .getUpcomingManga(epochMillis, statuses, MangaMapper::mapManga)
-            .subscribeToList()
     }
 
     override suspend fun resetViewerFlags(): Boolean {
