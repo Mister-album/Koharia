@@ -670,13 +670,20 @@ class EpubReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(menuVisible = visible) }
     }
 
-    internal fun showFootnote(link: Link, contentHtml: String) {
+    internal fun showFootnote(
+        link: Link,
+        contentHtml: String,
+        anchorXFraction: Float?,
+        anchorYFraction: Float?,
+    ) {
         closeImagePreview()
         footnoteLoadJob?.cancel()
         val href = link.href.toString()
         mutableFootnoteState.value = EpubFootnoteUiState(
             href = href,
             contentHtml = contentHtml,
+            anchorXFraction = anchorXFraction,
+            anchorYFraction = anchorYFraction,
         )
         showMenus(false)
         footnoteLoadJob = viewModelScope.launch {

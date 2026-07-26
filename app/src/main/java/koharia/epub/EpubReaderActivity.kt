@@ -12,7 +12,9 @@ import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
@@ -128,6 +130,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         private const val PAGINATION_SETTINGS_DEBOUNCE_MS = 250L
         private const val PAGINATION_VIEWPORT_DEBOUNCE_MS = 250L
         private const val PROGRESSION_SEEK_DEBOUNCE_MS = 100L
+        private const val FOOTNOTE_TOUCH_POSITION_MAX_AGE_MS = 10_000L
 
         fun newIntent(
             context: Context,
@@ -205,6 +208,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private var currentPublisherStyles: Boolean? = null
     private var readerFragment: EpubReaderFragment? = null
     private var imagePreviewVisible = false
+    private var lastTouchXFraction: Float? = null
+    private var lastTouchYFraction: Float? = null
+    private var lastTouchPositionTimeMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         registerSecureActivity(this)
@@ -996,7 +1002,17 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onFootnoteActivated(link: Link, contentHtml: String) {
-        viewModel.showFootnote(link, contentHtml)
+        val hasRecentTouch = lastTouchPositionTimeMs != 0L &&
+            SystemClock.elapsedRealtime() - lastTouchPositionTimeMs <= FOOTNOTE_TOUCH_POSITION_MAX_AGE_MS
+        viewModel.showFootnote(
+            link = link,
+            contentHtml = contentHtml,
+            anchorXFraction = lastTouchXFraction.takeIf { hasRecentTouch },
+            anchorYFraction = lastTouchYFraction.takeIf { hasRecentTouch },
+        )
+        lastTouchXFraction = null
+        lastTouchYFraction = null
+        lastTouchPositionTimeMs = 0L
     }
 
     override fun onImageInteraction(reference: EpubImageReference, interaction: EpubImageInteraction) {
@@ -1016,6 +1032,18 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     override fun onSessionMissing(chapterId: Long) {
         viewModel.onSessionMissing(chapterId)
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val decorView = window.decorView
+            if (decorView.width > 0 && decorView.height > 0) {
+                lastTouchXFraction = (event.x / decorView.width).coerceIn(0f, 1f)
+                lastTouchYFraction = (event.y / decorView.height).coerceIn(0f, 1f)
+                lastTouchPositionTimeMs = SystemClock.elapsedRealtime()
+            }
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
