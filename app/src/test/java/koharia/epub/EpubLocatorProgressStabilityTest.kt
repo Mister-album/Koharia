@@ -1,5 +1,7 @@
 package koharia.epub
 
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
@@ -93,13 +95,17 @@ class EpubLocatorProgressStabilityTest {
         progression: Double,
         position: Int,
         totalProgression: Double,
-    ): Locator = Locator(
-        href = checkNotNull(Url(href)),
-        mediaType = MediaType.XHTML,
-        locations = Locator.Locations(
-            progression = progression,
-            position = position,
-            totalProgression = totalProgression,
-        ),
-    )
+    ): Locator {
+        val url = mockk<Url>()
+        every { url.toString() } returns href
+        return Locator(
+            href = url,
+            mediaType = MediaType.XHTML,
+            locations = Locator.Locations(
+                progression = progression,
+                position = position,
+                totalProgression = totalProgression,
+            ),
+        )
+    }
 }

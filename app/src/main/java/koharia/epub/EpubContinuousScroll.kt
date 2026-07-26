@@ -1,7 +1,9 @@
 package koharia.epub
 
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 internal data class EpubContinuousScrollResource(
     val index: Int,
@@ -27,10 +29,10 @@ internal fun buildEpubContinuousScrollInstallScript(
     imageInteractionScript: String,
     paragraphIndentScript: String,
 ): String {
-    val resourcesJson = JSONArray().apply {
+    val resourcesJson = buildJsonArray {
         resources.forEach { resource ->
-            put(
-                JSONObject().apply {
+            add(
+                buildJsonObject {
                     put("index", resource.index)
                     put("href", resource.href)
                     put("url", resource.url)
@@ -38,8 +40,8 @@ internal fun buildEpubContinuousScrollInstallScript(
             )
         }
     }
-    val indentScriptJson = JSONObject.quote(paragraphIndentScript)
-    val imageInteractionScriptJson = JSONObject.quote(imageInteractionScript)
+    val indentScriptJson = JsonPrimitive(paragraphIndentScript)
+    val imageInteractionScriptJson = JsonPrimitive(imageInteractionScript)
     val clampedProgression = initialProgression.coerceIn(0.0, 1.0)
 
     return """
