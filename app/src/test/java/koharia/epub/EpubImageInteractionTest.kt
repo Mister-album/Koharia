@@ -67,7 +67,7 @@ class EpubImageInteractionTest {
             currentIndex = 0,
             initialProgression = 0.0,
             imageInteractionScript = script,
-            paragraphIndentScript = "",
+            contentPreparationScript = "",
         )
 
         assertTrue(continuousScript.contains("iframe.style.visibility = 'hidden'"))

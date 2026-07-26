@@ -101,6 +101,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import org.readium.r2.shared.ExperimentalReadiumApi
+import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.toUri
@@ -233,6 +234,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         setComposeContent {
             val state by viewModel.state.collectAsState()
             val imageState by viewModel.imageState.collectAsState()
+            val footnoteState by viewModel.footnoteState.collectAsState()
             val tocEntries =
                 remember(state.chapterId, state.sessionToken, state.isReady) { viewModel.tableOfContents() }
             val adjacentTocEntries = remember(tocEntries, state.currentPosition, state.currentHref) {
@@ -251,6 +253,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 .collectAsState(epubLayoutPreferences.pageDirection.get())
             val currentVerticalMargins by epubLayoutPreferences.verticalMargins.changes()
                 .collectAsState(epubLayoutPreferences.verticalMargins.get())
+            val currentFontScale by epubLayoutPreferences.fontSize.changes()
+                .collectAsState(epubLayoutPreferences.fontSize.get())
+            val publisherStylesEnabled by epubLayoutPreferences.publisherStyles.changes()
+                .collectAsState(epubLayoutPreferences.publisherStyles.get())
             val fullscreenVerticalPadding = remember(currentVerticalMargins) {
                 readerVerticalPaddingDp(currentVerticalMargins).dp
             }
@@ -779,6 +785,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 onShare = { viewModel.shareSelectedImage(copyToClipboard = false) },
                 onCopy = { viewModel.shareSelectedImage(copyToClipboard = true) },
             )
+
+            EpubFootnotePopup(
+                state = footnoteState,
+                backgroundColor = currentReaderBackgroundColor,
+                readerFontSizeSp = EpubLayoutPreferences.fontSizeFromScale(currentFontScale).toFloat(),
+                applyReaderStyles = !publisherStylesEnabled,
+                onDismissRequest = viewModel::dismissFootnote,
+            )
         }
 
         viewModel.imageEvents
@@ -899,7 +913,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onTap(positionX: Float, positionY: Float): Boolean {
-        if (viewModel.imageState.value.isVisible) return true
+        if (viewModel.imageState.value.isVisible || viewModel.footnoteState.value != null) return true
         val isRightToLeft = epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
             epubLayoutPreferences.pageDirection.get() == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
         return when (resolveNavigationAction(positionX, positionY)) {
@@ -981,6 +995,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         openInBrowser(url.toUri(), forceDefaultBrowser = false)
     }
 
+    override fun onFootnoteActivated(link: Link, contentHtml: String) {
+        viewModel.showFootnote(link, contentHtml)
+    }
+
     override fun onImageInteraction(reference: EpubImageReference, interaction: EpubImageInteraction) {
         if (interaction == EpubImageInteraction.PREVIEW && viewModel.state.value.menuVisible) {
             viewModel.showMenus(false)
@@ -1005,7 +1023,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
         val state = viewModel.state.value
         if (!isVolumeKey || !epubLayoutPreferences.readWithVolumeKeys.get() ||
-            state.menuVisible || state.isSearchActive || viewModel.imageState.value.isVisible
+            state.menuVisible || state.isSearchActive || viewModel.imageState.value.isVisible ||
+            viewModel.footnoteState.value != null
         ) {
             return super.dispatchKeyEvent(event)
         }

@@ -66,6 +66,8 @@ class EpubReaderFragment : Fragment() {
 
         fun onExternalLinkActivated(url: AbsoluteUrl)
 
+        fun onFootnoteActivated(link: Link, contentHtml: String)
+
         fun onImageInteraction(reference: EpubImageReference, interaction: EpubImageInteraction)
 
         fun onNavigatorReady(fragment: EpubReaderFragment)
@@ -94,6 +96,7 @@ class EpubReaderFragment : Fragment() {
     private var navigatorInputListener: InputListener? = null
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
+    private var readerFontScale = 1f
     private var textAlignmentOverride: EpubLayoutPreferences.TextAlignment? = null
     private var tocHrefs: List<String> = emptyList()
     private var chapterBreaksEnabled = false
@@ -108,6 +111,7 @@ class EpubReaderFragment : Fragment() {
         chapterBreaksEnabled = chapterBreaksEnabled,
         preserveImageColors = preserveImageColors,
         parentColorsInverted = parentColorsInverted,
+        readerFontScale = readerFontScale,
     )
     private var imageColorPolicyGeneration = 0L
     private var imageColorPolicyRoot: View? = null
@@ -127,7 +131,11 @@ class EpubReaderFragment : Fragment() {
             link: Link,
             context: HyperlinkNavigator.LinkContext?,
         ): Boolean {
-            return true
+            val footnote = context as? HyperlinkNavigator.FootnoteContext ?: return true
+            val contentHtml = footnote.noteContent.trim().takeIf { it.isNotEmpty() } ?: return true
+            val currentHost = host ?: return true
+            currentHost.onFootnoteActivated(link, contentHtml)
+            return false
         }
     }
 
@@ -147,6 +155,7 @@ class EpubReaderFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = sessionRepository.get(chapterId)
         paragraphIndentOverrideEnabled = epubLayoutPreferences.publisherStyles.get().not()
+        readerFontScale = epubLayoutPreferences.fontSize.get()
         textAlignmentOverride = epubLayoutPreferences.textAlignment.get()
             .takeIf { paragraphIndentOverrideEnabled }
         tocHrefs = session?.publication?.tableOfContents?.flattenEpubTocHrefs().orEmpty()
@@ -304,14 +313,17 @@ class EpubReaderFragment : Fragment() {
             clearContinuousScrollState()
         }
         val paragraphOverrideEnabled = preferences.publisherStyles == false
+        val nextReaderFontScale = preferences.fontSize?.toFloat() ?: readerFontScale
         val nextTextAlignmentOverride = epubLayoutPreferences.textAlignment.get()
             .takeIf { paragraphOverrideEnabled }
         val nextChapterBreaksEnabled = preferences.scroll != true
         val documentPolicyChanged =
             paragraphIndentOverrideEnabled != paragraphOverrideEnabled ||
                 textAlignmentOverride != nextTextAlignmentOverride ||
-                chapterBreaksEnabled != nextChapterBreaksEnabled
+                chapterBreaksEnabled != nextChapterBreaksEnabled ||
+                (paragraphOverrideEnabled && readerFontScale != nextReaderFontScale)
         paragraphIndentOverrideEnabled = paragraphOverrideEnabled
+        readerFontScale = nextReaderFontScale
         textAlignmentOverride = nextTextAlignmentOverride
         chapterBreaksEnabled = nextChapterBreaksEnabled
         navigator?.submitPreferences(preferences)
@@ -411,6 +423,7 @@ class EpubReaderFragment : Fragment() {
             chapterBreaksEnabled = chapterBreaksEnabled,
             preserveImageColors = preserveImageColors,
             parentColorsInverted = parentColorsInverted,
+            readerFontScale = readerFontScale,
         )
         imageColorPolicyGeneration++
         installedImageColorPolicies.clear()
@@ -682,10 +695,19 @@ class EpubReaderFragment : Fragment() {
                             preserveImageColors = preserveImageColors,
                             parentColorsInverted = parentColorsInverted,
                         ),
-                        paragraphIndentScript = buildEpubTypographyPreparationScript(
+                        contentPreparationScript = """
+                            (function() {
+                                ${buildEpubTypographyPreparationScript(
                             paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
                             textAlignment = textAlignmentOverride,
-                        ),
+                        )};
+                                ${buildEpubFootnoteCompatibilityScript(
+                            applyReaderStyles = paragraphIndentOverrideEnabled,
+                            readerFontScale = readerFontScale,
+                        )};
+                                return true;
+                            })()
+                        """.trimIndent(),
                     ),
                 )
             }.getOrNull()

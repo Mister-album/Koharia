@@ -145,6 +145,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
     val state = mutableState.asStateFlow()
     private val mutableImageState = MutableStateFlow(EpubImageUiState())
     internal val imageState = mutableImageState.asStateFlow()
+    private val mutableFootnoteState = MutableStateFlow<EpubFootnoteUiState?>(null)
+    internal val footnoteState = mutableFootnoteState.asStateFlow()
     private val mutableImageEvents = MutableSharedFlow<EpubImageEvent>(extraBufferCapacity = 1)
     internal val imageEvents = mutableImageEvents.asSharedFlow()
     private val imageRequestTracker = EpubImageRequestTracker()
@@ -665,6 +667,19 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun showMenus(visible: Boolean) {
         mutableState.update { it.copy(menuVisible = visible) }
+    }
+
+    internal fun showFootnote(link: Link, contentHtml: String) {
+        closeImagePreview()
+        mutableFootnoteState.value = EpubFootnoteUiState(
+            href = link.href.toString(),
+            contentHtml = contentHtml,
+        )
+        showMenus(false)
+    }
+
+    internal fun dismissFootnote() {
+        mutableFootnoteState.value = null
     }
 
     internal fun onImageInteraction(
@@ -1747,6 +1762,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun releaseSession() {
         closeImagePreview()
+        dismissFootnote()
         locatorPersistenceJob.cancel()
         val finalPositions = authoritativePublicationPositions()
         sessionRepository.remove(chapterId)?.close()

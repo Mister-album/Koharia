@@ -27,7 +27,7 @@ internal fun buildEpubContinuousScrollInstallScript(
     currentIndex: Int,
     initialProgression: Double,
     imageInteractionScript: String,
-    paragraphIndentScript: String,
+    contentPreparationScript: String,
 ): String {
     val resourcesJson = buildJsonArray {
         resources.forEach { resource ->
@@ -40,7 +40,7 @@ internal fun buildEpubContinuousScrollInstallScript(
             )
         }
     }
-    val indentScriptJson = JsonPrimitive(paragraphIndentScript)
+    val contentPreparationScriptJson = JsonPrimitive(contentPreparationScript)
     val imageInteractionScriptJson = JsonPrimitive(imageInteractionScript)
     val clampedProgression = initialProgression.coerceIn(0.0, 1.0)
 
@@ -49,11 +49,11 @@ internal fun buildEpubContinuousScrollInstallScript(
             const resources = $resourcesJson;
             const currentIndex = $currentIndex;
             const initialProgression = $clampedProgression;
-            const requestedParagraphIndentScript = $indentScriptJson;
+            const requestedContentPreparationScript = $contentPreparationScriptJson;
             const requestedImageInteractionScript = $imageInteractionScriptJson;
             const existing = window.__kohariaContinuousScroll;
             if (existing && existing.currentIndex === currentIndex) {
-                existing.refresh(requestedParagraphIndentScript, requestedImageInteractionScript);
+                existing.refresh(requestedContentPreparationScript, requestedImageInteractionScript);
                 return 'ready';
             }
             if (!document.body || !resources.length || currentIndex < 0 || currentIndex >= resources.length) {
@@ -69,7 +69,7 @@ internal fun buildEpubContinuousScrollInstallScript(
             let activeIndex = currentIndex;
             let locationFrame = 0;
             let lastLocationSentAt = 0;
-            let paragraphIndentScript = requestedParagraphIndentScript;
+            let contentPreparationScript = requestedContentPreparationScript;
             let imageInteractionScript = requestedImageInteractionScript;
 
             function installImageInteractions(targetWindow, resourceIndex) {
@@ -197,7 +197,7 @@ internal fun buildEpubContinuousScrollInstallScript(
                         doc.body.style.setProperty('height', 'auto', 'important');
                         doc.body.style.setProperty('overflow', 'hidden', 'important');
                     }
-                    try { iframe.contentWindow.eval(paragraphIndentScript); } catch (_) {}
+                    try { iframe.contentWindow.eval(contentPreparationScript); } catch (_) {}
                     installImageInteractions(iframe.contentWindow, index);
                     iframe.style.visibility = 'visible';
                     const height = Math.max(
@@ -346,10 +346,10 @@ internal fun buildEpubContinuousScrollInstallScript(
                 currentIndex: currentIndex,
                 resources: resources,
                 notifyLocation: notifyLocation,
-                refresh: function(nextParagraphIndentScript, nextImageInteractionScript) {
-                    paragraphIndentScript = nextParagraphIndentScript;
+                refresh: function(nextContentPreparationScript, nextImageInteractionScript) {
+                    contentPreparationScript = nextContentPreparationScript;
                     imageInteractionScript = nextImageInteractionScript;
-                    try { window.eval(paragraphIndentScript); } catch (_) {}
+                    try { window.eval(contentPreparationScript); } catch (_) {}
                     installImageInteractions(window, currentIndex);
                     const loadedIndexes = Array.from(liveFrames.keys());
                     loadedIndexes.forEach(unloadSection);
