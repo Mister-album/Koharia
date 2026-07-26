@@ -24,7 +24,7 @@ class EpubDocumentPreparationTest {
         assertTrue(script.contains("hyphens: auto !important"))
         assertTrue(script.contains("break-before: column !important"))
         assertTrue(script.contains("'duokan-footnote'"))
-        assertTrue(script.contains("setAttributeNS(epubNamespace, 'epub:type', 'noteref')"))
+        assertTrue(script.contains("setAttributeNS(epubNamespace, 'epub:type', updated)"))
         assertTrue(script.contains("font-size: 1.125rem !important"))
         assertTrue(script.contains("filter: invert(100%) !important"))
         assertTrue(script.contains("return 'prepared'"))

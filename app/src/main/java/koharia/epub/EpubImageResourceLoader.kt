@@ -105,7 +105,7 @@ internal fun epubImageCandidateHrefs(
     addCandidate(rawSource)
 }.filter(String::isNotBlank).distinct()
 
-private fun ByteArray.isSvgImage(): Boolean {
+internal fun ByteArray.isSvgImage(): Boolean {
     val prefix = copyOfRange(0, size.coerceAtMost(SVG_PREFIX_BYTES))
         .toString(StandardCharsets.UTF_8)
         .trimStart('\uFEFF')

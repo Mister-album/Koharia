@@ -37,8 +37,16 @@ class EpubFootnoteCompatibilityTest {
     @Test
     fun `script marks xhtml links using the epub namespace`() {
         assertTrue(script.contains("root.localName.toLowerCase() !== 'html'"))
-        assertTrue(script.contains("setAttributeNS(epubNamespace, 'epub:type', 'noteref')"))
+        assertTrue(script.contains("setAttributeNS(epubNamespace, 'epub:type', updated)"))
         assertTrue(script.contains("data-koharia-footnotes-prepared"))
+    }
+
+    @Test
+    fun `script preserves existing epub type tokens and creates an xhtml style element`() {
+        assertTrue(script.contains("const values = String(current).trim().split(/\\s+/).filter(Boolean)"))
+        assertTrue(script.contains("values.push(type)"))
+        assertTrue(script.contains("values.join(' ')"))
+        assertTrue(script.contains("createElementNS(root.namespaceURI || xhtmlNamespace, 'style')"))
     }
 
     @Test

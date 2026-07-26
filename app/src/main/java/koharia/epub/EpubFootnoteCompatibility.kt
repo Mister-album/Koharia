@@ -17,6 +17,7 @@ internal fun buildEpubFootnoteCompatibilityScript(
             if (!root || root.localName.toLowerCase() !== 'html') return 'unsupported';
 
             const epubNamespace = 'http://www.idpf.org/2007/ops';
+            const xhtmlNamespace = 'http://www.w3.org/1999/xhtml';
             const applyReaderStyles = $applyReaderStyles;
             const styleId = 'koharia-footnote-reference-style';
             const referenceAttribute = 'data-koharia-footnote-reference';
@@ -49,6 +50,21 @@ internal fun buildEpubFootnoteCompatibilityScript(
 
             function hasAny(values, expected) {
                 return values.some(function(value) { return expected.has(value); });
+            }
+
+            function addEpubType(element, type) {
+                const current = element.getAttributeNS(epubNamespace, 'type') ||
+                    element.getAttribute('epub:type') || '';
+                const values = String(current).trim().split(/\s+/).filter(Boolean);
+                if (!values.some(function(value) { return value.toLowerCase() === type; })) {
+                    values.push(type);
+                }
+                const updated = values.join(' ');
+                try {
+                    element.setAttributeNS(epubNamespace, 'epub:type', updated);
+                } catch (_) {
+                    element.setAttribute('epub:type', updated);
+                }
             }
 
             function fragmentTarget(anchor) {
@@ -95,8 +111,9 @@ internal fun buildEpubFootnoteCompatibilityScript(
             const previousStyle = document.getElementById(styleId);
             if (previousStyle) previousStyle.remove();
             if (applyReaderStyles) {
-                const style = document.createElement('style');
+                const style = document.createElementNS(root.namespaceURI || xhtmlNamespace, 'style');
                 style.id = styleId;
+                style.setAttribute('type', 'text/css');
                 style.textContent = `
                     a[${'$'}{referenceAttribute}="true"] {
                         position: relative !important;
@@ -182,11 +199,7 @@ internal fun buildEpubFootnoteCompatibilityScript(
                     return;
                 }
                 if (!isStandardReference) {
-                    try {
-                        anchor.setAttributeNS(epubNamespace, 'epub:type', 'noteref');
-                    } catch (_) {
-                        anchor.setAttribute('epub:type', 'noteref');
-                    }
+                    addEpubType(anchor, 'noteref');
                     marked += 1;
                 }
                 updateReferenceStyle(anchor);

@@ -212,6 +212,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var completionMarkedThisSession = false
     private var searchIterator: SearchIterator? = null
     private var imageLoadJob: Job? = null
+    private var footnoteLoadJob: Job? = null
     private var incognitoSession = basePreferences.incognitoMode.get()
     private val locatorPersistenceJob = viewModelScope.launch {
         locatorUpdates
@@ -671,14 +672,39 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     internal fun showFootnote(link: Link, contentHtml: String) {
         closeImagePreview()
+        footnoteLoadJob?.cancel()
+        val href = link.href.toString()
         mutableFootnoteState.value = EpubFootnoteUiState(
-            href = link.href.toString(),
+            href = href,
             contentHtml = contentHtml,
         )
         showMenus(false)
+        footnoteLoadJob = viewModelScope.launch {
+            val images = try {
+                withIOContext {
+                    val publication = sessionRepository.get(chapterId)?.publication
+                        ?: return@withIOContext emptyMap()
+                    loadEpubFootnoteImages(publication, href, contentHtml)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                logcat(LogPriority.WARN, error) { "Failed to load EPUB footnote images" }
+                emptyMap()
+            }
+            mutableFootnoteState.update { state ->
+                if (state?.href == href && state.contentHtml == contentHtml) {
+                    state.copy(images = images)
+                } else {
+                    state
+                }
+            }
+        }
     }
 
     internal fun dismissFootnote() {
+        footnoteLoadJob?.cancel()
+        footnoteLoadJob = null
         mutableFootnoteState.value = null
     }
 
@@ -1786,6 +1812,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     override fun onCleared() {
         imageLoadJob?.cancel()
+        footnoteLoadJob?.cancel()
         imageRequestTracker.invalidate()
         searchIterator?.close()
         searchIterator = null
