@@ -1,0 +1,27 @@
+name: Rebuild website
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    if: github.repository == 'Mister-album/Koharia'
+    name: Trigger Cloudflare Workers build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Rebuild Koharia website
+        env:
+          DEPLOY_HOOK: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "::error::CLOUDFLARE_WORKERS_DEPLOY_HOOK is not configured."
+            exit 1
+          fi
+
+          curl --fail --silent --show-error --request POST "$DEPLOY_HOOK"
