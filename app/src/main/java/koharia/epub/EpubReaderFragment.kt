@@ -24,6 +24,7 @@ import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -97,7 +98,8 @@ class EpubReaderFragment : Fragment() {
     private var imageInteractionInstallJob: Job? = null
     private var preserveImageColors = true
     private var parentColorsInverted = false
-    private var imageColorPolicyScript = buildEpubImageColorPolicyScript(
+    private var imageColorPolicyScript = buildEpubDocumentPreparationScript(
+        paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
         preserveImageColors = preserveImageColors,
         parentColorsInverted = parentColorsInverted,
     )
@@ -127,7 +129,6 @@ class EpubReaderFragment : Fragment() {
     private val paginationListener = object : EpubNavigatorFragment.PaginationListener {
         override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
             host?.onPageChanged(pageIndex, totalPages, locator)
-            applyParagraphIndentOverride()
             scheduleImageInteractionsInstall()
         }
     }
@@ -139,6 +140,8 @@ class EpubReaderFragment : Fragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = sessionRepository.get(chapterId)
+        paragraphIndentOverrideEnabled = epubLayoutPreferences.publisherStyles.get().not()
+        refreshDocumentPreparationPolicy()
         logcat(LogPriority.DEBUG) {
             "EPUB fragment onCreate chapterId=$chapterId hasSession=${session != null}"
         }
@@ -289,9 +292,13 @@ class EpubReaderFragment : Fragment() {
         if (!keepContinuousScrollPosition) {
             clearContinuousScrollState()
         }
-        paragraphIndentOverrideEnabled = preferences.publisherStyles == false
+        val paragraphOverrideEnabled = preferences.publisherStyles == false
+        val paragraphPolicyChanged = paragraphIndentOverrideEnabled != paragraphOverrideEnabled
+        paragraphIndentOverrideEnabled = paragraphOverrideEnabled
         navigator?.submitPreferences(preferences)
-        applyParagraphIndentOverride()
+        if (paragraphPolicyChanged) {
+            refreshDocumentPreparationPolicy()
+        }
         scheduleImageInteractionsInstall(navigator)
         if (keepContinuousScrollPosition) {
             // Keep the JS-reported Locator when the visible resource is an adjacent iframe. The
@@ -305,20 +312,6 @@ class EpubReaderFragment : Fragment() {
                 "paragraphSpacing=${preferences.paragraphSpacing} lineHeight=${preferences.lineHeight}"
         }
         logComputedParagraphIndent()
-    }
-
-    private fun applyParagraphIndentOverride() {
-        if (!isAdded || view == null) return
-        viewLifecycleOwner.lifecycleScope.launch {
-            val navigator = readyNavigatorFragment() ?: return@launch
-            navigator.evaluateJavascript(
-                if (paragraphIndentOverrideEnabled) {
-                    APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
-                } else {
-                    REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT
-                },
-            )
-        }
     }
 
     private fun logComputedParagraphIndent() {
@@ -384,7 +377,15 @@ class EpubReaderFragment : Fragment() {
         }
         this.preserveImageColors = preserveImageColors
         this.parentColorsInverted = parentColorsInverted
-        imageColorPolicyScript = buildEpubImageColorPolicyScript(
+        refreshDocumentPreparationPolicy()
+        val navigator = readyNavigatorFragment()
+        scheduleImageInteractionsInstall(navigator)
+        scheduleContinuousScrollInstall(navigator)
+    }
+
+    private fun refreshDocumentPreparationPolicy() {
+        imageColorPolicyScript = buildEpubDocumentPreparationScript(
+            paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
             preserveImageColors = preserveImageColors,
             parentColorsInverted = parentColorsInverted,
         )
@@ -393,9 +394,6 @@ class EpubReaderFragment : Fragment() {
         pendingImageColorPolicies.clear()
         imageColorPolicyDrawWaits.clear()
         imageColorPolicyRoot?.postInvalidateOnAnimation()
-        val navigator = readyNavigatorFragment()
-        scheduleImageInteractionsInstall(navigator)
-        scheduleContinuousScrollInstall(navigator)
     }
 
     private fun observeNavigator(navigator: EpubNavigatorFragment) {
@@ -427,7 +425,6 @@ class EpubReaderFragment : Fragment() {
                         host?.onLocatorChanged(locator)
                         scheduleContinuousScrollInstall(navigator, locator)
                     }
-                    applyParagraphIndentOverride()
                     scheduleImageInteractionsInstall(navigator)
                 }
             }
@@ -467,7 +464,7 @@ class EpubReaderFragment : Fragment() {
             if (!isAdded || view == null || readyNavigatorFragment() !== navigator) return@launch
             val configuration = ViewConfiguration.get(requireContext())
             val density = resources.displayMetrics.density.takeIf { it > 0f } ?: 1f
-            runCatching {
+            try {
                 navigator.evaluateJavascript(
                     buildEpubImageInteractionInstallScript(
                         longPressTimeoutMs = ViewConfiguration.getLongPressTimeout(),
@@ -476,7 +473,9 @@ class EpubReaderFragment : Fragment() {
                         parentColorsInverted = parentColorsInverted,
                     ),
                 )
-            }.onFailure { error ->
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
                 logcat(LogPriority.WARN, error) { "Failed to install EPUB image interactions" }
             }
         }

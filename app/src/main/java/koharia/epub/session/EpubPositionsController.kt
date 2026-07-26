@@ -13,19 +13,26 @@ class EpubPositionsController(
     initialPositions: List<Locator> = emptyList(),
 ) : PositionsService {
     private val refreshMutex = Mutex()
+    private val initialPositionGroups = initialPositions.groupForReadingOrder()
 
     @Volatile
-    private var current: List<List<Locator>> = initialPositions
-        .groupForReadingOrder()
+    private var current: List<List<Locator>> = initialPositionGroups
         .takeIf { groups -> groups.flatten().isNotEmpty() }
         ?: fallbackPositions()
+
+    @Volatile
+    var hasAuthoritativePositions: Boolean = initialPositionGroups.flatten().isNotEmpty()
+        private set
 
     override suspend fun positionsByReadingOrder(): List<List<Locator>> = current
 
     suspend fun refresh(): List<Locator> = refreshMutex.withLock {
         val refreshed = delegate?.positionsByReadingOrder()
             ?.takeIf { groups -> groups.flatten().isNotEmpty() }
-        if (refreshed != null) current = refreshed
+        if (refreshed != null) {
+            current = refreshed
+            hasAuthoritativePositions = true
+        }
         current.flatten()
     }
 

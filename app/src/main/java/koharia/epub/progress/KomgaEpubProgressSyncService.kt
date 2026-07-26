@@ -80,10 +80,19 @@ class KomgaEpubProgressSyncService(
         sourceId: Long,
         bookUrl: String,
         locator: Locator,
+        positions: List<Locator>,
         modifiedAt: Date,
     ) = withIOContext {
         val source = sourceManager.get(sourceId) as? KomgaSource ?: return@withIOContext
         val normalizedBookUrl = normalizeBookUrl(bookUrl)
+        val alignedLocator = locator.alignToKomgaPositions(positions)
+        if (alignedLocator !== locator) {
+            logcat(LogPriority.DEBUG) {
+                "Aligned Komga EPUB progression href=${locator.href} " +
+                    "from=${locator.locations.progression} " +
+                    "to=${alignedLocator.locations.progression}"
+            }
+        }
         val payload = JSONObject().apply {
             put(
                 "device",
@@ -92,7 +101,7 @@ class KomgaEpubProgressSyncService(
                     put("name", buildDeviceName())
                 },
             )
-            put("locator", locator.toKomgaJSON())
+            put("locator", alignedLocator.toKomgaJSON())
             put("modified", modifiedAt.toInstant().toString())
         }
         val request = Request.Builder()
@@ -263,3 +272,42 @@ class KomgaEpubProgressSyncService(
         const val MAX_CORRECTION_HOURS = 24L
     }
 }
+
+internal fun Locator.alignToKomgaPositions(positions: List<Locator>): Locator {
+    val targetProgression = locations.progression ?: return this
+    val targetHref = href.toString()
+    val resourcePositions = positions.mapNotNull { position ->
+        if (!position.href.toString().isSameEpubResource(targetHref)) return@mapNotNull null
+        val progression = position.locations.progression ?: return@mapNotNull null
+        position to progression
+    }
+    if (resourcePositions.isEmpty()) return this
+
+    val alignedPosition = resourcePositions
+        .filter { (_, progression) -> progression <= targetProgression }
+        .maxByOrNull { (_, progression) -> progression }
+        ?: resourcePositions.minBy { (_, progression) -> progression }
+    val alignedProgression = alignedPosition.second
+    if (alignedProgression == targetProgression) return this
+
+    return copy(
+        locations = locations.copy(
+            progression = alignedProgression,
+            position = alignedPosition.first.locations.position ?: locations.position,
+            totalProgression = alignedPosition.first.locations.totalProgression
+                ?: locations.totalProgression,
+        ),
+    )
+}
+
+private fun String.isSameEpubResource(other: String): Boolean {
+    val first = resourceKey()
+    val second = other.resourceKey()
+    if (first.isBlank() || second.isBlank()) return false
+    return first == second || first.endsWith("/$second") || second.endsWith("/$first")
+}
+
+private fun String.resourceKey(): String =
+    substringBefore('#')
+        .substringBefore('?')
+        .trimStart('/')

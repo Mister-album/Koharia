@@ -214,7 +214,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private val locatorPersistenceJob = viewModelScope.launch {
         locatorUpdates
             .debounce(750L)
-            .collect(::persistLocator)
+            .collect { locator -> persistLocator(locator) }
     }
 
     init {
@@ -854,10 +854,23 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     fun updateLocator(locator: Locator) {
-        val persistentLocator = sessionRepository.get(chapterId)
+        val session = sessionRepository.get(chapterId)
+        val mappedLocator = session
             ?.publication
             ?.toPersistentLocator(locator)
             ?: locator
+        val persistentLocator = if (session?.positionsController?.hasAuthoritativePositions == false) {
+            mappedLocator.preserveProgressMetricsFrom(latestLocator)
+        } else {
+            mappedLocator
+        }
+        if (persistentLocator !== mappedLocator) {
+            logcat(LogPriority.DEBUG) {
+                "Preserved EPUB progress while positions are provisional chapterId=$chapterId " +
+                    "href=${persistentLocator.href} total=${persistentLocator.totalProgressionValue()} " +
+                    "position=${persistentLocator.positionIndex()}"
+            }
+        }
         val visualPagePair = visualPagePairForLocator(persistentLocator)
         visualPagePair?.first?.let { visualPageNumber = it }
         latestLocator = persistentLocator
@@ -1005,7 +1018,15 @@ class EpubReaderViewModel @JvmOverloads constructor(
         positionsRefreshStarted = true
         viewModelScope.launch {
             runCatching { session.positionsController.refresh() }
-                .onSuccess(::applyPublicationPositions)
+                .onSuccess { positions ->
+                    applyPublicationPositions(positions)
+                    logcat(LogPriority.DEBUG) {
+                        "EPUB positions refreshed chapterId=$chapterId " +
+                            "authoritative=${session.positionsController.hasAuthoritativePositions} " +
+                            "positions=${positions.size}"
+                    }
+                    latestLocator?.let(locatorUpdates::tryEmit)
+                }
                 .onFailure { error ->
                     logcat(LogPriority.WARN, error) {
                         "Failed to refresh EPUB positions for chapterId=$chapterId"
@@ -1720,13 +1741,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
     fun releaseSession() {
         closeImagePreview()
         locatorPersistenceJob.cancel()
+        val finalPositions = authoritativePublicationPositions()
         sessionRepository.remove(chapterId)?.close()
         releaseCacheLeases()
 
         val locator = latestLocator
         if (locator != null && !isIncognito()) {
             sessionReleaseScope.launch {
-                runCatching { persistLocator(locator) }
+                runCatching { persistLocator(locator, finalPositions) }
                     .onFailure { error ->
                         logcat(LogPriority.ERROR, error) {
                             "Failed to persist final EPUB locator for chapterId=$chapterId"
@@ -1860,8 +1882,15 @@ class EpubReaderViewModel @JvmOverloads constructor(
     ) {
         val sourceId = currentSourceId.takeIf { it > 0 } ?: return
         val bookUrl = localProgress.bookUrl ?: currentBookUrl ?: return
+        val positions = authoritativePublicationPositions() ?: return
         runCatching {
-            komgaEpubProgressSyncService.pushProgression(sourceId, bookUrl, locator, localProgress.updatedAt)
+            komgaEpubProgressSyncService.pushProgression(
+                sourceId = sourceId,
+                bookUrl = bookUrl,
+                locator = locator,
+                positions = positions,
+                modifiedAt = localProgress.updatedAt,
+            )
             val syncedProgress = localProgress.copy(lastSyncedAt = localProgress.updatedAt)
             currentProgress = syncedProgress
             upsertEpubProgress.await(syncedProgress)
@@ -1872,7 +1901,10 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
     }
 
-    private suspend fun persistLocator(locator: Locator) = progressPersistenceMutex.withLock {
+    private suspend fun persistLocator(
+        locator: Locator,
+        positionsOverride: List<Locator>? = null,
+    ) = progressPersistenceMutex.withLock {
         val chapterId = chapterId.takeIf { it > 0 } ?: return@withLock
         mangaId.takeIf { it > 0 } ?: return@withLock
         val now = Date()
@@ -1894,8 +1926,15 @@ class EpubReaderViewModel @JvmOverloads constructor(
         val bookUrl = progress.bookUrl
         if (bookUrl != null && epubReaderPreferences.syncProgressionToKomga.get()) {
             val sourceId = currentSourceId.takeIf { it > 0 } ?: return@withLock
+            val positions = positionsOverride ?: authoritativePublicationPositions() ?: return@withLock
             runCatching {
-                komgaEpubProgressSyncService.pushProgression(sourceId, bookUrl, locator, now)
+                komgaEpubProgressSyncService.pushProgression(
+                    sourceId = sourceId,
+                    bookUrl = bookUrl,
+                    locator = locator,
+                    positions = positions,
+                    modifiedAt = now,
+                )
                 val syncedProgress = progress.copy(lastSyncedAt = now)
                 upsertEpubProgress.await(syncedProgress)
                 currentProgress = syncedProgress
@@ -2030,6 +2069,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     private fun Locator.totalProgressionValue(): Double? {
         return (locations.totalProgression as? Number)?.toDouble()
+    }
+
+    private fun authoritativePublicationPositions(): List<Locator>? {
+        val controller = sessionRepository.get(chapterId)?.positionsController ?: return null
+        if (!controller.hasAuthoritativePositions) return null
+        return publicationPositions.takeIf { it.isNotEmpty() }
     }
 
     private fun Locator.positionIndex(): Long? {
