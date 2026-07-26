@@ -29,7 +29,18 @@ class EpubReaderPreferenceDefaultsTest {
         assertEquals(EpubLayoutPreferences.SpacingMode.STANDARD, preferences.spacingMode.get())
         assertEquals(1.7f, preferences.lineHeight.get())
         assertEquals(0.05f, preferences.paragraphSpacing.get())
+        assertEquals(EpubLayoutPreferences.TextAlignment.START, preferences.textAlignment.get())
         assertTrue(preferences.publisherStyles.get())
+    }
+
+    @Test
+    fun `selecting text alignment disables publisher styles`() {
+        val preferences = EpubLayoutPreferences(InMemoryPreferenceStore())
+
+        preferences.applyTextAlignment(EpubLayoutPreferences.TextAlignment.JUSTIFY)
+
+        assertEquals(EpubLayoutPreferences.TextAlignment.JUSTIFY, preferences.textAlignment.get())
+        assertFalse(preferences.publisherStyles.get())
     }
 
     @Test

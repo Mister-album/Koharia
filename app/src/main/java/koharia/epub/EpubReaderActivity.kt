@@ -1114,6 +1114,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             epubLayoutPreferences.pageMargins.changes().map { it as Any },
             epubLayoutPreferences.verticalMargins.changes().map { it as Any },
             epubLayoutPreferences.fontFamily.changes().map { it as Any },
+            epubLayoutPreferences.textAlignment.changes().map { it as Any },
             epubLayoutPreferences.publisherStyles.changes().map { it as Any },
         )
         combine(paginationAffectingChanges) { values -> values.toList() }

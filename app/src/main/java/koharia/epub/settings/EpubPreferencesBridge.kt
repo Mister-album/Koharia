@@ -7,6 +7,7 @@ import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Metadata
 import org.readium.r2.navigator.preferences.Color as ReadiumColor
 import org.readium.r2.navigator.preferences.FontFamily as ReadiumFontFamily
+import org.readium.r2.navigator.preferences.TextAlign as ReadiumTextAlign
 import org.readium.r2.navigator.preferences.Theme as ReadiumTheme
 import org.readium.r2.shared.publication.ReadingProgression as PublicationReadingProgression
 
@@ -29,6 +30,7 @@ class EpubPreferencesBridge {
             paragraphIndent = preferences.paragraphIndent.get(),
             pageMargins = preferences.pageMargins.get(),
             fontFamily = preferences.fontFamily.get(),
+            textAlignment = preferences.textAlignment.get(),
             publisherStyles = preferences.publisherStyles.get(),
             customBackgroundColor = preferences.customBackgroundColor.get(),
         )
@@ -44,6 +46,7 @@ class EpubPreferencesBridge {
         paragraphIndent: Float,
         pageMargins: Float,
         fontFamily: EpubLayoutPreferences.FontFamily,
+        textAlignment: EpubLayoutPreferences.TextAlignment,
         publisherStyles: Boolean,
         customBackgroundColor: Int = EpubLayoutPreferences.DEFAULT_CUSTOM_BACKGROUND_COLOR,
         pageDirectionExplicit: Boolean = true,
@@ -68,6 +71,8 @@ class EpubPreferencesBridge {
             paragraphIndent = paragraphIndent.toDouble(),
             pageMargins = pageMargins.toDouble(),
             fontFamily = fontFamily.toReadiumFontFamily(),
+            textAlign = textAlignment.toReadiumTextAlign(),
+            hyphens = textAlignment == EpubLayoutPreferences.TextAlignment.JUSTIFY,
             publisherStyles = publisherStyles,
         )
     }
@@ -117,6 +122,15 @@ class EpubPreferencesBridge {
             EpubLayoutPreferences.FontFamily.SANS_SERIF -> ReadiumFontFamily.SANS_SERIF
             EpubLayoutPreferences.FontFamily.MONOSPACE -> ReadiumFontFamily.MONOSPACE
             EpubLayoutPreferences.FontFamily.OPEN_DYSLEXIC -> ReadiumFontFamily.OPEN_DYSLEXIC
+        }
+    }
+
+    private fun EpubLayoutPreferences.TextAlignment.toReadiumTextAlign(): ReadiumTextAlign {
+        return when (this) {
+            EpubLayoutPreferences.TextAlignment.START -> ReadiumTextAlign.START
+            EpubLayoutPreferences.TextAlignment.LEFT -> ReadiumTextAlign.LEFT
+            EpubLayoutPreferences.TextAlignment.RIGHT -> ReadiumTextAlign.RIGHT
+            EpubLayoutPreferences.TextAlignment.JUSTIFY -> ReadiumTextAlign.JUSTIFY
         }
     }
 }

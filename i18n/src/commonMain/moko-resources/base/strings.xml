@@ -991,6 +991,8 @@
     <string name="epub_reader_delete_custom_color">Delete background color</string>
     <string name="pref_epub_text_alignment">Text alignment</string>
     <string name="pref_epub_text_align_justify">Justify</string>
+    <string name="pref_epub_text_align_left">Left</string>
+    <string name="pref_epub_text_align_right">Right</string>
     <string name="pref_epub_text_align_start">Start</string>
     <string name="pref_epub_font_size">Font size</string>
     <string name="pref_epub_line_height">Line height</string>

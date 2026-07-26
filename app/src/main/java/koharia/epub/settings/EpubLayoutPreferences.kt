@@ -51,6 +51,9 @@ class EpubLayoutPreferences(
     val fontFamily: Preference<FontFamily> =
         preferenceStore.getEnum("epub_layout_font_family", FontFamily.ORIGINAL)
 
+    val textAlignment: Preference<TextAlignment> =
+        preferenceStore.getEnum("epub_layout_text_alignment", TextAlignment.START)
+
     val publisherStyles: Preference<Boolean> =
         preferenceStore.getBoolean("epub_layout_publisher_styles", true)
 
@@ -92,6 +95,13 @@ class EpubLayoutPreferences(
         OPEN_DYSLEXIC,
     }
 
+    enum class TextAlignment {
+        START,
+        LEFT,
+        RIGHT,
+        JUSTIFY,
+    }
+
     enum class SpacingMode(
         val lineHeight: Float?,
         val paragraphSpacing: Float?,
@@ -115,6 +125,11 @@ class EpubLayoutPreferences(
         paragraphIndent.set(checkNotNull(mode.paragraphIndent))
         verticalMargins.set(checkNotNull(mode.verticalMargins))
         pageMargins.set(checkNotNull(mode.horizontalMargins))
+    }
+
+    fun applyTextAlignment(alignment: TextAlignment) {
+        textAlignment.set(alignment)
+        publisherStyles.set(false)
     }
 
     companion object {

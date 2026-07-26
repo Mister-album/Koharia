@@ -94,12 +94,18 @@ class EpubReaderFragment : Fragment() {
     private var navigatorInputListener: InputListener? = null
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
+    private var textAlignmentOverride: EpubLayoutPreferences.TextAlignment? = null
+    private var tocHrefs: List<String> = emptyList()
+    private var chapterBreaksEnabled = false
     private var continuousScrollInstallJob: Job? = null
     private var imageInteractionInstallJob: Job? = null
     private var preserveImageColors = true
     private var parentColorsInverted = false
     private var imageColorPolicyScript = buildEpubDocumentPreparationScript(
         paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
+        textAlignment = textAlignmentOverride,
+        tocHrefs = tocHrefs,
+        chapterBreaksEnabled = chapterBreaksEnabled,
         preserveImageColors = preserveImageColors,
         parentColorsInverted = parentColorsInverted,
     )
@@ -141,6 +147,11 @@ class EpubReaderFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = sessionRepository.get(chapterId)
         paragraphIndentOverrideEnabled = epubLayoutPreferences.publisherStyles.get().not()
+        textAlignmentOverride = epubLayoutPreferences.textAlignment.get()
+            .takeIf { paragraphIndentOverrideEnabled }
+        tocHrefs = session?.publication?.tableOfContents?.flattenEpubTocHrefs().orEmpty()
+        chapterBreaksEnabled =
+            epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED
         refreshDocumentPreparationPolicy()
         logcat(LogPriority.DEBUG) {
             "EPUB fragment onCreate chapterId=$chapterId hasSession=${session != null}"
@@ -293,10 +304,18 @@ class EpubReaderFragment : Fragment() {
             clearContinuousScrollState()
         }
         val paragraphOverrideEnabled = preferences.publisherStyles == false
-        val paragraphPolicyChanged = paragraphIndentOverrideEnabled != paragraphOverrideEnabled
+        val nextTextAlignmentOverride = epubLayoutPreferences.textAlignment.get()
+            .takeIf { paragraphOverrideEnabled }
+        val nextChapterBreaksEnabled = preferences.scroll != true
+        val documentPolicyChanged =
+            paragraphIndentOverrideEnabled != paragraphOverrideEnabled ||
+                textAlignmentOverride != nextTextAlignmentOverride ||
+                chapterBreaksEnabled != nextChapterBreaksEnabled
         paragraphIndentOverrideEnabled = paragraphOverrideEnabled
+        textAlignmentOverride = nextTextAlignmentOverride
+        chapterBreaksEnabled = nextChapterBreaksEnabled
         navigator?.submitPreferences(preferences)
-        if (paragraphPolicyChanged) {
+        if (documentPolicyChanged) {
             refreshDocumentPreparationPolicy()
         }
         scheduleImageInteractionsInstall(navigator)
@@ -308,6 +327,7 @@ class EpubReaderFragment : Fragment() {
         logcat(LogPriority.DEBUG) {
             "EPUB paragraph indent submitted chapterId=$chapterId " +
                 "publisherStyles=${preferences.publisherStyles} " +
+                "textAlign=${preferences.textAlign} " +
                 "paragraphIndent=${preferences.paragraphIndent} " +
                 "paragraphSpacing=${preferences.paragraphSpacing} lineHeight=${preferences.lineHeight}"
         }
@@ -386,6 +406,9 @@ class EpubReaderFragment : Fragment() {
     private fun refreshDocumentPreparationPolicy() {
         imageColorPolicyScript = buildEpubDocumentPreparationScript(
             paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
+            textAlignment = textAlignmentOverride,
+            tocHrefs = tocHrefs,
+            chapterBreaksEnabled = chapterBreaksEnabled,
             preserveImageColors = preserveImageColors,
             parentColorsInverted = parentColorsInverted,
         )
@@ -659,11 +682,10 @@ class EpubReaderFragment : Fragment() {
                             preserveImageColors = preserveImageColors,
                             parentColorsInverted = parentColorsInverted,
                         ),
-                        paragraphIndentScript = if (paragraphIndentOverrideEnabled) {
-                            APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
-                        } else {
-                            REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT
-                        },
+                        paragraphIndentScript = buildEpubTypographyPreparationScript(
+                            paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
+                            textAlignment = textAlignmentOverride,
+                        ),
                     ),
                 )
             }.getOrNull()
@@ -900,6 +922,10 @@ class EpubReaderFragment : Fragment() {
                         className: String(element.className || ''),
                         inlineStyle: element.getAttribute('style') || '',
                         textIndent: style.textIndent,
+                        textAlign: style.textAlign,
+                        direction: style.direction,
+                        alignmentTarget: element.hasAttribute('$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE'),
+                        rightIndentSpacer: element.hasAttribute('$EPUB_RIGHT_INDENT_SPACER_ATTRIBUTE'),
                         display: style.display,
                         firstChildTag: element.firstElementChild ? element.firstElementChild.tagName : '',
                         text: String(element.textContent || '').trim().slice(0, 24)
@@ -912,6 +938,7 @@ class EpubReaderFragment : Fragment() {
                     advancedSettings: rootStyle.getPropertyValue('--USER__advancedSettings').trim(),
                     paragraphIndentVariable: rootStyle.getPropertyValue('--USER__paraIndent').trim(),
                     paragraphCount: paragraphs.length,
+                    chapterBreakCount: document.querySelectorAll('[$EPUB_CHAPTER_BREAK_TARGET_ATTRIBUTE]').length,
                     paragraphs: paragraphs.slice(0, 8).map(describe),
                     bodyBlocks: Array.from(document.body ? document.body.children : []).slice(0, 8).map(describe)
                 });
