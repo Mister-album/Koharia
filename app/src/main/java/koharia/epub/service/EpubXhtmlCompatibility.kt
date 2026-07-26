@@ -1,8 +1,5 @@
 package koharia.epub.service
 
-import java.nio.ByteBuffer
-import java.nio.charset.Charset
-import java.nio.charset.CodingErrorAction
 import logcat.LogPriority
 import org.readium.r2.shared.publication.Manifest
 import org.readium.r2.shared.publication.Publication
@@ -12,6 +9,9 @@ import org.readium.r2.shared.util.data.Container
 import org.readium.r2.shared.util.resource.Resource
 import org.readium.r2.shared.util.resource.map
 import tachiyomi.core.common.util.system.logcat
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 
 private data class DecodedXhtml(
     val content: String,
