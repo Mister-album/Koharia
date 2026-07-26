@@ -6,21 +6,30 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   get_tag:
-    if: github.repository == 'mihonapp/mihon'
+    if: github.repository == 'Mister-album/Koharia'
     name: Extract tag name
     runs-on: 'ubuntu-24.04'
     outputs:
       tag: ${{ steps.extract.outputs.tag }}
 
     steps:
+      - name: Validate tag
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          echo "::error::Run this workflow from an existing release tag."
+          exit 1
+
       - name: Get tag name
         id: extract
-        run: echo "tag=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_OUTPUT
+        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
 
   build:
-    if: github.repository == 'mihonapp/mihon'
+    if: github.repository == 'Mister-album/Koharia'
     name: Build
     runs-on: 'ubuntu-24.04'
     needs: get_tag
@@ -56,25 +65,25 @@ jobs:
         run: |
           set -e
 
-          mv app/build/outputs/apk/release/app-universal-release-unsigned-signed.apk mihon-${{ needs.get_tag.outputs.tag }}.apk
-          mv app/build/outputs/apk/release/app-arm64-v8a-release-unsigned-signed.apk mihon-arm64-v8a-${{ needs.get_tag.outputs.tag }}.apk
-          mv app/build/outputs/apk/release/app-armeabi-v7a-release-unsigned-signed.apk mihon-armeabi-v7a-${{ needs.get_tag.outputs.tag }}.apk
-          mv app/build/outputs/apk/release/app-x86-release-unsigned-signed.apk mihon-x86-${{ needs.get_tag.outputs.tag }}.apk
-          mv app/build/outputs/apk/release/app-x86_64-release-unsigned-signed.apk mihon-x86_64-${{ needs.get_tag.outputs.tag }}.apk
+          mv app/build/outputs/apk/release/app-universal-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-release.apk
+          mv app/build/outputs/apk/release/app-arm64-v8a-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-arm64-v8a-release.apk
+          mv app/build/outputs/apk/release/app-armeabi-v7a-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-armeabi-v7a-release.apk
+          mv app/build/outputs/apk/release/app-x86-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-x86-release.apk
+          mv app/build/outputs/apk/release/app-x86_64-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-x86_64-release.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: mihon
+          name: koharia
           path: |
-            mihon-${{ needs.get_tag.outputs.tag }}.apk
-            mihon-arm64-v8a-${{ needs.get_tag.outputs.tag }}.apk
-            mihon-armeabi-v7a-${{ needs.get_tag.outputs.tag }}.apk
-            mihon-x86-${{ needs.get_tag.outputs.tag }}.apk
-            mihon-x86_64-${{ needs.get_tag.outputs.tag }}.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-release.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-arm64-v8a-release.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-armeabi-v7a-release.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-x86-release.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-x86_64-release.apk
 
   build_foss:
-    if: github.repository == 'mihonapp/mihon'
+    if: github.repository == 'Mister-album/Koharia'
     name: Build (FOSS)
     runs-on: ubuntu-24.04
     needs: get_tag
@@ -112,16 +121,16 @@ jobs:
         run: |
           set -e
 
-          mv app/build/outputs/apk/foss/app-universal-foss-unsigned-signed.apk mihon-${{ needs.get_tag.outputs.tag }}-foss.apk
+          mv app/build/outputs/apk/foss/app-universal-foss-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-foss.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: mihon-foss
-          path: mihon-${{ needs.get_tag.outputs.tag }}-foss.apk
+          name: koharia-foss
+          path: Koharia-${{ needs.get_tag.outputs.tag }}-foss.apk
 
   release:
-    if: github.repository == 'mihonapp/mihon'
+    if: github.repository == 'Mister-album/Koharia'
     name: Create GitHub Release
     runs-on: ubuntu-24.04
     needs: [get_tag, build, build_foss]
@@ -137,33 +146,28 @@ jobs:
         with:
           failOnError: false
           name: |
-            mihon
-            mihon-foss
+            koharia
+            koharia-foss
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.get_tag.outputs.tag }}
-          name: Mihon ${{ needs.get_tag.outputs.tag }}
+          name: Koharia ${{ needs.get_tag.outputs.tag }}
           body: |
-            Check out the [past release notes](https://github.com/mihonapp/mihon/releases) if you're upgrading from an earlier version. Consider [becoming a patron](https://www.patreon.com/mihon/membership) to help keep Mihon improving!
-
-            <!-->
-
-
-
-            <!-->
+            Check the [past release notes](https://github.com/Mister-album/Koharia/releases) when upgrading from an earlier version.
+            Visit the [Koharia website](https://koharia.org/en/) for downloads, documentation, and support.
 
             > [!TIP]
             >
-            > ### If you are unsure which version to download then go with `mihon-${{ needs.get_tag.outputs.tag }}.apk`
+            > If you are unsure which APK to download, use `Koharia-${{ needs.get_tag.outputs.tag }}-release.apk`.
           files: |
-            mihon-${{ needs.get_tag.outputs.tag }}.apk
-            mihon-${{ needs.get_tag.outputs.tag }}-foss.apk
-            mihon-arm64-v8a-${{ needs.get_tag.outputs.tag }}.apk
-            mihon-armeabi-v7a-${{ needs.get_tag.outputs.tag }}.apk
-            mihon-x86-${{ needs.get_tag.outputs.tag }}.apk
-            mihon-x86_64-${{ needs.get_tag.outputs.tag }}.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-release.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-foss.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-arm64-v8a-release.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-armeabi-v7a-release.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-x86-release.apk
+            Koharia-${{ needs.get_tag.outputs.tag }}-x86_64-release.apk
           draft: true
           prerelease: false
-          token: ${{ secrets.MIHON_BOT_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
