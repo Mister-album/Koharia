@@ -58,6 +58,10 @@ class EpubPreferencesBridge {
             pageDirectionExplicit = pageDirectionExplicit,
             publicationMetadata = publicationMetadata,
         )
+        val textAlignmentPreferences = resolveReadiumTextAlignmentPreferences(
+            textAlignment = textAlignment,
+            publisherStyles = publisherStyles,
+        )
         return EpubPreferences(
             scroll = flowPreferences.scroll,
             readingProgression = flowPreferences.readingProgression,
@@ -71,8 +75,8 @@ class EpubPreferencesBridge {
             paragraphIndent = paragraphIndent.toDouble(),
             pageMargins = pageMargins.toDouble(),
             fontFamily = fontFamily.toReadiumFontFamily(),
-            textAlign = textAlignment.toReadiumTextAlign(),
-            hyphens = textAlignment == EpubLayoutPreferences.TextAlignment.JUSTIFY,
+            textAlign = textAlignmentPreferences.textAlign,
+            hyphens = textAlignmentPreferences.hyphens,
             publisherStyles = publisherStyles,
         )
     }
@@ -124,14 +128,30 @@ class EpubPreferencesBridge {
             EpubLayoutPreferences.FontFamily.OPEN_DYSLEXIC -> ReadiumFontFamily.OPEN_DYSLEXIC
         }
     }
+}
 
-    private fun EpubLayoutPreferences.TextAlignment.toReadiumTextAlign(): ReadiumTextAlign {
-        return when (this) {
-            EpubLayoutPreferences.TextAlignment.START -> ReadiumTextAlign.START
-            EpubLayoutPreferences.TextAlignment.LEFT -> ReadiumTextAlign.LEFT
-            EpubLayoutPreferences.TextAlignment.RIGHT -> ReadiumTextAlign.RIGHT
-            EpubLayoutPreferences.TextAlignment.JUSTIFY -> ReadiumTextAlign.JUSTIFY
-        }
+internal data class ReadiumTextAlignmentPreferences(
+    val textAlign: ReadiumTextAlign?,
+    val hyphens: Boolean?,
+)
+
+internal fun resolveReadiumTextAlignmentPreferences(
+    textAlignment: EpubLayoutPreferences.TextAlignment,
+    publisherStyles: Boolean,
+): ReadiumTextAlignmentPreferences {
+    val textAlignmentOverride = textAlignment.takeUnless { publisherStyles }
+    return ReadiumTextAlignmentPreferences(
+        textAlign = textAlignmentOverride?.toReadiumTextAlign(),
+        hyphens = textAlignmentOverride?.let { it == EpubLayoutPreferences.TextAlignment.JUSTIFY },
+    )
+}
+
+private fun EpubLayoutPreferences.TextAlignment.toReadiumTextAlign(): ReadiumTextAlign {
+    return when (this) {
+        EpubLayoutPreferences.TextAlignment.START -> ReadiumTextAlign.START
+        EpubLayoutPreferences.TextAlignment.LEFT -> ReadiumTextAlign.LEFT
+        EpubLayoutPreferences.TextAlignment.RIGHT -> ReadiumTextAlign.RIGHT
+        EpubLayoutPreferences.TextAlignment.JUSTIFY -> ReadiumTextAlign.JUSTIFY
     }
 }
 
