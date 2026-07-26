@@ -601,22 +601,14 @@ private fun ColumnScope.KomgaMetadataRow(
 
     if (infoParts.isEmpty()) return
 
-    Row(
-        modifier = Modifier.secondaryItemAlpha(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        ProvideTextStyle(MaterialTheme.typography.bodySmall) {
-            infoParts.forEachIndexed { index, part ->
-                if (index > 0) DotSeparatorText()
-                Text(
-                    text = part,
-                    overflow = TextOverflow.Ellipsis,
-                    maxLines = 1,
-                    textAlign = textAlign,
-                )
-            }
-        }
-    }
+    Text(
+        text = infoParts.joinToString(" • "),
+        modifier = Modifier
+            .fillMaxWidth()
+            .secondaryItemAlpha(),
+        style = MaterialTheme.typography.bodySmall,
+        textAlign = textAlign,
+    )
 }
 
 @Composable

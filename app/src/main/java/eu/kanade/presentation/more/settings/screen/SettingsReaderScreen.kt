@@ -260,6 +260,27 @@ object SettingsReaderScreen : SearchableSettings {
                 )
                 add(
                     Preference.PreferenceItem.ListPreference(
+                        preference = epubLayoutPreferences.textAlignment,
+                        entries = persistentMapOf(
+                            EpubLayoutPreferences.TextAlignment.START to
+                                stringResource(MR.strings.pref_epub_text_align_start),
+                            EpubLayoutPreferences.TextAlignment.LEFT to
+                                stringResource(MR.strings.pref_epub_text_align_left),
+                            EpubLayoutPreferences.TextAlignment.RIGHT to
+                                stringResource(MR.strings.pref_epub_text_align_right),
+                            EpubLayoutPreferences.TextAlignment.JUSTIFY to
+                                stringResource(MR.strings.pref_epub_text_align_justify),
+                        ),
+                        title = stringResource(MR.strings.pref_epub_text_alignment),
+                        enabled = !publisherStyles,
+                        onValueChanged = { alignment ->
+                            epubLayoutPreferences.applyTextAlignment(alignment)
+                            true
+                        },
+                    ),
+                )
+                add(
+                    Preference.PreferenceItem.ListPreference(
                         preference = epubLayoutPreferences.spacingMode,
                         entries = persistentMapOf(
                             EpubLayoutPreferences.SpacingMode.COMPACT to

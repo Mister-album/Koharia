@@ -634,6 +634,8 @@
     <string name="epub_reader_delete_custom_color">删除背景颜色</string>
     <string name="pref_epub_text_alignment">文本对齐</string>
     <string name="pref_epub_text_align_justify">两端对齐</string>
+    <string name="pref_epub_text_align_left">左对齐</string>
+    <string name="pref_epub_text_align_right">右对齐</string>
     <string name="pref_epub_text_align_start">起始对齐</string>
     <string name="pref_epub_font_size">字号</string>
     <string name="pref_epub_line_height">行高</string>

@@ -26,6 +26,7 @@ internal data class EpubPaginationLayoutSnapshot(
     val pageMargins: Float,
     val verticalMargins: Float,
     val fontFamily: String,
+    val textAlignment: String,
     val publisherStyles: Boolean,
     val viewportWidthPx: Int,
     val viewportHeightPx: Int,
@@ -46,6 +47,7 @@ internal data class EpubPaginationLayoutSnapshot(
             put("pageMargins", pageMargins.toDouble())
             put("verticalMargins", verticalMargins.toDouble())
             put("fontFamily", fontFamily)
+            put("textAlignment", textAlignment)
             put("publisherStyles", publisherStyles)
             put("viewportWidthPx", viewportWidthPx)
             put("viewportHeightPx", viewportHeightPx)
@@ -72,6 +74,7 @@ internal data class EpubPaginationLayoutSnapshot(
                 pageMargins = preferences.pageMargins.get(),
                 verticalMargins = preferences.verticalMargins.get(),
                 fontFamily = preferences.fontFamily.get().name,
+                textAlignment = preferences.textAlignment.get().name,
                 publisherStyles = preferences.publisherStyles.get(),
                 viewportWidthPx = viewport.widthPx,
                 viewportHeightPx = viewport.heightPx,
@@ -122,5 +125,5 @@ private fun String.sha256(): String {
         .joinToString("") { byte -> "%02x".format(byte) }
 }
 
-private const val PAGINATION_ALGORITHM_VERSION = 5
+private const val PAGINATION_ALGORITHM_VERSION = 6
 private const val READIUM_VERSION = "3.3.0"

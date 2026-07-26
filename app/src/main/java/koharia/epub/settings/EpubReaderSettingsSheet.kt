@@ -1216,6 +1216,7 @@ private fun TypographySettingsSheet(
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
                 FontFamilySection(preferences)
+                TextAlignmentSection(preferences)
                 PublisherStylesSection(preferences)
             }
         }
@@ -1700,6 +1701,23 @@ private fun FontFamilySection(preferences: EpubLayoutPreferences) {
 }
 
 @Composable
+private fun TextAlignmentSection(preferences: EpubLayoutPreferences) {
+    val currentAlignment by preferences.textAlignment.changes()
+        .collectAsState(preferences.textAlignment.get())
+
+    ChipSection(title = stringResource(MR.strings.pref_epub_text_alignment)) {
+        EpubLayoutPreferences.TextAlignment.entries.forEach { alignment ->
+            FilterChip(
+                selected = currentAlignment == alignment,
+                onClick = { preferences.applyTextAlignment(alignment) },
+                label = { Text(alignment.label()) },
+                modifier = Modifier.semantics { role = Role.RadioButton },
+            )
+        }
+    }
+}
+
+@Composable
 private fun PublisherStylesSection(preferences: EpubLayoutPreferences) {
     val publisherStyles by preferences.publisherStyles.changes().collectAsState(preferences.publisherStyles.get())
 
@@ -1770,6 +1788,16 @@ private fun EpubLayoutPreferences.FontFamily.label(): String {
         EpubLayoutPreferences.FontFamily.SANS_SERIF -> stringResource(MR.strings.pref_epub_font_sans_serif)
         EpubLayoutPreferences.FontFamily.MONOSPACE -> stringResource(MR.strings.pref_epub_font_monospace)
         EpubLayoutPreferences.FontFamily.OPEN_DYSLEXIC -> stringResource(MR.strings.pref_epub_font_open_dyslexic)
+    }
+}
+
+@Composable
+private fun EpubLayoutPreferences.TextAlignment.label(): String {
+    return when (this) {
+        EpubLayoutPreferences.TextAlignment.START -> stringResource(MR.strings.pref_epub_text_align_start)
+        EpubLayoutPreferences.TextAlignment.LEFT -> stringResource(MR.strings.pref_epub_text_align_left)
+        EpubLayoutPreferences.TextAlignment.RIGHT -> stringResource(MR.strings.pref_epub_text_align_right)
+        EpubLayoutPreferences.TextAlignment.JUSTIFY -> stringResource(MR.strings.pref_epub_text_align_justify)
     }
 }
 

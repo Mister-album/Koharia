@@ -45,6 +45,13 @@ internal class EpubPaginationScannerFragment : Fragment() {
     private var scanStarted = false
     private var awaitingMeasuredCallback = false
     private var readinessJob: Job? = null
+    private val tocHrefs by lazy {
+        sessionRepository.getForPagination(chapterId)
+            ?.publication
+            ?.tableOfContents
+            ?.flattenEpubTocHrefs()
+            .orEmpty()
+    }
     private val beginScanRunnable = Runnable {
         if (!isAdded || view == null || scanStarted) return@Runnable
         beginScan()
@@ -66,9 +73,15 @@ internal class EpubPaginationScannerFragment : Fragment() {
                 recordPageCount(totalPages, locator)
             } else if (readinessJob == null) {
                 readinessJob = viewLifecycleOwner.lifecycleScope.launch {
-                    if (!epubLayoutPreferences.publisherStyles.get()) {
-                        navigatorFragment()?.evaluateJavascript(APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT)
-                    }
+                    val publisherStyles = epubLayoutPreferences.publisherStyles.get()
+                    navigatorFragment()?.evaluateJavascript(
+                        buildEpubLayoutPreparationScript(
+                            paragraphIndentOverrideEnabled = !publisherStyles,
+                            textAlignment = epubLayoutPreferences.textAlignment.get().takeIf { !publisherStyles },
+                            tocHrefs = tocHrefs,
+                            chapterBreaksEnabled = true,
+                        ),
+                    )
                     val ready = awaitStableLayout()
                     readinessJob = null
                     if (!ready) {

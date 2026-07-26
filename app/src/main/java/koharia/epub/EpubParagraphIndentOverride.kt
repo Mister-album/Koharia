@@ -1,8 +1,13 @@
 package koharia.epub
 
+import koharia.epub.settings.EpubLayoutPreferences
+
 internal const val EPUB_PARAGRAPH_INDENT_STYLE_ID = "koharia-paragraph-indent"
 internal const val EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE = "data-koharia-no-paragraph-indent"
 internal const val EPUB_ORPHANED_INLINE_PADDING_ATTRIBUTE = "data-koharia-orphaned-inline-padding"
+internal const val EPUB_TEXT_ALIGNMENT_STYLE_ID = "koharia-text-alignment"
+internal const val EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE = "data-koharia-text-alignment-target"
+internal const val EPUB_RIGHT_INDENT_SPACER_ATTRIBUTE = "data-koharia-right-indent-spacer"
 
 // Readium's paragraph preference targets every <p>. A higher-specificity exception keeps
 // paragraph-shaped headings, signatures and media containers from inheriting body indentation.
@@ -33,10 +38,12 @@ internal const val APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT =
             var textAlign = (computed.textAlign || '').toLowerCase();
             var role = (paragraph.getAttribute('role') || '').toLowerCase();
             var epubType = (paragraph.getAttribute('epub:type') || '').toLowerCase();
+            var className = typeof paragraph.className === 'string' ? paragraph.className : '';
+            var structuralClasses = /(^|[-_ ])(title|subtitle|heading|headline|caption|credit|signature|author|date|center|right)([-_ ]|${'$'})/i;
             var hasOnlyMedia = paragraph.textContent.trim() === '' &&
                 paragraph.querySelector('img, svg, picture, video, audio, figure, table');
             var isStructuralParagraph =
-                textAlign === 'center' || textAlign === 'right' || textAlign === 'end' ||
+                textAlign === 'center' || structuralClasses.test(className) ||
                 role === 'heading' || epubType.indexOf('title') !== -1 || hasOnlyMedia;
             if (isStructuralParagraph) {
                 paragraph.setAttribute('$EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE', '');
@@ -72,10 +79,114 @@ internal const val REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT =
         return true;
     })()"""
 
-internal fun buildEpubDocumentPreparationScript(
+internal fun buildEpubTextAlignmentOverrideScript(
+    textAlignment: EpubLayoutPreferences.TextAlignment?,
+): String {
+    if (textAlignment == null) {
+        return """
+            (function() {
+                if (!document.documentElement || document.documentElement.localName.toLowerCase() !== 'html') return false;
+                var style = document.getElementById('$EPUB_TEXT_ALIGNMENT_STYLE_ID');
+                if (style) style.remove();
+                Array.from(document.querySelectorAll('[$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE]')).forEach(function(element) {
+                    element.removeAttribute('$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE');
+                    element.removeAttribute('$EPUB_RIGHT_INDENT_SPACER_ATTRIBUTE');
+                });
+                return true;
+            })()
+        """.trimIndent()
+    }
+    val alignmentCss = when (textAlignment) {
+        EpubLayoutPreferences.TextAlignment.START ->
+            "text-align: start !important; " +
+                "-webkit-hyphens: none !important; hyphens: none !important;"
+        EpubLayoutPreferences.TextAlignment.LEFT ->
+            "text-align: left !important; " +
+                "-webkit-hyphens: none !important; hyphens: none !important;"
+        EpubLayoutPreferences.TextAlignment.RIGHT ->
+            "text-align: right !important; " +
+                "-webkit-hyphens: none !important; hyphens: none !important;"
+        EpubLayoutPreferences.TextAlignment.JUSTIFY ->
+            "text-align: justify !important; text-justify: auto !important; " +
+                "-webkit-hyphens: auto !important; hyphens: auto !important;"
+    }
+    val rightIndentCss = if (textAlignment == EpubLayoutPreferences.TextAlignment.RIGHT) {
+        " html:root:root:root p[$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE]" +
+            ":not([$EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE]) { text-indent: 0 !important; }" +
+            " html:root:root:root p[$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE]" +
+            "[$EPUB_RIGHT_INDENT_SPACER_ATTRIBUTE]:not([$EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE])::before { " +
+            "content: \"\" !important; float: right !important; " +
+            "width: var(--USER__paraIndent, 2rem) !important; height: 1em !important; " +
+            "pointer-events: none !important; }"
+    } else {
+        ""
+    }
+    return """
+        (function() {
+            if (!document.documentElement || document.documentElement.localName.toLowerCase() !== 'html') return false;
+            var style = document.getElementById('$EPUB_TEXT_ALIGNMENT_STYLE_ID');
+            if (style) style.remove();
+            Array.from(document.querySelectorAll('[$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE]')).forEach(function(element) {
+                element.removeAttribute('$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE');
+                element.removeAttribute('$EPUB_RIGHT_INDENT_SPACER_ATTRIBUTE');
+            });
+            style = document.createElementNS('http://www.w3.org/1999/xhtml', 'style');
+            style.id = '$EPUB_TEXT_ALIGNMENT_STYLE_ID';
+            style.setAttribute('type', 'text/css');
+            style.textContent =
+                'html:root:root:root [$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE] { $alignmentCss }' +
+                '$rightIndentCss';
+            (document.head || document.documentElement).appendChild(style);
+
+            var blockTags = /^(p|li|dd|blockquote|div|section)$/;
+            var nestedBlockTags = /^(p|li|dd|blockquote|div|section|article|aside|header|footer|nav|main)$/;
+            var structuralClasses = /(^|[-_ ])(title|subtitle|heading|headline|caption|credit|signature|author|date|center|right)([-_ ]|${'$'})/i;
+            Array.from(document.querySelectorAll('p, li, dd, blockquote, div, section')).forEach(function(element) {
+                var tagName = element.localName.toLowerCase();
+                if (!blockTags.test(tagName)) return;
+                var role = (element.getAttribute('role') || '').toLowerCase();
+                var epubType = (
+                    element.getAttribute('epub:type') ||
+                    element.getAttributeNS('http://www.idpf.org/2007/ops', 'type') ||
+                    ''
+                ).toLowerCase();
+                var className = typeof element.className === 'string' ? element.className : '';
+                var computed = window.getComputedStyle(element);
+                var originalAlignment = (computed.textAlign || '').toLowerCase();
+                var text = (element.textContent || '').trim();
+                var hasOnlyMedia = text === '' && element.querySelector(
+                    'img, svg, picture, video, audio, figure, table, canvas',
+                );
+                var hasNestedBlock = Array.from(element.children).some(function(child) {
+                    return nestedBlockTags.test(child.localName.toLowerCase());
+                });
+                var isStructural =
+                    role === 'heading' ||
+                    epubType.indexOf('title') !== -1 ||
+                    epubType.indexOf('subtitle') !== -1 ||
+                    epubType.indexOf('heading') !== -1 ||
+                    structuralClasses.test(className) ||
+                    originalAlignment === 'center' ||
+                    element.closest('h1, h2, h3, h4, h5, h6, figure, figcaption, table, pre, code, nav');
+                if (!text || hasOnlyMedia || hasNestedBlock || isStructural) return;
+                element.setAttribute('$EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE', '');
+                if (${textAlignment == EpubLayoutPreferences.TextAlignment.RIGHT} && tagName === 'p') {
+                    var beforeContent = window.getComputedStyle(element, '::before').content;
+                    var hasGeneratedBeforeContent =
+                        beforeContent && beforeContent !== 'none' && beforeContent !== 'normal' && beforeContent !== '""';
+                    if (!hasGeneratedBeforeContent) {
+                        element.setAttribute('$EPUB_RIGHT_INDENT_SPACER_ATTRIBUTE', '');
+                    }
+                }
+            });
+            return true;
+        })()
+    """.trimIndent()
+}
+
+internal fun buildEpubTypographyPreparationScript(
     paragraphIndentOverrideEnabled: Boolean,
-    preserveImageColors: Boolean,
-    parentColorsInverted: Boolean,
+    textAlignment: EpubLayoutPreferences.TextAlignment?,
 ): String {
     val paragraphIndentScript = if (paragraphIndentOverrideEnabled) {
         APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
@@ -85,6 +196,43 @@ internal fun buildEpubDocumentPreparationScript(
     return """
         (function() {
             $paragraphIndentScript;
+            ${buildEpubTextAlignmentOverrideScript(textAlignment)};
+            return true;
+        })()
+    """.trimIndent()
+}
+
+internal fun buildEpubLayoutPreparationScript(
+    paragraphIndentOverrideEnabled: Boolean,
+    textAlignment: EpubLayoutPreferences.TextAlignment?,
+    tocHrefs: List<String>,
+    chapterBreaksEnabled: Boolean,
+): String =
+    """
+        (function() {
+            ${buildEpubTypographyPreparationScript(paragraphIndentOverrideEnabled, textAlignment)};
+            ${buildEpubChapterBreakOverrideScript(tocHrefs, chapterBreaksEnabled)};
+            return true;
+        })()
+    """.trimIndent()
+
+internal fun buildEpubDocumentPreparationScript(
+    paragraphIndentOverrideEnabled: Boolean,
+    textAlignment: EpubLayoutPreferences.TextAlignment?,
+    tocHrefs: List<String>,
+    chapterBreaksEnabled: Boolean,
+    preserveImageColors: Boolean,
+    parentColorsInverted: Boolean,
+): String {
+    val layoutPreparationScript = buildEpubLayoutPreparationScript(
+        paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
+        textAlignment = textAlignment,
+        tocHrefs = tocHrefs,
+        chapterBreaksEnabled = chapterBreaksEnabled,
+    )
+    return """
+        (function() {
+            $layoutPreparationScript;
             ${buildEpubImageColorPolicyScript(preserveImageColors, parentColorsInverted)};
             return 'prepared';
         })()
