@@ -4,6 +4,7 @@ import koharia.epub.cache.EpubCacheManager
 import koharia.epub.injectEpubParagraphIndentStyle
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -123,18 +124,20 @@ private class EpubResourceCacheHttpClient(
             val bytes = response.body.use { it.readBytes() }
             if (persistCache) {
                 prefetchScope.launch {
-                    cacheManager.putResource(
-                        sourceId = sourceId,
-                        publicationKey = publicationKey,
-                        url = request.url.toString(),
-                        mediaType = response.response.mediaType?.toString(),
-                        bytes = bytes,
-                    )
-                    if (response.response.mediaType?.isHtml == true || isHtmlUrl(request.url.toString())) {
-                        prefetchDependencies(
-                            baseUrl = response.response.url.toString(),
-                            content = bytes.toString(Charsets.UTF_8),
+                    prefetchSafely(request.url.toString()) {
+                        cacheManager.putResource(
+                            sourceId = sourceId,
+                            publicationKey = publicationKey,
+                            url = request.url.toString(),
+                            mediaType = response.response.mediaType?.toString(),
+                            bytes = bytes,
                         )
+                        if (response.response.mediaType?.isHtml == true || isHtmlUrl(request.url.toString())) {
+                            prefetchDependencies(
+                                baseUrl = response.response.url.toString(),
+                                content = bytes.toString(Charsets.UTF_8),
+                            )
+                        }
                     }
                 }
             }
@@ -175,34 +178,51 @@ private class EpubResourceCacheHttpClient(
         if (!visited.add(resolved)) return
         val absoluteUrl = AbsoluteUrl(resolved) ?: return
         cacheManager.getResource(sourceId, publicationKey, resolved)?.let { return }
-        delegate.stream(HttpRequest(absoluteUrl)).map { response ->
-            if (response.response.statusCode != HttpStatus(200) ||
-                response.response.contentLength?.let { it > EpubCacheManager.MAX_RESOURCE_BYTES } == true
-            ) {
-                response.body.close()
-                return@map
+        prefetchSafely(resolved) {
+            delegate.stream(HttpRequest(absoluteUrl)).map { response ->
+                if (response.response.statusCode != HttpStatus(200) ||
+                    response.response.contentLength?.let { it > EpubCacheManager.MAX_RESOURCE_BYTES } == true
+                ) {
+                    response.body.close()
+                    return@map
+                }
+                val bytes = response.body.use { it.readBytes() }
+                cacheManager.putResource(
+                    sourceId = sourceId,
+                    publicationKey = publicationKey,
+                    url = resolved,
+                    mediaType = response.response.mediaType?.toString(),
+                    bytes = bytes,
+                )
+                if (parseCssDependencies &&
+                    (
+                        response.response.mediaType?.toString()?.startsWith("text/css") == true ||
+                            resolved.substringBefore('?').endsWith(".css", ignoreCase = true)
+                        )
+                ) {
+                    cssDependency.findAll(bytes.toString(Charsets.UTF_8))
+                        .map { match -> match.groupValues[2] }
+                        .filter(::isFetchableReference)
+                        .take(MAX_PREFETCH_DEPENDENCIES)
+                        .forEach { cssReference ->
+                            prefetchDependency(resolved, cssReference, visited, parseCssDependencies = false)
+                        }
+                }
             }
-            val bytes = response.body.use { it.readBytes() }
-            cacheManager.putResource(
-                sourceId = sourceId,
-                publicationKey = publicationKey,
-                url = resolved,
-                mediaType = response.response.mediaType?.toString(),
-                bytes = bytes,
-            )
-            if (parseCssDependencies &&
-                (
-                    response.response.mediaType?.toString()?.startsWith("text/css") == true ||
-                        resolved.substringBefore('?').endsWith(".css", ignoreCase = true)
-                    )
-            ) {
-                cssDependency.findAll(bytes.toString(Charsets.UTF_8))
-                    .map { match -> match.groupValues[2] }
-                    .filter(::isFetchableReference)
-                    .take(MAX_PREFETCH_DEPENDENCIES)
-                    .forEach { cssReference ->
-                        prefetchDependency(resolved, cssReference, visited, parseCssDependencies = false)
-                    }
+        }
+    }
+
+    private suspend fun prefetchSafely(
+        url: String,
+        block: suspend () -> Unit,
+    ) {
+        try {
+            block()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logcat(LogPriority.WARN, error) {
+                "Failed to prefetch EPUB resource url=${url.substringBefore('?')}"
             }
         }
     }

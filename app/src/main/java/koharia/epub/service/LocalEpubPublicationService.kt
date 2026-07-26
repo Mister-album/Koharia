@@ -41,7 +41,11 @@ class LocalEpubPublicationService(
 
         val asset = assetRetriever.retrieve(url, MediaType.EPUB)
             .getOrElse { throw IllegalStateException(it.message) }
-        val openedPublication = publicationOpener.open(asset, allowUserInteraction = false)
+        val openedPublication = publicationOpener.open(
+            asset,
+            allowUserInteraction = false,
+            onCreatePublication = { installEpubXhtmlCompatibility() },
+        )
             .getOrElse {
                 asset.close()
                 throw IllegalStateException(it.message)

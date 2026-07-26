@@ -1,5 +1,6 @@
 package koharia.epub.session
 
+import koharia.epub.isSameEpubResource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.readium.r2.shared.publication.Link
@@ -13,19 +14,26 @@ class EpubPositionsController(
     initialPositions: List<Locator> = emptyList(),
 ) : PositionsService {
     private val refreshMutex = Mutex()
+    private val initialPositionGroups = initialPositions.groupForReadingOrder()
 
     @Volatile
-    private var current: List<List<Locator>> = initialPositions
-        .groupForReadingOrder()
+    private var current: List<List<Locator>> = initialPositionGroups
         .takeIf { groups -> groups.flatten().isNotEmpty() }
         ?: fallbackPositions()
+
+    @Volatile
+    var hasAuthoritativePositions: Boolean = initialPositionGroups.flatten().isNotEmpty()
+        private set
 
     override suspend fun positionsByReadingOrder(): List<List<Locator>> = current
 
     suspend fun refresh(): List<Locator> = refreshMutex.withLock {
         val refreshed = delegate?.positionsByReadingOrder()
             ?.takeIf { groups -> groups.flatten().isNotEmpty() }
-        if (refreshed != null) current = refreshed
+        if (refreshed != null) {
+            current = refreshed
+            hasAuthoritativePositions = true
+        }
         current.flatten()
     }
 
@@ -37,12 +45,8 @@ class EpubPositionsController(
 
     private fun List<Locator>.groupForReadingOrder(): List<List<Locator>> =
         readingOrder.map { link ->
-            val linkHref = link.href.toString().resourceKey()
             filter { locator ->
-                val locatorHref = locator.href.toString().resourceKey()
-                linkHref == locatorHref ||
-                    linkHref.endsWith("/$locatorHref") ||
-                    locatorHref.endsWith("/$linkHref")
+                link.href.toString().isSameEpubResource(locator.href.toString())
             }
         }
 
@@ -63,9 +67,4 @@ class EpubPositionsController(
             )
         }
     }
-
-    private fun String.resourceKey(): String =
-        substringBefore('#')
-            .substringBefore('?')
-            .trimStart('/')
 }

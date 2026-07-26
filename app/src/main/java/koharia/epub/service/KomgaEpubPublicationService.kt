@@ -84,7 +84,11 @@ class KomgaEpubPublicationService(
             resource = manifestResource,
         )
 
-        val openedPublication = publicationOpener.open(manifestAsset, allowUserInteraction = false)
+        val openedPublication = publicationOpener.open(
+            manifestAsset,
+            allowUserInteraction = false,
+            onCreatePublication = { installEpubXhtmlCompatibility() },
+        )
             .getOrElse {
                 manifestAsset.close()
                 throw IllegalStateException(it.message)

@@ -4,6 +4,7 @@ import android.os.Build
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
+import koharia.epub.alignToEpubPositions
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaSource
 import logcat.LogPriority
@@ -80,10 +81,19 @@ class KomgaEpubProgressSyncService(
         sourceId: Long,
         bookUrl: String,
         locator: Locator,
+        positions: List<Locator>,
         modifiedAt: Date,
     ) = withIOContext {
         val source = sourceManager.get(sourceId) as? KomgaSource ?: return@withIOContext
         val normalizedBookUrl = normalizeBookUrl(bookUrl)
+        val alignedLocator = locator.alignToKomgaPositions(positions)
+        if (alignedLocator !== locator) {
+            logcat(LogPriority.DEBUG) {
+                "Aligned Komga EPUB progression href=${locator.href} " +
+                    "from=${locator.locations.progression} " +
+                    "to=${alignedLocator.locations.progression}"
+            }
+        }
         val payload = JSONObject().apply {
             put(
                 "device",
@@ -92,7 +102,7 @@ class KomgaEpubProgressSyncService(
                     put("name", buildDeviceName())
                 },
             )
-            put("locator", locator.toKomgaJSON())
+            put("locator", alignedLocator.toKomgaJSON())
             put("modified", modifiedAt.toInstant().toString())
         }
         val request = Request.Builder()
@@ -262,4 +272,8 @@ class KomgaEpubProgressSyncService(
         const val RECENT_PUSH_EVIDENCE_TTL_MS = 5 * MINUTE_MS
         const val MAX_CORRECTION_HOURS = 24L
     }
+}
+
+internal fun Locator.alignToKomgaPositions(positions: List<Locator>): Locator {
+    return alignToEpubPositions(positions)
 }

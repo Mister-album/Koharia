@@ -15,6 +15,7 @@ internal const val EPUB_PARAGRAPH_INDENT_CSS =
 
 internal const val APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT =
     """(function() {
+        if (!document.documentElement || document.documentElement.localName.toLowerCase() !== 'html') return false;
         var style = document.getElementById('$EPUB_PARAGRAPH_INDENT_STYLE_ID');
         if (!style) {
             style = document.createElementNS('http://www.w3.org/1999/xhtml', 'style');
@@ -59,6 +60,7 @@ internal const val APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT =
 
 internal const val REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT =
     """(function() {
+        if (!document.documentElement || document.documentElement.localName.toLowerCase() !== 'html') return false;
         var style = document.getElementById('$EPUB_PARAGRAPH_INDENT_STYLE_ID');
         if (style) style.remove();
         Array.from(document.querySelectorAll('p[$EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE]')).forEach(function(paragraph) {
@@ -69,6 +71,25 @@ internal const val REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT =
         });
         return true;
     })()"""
+
+internal fun buildEpubDocumentPreparationScript(
+    paragraphIndentOverrideEnabled: Boolean,
+    preserveImageColors: Boolean,
+    parentColorsInverted: Boolean,
+): String {
+    val paragraphIndentScript = if (paragraphIndentOverrideEnabled) {
+        APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
+    } else {
+        REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT
+    }
+    return """
+        (function() {
+            $paragraphIndentScript;
+            ${buildEpubImageColorPolicyScript(preserveImageColors, parentColorsInverted)};
+            return 'prepared';
+        })()
+    """.trimIndent()
+}
 
 internal fun String.injectEpubParagraphIndentStyle(): String {
     if (contains("id=\"$EPUB_PARAGRAPH_INDENT_STYLE_ID\"", ignoreCase = true)) return this
