@@ -198,6 +198,15 @@ internal fun buildEpubContinuousScrollInstallScript(
                         doc.body.style.setProperty('overflow', 'hidden', 'important');
                     }
                     try { iframe.contentWindow.eval(contentPreparationScript); } catch (_) {}
+                    const fontState = iframe.contentWindow.__kohariaFontState;
+                    if (fontState && fontState.status === 'loading') {
+                        iframe.style.visibility = 'hidden';
+                        clearTimeout(iframe.__kohariaFontMeasureTimer);
+                        iframe.__kohariaFontMeasureTimer = setTimeout(function() {
+                            measureFrame(index, iframe);
+                        }, 40);
+                        return;
+                    }
                     installImageInteractions(iframe.contentWindow, index);
                     iframe.style.visibility = 'visible';
                     const height = Math.max(

@@ -1,5 +1,7 @@
 package koharia.epub
 
+import koharia.epub.font.EpubFontId
+import koharia.epub.font.EpubFontManager
 import koharia.epub.settings.EpubLayoutPreferences
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -25,7 +27,8 @@ internal data class EpubPaginationLayoutSnapshot(
     val paragraphIndent: Float,
     val pageMargins: Float,
     val verticalMargins: Float,
-    val fontFamily: String,
+    val fontId: String,
+    val fontFingerprint: String,
     val textAlignment: String,
     val publisherStyles: Boolean,
     val viewportWidthPx: Int,
@@ -46,7 +49,8 @@ internal data class EpubPaginationLayoutSnapshot(
             put("paragraphIndent", paragraphIndent.toDouble())
             put("pageMargins", pageMargins.toDouble())
             put("verticalMargins", verticalMargins.toDouble())
-            put("fontFamily", fontFamily)
+            put("fontId", fontId)
+            put("fontFingerprint", fontFingerprint)
             put("textAlignment", textAlignment)
             put("publisherStyles", publisherStyles)
             put("viewportWidthPx", viewportWidthPx)
@@ -63,7 +67,14 @@ internal data class EpubPaginationLayoutSnapshot(
         fun from(
             preferences: EpubLayoutPreferences,
             viewport: EpubPaginationViewport,
+            fontManager: EpubFontManager,
         ): EpubPaginationLayoutSnapshot {
+            val fontId = EpubFontId.fromPreference(preferences.selectedFontId.get())
+            val effectiveFontId = if (preferences.publisherStyles.get()) {
+                EpubFontId.ORIGINAL
+            } else {
+                fontManager.resolve(fontId).id
+            }
             return EpubPaginationLayoutSnapshot(
                 readingMode = preferences.readingMode.get().name,
                 pageDirection = preferences.pageDirection.get().name,
@@ -73,7 +84,8 @@ internal data class EpubPaginationLayoutSnapshot(
                 paragraphIndent = preferences.paragraphIndent.get(),
                 pageMargins = preferences.pageMargins.get(),
                 verticalMargins = preferences.verticalMargins.get(),
-                fontFamily = preferences.fontFamily.get().name,
+                fontId = effectiveFontId.value,
+                fontFingerprint = fontManager.fingerprint(effectiveFontId),
                 textAlignment = preferences.textAlignment.get().name,
                 publisherStyles = preferences.publisherStyles.get(),
                 viewportWidthPx = viewport.widthPx,
@@ -125,5 +137,5 @@ private fun String.sha256(): String {
         .joinToString("") { byte -> "%02x".format(byte) }
 }
 
-private const val PAGINATION_ALGORITHM_VERSION = 6
+private const val PAGINATION_ALGORITHM_VERSION = 7
 private const val READIUM_VERSION = "3.3.0"

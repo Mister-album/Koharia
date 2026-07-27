@@ -5,12 +5,15 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.epub.settings.EpubBackgroundSettingsPreference
+import koharia.epub.settings.EpubFontPreference
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.source.komga.KomgaServerPreferences
@@ -211,6 +214,7 @@ object SettingsReaderScreen : SearchableSettings {
         readerPreferences: ReaderPreferences,
         epubLayoutPreferences: EpubLayoutPreferences,
     ): Preference.PreferenceGroup {
+        val navigator = LocalNavigator.currentOrThrow
         val fontSizeScale by epubLayoutPreferences.fontSize.collectAsState()
         val fontSize = EpubLayoutPreferences.fontSizeFromScale(fontSizeScale)
         val spacingMode by epubLayoutPreferences.spacingMode.collectAsState()
@@ -235,22 +239,14 @@ object SettingsReaderScreen : SearchableSettings {
                     ),
                 )
                 add(
-                    Preference.PreferenceItem.ListPreference(
-                        preference = epubLayoutPreferences.fontFamily,
-                        entries = persistentMapOf(
-                            EpubLayoutPreferences.FontFamily.ORIGINAL to
-                                stringResource(MR.strings.pref_epub_font_original),
-                            EpubLayoutPreferences.FontFamily.SERIF to
-                                stringResource(MR.strings.pref_epub_font_serif),
-                            EpubLayoutPreferences.FontFamily.SANS_SERIF to
-                                stringResource(MR.strings.pref_epub_font_sans_serif),
-                            EpubLayoutPreferences.FontFamily.MONOSPACE to
-                                stringResource(MR.strings.pref_epub_font_monospace),
-                            EpubLayoutPreferences.FontFamily.OPEN_DYSLEXIC to
-                                stringResource(MR.strings.pref_epub_font_open_dyslexic),
-                        ),
+                    Preference.PreferenceItem.CustomPreference(
                         title = stringResource(MR.strings.pref_epub_font_family),
-                    ),
+                    ) {
+                        EpubFontPreference(
+                            preferences = epubLayoutPreferences,
+                            onClick = { navigator.push(EpubFontSettingsScreen()) },
+                        )
+                    },
                 )
                 add(
                     Preference.PreferenceItem.SwitchPreference(

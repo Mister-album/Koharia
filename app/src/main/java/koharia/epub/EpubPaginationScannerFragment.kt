@@ -2,11 +2,13 @@ package koharia.epub
 
 import android.os.Bundle
 import android.view.View
+import android.webkit.JavascriptInterface
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentContainerView
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.lifecycleScope
 import eu.kanade.tachiyomi.R
+import koharia.epub.font.EpubFontManager
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
@@ -25,6 +27,7 @@ import uy.kohesive.injekt.api.get
 internal class EpubPaginationScannerFragment : Fragment() {
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
+    private val fontManager: EpubFontManager = Injekt.get()
     private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
@@ -45,6 +48,14 @@ internal class EpubPaginationScannerFragment : Fragment() {
     private var scanStarted = false
     private var awaitingMeasuredCallback = false
     private var readinessJob: Job? = null
+    private val fontPreparation: EpubFontPreparation
+        get() = buildEpubFontPreparationScript(
+            fontManager = fontManager,
+            selectedFontId = epubLayoutPreferences.selectedFontId.get(),
+            publisherStyles = epubLayoutPreferences.publisherStyles.get() ||
+                sessionRepository.getForPagination(chapterId)?.publication?.metadata?.layout ==
+                org.readium.r2.shared.publication.Layout.FIXED,
+        )
     private val tocHrefs by lazy {
         sessionRepository.getForPagination(chapterId)
             ?.publication
@@ -75,12 +86,17 @@ internal class EpubPaginationScannerFragment : Fragment() {
                 readinessJob = viewLifecycleOwner.lifecycleScope.launch {
                     val publisherStyles = epubLayoutPreferences.publisherStyles.get()
                     navigatorFragment()?.evaluateJavascript(
-                        buildEpubLayoutPreparationScript(
+                        """
+                            (function() {
+                                ${buildEpubLayoutPreparationScript(
                             paragraphIndentOverrideEnabled = !publisherStyles,
                             textAlignment = epubLayoutPreferences.textAlignment.get().takeIf { !publisherStyles },
                             tocHrefs = tocHrefs,
                             chapterBreaksEnabled = true,
-                        ),
+                        )};
+                                return ${fontPreparation.script};
+                            })()
+                        """.trimIndent(),
                     )
                     val ready = awaitStableLayout()
                     readinessJob = null
@@ -111,7 +127,9 @@ internal class EpubPaginationScannerFragment : Fragment() {
                 publicationMetadata = session.publication.metadata,
             ),
             paginationListener = paginationListener,
-            configuration = epubNavigatorConfiguration(),
+            configuration = epubNavigatorConfiguration().apply {
+                registerJavascriptInterface(EPUB_FONT_BRIDGE_NAME) { EpubFontJavascriptBridge() }
+            },
         ) ?: EpubNavigatorFragment.createDummyFactory()
         super.onCreate(savedInstanceState)
     }
@@ -172,7 +190,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
             while (true) {
                 val navigator = readyNavigatorFragment() ?: return@withTimeoutOrNull false
                 val result = runCatching {
-                    navigator.evaluateJavascript(RESOURCE_READY_SCRIPT)
+                    navigator.evaluateJavascript(resourceReadyScript(fontPreparation.key))
                 }.getOrNull() ?: return@withTimeoutOrNull false
                 if (result == "true") break
                 delay(RESOURCE_READY_POLL_MS)
@@ -228,6 +246,15 @@ internal class EpubPaginationScannerFragment : Fragment() {
     private fun readyNavigatorFragment(): EpubNavigatorFragment? =
         navigatorFragment()?.takeIf { it.view != null }
 
+    @Suppress("unused")
+    private inner class EpubFontJavascriptBridge {
+        @JavascriptInterface
+        fun getChunk(faceKey: String, chunkIndex: Int): String? {
+            if (faceKey !in fontPreparation.faceKeys) return null
+            return fontManager.fontChunk(faceKey, chunkIndex)
+        }
+    }
+
     private fun String.isSameResourceHref(other: String): Boolean {
         val first = resourceKey()
         val second = other.resourceKey()
@@ -249,9 +276,15 @@ internal class EpubPaginationScannerFragment : Fragment() {
         private const val RESOURCE_READY_TIMEOUT_MS = 8_000L
         private const val RESOURCE_READY_POLL_MS = 75L
         private const val STABLE_LAYOUT_DELAY_MS = 40L
-        private const val RESOURCE_READY_SCRIPT =
-            "document.fonts.status === 'loaded' && " +
+        private const val EPUB_FONT_BRIDGE_NAME = "KohariaEpubFont"
+
+        private fun resourceReadyScript(fontKey: String): String {
+            val escapedKey = kotlinx.serialization.json.JsonPrimitive(fontKey)
+            return "document.fonts.status === 'loaded' && " +
+                "window.__kohariaFontState && window.__kohariaFontState.key === $escapedKey && " +
+                "(window.__kohariaFontState.status === 'ready' || window.__kohariaFontState.status === 'failed') && " +
                 "Array.from(document.images).every(function(image) { return image.complete; })"
+        }
 
         fun newInstance(
             chapterId: Long,

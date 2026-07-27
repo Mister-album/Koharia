@@ -1,10 +1,16 @@
 package koharia.epub.settings
 
 import androidx.core.graphics.ColorUtils
+import koharia.epub.font.EpubFontFamilyDescriptor
+import koharia.epub.font.EpubFontId
+import koharia.epub.font.EpubFontManager
 import org.readium.r2.navigator.epub.EpubPreferences
 import org.readium.r2.navigator.preferences.ReadingProgression
 import org.readium.r2.shared.ExperimentalReadiumApi
+import org.readium.r2.shared.publication.Layout
 import org.readium.r2.shared.publication.Metadata
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import org.readium.r2.navigator.preferences.Color as ReadiumColor
 import org.readium.r2.navigator.preferences.FontFamily as ReadiumFontFamily
 import org.readium.r2.navigator.preferences.TextAlign as ReadiumTextAlign
@@ -12,7 +18,9 @@ import org.readium.r2.navigator.preferences.Theme as ReadiumTheme
 import org.readium.r2.shared.publication.ReadingProgression as PublicationReadingProgression
 
 @OptIn(ExperimentalReadiumApi::class)
-class EpubPreferencesBridge {
+class EpubPreferencesBridge(
+    private val fontManager: EpubFontManager = Injekt.get(),
+) {
 
     fun toReadiumPreferences(
         preferences: EpubLayoutPreferences,
@@ -29,9 +37,10 @@ class EpubPreferencesBridge {
             paragraphSpacing = preferences.paragraphSpacing.get(),
             paragraphIndent = preferences.paragraphIndent.get(),
             pageMargins = preferences.pageMargins.get(),
-            fontFamily = preferences.fontFamily.get(),
+            fontFamily = fontManager.resolve(EpubFontId.fromPreference(preferences.selectedFontId.get())),
             textAlignment = preferences.textAlignment.get(),
             publisherStyles = preferences.publisherStyles.get(),
+            fontOverrideAllowed = publicationMetadata?.layout != Layout.FIXED,
             customBackgroundColor = preferences.customBackgroundColor.get(),
         )
     }
@@ -45,9 +54,10 @@ class EpubPreferencesBridge {
         paragraphSpacing: Float,
         paragraphIndent: Float,
         pageMargins: Float,
-        fontFamily: EpubLayoutPreferences.FontFamily,
+        fontFamily: EpubFontFamilyDescriptor,
         textAlignment: EpubLayoutPreferences.TextAlignment,
         publisherStyles: Boolean,
+        fontOverrideAllowed: Boolean = true,
         customBackgroundColor: Int = EpubLayoutPreferences.DEFAULT_CUSTOM_BACKGROUND_COLOR,
         pageDirectionExplicit: Boolean = true,
         publicationMetadata: Metadata? = null,
@@ -74,7 +84,7 @@ class EpubPreferencesBridge {
             paragraphSpacing = paragraphSpacing.toDouble(),
             paragraphIndent = paragraphIndent.toDouble(),
             pageMargins = pageMargins.toDouble(),
-            fontFamily = fontFamily.toReadiumFontFamily(),
+            fontFamily = fontFamily.toReadiumFontFamily().takeUnless { publisherStyles || !fontOverrideAllowed },
             textAlign = textAlignmentPreferences.textAlign,
             hyphens = textAlignmentPreferences.hyphens,
             publisherStyles = publisherStyles,
@@ -119,13 +129,14 @@ class EpubPreferencesBridge {
 
     private fun Int.isDark(): Boolean = ColorUtils.calculateLuminance(this) < 0.35
 
-    private fun EpubLayoutPreferences.FontFamily.toReadiumFontFamily(): ReadiumFontFamily? {
-        return when (this) {
-            EpubLayoutPreferences.FontFamily.ORIGINAL -> null
-            EpubLayoutPreferences.FontFamily.SERIF -> ReadiumFontFamily.SERIF
-            EpubLayoutPreferences.FontFamily.SANS_SERIF -> ReadiumFontFamily.SANS_SERIF
-            EpubLayoutPreferences.FontFamily.MONOSPACE -> ReadiumFontFamily.MONOSPACE
-            EpubLayoutPreferences.FontFamily.OPEN_DYSLEXIC -> ReadiumFontFamily.OPEN_DYSLEXIC
+    private fun EpubFontFamilyDescriptor.toReadiumFontFamily(): ReadiumFontFamily? {
+        return when (id) {
+            EpubFontId.ORIGINAL -> null
+            EpubFontId.SERIF -> ReadiumFontFamily.SERIF
+            EpubFontId.SANS_SERIF -> ReadiumFontFamily.SANS_SERIF
+            EpubFontId.MONOSPACE -> ReadiumFontFamily.MONOSPACE
+            EpubFontId.OPEN_DYSLEXIC -> ReadiumFontFamily.OPEN_DYSLEXIC
+            else -> cssFamilyName?.let(::ReadiumFontFamily)
         }
     }
 }

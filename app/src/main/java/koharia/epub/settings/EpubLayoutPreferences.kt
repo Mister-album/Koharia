@@ -1,5 +1,6 @@
 package koharia.epub.settings
 
+import koharia.epub.font.EpubFontId
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
@@ -48,8 +49,8 @@ class EpubLayoutPreferences(
     val spacingMode: Preference<SpacingMode> =
         preferenceStore.getEnum("epub_layout_spacing_mode", SpacingMode.STANDARD)
 
-    val fontFamily: Preference<FontFamily> =
-        preferenceStore.getEnum("epub_layout_font_family", FontFamily.ORIGINAL)
+    val selectedFontId: Preference<String> =
+        preferenceStore.getString("epub_layout_font_family", EpubFontId.ORIGINAL.value)
 
     val textAlignment: Preference<TextAlignment> =
         preferenceStore.getEnum("epub_layout_text_alignment", TextAlignment.START)
@@ -87,14 +88,6 @@ class EpubLayoutPreferences(
         CUSTOM,
     }
 
-    enum class FontFamily {
-        ORIGINAL,
-        SERIF,
-        SANS_SERIF,
-        MONOSPACE,
-        OPEN_DYSLEXIC,
-    }
-
     enum class TextAlignment {
         START,
         LEFT,
@@ -130,6 +123,11 @@ class EpubLayoutPreferences(
     fun applyTextAlignment(alignment: TextAlignment) {
         textAlignment.set(alignment)
         publisherStyles.set(false)
+    }
+
+    fun selectFont(id: EpubFontId) {
+        selectedFontId.set(id.value)
+        if (id != EpubFontId.ORIGINAL) publisherStyles.set(false)
     }
 
     companion object {

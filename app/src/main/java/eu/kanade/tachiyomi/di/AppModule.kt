@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
 import koharia.epub.cache.EpubCacheManager
 import koharia.epub.cache.EpubCachePreferences
+import koharia.epub.font.EpubFontManager
 import koharia.epub.progress.KomgaEpubProgressSyncService
 import koharia.epub.progress.KomgaEpubRemoteProgressCoordinator
 import koharia.epub.service.EpubPublicationResolver
@@ -205,6 +206,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { CoverCache(app) }
         addSingletonFactory { EpubCachePreferences(get()) }
         addSingletonFactory { EpubCacheManager(app, get()) }
+        addSingletonFactory { EpubFontManager(app, get()) }
         addSingletonFactory { LocalCacheCleaner(app, get(), get(), get(), get(), get()) }
 
         addSingletonFactory { NetworkHelper(app, get()) }

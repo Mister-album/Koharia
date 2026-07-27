@@ -90,6 +90,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.epub.EpubBrightnessAwareDialogContent
+import koharia.epub.EpubReaderActivity
 import koharia.epub.calculateEpubBrightness
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.i18n.MR
@@ -1680,24 +1681,12 @@ private fun TapZoneSection(
 
 @Composable
 private fun FontFamilySection(preferences: EpubLayoutPreferences) {
-    val currentFont by preferences.fontFamily.changes().collectAsState(preferences.fontFamily.get())
-
-    ChipSection(title = stringResource(MR.strings.pref_epub_font_family)) {
-        EpubLayoutPreferences.FontFamily.entries.forEach { fontFamily ->
-            FilterChip(
-                selected = currentFont == fontFamily,
-                onClick = { preferences.fontFamily.set(fontFamily) },
-                label = {
-                    Text(
-                        text = fontFamily.label(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                modifier = Modifier.semantics { role = Role.RadioButton },
-            )
-        }
-    }
+    val fontSelectionEnabled = (LocalActivity.current as? EpubReaderActivity)?.supportsFontOverride() ?: true
+    EpubFontPreference(
+        preferences = preferences,
+        modifier = Modifier.padding(horizontal = 8.dp),
+        enabled = fontSelectionEnabled,
+    )
 }
 
 @Composable
@@ -1777,17 +1766,6 @@ private fun ChipSection(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         content()
-    }
-}
-
-@Composable
-private fun EpubLayoutPreferences.FontFamily.label(): String {
-    return when (this) {
-        EpubLayoutPreferences.FontFamily.ORIGINAL -> stringResource(MR.strings.pref_epub_font_original)
-        EpubLayoutPreferences.FontFamily.SERIF -> stringResource(MR.strings.pref_epub_font_serif)
-        EpubLayoutPreferences.FontFamily.SANS_SERIF -> stringResource(MR.strings.pref_epub_font_sans_serif)
-        EpubLayoutPreferences.FontFamily.MONOSPACE -> stringResource(MR.strings.pref_epub_font_monospace)
-        EpubLayoutPreferences.FontFamily.OPEN_DYSLEXIC -> stringResource(MR.strings.pref_epub_font_open_dyslexic)
     }
 }
 
