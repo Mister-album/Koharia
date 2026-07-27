@@ -22,20 +22,20 @@ The project is built on the mature Android reading foundation of [Mihon](https:/
 <table>
   <tr>
     <td align="center" width="25%">
-      <img src="./.github/assets/screenshots/library.png" alt="Koharia library screen" width="150"/><br/>
-      <sub>Library</sub>
+      <img src="./.github/assets/screenshots/epub-reader.png" alt="Koharia EPUB reader" width="180"/><br/>
+      <sub>Book reader</sub>
     </td>
     <td align="center" width="25%">
-      <img src="./.github/assets/screenshots/series-details.png" alt="Koharia series details screen" width="150"/><br/>
-      <sub>Series details</sub>
-    </td>
-    <td align="center" width="25%">
-      <img src="./.github/assets/screenshots/comic-reader.png" alt="Koharia comic reader" width="150"/><br/>
+      <img src="./.github/assets/screenshots/comic-reader.png" alt="Koharia comic reader" width="180"/><br/>
       <sub>Comic reader</sub>
     </td>
     <td align="center" width="25%">
-      <img src="./.github/assets/screenshots/epub-reader.png" alt="Koharia EPUB reader" width="150"/><br/>
-      <sub>Book reader</sub>
+      <img src="./.github/assets/screenshots/series-details.png" alt="Koharia series details screen" width="180"/><br/>
+      <sub>Series details</sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="./.github/assets/screenshots/library.png" alt="Koharia library screen" width="180"/><br/>
+      <sub>Library</sub>
     </td>
   </tr>
 </table>
