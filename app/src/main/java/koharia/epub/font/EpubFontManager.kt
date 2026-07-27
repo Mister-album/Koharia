@@ -259,7 +259,7 @@ class EpubFontManager(
         if (family.id == EpubFontId.ORIGINAL || family.source == EpubFontSource.BUILTIN || family.faces.isEmpty()) {
             return null
         }
-        val faces = family.faces.map { face ->
+        val faces = family.faces.webLoadOrder().map { face ->
             EpubWebFontFace(
                 key = face.key,
                 postScriptName = face.postScriptName,
@@ -278,11 +278,14 @@ class EpubFontManager(
         )
     }
 
+    fun fontLength(faceKey: String): Long {
+        val currentFace = localFace(faceKey) ?: return -1L
+        return materializeFace(currentFace)?.length()?.takeIf { it > 0L } ?: -1L
+    }
+
     fun fontChunk(faceKey: String, chunkIndex: Int): String? {
         if (chunkIndex < 0) return null
-        val currentFace = catalogState.value.localFamilies.asSequence()
-            .flatMap { it.faces.asSequence() }
-            .firstOrNull { it.key == faceKey } ?: return null
+        val currentFace = localFace(faceKey) ?: return null
         val file = materializeFace(currentFace) ?: return null
         val offset = chunkIndex.toLong() * WEB_CHUNK_BYTES
         if (offset >= file.length()) return ""
@@ -292,6 +295,30 @@ class EpubFontManager(
             val read = input.read(bytes)
             if (read <= 0) return ""
             return Base64.encodeToString(bytes, 0, read, Base64.NO_WRAP)
+        }
+    }
+
+    private fun localFace(faceKey: String): EpubFontFaceDescriptor? {
+        return catalogState.value.localFamilies.asSequence()
+            .flatMap { it.faces.asSequence() }
+            .firstOrNull { it.key == faceKey }
+    }
+
+    private fun List<EpubFontFaceDescriptor>.webLoadOrder(): List<EpubFontFaceDescriptor> {
+        val remaining = toMutableList()
+        return buildList {
+            fun takeClosest(italic: Boolean, targetWeight: Int) {
+                val face = remaining.filter { it.italic == italic }
+                    .minByOrNull { kotlin.math.abs(it.weight - targetWeight) }
+                    ?: return
+                remaining.remove(face)
+                add(face)
+            }
+            takeClosest(italic = false, targetWeight = 400)
+            takeClosest(italic = true, targetWeight = 400)
+            takeClosest(italic = false, targetWeight = 700)
+            takeClosest(italic = true, targetWeight = 700)
+            addAll(remaining.sortedWith(compareBy({ it.italic }, { kotlin.math.abs(it.weight - 400) })))
         }
     }
 
@@ -639,6 +666,7 @@ class EpubFontManager(
         const val MAX_SOURCE_BYTES = 256L * 1024 * 1024
         const val MAX_LIBRARY_BYTES = 1024L * 1024 * 1024
         const val MAX_EXTRACTED_CACHE_BYTES = 256L * 1024 * 1024
+        const val MAX_WEB_FONT_FAMILY_BYTES = 48L * 1024 * 1024
         const val WEB_CHUNK_BYTES = 256 * 1024
         private const val COPY_BUFFER_SIZE = 64 * 1024
 

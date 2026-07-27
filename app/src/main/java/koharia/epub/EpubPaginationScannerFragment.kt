@@ -249,6 +249,12 @@ internal class EpubPaginationScannerFragment : Fragment() {
     @Suppress("unused")
     private inner class EpubFontJavascriptBridge {
         @JavascriptInterface
+        fun getLength(faceKey: String): Long {
+            if (faceKey !in fontPreparation.faceKeys) return -1L
+            return fontManager.fontLength(faceKey)
+        }
+
+        @JavascriptInterface
         fun getChunk(faceKey: String, chunkIndex: Int): String? {
             if (faceKey !in fontPreparation.faceKeys) return null
             return fontManager.fontChunk(faceKey, chunkIndex)
