@@ -1043,6 +1043,7 @@
     <string name="epub_font_series_collapse">Hide fonts in series</string>
     <string name="epub_font_family_expand">Show font styles</string>
     <string name="epub_font_family_collapse">Hide font styles</string>
+    <string name="epub_font_preview_sample">Aa Font 123</string>
     <string name="epub_font_style_variable">Variable</string>
     <string name="epub_font_style_italic_format">%1$s Italic</string>
     <string name="epub_font_weight_thin">Thin</string>

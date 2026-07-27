@@ -70,6 +70,7 @@ import koharia.epub.font.EpubFontImportFailure
 import koharia.epub.font.EpubFontImportResult
 import koharia.epub.font.EpubFontManager
 import koharia.epub.font.EpubFontSource
+import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -156,6 +157,7 @@ private fun EpubFontPickerContent(
     showTitle: Boolean,
     onFontSelected: (EpubFontId) -> Unit,
 ) {
+    val scopedPreferenceStoreFactory = remember { Injekt.get<KomgaScopedPreferenceStoreFactory>() }
     val catalog by manager.catalogState.collectAsState()
     val rawSelectedId by preferences.selectedFontId.changes().collectAsState(preferences.selectedFontId.get())
     val selectedId = EpubFontId.fromPreference(rawSelectedId)
@@ -386,7 +388,7 @@ private fun EpubFontPickerContent(
                     deleteCandidate = null
                     scope.launch {
                         if (manager.deleteFamily(family.id)) {
-                            if (selectedId == family.id) preferences.selectFont(EpubFontId.ORIGINAL)
+                            scopedPreferenceStoreFactory.resetEpubFontSelection(family.id)
                         } else {
                             importMessage = deleteFailed
                         }
@@ -518,6 +520,7 @@ private fun EpubFontFamilyItem(
     onDelete: (() -> Unit)?,
 ) {
     val canExpand = family.faces.isNotEmpty()
+    val previewText = stringResource(MR.strings.epub_font_preview_sample)
     val secondaryTextColor = if (selected) {
         MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f)
     } else {
@@ -572,7 +575,7 @@ private fun EpubFontFamilyItem(
                     AndroidView(
                         factory = { context -> TextView(context).apply { includeFontPadding = false } },
                         update = { view ->
-                            view.text = "Aa 字体 123"
+                            view.text = previewText
                             view.typeface = typeface ?: Typeface.DEFAULT
                             view.setTextColor(previewColor)
                         },

@@ -686,6 +686,7 @@
     <string name="epub_font_series_collapse">隐藏系列内字体</string>
     <string name="epub_font_family_expand">显示字体字形</string>
     <string name="epub_font_family_collapse">隐藏字体字形</string>
+    <string name="epub_font_preview_sample">Aa 字体 123</string>
     <string name="epub_font_style_variable">可变字重</string>
     <string name="epub_font_style_italic_format">%1$s斜体</string>
     <string name="epub_font_weight_thin">极细体</string>

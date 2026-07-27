@@ -26,8 +26,9 @@ internal class OpenTypeFontParser {
             } else {
                 listOf(0L)
             }
+            val nameDecodeBudget = NameDecodeBudget(MAX_TOTAL_NAME_BYTES)
             val faces = faceOffsets.mapIndexed { index, offset ->
-                parseFace(input, index, offset, preferredLocale)
+                parseFace(input, index, offset, preferredLocale, nameDecodeBudget)
             }
             return ParsedOpenTypeFile(
                 isCollection = signature == TAG_TTCF,
@@ -104,6 +105,7 @@ internal class OpenTypeFontParser {
         index: Int,
         offset: Long,
         preferredLocale: Locale,
+        nameDecodeBudget: NameDecodeBudget,
     ): ParsedOpenTypeFace {
         requireRange(offset, SFNT_HEADER_SIZE, input.length())
         val signature = input.readTag(offset)
@@ -122,9 +124,15 @@ internal class OpenTypeFontParser {
                 length = tableLength,
             )
         }
+        var aggregateTableBytes = 0L
+        tables.forEach { table ->
+            require(aggregateTableBytes <= input.length())
+            require(table.length <= input.length() - aggregateTableBytes)
+            aggregateTableBytes += table.length
+        }
         val tablesByTag = tables.associateBy { it.tag }
         require(tablesByTag.size == tables.size)
-        val names = tablesByTag[TAG_NAME]?.let { readNames(input, it) }.orEmpty()
+        val names = tablesByTag[TAG_NAME]?.let { readNames(input, it, nameDecodeBudget) }.orEmpty()
         val familyName = names.preferred(NAME_TYPOGRAPHIC_FAMILY)
             ?: names.preferred(NAME_FAMILY)
             ?: names.preferred(NAME_FULL)
@@ -161,7 +169,11 @@ internal class OpenTypeFontParser {
         )
     }
 
-    private fun readNames(input: RandomAccessFile, table: OpenTypeTable): List<OpenTypeName> {
+    private fun readNames(
+        input: RandomAccessFile,
+        table: OpenTypeTable,
+        nameDecodeBudget: NameDecodeBudget,
+    ): List<OpenTypeName> {
         if (table.length < 6) return emptyList()
         val count = input.readUInt16(table.offset + 2).coerceAtMost(MAX_NAME_RECORD_COUNT)
         val stringOffset = input.readUInt16(table.offset + 4)
@@ -176,7 +188,12 @@ internal class OpenTypeFontParser {
                 val length = input.readUInt16(recordOffset + 8)
                 val offset = input.readUInt16(recordOffset + 10)
                 val absoluteOffset = table.offset + stringOffset + offset
-                if (!isRangeValid(absoluteOffset, length.toLong(), input.length())) return@repeat
+                if (length > MAX_NAME_RECORD_BYTES) return@repeat
+                val tableEnd = table.offset + table.length
+                if (absoluteOffset < table.offset || !isRangeValid(absoluteOffset, length.toLong(), tableEnd)) {
+                    return@repeat
+                }
+                if (!nameDecodeBudget.tryConsume(length)) return@repeat
                 val bytes = ByteArray(length)
                 input.seek(absoluteOffset)
                 input.readFully(bytes)
@@ -460,6 +477,14 @@ internal class OpenTypeFontParser {
         val destinationOffset: Long,
     )
 
+    private class NameDecodeBudget(private var remainingBytes: Int) {
+        fun tryConsume(bytes: Int): Boolean {
+            if (bytes < 0 || bytes > remainingBytes) return false
+            remainingBytes -= bytes
+            return true
+        }
+    }
+
     companion object {
         private const val TAG_TTCF = "ttcf"
         private const val TAG_TRUE_TYPE = "\u0000\u0001\u0000\u0000"
@@ -494,6 +519,8 @@ internal class OpenTypeFontParser {
         private const val MAX_FACE_COUNT = 128
         private const val MAX_TABLE_COUNT = 256
         private const val MAX_NAME_RECORD_COUNT = 512
+        private const val MAX_NAME_RECORD_BYTES = 16 * 1024
+        private const val MAX_TOTAL_NAME_BYTES = 4 * 1024 * 1024
         private const val MAX_AXIS_COUNT = 32
         private const val TTC_VERSION_1 = 0x0001_0000L
         private const val TTC_VERSION_2 = 0x0002_0000L

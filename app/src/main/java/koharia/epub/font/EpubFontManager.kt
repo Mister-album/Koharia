@@ -40,6 +40,7 @@ class EpubFontManager(
     private val parser = OpenTypeFontParser()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val catalogMutex = Mutex()
+    private val materializationLock = Any()
     private val typefaceCache = object : LruCache<String, Typeface>(24) {}
     private val materializedFaceFiles = ConcurrentHashMap<String, File>()
     private var storedCatalog = StoredEpubFontCatalog()
@@ -94,21 +95,27 @@ class EpubFontManager(
                             }
                         } ?: error("Unable to open font")
                         val checksum = stagedFile.sha256()
-                        if (storedCatalog.sources.any { it.checksum == checksum } ||
-                            staged.any { it.checksum == checksum }
-                        ) {
+                        if (staged.any { it.checksum == checksum }) {
                             duplicateFiles++
                             stagedFile.delete()
                             null
                         } else {
                             val parsed = parseFont(stagedFile)
                             require(parsed.faces.isNotEmpty())
-                            StagedFont(
-                                temporaryFile = stagedFile,
-                                checksum = checksum,
-                                originalFileName = queryDisplayName(uri) ?: "font",
-                                parsed = parsed,
-                            )
+                            val retainedSource = storedCatalog.sources.firstOrNull { it.checksum == checksum }
+                            val missingFaces = parsed.missingFrom(retainedSource)
+                            if (missingFaces.isEmpty()) {
+                                duplicateFiles++
+                                stagedFile.delete()
+                                null
+                            } else {
+                                StagedFont(
+                                    temporaryFile = stagedFile,
+                                    checksum = checksum,
+                                    originalFileName = queryDisplayName(uri) ?: "font",
+                                    parsed = parsed.copy(faces = missingFaces),
+                                )
+                            }
                         }
                     }
                     val value = result.getOrElse { error ->
@@ -136,7 +143,10 @@ class EpubFontManager(
                 if (replaceConflicts) storedCatalog = catalogWithoutConflictingFaces(staged)
                 val acceptedFaces = acceptedStagedFaceIndices(staged, replaceConflicts)
                 val acceptedSources = staged.filter { acceptedFaces[it.checksum].orEmpty().isNotEmpty() }
-                val newBytes = acceptedSources.sumOf { it.temporaryFile.length() }
+                val existingChecksums = originalCatalog.sources.mapTo(mutableSetOf(), StoredEpubFontSource::checksum)
+                val newBytes = acceptedSources
+                    .filterNot { it.checksum in existingChecksums }
+                    .sumOf { it.temporaryFile.length() }
                 if (storedCatalog.sources.sumOf { it.size } + newBytes > MAX_LIBRARY_BYTES) {
                     storedCatalog = originalCatalog
                     return@withLock EpubFontImportResult.Failure(EpubFontImportFailure.LIBRARY_FULL)
@@ -152,13 +162,18 @@ class EpubFontManager(
                             hasCff -> "otf"
                             else -> "ttf"
                         }
-                        val destination = File(sourcesDirectory, "${font.checksum}.$extension")
-                        if (!destination.exists()) newlyCreatedFiles += destination
-                        font.temporaryFile.copyTo(destination, overwrite = true)
+                        val retainedSource = storedCatalog.sources.firstOrNull { it.checksum == font.checksum }
+                            ?: originalCatalog.sources.firstOrNull { it.checksum == font.checksum }
+                        val destination = retainedSource?.let { File(sourcesDirectory, it.storedFileName) }
+                            ?: File(sourcesDirectory, "${font.checksum}.$extension")
+                        if (!destination.exists()) {
+                            if (retainedSource == null) newlyCreatedFiles += destination
+                            font.temporaryFile.copyTo(destination, overwrite = false)
+                        }
                         StoredEpubFontSource(
                             checksum = font.checksum,
                             storedFileName = destination.name,
-                            originalFileName = font.originalFileName,
+                            originalFileName = retainedSource?.originalFileName ?: font.originalFileName,
                             size = destination.length(),
                             faces = font.parsed.faces.filter {
                                 it.index in acceptedFaces.getValue(font.checksum)
@@ -183,7 +198,9 @@ class EpubFontManager(
                     newlyCreatedFiles.forEach(File::delete)
                     return@withLock EpubFontImportResult.Failure(EpubFontImportFailure.READ_FAILED)
                 }
-                storedCatalog = storedCatalog.copy(sources = storedCatalog.sources + additions)
+                storedCatalog = storedCatalog.copy(
+                    sources = mergeStoredFontSources(storedCatalog.sources, additions),
+                )
                 if (runCatching(::saveCatalog).isFailure) {
                     storedCatalog = originalCatalog
                     newlyCreatedFiles.forEach(File::delete)
@@ -381,7 +398,9 @@ class EpubFontManager(
             catalogChanged = true
         }
         if (catalogChanged && storedCatalog.sources.isNotEmpty()) {
-            saveCatalog()
+            runCatching(::saveCatalog).onFailure {
+                logcat(logcat.LogPriority.WARN, it) { "Failed to persist recovered EPUB font catalog" }
+            }
         }
         publishLocalCatalog(isLoading = false)
     }
@@ -544,25 +563,25 @@ class EpubFontManager(
         _catalogState.value = _catalogState.value.copy(localFamilies = families, isLocalLoading = isLoading)
     }
 
-    private fun materializeFace(face: EpubFontFaceDescriptor): File? {
-        materializedFaceFiles[face.key]?.takeIf(File::isFile)?.let { return it }
-        val source = face.sourceFile?.takeIf(File::isFile) ?: return null
-        val parsed = runCatching { parseFont(source) }.getOrNull() ?: return null
+    private fun materializeFace(face: EpubFontFaceDescriptor): File? = synchronized(materializationLock) {
+        materializedFaceFiles[face.key]?.takeIf(File::isFile)?.let { return@synchronized it }
+        val source = face.sourceFile?.takeIf(File::isFile) ?: return@synchronized null
+        val parsed = runCatching { parseFont(source) }.getOrNull() ?: return@synchronized null
         if (!parsed.isCollection) {
             materializedFaceFiles[face.key] = source
-            return source
+            return@synchronized source
         }
         extractedDirectory.mkdirs()
         val destination = File(extractedDirectory, "${face.sourceChecksum}-${face.faceIndex}.sfnt")
         if (!destination.isFile || destination.length() == 0L) {
             runCatching { parser.extractFace(source, face.faceIndex, destination) }
                 .onFailure { destination.delete() }
-                .getOrNull() ?: return null
+                .getOrNull() ?: return@synchronized null
         }
         destination.setLastModified(System.currentTimeMillis())
         materializedFaceFiles[face.key] = destination
         trimExtractedCache(destination)
-        return destination
+        destination
     }
 
     private fun trimExtractedCache(protectedFile: File) {
@@ -725,4 +744,29 @@ class EpubFontManager(
             digest.digest().joinToString("") { "%02x".format(it) }
         }
     }
+}
+
+internal fun ParsedOpenTypeFile.missingFrom(source: StoredEpubFontSource?): List<ParsedOpenTypeFace> {
+    val retainedFaceIndices = source?.faces
+        ?.mapTo(mutableSetOf(), StoredEpubFontFace::faceIndex)
+        .orEmpty()
+    return faces.filterNot { it.index in retainedFaceIndices }
+}
+
+internal fun mergeStoredFontSources(
+    retained: List<StoredEpubFontSource>,
+    additions: List<StoredEpubFontSource>,
+): List<StoredEpubFontSource> {
+    val additionsByChecksum = additions.associateBy(StoredEpubFontSource::checksum)
+    val merged = retained.map { source ->
+        val addition = additionsByChecksum[source.checksum] ?: return@map source
+        source.copy(
+            size = addition.size,
+            faces = (source.faces + addition.faces)
+                .distinctBy(StoredEpubFontFace::faceIndex)
+                .sortedBy(StoredEpubFontFace::faceIndex),
+        )
+    }
+    val retainedChecksums = retained.mapTo(mutableSetOf(), StoredEpubFontSource::checksum)
+    return merged + additions.filterNot { it.checksum in retainedChecksums }
 }

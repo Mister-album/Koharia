@@ -146,6 +146,22 @@ class OpenTypeFontParserTest {
     }
 
     @Test
+    fun `skips oversized name records without allocating their contents`() {
+        val file = directory.resolve("oversized-name.ttf")
+        file.writeBytes(
+            sfnt(
+                family = "A".repeat(9_000),
+                postScript = "BoundedName-Regular",
+            ),
+        )
+
+        val face = parser.parse(file.toFile()).faces.single()
+
+        assertEquals("Font 1", face.familyName)
+        assertEquals("BoundedName-Regular", face.postScriptName)
+    }
+
+    @Test
     fun `legacy preference values map to stable ids`() {
         assertEquals(EpubFontId.ORIGINAL, EpubFontId.fromPreference("ORIGINAL"))
         assertEquals(EpubFontId.SERIF, EpubFontId.fromPreference("SERIF"))

@@ -50,7 +50,7 @@ class EpubLayoutPreferences(
         preferenceStore.getEnum("epub_layout_spacing_mode", SpacingMode.STANDARD)
 
     val selectedFontId: Preference<String> =
-        preferenceStore.getString("epub_layout_font_family", EpubFontId.ORIGINAL.value)
+        preferenceStore.getString(SELECTED_FONT_KEY, EpubFontId.ORIGINAL.value)
 
     val textAlignment: Preference<TextAlignment> =
         preferenceStore.getEnum("epub_layout_text_alignment", TextAlignment.START)
@@ -131,6 +131,7 @@ class EpubLayoutPreferences(
     }
 
     companion object {
+        const val SELECTED_FONT_KEY = "epub_layout_font_family"
         const val BASE_FONT_SIZE = 16
         const val MIN_FONT_SIZE = 13
         const val MAX_FONT_SIZE = 32
