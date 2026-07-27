@@ -145,6 +145,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
     val state = mutableState.asStateFlow()
     private val mutableImageState = MutableStateFlow(EpubImageUiState())
     internal val imageState = mutableImageState.asStateFlow()
+    private val mutableFootnoteState = MutableStateFlow<EpubFootnoteUiState?>(null)
+    internal val footnoteState = mutableFootnoteState.asStateFlow()
     private val mutableImageEvents = MutableSharedFlow<EpubImageEvent>(extraBufferCapacity = 1)
     internal val imageEvents = mutableImageEvents.asSharedFlow()
     private val imageRequestTracker = EpubImageRequestTracker()
@@ -210,6 +212,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var completionMarkedThisSession = false
     private var searchIterator: SearchIterator? = null
     private var imageLoadJob: Job? = null
+    private var footnoteLoadJob: Job? = null
     private var incognitoSession = basePreferences.incognitoMode.get()
     private val locatorPersistenceJob = viewModelScope.launch {
         locatorUpdates
@@ -665,6 +668,51 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun showMenus(visible: Boolean) {
         mutableState.update { it.copy(menuVisible = visible) }
+    }
+
+    internal fun showFootnote(
+        link: Link,
+        contentHtml: String,
+        anchorXFraction: Float?,
+        anchorYFraction: Float?,
+    ) {
+        closeImagePreview()
+        footnoteLoadJob?.cancel()
+        val href = link.href.toString()
+        mutableFootnoteState.value = EpubFootnoteUiState(
+            href = href,
+            contentHtml = contentHtml,
+            anchorXFraction = anchorXFraction,
+            anchorYFraction = anchorYFraction,
+        )
+        showMenus(false)
+        footnoteLoadJob = viewModelScope.launch {
+            val images = try {
+                withIOContext {
+                    val publication = sessionRepository.get(chapterId)?.publication
+                        ?: return@withIOContext emptyMap()
+                    loadEpubFootnoteImages(publication, href, contentHtml)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                logcat(LogPriority.WARN, error) { "Failed to load EPUB footnote images" }
+                emptyMap()
+            }
+            mutableFootnoteState.update { state ->
+                if (state?.href == href && state.contentHtml == contentHtml) {
+                    state.copy(images = images)
+                } else {
+                    state
+                }
+            }
+        }
+    }
+
+    internal fun dismissFootnote() {
+        footnoteLoadJob?.cancel()
+        footnoteLoadJob = null
+        mutableFootnoteState.value = null
     }
 
     internal fun onImageInteraction(
@@ -1747,6 +1795,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun releaseSession() {
         closeImagePreview()
+        dismissFootnote()
         locatorPersistenceJob.cancel()
         val finalPositions = authoritativePublicationPositions()
         sessionRepository.remove(chapterId)?.close()
@@ -1770,6 +1819,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     override fun onCleared() {
         imageLoadJob?.cancel()
+        footnoteLoadJob?.cancel()
         imageRequestTracker.invalidate()
         searchIterator?.close()
         searchIterator = null

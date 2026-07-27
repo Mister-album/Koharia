@@ -16,12 +16,16 @@ class EpubDocumentPreparationTest {
             chapterBreaksEnabled = true,
             preserveImageColors = true,
             parentColorsInverted = true,
+            readerFontScale = 1.5f,
         )
 
         assertTrue(script.contains(EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE))
         assertTrue(script.contains("text-align: justify !important"))
         assertTrue(script.contains("hyphens: auto !important"))
         assertTrue(script.contains("break-before: column !important"))
+        assertTrue(script.contains("'duokan-footnote'"))
+        assertTrue(script.contains("setAttributeNS(epubNamespace, 'epub:type', updated)"))
+        assertTrue(script.contains("font-size: 1.125rem !important"))
         assertTrue(script.contains("filter: invert(100%) !important"))
         assertTrue(script.contains("return 'prepared'"))
     }
@@ -35,6 +39,7 @@ class EpubDocumentPreparationTest {
             chapterBreaksEnabled = false,
             preserveImageColors = false,
             parentColorsInverted = false,
+            readerFontScale = 1f,
         )
 
         assertTrue(script.contains("paragraph.removeAttribute('$EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE')"))

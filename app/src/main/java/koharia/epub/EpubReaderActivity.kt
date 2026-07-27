@@ -12,7 +12,9 @@ import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
@@ -101,6 +103,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import org.readium.r2.shared.ExperimentalReadiumApi
+import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.toUri
@@ -127,6 +130,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         private const val PAGINATION_SETTINGS_DEBOUNCE_MS = 250L
         private const val PAGINATION_VIEWPORT_DEBOUNCE_MS = 250L
         private const val PROGRESSION_SEEK_DEBOUNCE_MS = 100L
+        private const val FOOTNOTE_TOUCH_POSITION_MAX_AGE_MS = 10_000L
 
         fun newIntent(
             context: Context,
@@ -204,6 +208,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private var currentPublisherStyles: Boolean? = null
     private var readerFragment: EpubReaderFragment? = null
     private var imagePreviewVisible = false
+    private var lastTouchXFraction: Float? = null
+    private var lastTouchYFraction: Float? = null
+    private var lastTouchPositionTimeMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         registerSecureActivity(this)
@@ -233,6 +240,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         setComposeContent {
             val state by viewModel.state.collectAsState()
             val imageState by viewModel.imageState.collectAsState()
+            val footnoteState by viewModel.footnoteState.collectAsState()
             val tocEntries =
                 remember(state.chapterId, state.sessionToken, state.isReady) { viewModel.tableOfContents() }
             val adjacentTocEntries = remember(tocEntries, state.currentPosition, state.currentHref) {
@@ -251,6 +259,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 .collectAsState(epubLayoutPreferences.pageDirection.get())
             val currentVerticalMargins by epubLayoutPreferences.verticalMargins.changes()
                 .collectAsState(epubLayoutPreferences.verticalMargins.get())
+            val currentFontScale by epubLayoutPreferences.fontSize.changes()
+                .collectAsState(epubLayoutPreferences.fontSize.get())
+            val publisherStylesEnabled by epubLayoutPreferences.publisherStyles.changes()
+                .collectAsState(epubLayoutPreferences.publisherStyles.get())
             val fullscreenVerticalPadding = remember(currentVerticalMargins) {
                 readerVerticalPaddingDp(currentVerticalMargins).dp
             }
@@ -779,6 +791,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 onShare = { viewModel.shareSelectedImage(copyToClipboard = false) },
                 onCopy = { viewModel.shareSelectedImage(copyToClipboard = true) },
             )
+
+            EpubFootnotePopup(
+                state = footnoteState,
+                backgroundColor = currentReaderBackgroundColor,
+                readerFontSizeSp = EpubLayoutPreferences.fontSizeFromScale(currentFontScale).toFloat(),
+                applyReaderStyles = !publisherStylesEnabled,
+                onDismissRequest = viewModel::dismissFootnote,
+            )
         }
 
         viewModel.imageEvents
@@ -899,7 +919,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onTap(positionX: Float, positionY: Float): Boolean {
-        if (viewModel.imageState.value.isVisible) return true
+        if (viewModel.imageState.value.isVisible || viewModel.footnoteState.value != null) return true
         val isRightToLeft = epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
             epubLayoutPreferences.pageDirection.get() == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
         return when (resolveNavigationAction(positionX, positionY)) {
@@ -981,6 +1001,20 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         openInBrowser(url.toUri(), forceDefaultBrowser = false)
     }
 
+    override fun onFootnoteActivated(link: Link, contentHtml: String) {
+        val hasRecentTouch = lastTouchPositionTimeMs != 0L &&
+            SystemClock.elapsedRealtime() - lastTouchPositionTimeMs <= FOOTNOTE_TOUCH_POSITION_MAX_AGE_MS
+        viewModel.showFootnote(
+            link = link,
+            contentHtml = contentHtml,
+            anchorXFraction = lastTouchXFraction.takeIf { hasRecentTouch },
+            anchorYFraction = lastTouchYFraction.takeIf { hasRecentTouch },
+        )
+        lastTouchXFraction = null
+        lastTouchYFraction = null
+        lastTouchPositionTimeMs = 0L
+    }
+
     override fun onImageInteraction(reference: EpubImageReference, interaction: EpubImageInteraction) {
         if (interaction == EpubImageInteraction.PREVIEW && viewModel.state.value.menuVisible) {
             viewModel.showMenus(false)
@@ -1000,12 +1034,25 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         viewModel.onSessionMissing(chapterId)
     }
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val decorView = window.decorView
+            if (decorView.width > 0 && decorView.height > 0) {
+                lastTouchXFraction = (event.x / decorView.width).coerceIn(0f, 1f)
+                lastTouchYFraction = (event.y / decorView.height).coerceIn(0f, 1f)
+                lastTouchPositionTimeMs = SystemClock.elapsedRealtime()
+            }
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
             event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
         val state = viewModel.state.value
         if (!isVolumeKey || !epubLayoutPreferences.readWithVolumeKeys.get() ||
-            state.menuVisible || state.isSearchActive || viewModel.imageState.value.isVisible
+            state.menuVisible || state.isSearchActive || viewModel.imageState.value.isVisible ||
+            viewModel.footnoteState.value != null
         ) {
             return super.dispatchKeyEvent(event)
         }

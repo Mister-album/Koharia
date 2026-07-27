@@ -223,6 +223,7 @@ internal fun buildEpubDocumentPreparationScript(
     chapterBreaksEnabled: Boolean,
     preserveImageColors: Boolean,
     parentColorsInverted: Boolean,
+    readerFontScale: Float,
 ): String {
     val layoutPreparationScript = buildEpubLayoutPreparationScript(
         paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
@@ -233,6 +234,10 @@ internal fun buildEpubDocumentPreparationScript(
     return """
         (function() {
             $layoutPreparationScript;
+            ${buildEpubFootnoteCompatibilityScript(
+        applyReaderStyles = paragraphIndentOverrideEnabled,
+        readerFontScale = readerFontScale,
+    )};
             ${buildEpubImageColorPolicyScript(preserveImageColors, parentColorsInverted)};
             return 'prepared';
         })()
