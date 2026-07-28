@@ -1,6 +1,7 @@
 package koharia.epub
 
 import android.content.Context
+import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.text.method.ScrollingMovementMethod
 import android.util.TypedValue
@@ -64,6 +65,7 @@ internal fun EpubFootnotePopup(
     backgroundColor: Color,
     readerFontSizeSp: Float,
     applyReaderStyles: Boolean,
+    typeface: Typeface?,
     onDismissRequest: () -> Unit,
 ) {
     state ?: return
@@ -186,6 +188,7 @@ internal fun EpubFootnotePopup(
                 update = { textView ->
                     textView.setTextColor(contentColor.toArgb())
                     textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, textSizeSp)
+                    textView.typeface = typeface ?: Typeface.DEFAULT
                     textView.text = renderedContent
                 },
             )

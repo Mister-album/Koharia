@@ -5,6 +5,7 @@ import androidx.lifecycle.SavedStateHandle
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import koharia.epub.font.EpubFontId
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
 import kotlinx.coroutines.flow.Flow
@@ -40,6 +41,19 @@ class KomgaScopedPreferenceStoreFactory(
 
     fun epubLayoutPreferences(serverId: Long): EpubLayoutPreferences {
         return EpubLayoutPreferences(storeForServer(serverId))
+    }
+
+    fun resetEpubFontSelection(fontId: EpubFontId) {
+        val key = EpubLayoutPreferences.SELECTED_FONT_KEY
+        val scopedSuffix = "::$key"
+        val matchingKeys = preferenceStore.getAll()
+            .filter { (storedKey, value) ->
+                (storedKey == key || storedKey.endsWith(scopedSuffix)) && value == fontId.value
+            }
+            .keys
+        matchingKeys.forEach { storedKey ->
+            preferenceStore.getString(storedKey, EpubFontId.ORIGINAL.value).set(EpubFontId.ORIGINAL.value)
+        }
     }
 
     fun basePreferences(serverId: Long): BasePreferences {

@@ -90,6 +90,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.epub.EpubBrightnessAwareDialogContent
+import koharia.epub.EpubReaderActivity
 import koharia.epub.calculateEpubBrightness
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.i18n.MR
@@ -114,12 +115,14 @@ fun EpubReaderSettingsSheet(
     readerPreferences: ReaderPreferences,
     epubReaderPreferences: EpubReaderPreferences,
     onDismissRequest: () -> Unit,
+    onOpenFontPicker: (() -> Unit)? = null,
 ) {
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         EpubReaderSettingsContent(
             preferences = preferences,
             readerPreferences = readerPreferences,
             epubReaderPreferences = epubReaderPreferences,
+            onOpenFontPicker = onOpenFontPicker,
         )
     }
 }
@@ -131,6 +134,7 @@ fun EpubReaderSettingsContent(
     epubReaderPreferences: EpubReaderPreferences,
     modifier: Modifier = Modifier,
     scrollable: Boolean = true,
+    onOpenFontPicker: (() -> Unit)? = null,
 ) {
     var activeDialog by rememberSaveable { mutableStateOf<EpubSettingsDialog?>(null) }
     val scrollState = rememberScrollState()
@@ -217,6 +221,7 @@ fun EpubReaderSettingsContent(
         EpubSettingsDialog.TYPOGRAPHY -> TypographySettingsSheet(
             preferences = preferences,
             readerPreferences = readerPreferences,
+            onOpenFontPicker = onOpenFontPicker,
             onDismissRequest = { activeDialog = null },
         )
         EpubSettingsDialog.MORE -> MoreReadingSettingsSheet(
@@ -1197,6 +1202,7 @@ private fun CompactSettingRow(
 private fun TypographySettingsSheet(
     preferences: EpubLayoutPreferences,
     readerPreferences: ReaderPreferences,
+    onOpenFontPicker: (() -> Unit)?,
     onDismissRequest: () -> Unit,
 ) {
     var showCustomSpacing by rememberSaveable { mutableStateOf(false) }
@@ -1215,7 +1221,7 @@ private fun TypographySettingsSheet(
                     onOpenCustom = { showCustomSpacing = true },
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-                FontFamilySection(preferences)
+                FontFamilySection(preferences, onOpenFontPicker)
                 TextAlignmentSection(preferences)
                 PublisherStylesSection(preferences)
             }
@@ -1679,25 +1685,17 @@ private fun TapZoneSection(
 }
 
 @Composable
-private fun FontFamilySection(preferences: EpubLayoutPreferences) {
-    val currentFont by preferences.fontFamily.changes().collectAsState(preferences.fontFamily.get())
-
-    ChipSection(title = stringResource(MR.strings.pref_epub_font_family)) {
-        EpubLayoutPreferences.FontFamily.entries.forEach { fontFamily ->
-            FilterChip(
-                selected = currentFont == fontFamily,
-                onClick = { preferences.fontFamily.set(fontFamily) },
-                label = {
-                    Text(
-                        text = fontFamily.label(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                modifier = Modifier.semantics { role = Role.RadioButton },
-            )
-        }
-    }
+private fun FontFamilySection(
+    preferences: EpubLayoutPreferences,
+    onOpenFontPicker: (() -> Unit)?,
+) {
+    val fontSelectionEnabled = (LocalActivity.current as? EpubReaderActivity)?.supportsFontOverride() ?: true
+    EpubFontPreference(
+        preferences = preferences,
+        modifier = Modifier.padding(horizontal = 8.dp),
+        enabled = fontSelectionEnabled,
+        onPickerOpened = onOpenFontPicker,
+    )
 }
 
 @Composable
@@ -1777,17 +1775,6 @@ private fun ChipSection(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         content()
-    }
-}
-
-@Composable
-private fun EpubLayoutPreferences.FontFamily.label(): String {
-    return when (this) {
-        EpubLayoutPreferences.FontFamily.ORIGINAL -> stringResource(MR.strings.pref_epub_font_original)
-        EpubLayoutPreferences.FontFamily.SERIF -> stringResource(MR.strings.pref_epub_font_serif)
-        EpubLayoutPreferences.FontFamily.SANS_SERIF -> stringResource(MR.strings.pref_epub_font_sans_serif)
-        EpubLayoutPreferences.FontFamily.MONOSPACE -> stringResource(MR.strings.pref_epub_font_monospace)
-        EpubLayoutPreferences.FontFamily.OPEN_DYSLEXIC -> stringResource(MR.strings.pref_epub_font_open_dyslexic)
     }
 }
 

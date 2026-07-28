@@ -23,6 +23,7 @@ class EpubPaginationModelsTest {
         assertNotEquals(original.key, snapshot(paragraphSpacing = 0.5f).key)
         assertNotEquals(original.key, snapshot(verticalMargins = 1.3f).key)
         assertNotEquals(original.key, snapshot(textAlignment = "JUSTIFY").key)
+        assertNotEquals(original.key, snapshot(fontFingerprint = "different-font-content").key)
         assertNotEquals(original.key, snapshot(viewportWidthPx = 1080).key)
         assertNotEquals(original.key, snapshot(webViewVersion = "2").key)
     }
@@ -44,6 +45,7 @@ class EpubPaginationModelsTest {
         textAlignment: String = "START",
         viewportWidthPx: Int = 720,
         webViewVersion: String = "1",
+        fontFingerprint: String = "builtin:original",
     ): EpubPaginationLayoutSnapshot {
         return EpubPaginationLayoutSnapshot(
             readingMode = "PAGINATED",
@@ -54,7 +56,8 @@ class EpubPaginationModelsTest {
             paragraphIndent = 2.0f,
             pageMargins = 1.0f,
             verticalMargins = verticalMargins,
-            fontFamily = "ORIGINAL",
+            fontId = "builtin:original",
+            fontFingerprint = fontFingerprint,
             textAlignment = textAlignment,
             publisherStyles = true,
             viewportWidthPx = viewportWidthPx,

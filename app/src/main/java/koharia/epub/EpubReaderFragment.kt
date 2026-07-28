@@ -19,6 +19,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import eu.kanade.tachiyomi.R
+import koharia.epub.font.EpubFontId
+import koharia.epub.font.EpubFontManager
 import koharia.epub.locator.toNavigatorLocator
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
@@ -28,6 +30,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import org.readium.r2.navigator.HyperlinkNavigator
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
@@ -70,12 +73,17 @@ class EpubReaderFragment : Fragment() {
 
         fun onImageInteraction(reference: EpubImageReference, interaction: EpubImageInteraction)
 
+        fun onFontLoadFailed()
+
+        fun onVisibleFontRequirementsCaptured(chapterId: Long, requirementsJson: String?)
+
         fun onNavigatorReady(fragment: EpubReaderFragment)
 
         fun onSessionMissing(chapterId: Long)
     }
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
+    private val fontManager: EpubFontManager = Injekt.get()
     private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
@@ -102,6 +110,15 @@ class EpubReaderFragment : Fragment() {
     private var chapterBreaksEnabled = false
     private var continuousScrollInstallJob: Job? = null
     private var imageInteractionInstallJob: Job? = null
+    private var fontSwitchJob: Job? = null
+    private var fontRequirementCaptureJob: Job? = null
+    private var paginationStartJob: Job? = null
+    private var pendingPaginationRequest: EpubPaginationRequest? = null
+    private var pendingFontKey: String? = null
+    private var pendingFontPreferences: EpubPreferences? = null
+    private var capturedFontRequirementsJson: String? = null
+    private var appliedFontId = EpubFontId.ORIGINAL.value
+    private var reportedFontFailureKey: String? = null
     private var preserveImageColors = true
     private var parentColorsInverted = false
     private var imageColorPolicyScript = buildEpubDocumentPreparationScript(
@@ -112,6 +129,11 @@ class EpubReaderFragment : Fragment() {
         preserveImageColors = preserveImageColors,
         parentColorsInverted = parentColorsInverted,
         readerFontScale = readerFontScale,
+    )
+    private var fontPreparation = buildEpubFontPreparationScript(
+        fontManager = fontManager,
+        selectedFontId = EpubFontId.ORIGINAL.value,
+        publisherStyles = true,
     )
     private var imageColorPolicyGeneration = 0L
     private var imageColorPolicyRoot: View? = null
@@ -162,6 +184,7 @@ class EpubReaderFragment : Fragment() {
         chapterBreaksEnabled =
             epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED
         refreshDocumentPreparationPolicy()
+        appliedFontId = epubLayoutPreferences.selectedFontId.get()
         logcat(LogPriority.DEBUG) {
             "EPUB fragment onCreate chapterId=$chapterId hasSession=${session != null}"
         }
@@ -171,6 +194,9 @@ class EpubReaderFragment : Fragment() {
             }
             registerJavascriptInterface(EPUB_IMAGE_BRIDGE_NAME) { resource ->
                 EpubImageJavascriptBridge(resource)
+            }
+            registerJavascriptInterface(EPUB_FONT_BRIDGE_NAME) {
+                EpubFontJavascriptBridge()
             }
         }
         childFragmentManager.fragmentFactory = session?.navigatorFactory?.createFragmentFactory(
@@ -271,6 +297,15 @@ class EpubReaderFragment : Fragment() {
         clearContinuousScrollState()
         imageInteractionInstallJob?.cancel()
         imageInteractionInstallJob = null
+        fontSwitchJob?.cancel()
+        fontSwitchJob = null
+        fontRequirementCaptureJob?.cancel()
+        fontRequirementCaptureJob = null
+        paginationStartJob?.cancel()
+        paginationStartJob = null
+        pendingPaginationRequest = null
+        pendingFontKey = null
+        pendingFontPreferences = null
         clearImageColorPolicyDrawGuard()
         clearNavigatorInputListener()
         super.onDestroyView()
@@ -303,6 +338,33 @@ class EpubReaderFragment : Fragment() {
         return navigator.goBackward()
     }
 
+    fun prepareFontSelection() {
+        if (!isAdded || view == null) return
+        val navigator = readyNavigatorFragment() ?: return
+        capturedFontRequirementsJson = null
+        host?.onVisibleFontRequirementsCaptured(chapterId, null)
+        fontRequirementCaptureJob?.cancel()
+        fontRequirementCaptureJob = viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                navigator.evaluateJavascript(EPUB_CAPTURE_VISIBLE_FONT_REQUIREMENTS_SCRIPT)
+            }.onSuccess { requirements ->
+                capturedFontRequirementsJson = requirements
+                host?.onVisibleFontRequirementsCaptured(chapterId, requirements)
+                logcat(LogPriority.DEBUG) {
+                    "EPUB visible font requirements captured chapterId=$chapterId requirements=$requirements"
+                }
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) {
+                    "Failed to inspect visible EPUB text before opening font picker"
+                }
+            }
+        }
+    }
+
+    fun restoreFontSelectionContext(requirementsJson: String?) {
+        capturedFontRequirementsJson = requirementsJson
+    }
+
     fun submitPreferences(preferences: EpubPreferences) {
         if (!isAdded || view == null) return
         val navigator = readyNavigatorFragment()
@@ -326,9 +388,77 @@ class EpubReaderFragment : Fragment() {
         readerFontScale = nextReaderFontScale
         textAlignmentOverride = nextTextAlignmentOverride
         chapterBreaksEnabled = nextChapterBreaksEnabled
-        navigator?.submitPreferences(preferences)
-        if (documentPolicyChanged) {
+        val nextFontPreparation = buildEpubFontPreparationScript(
+            fontManager = fontManager,
+            selectedFontId = epubLayoutPreferences.selectedFontId.get(),
+            publisherStyles = preferences.publisherStyles != false || fontOverridesDisabled(),
+            capturedRequirementsJson = capturedFontRequirementsJson,
+        )
+        val fontPolicyChanged = nextFontPreparation.key != fontPreparation.key ||
+            nextFontPreparation.script != fontPreparation.script
+        fontPreparation = nextFontPreparation
+        if (documentPolicyChanged || fontPolicyChanged) {
             refreshDocumentPreparationPolicy()
+        }
+        if (nextFontPreparation.requiresAsyncLoad && navigator != null &&
+            (fontPolicyChanged || pendingFontKey == nextFontPreparation.key)
+        ) {
+            val previousFontId = appliedFontId
+            val expectedKey = nextFontPreparation.key
+            val requestedFontId = epubLayoutPreferences.selectedFontId.get()
+            pendingFontPreferences = preferences
+            if (!fontPolicyChanged && fontSwitchJob?.isActive == true) {
+                return
+            }
+            fontSwitchJob?.cancel()
+            pendingFontKey = expectedKey
+            reportedFontFailureKey = null
+            fontSwitchJob = viewLifecycleOwner.lifecycleScope.launch {
+                val startedAt = SystemClock.elapsedRealtime()
+                navigator.evaluateJavascript(nextFontPreparation.script)
+                val loaded = withTimeoutOrNull(FONT_PREPARATION_DRAW_TIMEOUT_MS) {
+                    while (true) {
+                        if (fontPreparation.key != expectedKey) return@withTimeoutOrNull false
+                        val key = kotlinx.serialization.json.JsonPrimitive(expectedKey)
+                        val status = navigator.evaluateJavascript(
+                            "window.__kohariaFontState && window.__kohariaFontState.key === $key ? " +
+                                "window.__kohariaFontState.status : 'missing'",
+                        )
+                        if (status == "\"ready\"") return@withTimeoutOrNull true
+                        if (status == "\"failed\"") return@withTimeoutOrNull false
+                        delay(FONT_PREPARATION_POLL_MS)
+                    }
+                } == true
+                if (fontPreparation.key != expectedKey) return@launch
+                if (loaded) {
+                    appliedFontId = requestedFontId
+                    navigator.submitPreferences(pendingFontPreferences ?: preferences)
+                    if (capturedFontRequirementsJson != null) {
+                        capturedFontRequirementsJson = null
+                        host?.onVisibleFontRequirementsCaptured(chapterId, null)
+                        refreshDocumentPreparationPolicy()
+                    }
+                } else {
+                    val fallbackFontId = previousFontId.takeUnless { it == requestedFontId }
+                        ?: EpubFontId.ORIGINAL.value
+                    reportFontFailure(expectedKey, fallbackFontId)
+                }
+                logcat(if (loaded) LogPriority.DEBUG else LogPriority.WARN) {
+                    "EPUB visible font preparation completed chapterId=$chapterId key=$expectedKey " +
+                        "loaded=$loaded elapsedMs=${SystemClock.elapsedRealtime() - startedAt}"
+                }
+                if (pendingFontKey == expectedKey) {
+                    pendingFontKey = null
+                    pendingFontPreferences = null
+                }
+            }
+        } else {
+            fontSwitchJob?.cancel()
+            fontSwitchJob = null
+            pendingFontKey = null
+            pendingFontPreferences = null
+            appliedFontId = epubLayoutPreferences.selectedFontId.get()
+            navigator?.submitPreferences(preferences)
         }
         scheduleImageInteractionsInstall(navigator)
         if (keepContinuousScrollPosition) {
@@ -344,6 +474,16 @@ class EpubReaderFragment : Fragment() {
                 "paragraphSpacing=${preferences.paragraphSpacing} lineHeight=${preferences.lineHeight}"
         }
         logComputedParagraphIndent()
+    }
+
+    private fun reportFontFailure(expectedKey: String, fallbackFontId: String) {
+        if (fontPreparation.key != expectedKey || reportedFontFailureKey == expectedKey) return
+        reportedFontFailureKey = expectedKey
+        appliedFontId = fallbackFontId
+        capturedFontRequirementsJson = null
+        host?.onVisibleFontRequirementsCaptured(chapterId, null)
+        epubLayoutPreferences.selectedFontId.set(fallbackFontId)
+        host?.onFontLoadFailed()
     }
 
     private fun logComputedParagraphIndent() {
@@ -362,13 +502,39 @@ class EpubReaderFragment : Fragment() {
 
     internal fun startPagination(request: EpubPaginationRequest) {
         if (!isAdded || view == null) return
+        paginationStartJob?.cancel()
+        paginationStartJob = null
+        pendingPaginationRequest = request
         val existing = paginationScannerFragment()
         if (!request.shouldScan) {
+            pendingPaginationRequest = null
             if (existing != null) {
                 childFragmentManager.commitNow { remove(existing) }
             }
             return
         }
+        paginationStartJob = viewLifecycleOwner.lifecycleScope.launch {
+            fontSwitchJob?.join()
+            if (!isAdded || view == null || pendingPaginationRequest?.generation != request.generation) return@launch
+            val backgroundWaitStartedAt = SystemClock.elapsedRealtime()
+            val backgroundReady = awaitVisibleFontBackground()
+            logcat(LogPriority.DEBUG) {
+                "EPUB pagination font preparation completed chapterId=$chapterId " +
+                    "generation=${request.generation} ready=$backgroundReady " +
+                    "elapsedMs=${SystemClock.elapsedRealtime() - backgroundWaitStartedAt}"
+            }
+            if (!backgroundReady) {
+                if (pendingPaginationRequest?.generation == request.generation) pendingPaginationRequest = null
+                return@launch
+            }
+            if (!isAdded || view == null || pendingPaginationRequest?.generation != request.generation) return@launch
+            pendingPaginationRequest = null
+            launchPaginationScanner(request)
+        }
+    }
+
+    private fun launchPaginationScanner(request: EpubPaginationRequest) {
+        if (!isAdded || view == null || childFragmentManager.isStateSaved) return
         childFragmentManager.commitNow {
             setReorderingAllowed(true)
             replace(
@@ -379,7 +545,35 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
+    private suspend fun awaitVisibleFontBackground(): Boolean {
+        if (!fontPreparation.requiresAsyncLoad) return true
+        val expectedKey = fontPreparation.key
+        return withTimeoutOrNull(FONT_BACKGROUND_WAIT_TIMEOUT_MS) {
+            while (true) {
+                if (fontPreparation.key != expectedKey) return@withTimeoutOrNull false
+                val key = kotlinx.serialization.json.JsonPrimitive(expectedKey)
+                val status = readyNavigatorFragment()?.evaluateJavascript(
+                    "(function() { var state = window.__kohariaFontState; " +
+                        "if (!state || state.key !== $key) return 'stale'; " +
+                        "if (state.status === 'failed') return 'failed'; " +
+                        "if (state.status === 'ready' && state.backgroundStatus === 'complete') return 'complete'; " +
+                        "return 'waiting'; })()",
+                ) ?: return@withTimeoutOrNull false
+                when (status) {
+                    "\"complete\"" -> return@withTimeoutOrNull true
+                    "\"failed\"", "\"stale\"" -> return@withTimeoutOrNull false
+                }
+                delay(FONT_BACKGROUND_POLL_MS)
+            }
+            @Suppress("UNREACHABLE_CODE")
+            false
+        } ?: true
+    }
+
     fun stopPagination() {
+        paginationStartJob?.cancel()
+        paginationStartJob = null
+        pendingPaginationRequest = null
         paginationScannerFragment()?.let { scanner ->
             if (!childFragmentManager.isStateSaved) {
                 childFragmentManager.commitNow { remove(scanner) }
@@ -416,7 +610,13 @@ class EpubReaderFragment : Fragment() {
     }
 
     private fun refreshDocumentPreparationPolicy() {
-        imageColorPolicyScript = buildEpubDocumentPreparationScript(
+        fontPreparation = buildEpubFontPreparationScript(
+            fontManager = fontManager,
+            selectedFontId = epubLayoutPreferences.selectedFontId.get(),
+            publisherStyles = epubLayoutPreferences.publisherStyles.get() || fontOverridesDisabled(),
+            capturedRequirementsJson = capturedFontRequirementsJson,
+        )
+        val documentScript = buildEpubDocumentPreparationScript(
             paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
             textAlignment = textAlignmentOverride,
             tocHrefs = tocHrefs,
@@ -425,6 +625,12 @@ class EpubReaderFragment : Fragment() {
             parentColorsInverted = parentColorsInverted,
             readerFontScale = readerFontScale,
         )
+        imageColorPolicyScript = """
+            (function() {
+                $documentScript;
+                return ${fontPreparation.script};
+            })()
+        """.trimIndent()
         imageColorPolicyGeneration++
         installedImageColorPolicies.clear()
         pendingImageColorPolicies.clear()
@@ -548,11 +754,24 @@ class EpubReaderFragment : Fragment() {
     private fun applyImageColorPolicyBeforeDraw(root: View): Boolean {
         val generation = imageColorPolicyGeneration
         val script = imageColorPolicyScript
+        val expectedFontKey = fontPreparation.key
+        val expectedRequiresAsyncFontLoad = fontPreparation.requiresAsyncLoad
         var visiblePolicyPending = false
+        var visibleFontPolicyPending = false
+        if (fontPreparation.requiresAsyncLoad) {
+            root.forEachWebView { webView ->
+                val url = webView.url?.substringBefore('#')?.takeIf { it.isNotBlank() } ?: return@forEachWebView
+                val policyKey = "$generation:$url"
+                if (webView.isVisiblyDrawn() && installedImageColorPolicies[webView] != policyKey) {
+                    visibleFontPolicyPending = true
+                }
+            }
+        }
         root.forEachWebView { webView ->
             val url = webView.url?.substringBefore('#')?.takeIf { it.isNotBlank() } ?: return@forEachWebView
             val policyKey = "$generation:$url"
             val isVisible = webView.isVisiblyDrawn()
+            if (visibleFontPolicyPending && !isVisible) return@forEachWebView
             if (webView.progress < 100) {
                 installedImageColorPolicies.remove(webView)
                 if (isVisible && shouldBlockImageColorPolicyDraw(root, webView, policyKey)) {
@@ -568,12 +787,24 @@ class EpubReaderFragment : Fragment() {
 
             if (pendingImageColorPolicies[webView] != policyKey) {
                 pendingImageColorPolicies[webView] = policyKey
+                val wasVisible = isVisible
                 runCatching {
-                    webView.evaluateJavascript(script) {
+                    webView.evaluateJavascript(script) { result ->
                         if (pendingImageColorPolicies[webView] == policyKey) {
                             pendingImageColorPolicies.remove(webView)
                         }
-                        if (imageColorPolicyGeneration == generation &&
+                        val fontReady = !expectedRequiresAsyncFontLoad ||
+                            result == "\"ready\"" || result == "\"failed\""
+                        if (result == "\"failed\"" && expectedRequiresAsyncFontLoad && wasVisible &&
+                            imageColorPolicyGeneration == generation && fontPreparation.key == expectedFontKey &&
+                            pendingFontKey != expectedFontKey
+                        ) {
+                            val fallbackFontId = appliedFontId.takeUnless {
+                                it == epubLayoutPreferences.selectedFontId.get()
+                            } ?: EpubFontId.ORIGINAL.value
+                            reportFontFailure(expectedFontKey, fallbackFontId)
+                        }
+                        if (fontReady && imageColorPolicyGeneration == generation &&
                             webView.url?.substringBefore('#') == url
                         ) {
                             installedImageColorPolicies[webView] = policyKey
@@ -594,7 +825,7 @@ class EpubReaderFragment : Fragment() {
                                 root.postInvalidateOnAnimation()
                             }
                         },
-                        IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS,
+                        currentDrawTimeoutMs(),
                     )
                 }.onFailure {
                     pendingImageColorPolicies.remove(webView)
@@ -618,18 +849,40 @@ class EpubReaderFragment : Fragment() {
         val wait = if (currentWait?.policyKey == policyKey) {
             currentWait
         } else {
+            val expectedGeneration = imageColorPolicyGeneration
+            val expectedFontKey = fontPreparation.key
+            val expectedRequiresAsyncFontLoad = fontPreparation.requiresAsyncLoad
+            val wasVisible = webView.isVisiblyDrawn()
             ImageColorPolicyDrawWait(
                 policyKey = policyKey,
-                expiresAt = now + IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS,
+                expiresAt = now + currentDrawTimeoutMs(),
             ).also { newWait ->
                 imageColorPolicyDrawWaits[webView] = newWait
                 webView.postDelayed(
                     {
                         if (imageColorPolicyDrawWaits[webView] == newWait) {
+                            if (expectedRequiresAsyncFontLoad && wasVisible && webView.isVisiblyDrawn() &&
+                                imageColorPolicyGeneration == expectedGeneration &&
+                                fontPreparation.key == expectedFontKey && pendingFontKey != expectedFontKey
+                            ) {
+                                val timedOutKey = kotlinx.serialization.json.JsonPrimitive(expectedFontKey)
+                                webView.evaluateJavascript(
+                                    "if (window.__kohariaFontState && " +
+                                        "window.__kohariaFontState.key === $timedOutKey && " +
+                                        "window.__kohariaFontState.status === 'loading') { " +
+                                        "window.__kohariaFontState = { key: $timedOutKey + ':cancelled', " +
+                                        "status: 'failed', faces: [] }; }",
+                                    null,
+                                )
+                                val fallbackFontId = appliedFontId.takeUnless {
+                                    it == epubLayoutPreferences.selectedFontId.get()
+                                } ?: EpubFontId.ORIGINAL.value
+                                reportFontFailure(expectedFontKey, fallbackFontId)
+                            }
                             root.postInvalidateOnAnimation()
                         }
                     },
-                    IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS,
+                    currentDrawTimeoutMs(),
                 )
             }
         }
@@ -649,6 +902,13 @@ class EpubReaderFragment : Fragment() {
 
     private fun WebView.isVisiblyDrawn(): Boolean =
         isShown && width > 0 && height > 0 && getGlobalVisibleRect(Rect())
+
+    private fun currentDrawTimeoutMs(): Long =
+        if (fontPreparation.requiresAsyncLoad) FONT_PREPARATION_DRAW_TIMEOUT_MS else IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS
+
+    private fun fontOverridesDisabled(): Boolean =
+        sessionRepository.get(chapterId)?.publication?.metadata?.layout ==
+            org.readium.r2.shared.publication.Layout.FIXED
 
     private fun scheduleContinuousScrollInstall(
         navigator: EpubNavigatorFragment?,
@@ -705,6 +965,7 @@ class EpubReaderFragment : Fragment() {
                             applyReaderStyles = paragraphIndentOverrideEnabled,
                             readerFontScale = readerFontScale,
                         )};
+                                ${fontPreparation.script};
                                 return true;
                             })()
                         """.trimIndent(),
@@ -850,6 +1111,21 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
+    @Suppress("unused")
+    private inner class EpubFontJavascriptBridge {
+        @JavascriptInterface
+        fun getLength(faceKey: String): Long {
+            if (faceKey !in fontPreparation.faceKeys) return -1L
+            return fontManager.fontLength(faceKey)
+        }
+
+        @JavascriptInterface
+        fun getChunk(faceKey: String, chunkIndex: Int): String? {
+            if (faceKey !in fontPreparation.faceKeys) return null
+            return fontManager.fontChunk(faceKey, chunkIndex)
+        }
+    }
+
     private fun createContinuousScrollLocator(
         link: Link,
         progression: Double,
@@ -928,9 +1204,14 @@ class EpubReaderFragment : Fragment() {
         private const val PAGINATION_SCANNER_TAG = "epub_pagination_scanner"
         private const val PARAGRAPH_INDENT_DEBUG_DELAY_MS = 600L
         private const val CONTINUOUS_SCROLL_BRIDGE_NAME = "KohariaContinuousScroll"
+        private const val EPUB_FONT_BRIDGE_NAME = "KohariaEpubFont"
         private const val CONTINUOUS_SCROLL_INSTALL_DELAY_MS = 180L
         private const val IMAGE_INTERACTION_INSTALL_DELAY_MS = 80L
         private const val IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS = 250L
+        private const val FONT_PREPARATION_DRAW_TIMEOUT_MS = 8_000L
+        private const val FONT_PREPARATION_POLL_MS = 40L
+        private const val FONT_BACKGROUND_WAIT_TIMEOUT_MS = 6_000L
+        private const val FONT_BACKGROUND_POLL_MS = 75L
         private val READIUM_PACKAGE_BASE_URL = AbsoluteUrl("https://readium_package/")!!
         private val PARAGRAPH_INDENT_DEBUG_SCRIPT =
             """
