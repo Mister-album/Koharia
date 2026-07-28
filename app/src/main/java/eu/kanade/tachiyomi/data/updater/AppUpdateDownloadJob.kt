@@ -140,12 +140,16 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
             } catch (error: DownloadIntegrityException) {
                 partialFile.delete()
                 logcat(LogPriority.WARN, error) { "Discarding an invalid completed update download" }
+            } catch (error: TerminalDownloadException) {
+                partialFile.delete()
+                throw error
             }
         } else if (spec.expectedSize != null && partialFile.length() > spec.expectedSize) {
             partialFile.delete()
         }
 
         var lastFailure: Throwable? = null
+        var hasRetryableFailure = false
         spec.urls.forEachIndexed { index, url ->
             try {
                 downloadFromSource(
@@ -159,7 +163,13 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
                 return
             } catch (error: CancellationException) {
                 throw error
+            } catch (error: SourceDownloadException) {
+                lastFailure = error
+                logcat(LogPriority.WARN, error) {
+                    "App update source ${index + 1}/${spec.urls.size} rejected (${url.safeHost()})"
+                }
             } catch (error: TerminalDownloadException) {
+                partialFile.delete()
                 throw error
             } catch (error: Exception) {
                 if (isStopped || error.isCancellation()) {
@@ -168,6 +178,7 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
                 if (error is DownloadIntegrityException) {
                     partialFile.delete()
                 }
+                hasRetryableFailure = true
                 lastFailure = error
                 logcat(LogPriority.WARN, error) {
                     "App update source ${index + 1}/${spec.urls.size} failed (${url.safeHost()})"
@@ -175,7 +186,10 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
             }
         }
 
-        throw RetryableDownloadException("All app update download sources failed", lastFailure)
+        if (hasRetryableFailure) {
+            throw RetryableDownloadException("All app update download sources failed", lastFailure)
+        }
+        throw TerminalDownloadException("All app update download sources were rejected", lastFailure)
     }
 
     private suspend fun downloadFromSource(
@@ -193,7 +207,7 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
                 }
             }.build()
         } catch (error: IllegalArgumentException) {
-            throw TerminalDownloadException("Invalid app update URL", error)
+            throw SourceDownloadException("Invalid app update URL", error)
         }
 
         val progressListener = DownloadProgressListener()
@@ -242,7 +256,7 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
                 else -> if (AppUpdateDownloadPolicy.isRetryableHttpCode(it.code)) {
                     throw RetryableDownloadException("Temporary HTTP ${it.code} from update source")
                 } else {
-                    throw TerminalDownloadException("HTTP ${it.code} from update source")
+                    throw SourceDownloadException("HTTP ${it.code} from update source")
                 }
             }
 
@@ -384,6 +398,9 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
         IOException(message, cause)
 
     private class DownloadIntegrityException(message: String) : IOException(message)
+
+    private class SourceDownloadException(message: String, cause: Throwable? = null) :
+        IOException(message, cause)
 
     private class TerminalDownloadException(message: String, cause: Throwable? = null) :
         IllegalStateException(message, cause)

@@ -120,7 +120,11 @@ object AboutScreen : Screen() {
                                             context = context,
                                             onResult = { release, updateAvailable ->
                                                 val updateScreen = NewUpdateScreen(
-                                                    versionName = release?.version ?: BuildConfig.VERSION_NAME,
+                                                    versionName = if (updateAvailable) {
+                                                        release?.version ?: BuildConfig.VERSION_NAME
+                                                    } else {
+                                                        BuildConfig.VERSION_NAME
+                                                    },
                                                     changelogInfo = release?.info.orEmpty(),
                                                     downloadLinks = release?.downloadLinks.orEmpty(),
                                                     expectedSize = release?.expectedSize,
