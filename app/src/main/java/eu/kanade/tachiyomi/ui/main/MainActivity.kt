@@ -306,6 +306,7 @@ class MainActivity : BaseActivity() {
                             downloadLinks = result.release.downloadLinks,
                             expectedSize = result.release.expectedSize,
                             expectedSha256 = result.release.expectedSha256,
+                            updateAvailable = true,
                         )
                         navigator.push(updateScreen)
                     }

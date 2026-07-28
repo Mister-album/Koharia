@@ -22,10 +22,10 @@ class GetApplicationRelease(
         // Limit checks to once every 3 days at most
         val nextCheckTime = Instant.ofEpochMilli(lastChecked.get()).plus(3, ChronoUnit.DAYS)
         if (!arguments.forceCheck && now.isBefore(nextCheckTime)) {
-            return Result.NoNewUpdate
+            return Result.NoNewUpdate()
         }
 
-        val release = service.latest(arguments) ?: return Result.NoNewUpdate
+        val release = service.latest(arguments) ?: return Result.NoNewUpdate()
 
         lastChecked.set(now.toEpochMilli())
 
@@ -38,7 +38,7 @@ class GetApplicationRelease(
         )
         return when {
             isNewVersion -> Result.NewUpdate(release)
-            else -> Result.NoNewUpdate
+            else -> Result.NoNewUpdate(release)
         }
     }
 
@@ -89,7 +89,7 @@ class GetApplicationRelease(
 
     sealed interface Result {
         data class NewUpdate(val release: Release) : Result
-        data object NoNewUpdate : Result
+        data class NoNewUpdate(val release: Release? = null) : Result
         data object OsTooOld : Result
     }
 }

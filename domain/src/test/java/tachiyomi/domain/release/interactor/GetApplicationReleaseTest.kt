@@ -112,7 +112,7 @@ class GetApplicationReleaseTest {
             ),
         )
 
-        result shouldBe GetApplicationRelease.Result.NoNewUpdate
+        result shouldBe GetApplicationRelease.Result.NoNewUpdate(release)
     }
 
     @Test
@@ -146,12 +146,13 @@ class GetApplicationReleaseTest {
         every { preference.get() } returns 0
         every { preference.set(any()) }.answers { }
 
-        coEvery { releaseService.latest(any()) } returns Release(
+        val release = Release(
             "latest",
             "info",
             "http://example.com/release_link",
             "http://example.com/release_link.apk",
         )
+        coEvery { releaseService.latest(any()) } returns release
 
         val result = getApplicationRelease.await(
             GetApplicationRelease.Arguments(
@@ -163,7 +164,7 @@ class GetApplicationReleaseTest {
             ),
         )
 
-        result shouldBe GetApplicationRelease.Result.NoNewUpdate
+        result shouldBe GetApplicationRelease.Result.NoNewUpdate(release)
     }
 
     @Test
@@ -191,6 +192,6 @@ class GetApplicationReleaseTest {
         )
 
         coVerify(exactly = 0) { releaseService.latest(any()) }
-        result shouldBe GetApplicationRelease.Result.NoNewUpdate
+        result shouldBe GetApplicationRelease.Result.NoNewUpdate()
     }
 }
