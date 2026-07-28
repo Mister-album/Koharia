@@ -303,7 +303,10 @@ class MainActivity : BaseActivity() {
                         val updateScreen = NewUpdateScreen(
                             versionName = result.release.version,
                             changelogInfo = result.release.info,
-                            downloadLink = result.release.downloadLink,
+                            downloadLinks = result.release.downloadLinks,
+                            expectedSize = result.release.expectedSize,
+                            expectedSha256 = result.release.expectedSha256,
+                            updateAvailable = true,
                         )
                         navigator.push(updateScreen)
                     }

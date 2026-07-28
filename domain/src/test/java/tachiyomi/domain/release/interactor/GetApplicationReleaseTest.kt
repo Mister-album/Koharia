@@ -112,7 +112,59 @@ class GetApplicationReleaseTest {
             ),
         )
 
-        result shouldBe GetApplicationRelease.Result.NoNewUpdate
+        result shouldBe GetApplicationRelease.Result.NoNewUpdate(release)
+    }
+
+    @Test
+    fun `When new version has fewer components expect new update`() = runTest {
+        every { preference.get() } returns 0
+        every { preference.set(any()) }.answers { }
+
+        val release = Release(
+            "v1.1",
+            "info",
+            "http://example.com/release_link",
+            "http://example.com/release_link.apk",
+        )
+        coEvery { releaseService.latest(any()) } returns release
+
+        val result = getApplicationRelease.await(
+            GetApplicationRelease.Arguments(
+                isFoss = false,
+                isPreview = false,
+                commitCount = 0,
+                versionName = "1.0.9",
+                repository = "test",
+            ),
+        )
+
+        result shouldBe GetApplicationRelease.Result.NewUpdate(release)
+    }
+
+    @Test
+    fun `When release version is malformed expect no new update`() = runTest {
+        every { preference.get() } returns 0
+        every { preference.set(any()) }.answers { }
+
+        val release = Release(
+            "latest",
+            "info",
+            "http://example.com/release_link",
+            "http://example.com/release_link.apk",
+        )
+        coEvery { releaseService.latest(any()) } returns release
+
+        val result = getApplicationRelease.await(
+            GetApplicationRelease.Arguments(
+                isFoss = false,
+                isPreview = false,
+                commitCount = 0,
+                versionName = "1.0.0",
+                repository = "test",
+            ),
+        )
+
+        result shouldBe GetApplicationRelease.Result.NoNewUpdate(release)
     }
 
     @Test
@@ -140,6 +192,6 @@ class GetApplicationReleaseTest {
         )
 
         coVerify(exactly = 0) { releaseService.latest(any()) }
-        result shouldBe GetApplicationRelease.Result.NoNewUpdate
+        result shouldBe GetApplicationRelease.Result.NoNewUpdate()
     }
 }

@@ -39,8 +39,10 @@ internal class AppUpdateNotifier(private val context: Context) {
     fun promptUpdate(release: Release) {
         val updateIntent = NotificationReceiver.downloadAppUpdatePendingBroadcast(
             context,
-            release.downloadLink,
-            release.version,
+            urls = release.downloadLinks,
+            title = release.version,
+            expectedSize = release.expectedSize,
+            expectedSha256 = release.expectedSha256,
         )
 
         val releaseIntent = Intent(
@@ -119,6 +121,25 @@ internal class AppUpdateNotifier(private val context: Context) {
         notificationBuilder.show()
     }
 
+    fun onDownloadRetrying(title: String) {
+        with(notificationBuilder) {
+            setContentTitle(title)
+            setContentText(context.stringResource(MR.strings.update_check_notification_download_retrying))
+            setSmallIcon(android.R.drawable.stat_sys_download)
+            setProgress(100, 0, true)
+            setOnlyAlertOnce(true)
+            setOngoing(true)
+
+            clearActions()
+            addAction(
+                R.drawable.ic_close_24dp,
+                context.stringResource(MR.strings.action_cancel),
+                NotificationReceiver.cancelDownloadAppUpdatePendingBroadcast(context),
+            )
+        }
+        notificationBuilder.show()
+    }
+
     /**
      * Call when apk download is finished.
      *
@@ -152,10 +173,16 @@ internal class AppUpdateNotifier(private val context: Context) {
     /**
      * Call when apk download throws a error
      *
-     * @param url web location of apk to download.
+     * @param urls web locations of apk to download.
      */
-    fun onDownloadError(url: String) {
+    fun onDownloadError(
+        urls: List<String>,
+        title: String,
+        expectedSize: Long?,
+        expectedSha256: String?,
+    ) {
         with(notificationBuilder) {
+            setContentTitle(title)
             setContentText(context.stringResource(MR.strings.update_check_notification_download_error))
             setSmallIcon(R.drawable.ic_warning_white_24dp)
             setOnlyAlertOnce(false)
@@ -165,7 +192,13 @@ internal class AppUpdateNotifier(private val context: Context) {
             addAction(
                 R.drawable.ic_refresh_24dp,
                 context.stringResource(MR.strings.action_retry),
-                NotificationReceiver.downloadAppUpdatePendingBroadcast(context, url),
+                NotificationReceiver.downloadAppUpdatePendingBroadcast(
+                    context = context,
+                    urls = urls,
+                    title = title,
+                    expectedSize = expectedSize,
+                    expectedSha256 = expectedSha256,
+                ),
             )
             addAction(
                 R.drawable.ic_close_24dp,

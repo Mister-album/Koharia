@@ -1225,10 +1225,14 @@
     <string name="update_check_open">Open on GitHub</string>
     <!-- reserved for future use -->
     <string name="update_check_eol">This Android version is no longer supported</string>
-    <string name="update_check_no_new_updates">No new updates available</string>
+    <string name="update_check_no_new_updates">No updates available</string>
+    <string name="update_check_current_version">Current version: %s</string>
+    <string name="update_check_release_notes_unavailable">Release notes are unavailable. Open the release page to view the details.</string>
+    <string name="update_check_open_release_page">Open release page</string>
 
     <!--UpdateCheck Notifications-->
     <string name="update_check_notification_download_in_progress">Downloading…</string>
+    <string name="update_check_notification_download_retrying">Download interrupted, retrying…</string>
     <string name="update_check_notification_download_complete">Tap to install update</string>
     <string name="update_check_notification_download_error">Download error</string>
     <string name="update_check_notification_update_available">New version available!</string>

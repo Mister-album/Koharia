@@ -22,10 +22,10 @@ class GetApplicationRelease(
         // Limit checks to once every 3 days at most
         val nextCheckTime = Instant.ofEpochMilli(lastChecked.get()).plus(3, ChronoUnit.DAYS)
         if (!arguments.forceCheck && now.isBefore(nextCheckTime)) {
-            return Result.NoNewUpdate
+            return Result.NoNewUpdate()
         }
 
-        val release = service.latest(arguments) ?: return Result.NoNewUpdate
+        val release = service.latest(arguments) ?: return Result.NoNewUpdate()
 
         lastChecked.set(now.toEpochMilli())
 
@@ -38,7 +38,7 @@ class GetApplicationRelease(
         )
         return when {
             isNewVersion -> Result.NewUpdate(release)
-            else -> Result.NoNewUpdate
+            else -> Result.NoNewUpdate(release)
         }
     }
 
@@ -48,28 +48,34 @@ class GetApplicationRelease(
         versionName: String,
         versionTag: String,
     ): Boolean {
-        // Removes prefixes like "r" or "v"
-        val newVersion = versionTag.replace("[^\\d.]".toRegex(), "")
         return if (isPreview) {
             // Preview builds: based on releases in "kohariaapp/koharia-preview" repo
             // tagged as something like "r1234"
-            newVersion.toInt() > commitCount
+            versionTag.filter(Char::isDigit).toIntOrNull()?.let { it > commitCount } == true
         } else {
             // Release builds: based on releases in "kohariaapp/koharia" repo
             // tagged as something like "v0.1.2"
-            val oldVersion = versionName.replace("[^\\d.]".toRegex(), "")
+            val newSemVer = versionTag.toVersionComponents()
+            val oldSemVer = versionName.toVersionComponents()
+            if (newSemVer.isEmpty() || oldSemVer.isEmpty()) return false
 
-            val newSemVer = newVersion.split(".").map { it.toInt() }
-            val oldSemVer = oldVersion.split(".").map { it.toInt() }
-
-            oldSemVer.mapIndexed { index, i ->
-                if (newSemVer[index] > i) {
-                    return true
+            repeat(maxOf(newSemVer.size, oldSemVer.size)) { index ->
+                val newPart = newSemVer.getOrElse(index) { 0 }
+                val oldPart = oldSemVer.getOrElse(index) { 0 }
+                when {
+                    newPart > oldPart -> return true
+                    newPart < oldPart -> return false
                 }
             }
 
             false
         }
+    }
+
+    private fun String.toVersionComponents(): List<Int> {
+        return substringBefore('-')
+            .split('.')
+            .mapNotNull { component -> component.filter(Char::isDigit).toIntOrNull() }
     }
 
     data class Arguments(
@@ -83,7 +89,7 @@ class GetApplicationRelease(
 
     sealed interface Result {
         data class NewUpdate(val release: Release) : Result
-        data object NoNewUpdate : Result
+        data class NoNewUpdate(val release: Release? = null) : Result
         data object OsTooOld : Result
     }
 }

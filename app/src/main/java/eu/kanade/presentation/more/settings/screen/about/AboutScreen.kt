@@ -45,6 +45,7 @@ import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.release.interactor.GetApplicationRelease
+import tachiyomi.domain.release.model.Release
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LinkIcon
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
@@ -117,11 +118,18 @@ object AboutScreen : Screen() {
 
                                         checkVersion(
                                             context = context,
-                                            onAvailableUpdate = { result ->
+                                            onResult = { release, updateAvailable ->
                                                 val updateScreen = NewUpdateScreen(
-                                                    versionName = result.release.version,
-                                                    changelogInfo = result.release.info,
-                                                    downloadLink = result.release.downloadLink,
+                                                    versionName = if (updateAvailable) {
+                                                        release?.version ?: BuildConfig.VERSION_NAME
+                                                    } else {
+                                                        BuildConfig.VERSION_NAME
+                                                    },
+                                                    changelogInfo = release?.info.orEmpty(),
+                                                    downloadLinks = release?.downloadLinks.orEmpty(),
+                                                    expectedSize = release?.expectedSize,
+                                                    expectedSha256 = release?.expectedSha256,
+                                                    updateAvailable = updateAvailable,
                                                 )
                                                 navigator.push(updateScreen)
                                             },
@@ -187,7 +195,7 @@ object AboutScreen : Screen() {
      */
     private suspend fun checkVersion(
         context: Context,
-        onAvailableUpdate: (GetApplicationRelease.Result.NewUpdate) -> Unit,
+        onResult: (release: Release?, updateAvailable: Boolean) -> Unit,
         onFinish: () -> Unit,
     ) {
         val updateChecker = AppUpdateChecker()
@@ -195,10 +203,10 @@ object AboutScreen : Screen() {
             try {
                 when (val result = withIOContext { updateChecker.checkForUpdate(context, forceCheck = true) }) {
                     is GetApplicationRelease.Result.NewUpdate -> {
-                        onAvailableUpdate(result)
+                        onResult(result.release, true)
                     }
                     is GetApplicationRelease.Result.NoNewUpdate -> {
-                        context.toast(MR.strings.update_check_no_new_updates)
+                        onResult(result.release, false)
                     }
                     is GetApplicationRelease.Result.OsTooOld -> {
                         context.toast(MR.strings.update_check_eol)

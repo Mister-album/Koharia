@@ -337,8 +337,12 @@
     <string name="file_select_cover">选择封面图片</string>
     <string name="file_select_backup">选择备份文件</string>
     <string name="update_check_confirm">下载</string>
-    <string name="update_check_no_new_updates">没有新版本</string>
+    <string name="update_check_no_new_updates">暂无更新</string>
+    <string name="update_check_current_version">当前版本：%s</string>
+    <string name="update_check_release_notes_unavailable">暂时无法获取更新公告，可打开版本页面查看详情。</string>
+    <string name="update_check_open_release_page">打开版本页面</string>
     <string name="update_check_notification_download_in_progress">正在下载…</string>
+    <string name="update_check_notification_download_retrying">下载中断，正在重试…</string>
     <string name="update_check_notification_download_complete">点击安装更新</string>
     <string name="update_check_notification_download_error">下载失败</string>
     <string name="update_check_notification_update_available">有新版本！</string>

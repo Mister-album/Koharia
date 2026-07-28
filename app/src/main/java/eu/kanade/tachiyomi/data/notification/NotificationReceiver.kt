@@ -190,8 +190,19 @@ class NotificationReceiver : BroadcastReceiver() {
     }
 
     private fun startDownloadAppUpdate(context: Context, intent: Intent) {
-        val url = intent.getStringExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_URL) ?: return
-        AppUpdateDownloadJob.start(context, url)
+        val urls = intent.getStringArrayExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_URLS)
+            ?.filter(String::isNotBlank)
+            ?.takeIf { it.isNotEmpty() }
+            ?: listOfNotNull(intent.getStringExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_URL))
+        if (urls.isEmpty()) return
+
+        AppUpdateDownloadJob.start(
+            context = context,
+            urls = urls,
+            title = intent.getStringExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_TITLE),
+            expectedSize = intent.getLongExtra(AppUpdateDownloadJob.EXTRA_EXPECTED_SIZE, -1L).takeIf { it > 0L },
+            expectedSha256 = intent.getStringExtra(AppUpdateDownloadJob.EXTRA_EXPECTED_SHA256),
+        )
     }
 
     private fun cancelDownloadAppUpdate(context: Context) {
@@ -560,13 +571,18 @@ class NotificationReceiver : BroadcastReceiver() {
          */
         internal fun downloadAppUpdatePendingBroadcast(
             context: Context,
-            url: String,
+            urls: List<String>,
             title: String? = null,
+            expectedSize: Long? = null,
+            expectedSha256: String? = null,
         ): PendingIntent {
             return Intent(context, NotificationReceiver::class.java).run {
                 action = ACTION_START_APP_UPDATE
-                putExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_URL, url)
+                putExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_URL, urls.firstOrNull())
+                putExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_URLS, urls.toTypedArray())
                 title?.let { putExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_TITLE, it) }
+                expectedSize?.let { putExtra(AppUpdateDownloadJob.EXTRA_EXPECTED_SIZE, it) }
+                expectedSha256?.let { putExtra(AppUpdateDownloadJob.EXTRA_EXPECTED_SHA256, it) }
                 PendingIntent.getBroadcast(
                     context,
                     0,
@@ -574,6 +590,14 @@ class NotificationReceiver : BroadcastReceiver() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 )
             }
+        }
+
+        internal fun downloadAppUpdatePendingBroadcast(
+            context: Context,
+            url: String,
+            title: String? = null,
+        ): PendingIntent {
+            return downloadAppUpdatePendingBroadcast(context, listOf(url), title)
         }
 
         /**

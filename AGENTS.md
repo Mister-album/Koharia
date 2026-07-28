@@ -36,6 +36,19 @@ Use Windows commands:
 - Do not hardcode user-facing strings in composables when an `MR.strings.*` resource fits.
 - Compile after i18n edits to regenerate moko-resources accessors.
 
+### GitHub Release Notes
+
+- Release bodies are the source for localized in-app update notes: Chinese app locales use the Chinese block, while every other locale uses English.
+- Write both blocks with the exact markers below. Do not place `---` between them; put checksums or other non-changelog content after the end marker.
+
+```markdown
+<!-- koharia-release-notes:zh -->
+中文更新说明
+<!-- koharia-release-notes:en -->
+English release notes
+<!-- koharia-release-notes:end -->
+```
+
 ## Project Map
 
 | Path | Purpose |
