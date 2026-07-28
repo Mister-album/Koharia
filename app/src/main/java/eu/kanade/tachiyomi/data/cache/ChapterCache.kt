@@ -233,6 +233,7 @@ class ChapterCache(
                 deletedFiles++
             }
         }
+        deletedFiles += LocalTempCacheDirectoryProvider.clearInactiveChapterCaches(context, cacheDir)
         return deletedFiles
     }
 

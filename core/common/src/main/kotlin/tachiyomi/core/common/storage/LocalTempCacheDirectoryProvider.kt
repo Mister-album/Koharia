@@ -59,13 +59,15 @@ object LocalTempCacheDirectoryProvider {
         )
     }
 
-    fun clearLegacyChapterCache(context: Context): Int {
-        val legacy = legacyDirectory(context, CHAPTER_CACHE_DIR)
-        return if (legacy.absolutePath == chapterCacheDir(context).absolutePath) {
-            0
-        } else {
-            clearDirectoryContents(legacy, recreate = false)
-        }
+    fun clearInactiveChapterCaches(context: Context, activeDirectory: File): Int {
+        return listOf(
+            chapterCacheDir(context),
+            internalChapterCacheDir(context),
+            legacyDirectory(context, CHAPTER_CACHE_DIR),
+        )
+            .distinctBy { it.absolutePath }
+            .filterNot { it.absolutePath == activeDirectory.absolutePath }
+            .sumOf(::deleteEntry)
     }
 
     fun countNetworkCacheFiles(context: Context): Int {

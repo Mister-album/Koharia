@@ -26,7 +26,7 @@ class LocalCacheCleaner(
     }
 
     fun clearChapterCache(): Int {
-        return chapterCache.clear() + LocalTempCacheDirectoryProvider.clearLegacyChapterCache(context)
+        return chapterCache.clear()
     }
 
     fun clearCoverCache(): Int {
