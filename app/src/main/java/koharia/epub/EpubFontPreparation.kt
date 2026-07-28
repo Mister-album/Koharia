@@ -22,11 +22,13 @@ internal fun buildEpubFontPreparationScript(
     val payload = fontManager.webPayload(effectiveId)
     val key = payload?.key ?: family.id.value
     if (payload == null) {
+        val retainedLocalFaceKeys = fontManager.localFaceKeys().sorted()
+        val fontCatalogValue = fontManager.localCatalogFingerprint()
         return EpubFontPreparation(
             key = key,
             requiresAsyncLoad = false,
             faceKeys = emptySet(),
-            script = clearEpubFontScript(key),
+            script = clearEpubFontScript(key, retainedLocalFaceKeys, fontCatalogValue),
         )
     }
     val facesJson = JsonArray(
@@ -339,10 +341,22 @@ internal fun buildEpubFontPreparationScript(
     )
 }
 
-private fun clearEpubFontScript(key: String): String {
+private fun clearEpubFontScript(
+    key: String,
+    retainedLocalFaceKeys: List<String>,
+    fontCatalogValue: String,
+): String {
     val keyJson = JsonPrimitive(key)
+    val retainedLocalFaceKeysJson = JsonArray(retainedLocalFaceKeys.map(::JsonPrimitive))
+    val fontCatalogValueJson = JsonPrimitive(fontCatalogValue)
     return """
         (function() {
+            const fontCacheName = 'koharia-epub-fonts-v2';
+            const fontCachePrefix = 'koharia-epub-fonts-';
+            const activeFontStorageKey = '__kohariaActiveEpubFont';
+            const fontCatalogStorageKey = '__kohariaEpubFontCatalogV2';
+            const retainedLocalFaceKeys = $retainedLocalFaceKeysJson;
+            const fontCatalogValue = $fontCatalogValueJson;
             const current = window.__kohariaFontState;
             if (current && Array.isArray(current.faces)) {
                 current.faces.forEach(function(face) {
@@ -356,6 +370,33 @@ private fun clearEpubFontScript(key: String): String {
                 faces: []
             };
             document.documentElement.setAttribute('data-koharia-font-ready', $keyJson);
+            try { localStorage.removeItem(activeFontStorageKey); } catch (_) {}
+            if (window.caches) {
+                let cachedCatalogValue = null;
+                try { cachedCatalogValue = localStorage.getItem(fontCatalogStorageKey); } catch (_) {}
+                if (cachedCatalogValue !== fontCatalogValue) {
+                    const retainedUrls = new Set(retainedLocalFaceKeys.map(function(faceKey) {
+                        return 'https://koharia-font-cache.invalid/v2/' + encodeURIComponent(faceKey);
+                    }));
+                    caches.keys().then(function(names) {
+                        const work = names.filter(function(name) {
+                            return name.indexOf(fontCachePrefix) === 0 && name !== fontCacheName;
+                        }).map(function(name) { return caches.delete(name); });
+                        if (names.indexOf(fontCacheName) >= 0) {
+                            work.push(caches.open(fontCacheName).then(function(cache) {
+                                return cache.keys().then(function(requests) {
+                                    return Promise.all(requests.filter(function(request) {
+                                        return !retainedUrls.has(request.url);
+                                    }).map(function(request) { return cache.delete(request); }));
+                                });
+                            }));
+                        }
+                        return Promise.all(work);
+                    }).then(function() {
+                        try { localStorage.setItem(fontCatalogStorageKey, fontCatalogValue); } catch (_) {}
+                    }).catch(function() {});
+                }
+            }
             return 'ready';
         })()
     """.trimIndent()

@@ -275,6 +275,13 @@ class EpubFontManager(
 
     fun fingerprint(id: EpubFontId): String = resolve(id).renderingFingerprint()
 
+    internal fun localFaceKeys(): Set<String> = catalogState.value.localFamilies
+        .flatMapTo(mutableSetOf()) { family -> family.faces.map(EpubFontFaceDescriptor::key) }
+
+    internal fun localCatalogFingerprint(): String = catalogState.value.localFamilies
+        .joinToString("|") { family -> "${family.id.value}:${family.fingerprint}" }
+        .sha256Text()
+
     internal fun webPayload(id: EpubFontId): EpubWebFontPayload? {
         val family = resolve(id)
         if (family.id == EpubFontId.ORIGINAL || family.source == EpubFontSource.BUILTIN || family.faces.isEmpty()) {
