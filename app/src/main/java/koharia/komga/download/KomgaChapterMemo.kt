@@ -26,6 +26,7 @@ object KomgaChapterMemo {
     const val FILE_HASH = "fileHash"
     const val SIZE_BYTES = "sizeBytes"
     const val DISPLAY_SIZE = "displaySize"
+    const val EMBEDDED_FILE_SIZE = "embeddedFileSize"
     const val SERIES_TITLE = "seriesTitle"
     const val BOOK_TITLE = "bookTitle"
     const val NUMBER_SORT = "numberSort"
@@ -52,11 +53,16 @@ object KomgaChapterMemo {
         )
     }
 
-    fun buildMemo(baseUrl: String, book: BookDto): JsonObject {
+    fun buildMemo(
+        baseUrl: String,
+        book: BookDto,
+        embeddedFileSize: String? = null,
+    ): JsonObject {
         val fingerprint = buildMemo(buildFingerprint(baseUrl, book))
         return buildJsonObject {
             fingerprint.forEach { (key, value) -> put(key, value) }
             if (book.size.isNotBlank()) put(DISPLAY_SIZE, book.size)
+            embeddedFileSize?.takeIf(String::isNotBlank)?.let { put(EMBEDDED_FILE_SIZE, it) }
             put(IS_EPUB, book.isEpub)
             put(EPUB_DIVINA_COMPATIBLE, book.media.epubDivinaCompatible)
             if (book.fileLastModified.isNotBlank()) put(FILE_LAST_MODIFIED, book.fileLastModified)
@@ -187,6 +193,15 @@ object KomgaChapterMemo {
     fun sizeBytes(memo: JsonObject): Long? = memo.long(SIZE_BYTES)?.takeIf { it > 0L }
 
     fun displaySize(memo: JsonObject): String? = memo.string(DISPLAY_SIZE)
+
+    fun removeTrailingEmbeddedFileSize(title: String, memo: JsonObject): String {
+        val embeddedFileSize = memo.string(EMBEDDED_FILE_SIZE) ?: return title
+        val withoutEmbeddedFileSize = title.replace(
+            Regex("\\s*\\(\\s*${Regex.escape(embeddedFileSize)}\\s*\\)\\s*$", RegexOption.IGNORE_CASE),
+            "",
+        )
+        return withoutEmbeddedFileSize.ifBlank { title }
+    }
 
     fun pagesCount(memo: JsonObject): Int? = memo.long(PAGES_COUNT)?.toInt()?.takeIf { it > 0 }
 

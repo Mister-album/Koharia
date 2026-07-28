@@ -1342,23 +1342,8 @@ private fun chapterFileSize(item: ChapterList.Item): String? {
 }
 
 private fun String.withoutEmbeddedFileSize(memo: kotlinx.serialization.json.JsonObject): String {
-    if (KomgaChapterMemo.sizeBytes(memo) == null) return this
-    val displaySize = KomgaChapterMemo.displaySize(memo)
-    val withoutRecordedSize = if (displaySize.isNullOrBlank()) {
-        this
-    } else {
-        replace(
-            Regex("\\s*\\(\\s*${Regex.escape(displaySize)}\\s*\\)\\s*$", RegexOption.IGNORE_CASE),
-            "",
-        )
-    }
-    return withoutRecordedSize.replace(TRAILING_FILE_SIZE_REGEX, "").ifBlank { this }
+    return KomgaChapterMemo.removeTrailingEmbeddedFileSize(this, memo)
 }
-
-private val TRAILING_FILE_SIZE_REGEX = Regex(
-    pattern = "\\s*\\(\\s*\\d+(?:[.,]\\d+)?\\s*(?:bytes?|[kmgtpe]i?b)\\s*\\)\\s*$",
-    option = RegexOption.IGNORE_CASE,
-)
 
 private fun onChapterItemClick(
     chapterItem: ChapterList.Item,

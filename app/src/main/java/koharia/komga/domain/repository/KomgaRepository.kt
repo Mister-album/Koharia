@@ -298,18 +298,48 @@ class KomgaRepository(
         isFromReadList: Boolean,
         chapterNumber: Float,
     ): SChapter {
+        val formattedName = formatChapterName(chapterNameTemplate, isFromReadList)
         return SChapter.create().apply {
             this.chapter_number = chapterNumber
             url = "$baseUrl/api/v1/books/$id"
-            name = formatChapterName(chapterNameTemplate, isFromReadList)
+            name = formattedName
             scanlator = metadata.authors.filter { it.role == "translator" }.joinToString { it.name }
-            memo = toChapterMemo(baseUrl)
+            memo = toChapterMemo(
+                baseUrl,
+                embeddedFileSize = trailingEmbeddedFileSize(
+                    chapterNameTemplate = chapterNameTemplate,
+                    formattedName = formattedName,
+                    isFromReadList = isFromReadList,
+                ),
+            )
             date_upload = when {
                 metadata.releaseDate != null -> parseDate(metadata.releaseDate)
                 created != null -> parseDateTime(created)
                 else -> parseDateTime(fileLastModified)
             }
         }
+    }
+
+    private fun BookDto.trailingEmbeddedFileSize(
+        chapterNameTemplate: String,
+        formattedName: String,
+        isFromReadList: Boolean,
+    ): String? {
+        val markedTemplate = chapterNameTemplate
+            .replace("{size}", FILE_SIZE_MARKER)
+            .replace("{sizeBytes}", FILE_SIZE_MARKER)
+        if (markedTemplate == chapterNameTemplate) return null
+
+        val markedSuffix = TRAILING_PARENTHESIZED_VALUE.find(
+            formatChapterName(markedTemplate, isFromReadList),
+        )?.groupValues?.getOrNull(1)
+        if (markedSuffix?.contains(FILE_SIZE_MARKER) != true) return null
+
+        return TRAILING_PARENTHESIZED_VALUE.find(formattedName)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
     }
 
     data class KomgaFilterOptions(
@@ -322,6 +352,9 @@ class KomgaRepository(
     )
 
     companion object {
+        private const val FILE_SIZE_MARKER = "__KOHARIA_FILE_SIZE__"
+        private val TRAILING_PARENTHESIZED_VALUE = Regex("\\(\\s*([^()]*)\\s*\\)\\s*$")
+
         val formatterDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         val formatterDateTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
             timeZone =
