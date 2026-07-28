@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import tachiyomi.domain.release.interactor.GetApplicationRelease
 import tachiyomi.domain.release.model.Release
 import tachiyomi.domain.release.service.ReleaseService
@@ -18,12 +19,26 @@ class ReleaseServiceImpl(
     override suspend fun latest(arguments: GetApplicationRelease.Arguments): Release? {
         val release = with(json) {
             networkService.client
-                .newCall(GET("https://api.github.com/repos/${arguments.repository}/releases/latest"))
+                .newCall(
+                    GET("https://api.github.com/repos/${arguments.repository}/releases/latest")
+                        .newBuilder()
+                        .header("Accept", "application/vnd.github+json")
+                        .header("X-GitHub-Api-Version", "2022-11-28")
+                        .build(),
+                )
                 .awaitSuccess()
                 .parseAs<GithubRelease>()
         }
 
-        val downloadLink = getDownloadLink(release = release, isFoss = arguments.isFoss) ?: return null
+        val downloadAsset = getDownloadAsset(release = release, isFoss = arguments.isFoss) ?: return null
+        val proxyDownloadLink = buildProxyDownloadLink(
+            repository = arguments.repository,
+            tag = release.version,
+            assetName = downloadAsset.name,
+        )
+        val expectedSha256 = downloadAsset.digest
+            ?.substringAfter("sha256:", missingDelimiterValue = "")
+            ?.takeIf { SHA256_REGEX.matches(it) }
 
         return Release(
             version = release.version,
@@ -31,14 +46,21 @@ class ReleaseServiceImpl(
                 "[${mention.value}](https://github.com/${mention.value.substring(1)})"
             },
             releaseLink = release.releaseLink,
-            downloadLink = downloadLink,
+            downloadLink = proxyDownloadLink ?: downloadAsset.downloadLink,
+            fallbackDownloadLinks = listOfNotNull(
+                downloadAsset.downloadLink.takeIf { it != proxyDownloadLink },
+            ),
+            expectedSize = downloadAsset.size.takeIf { it > 0L },
+            expectedSha256 = expectedSha256,
         )
     }
 
-    private fun getDownloadLink(release: GithubRelease, isFoss: Boolean): String? {
-        val map = release.assets.associate { asset ->
-            BUILD_TYPES.find { "-$it" in asset.name } to asset.downloadLink
-        }
+    private fun getDownloadAsset(release: GithubRelease, isFoss: Boolean): GitHubAsset? {
+        val map = release.assets
+            .filter { it.name.startsWith("Koharia") && it.name.endsWith(".apk", ignoreCase = true) }
+            .associate { asset ->
+                BUILD_TYPES.find { "-$it" in asset.name } to asset
+            }
 
         return if (!isFoss) {
             map[Build.SUPPORTED_ABIS[0]] ?: map[null]
@@ -47,9 +69,25 @@ class ReleaseServiceImpl(
         }
     }
 
+    private fun buildProxyDownloadLink(repository: String, tag: String, assetName: String): String? {
+        if (repository != KOHARIA_REPOSITORY) return null
+
+        return DOWNLOAD_BASE_URL.toHttpUrl()
+            .newBuilder()
+            .addPathSegment("releases")
+            .addPathSegment("download")
+            .addPathSegment(tag)
+            .addPathSegment(assetName)
+            .build()
+            .toString()
+    }
+
     companion object {
+        private const val KOHARIA_REPOSITORY = "Mister-album/Koharia"
+        private const val DOWNLOAD_BASE_URL = "https://download.koharia.org"
         private const val FOSS = "foss"
         private val BUILD_TYPES = listOf(FOSS, "arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        private val SHA256_REGEX = Regex("[0-9a-fA-F]{64}")
 
         /**
          * Regular expression that matches a mention to a valid GitHub username, like it's

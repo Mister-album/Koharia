@@ -339,6 +339,7 @@
     <string name="update_check_confirm">下载</string>
     <string name="update_check_no_new_updates">没有新版本</string>
     <string name="update_check_notification_download_in_progress">正在下载…</string>
+    <string name="update_check_notification_download_retrying">下载中断，正在重试…</string>
     <string name="update_check_notification_download_complete">点击安装更新</string>
     <string name="update_check_notification_download_error">下载失败</string>
     <string name="update_check_notification_update_available">有新版本！</string>

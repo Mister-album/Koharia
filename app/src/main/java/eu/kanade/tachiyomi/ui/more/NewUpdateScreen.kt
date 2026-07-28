@@ -14,7 +14,9 @@ import tachiyomi.core.common.DocumentationUrls
 class NewUpdateScreen(
     private val versionName: String,
     private val changelogInfo: String,
-    private val downloadLink: String,
+    private val downloadLinks: List<String>,
+    private val expectedSize: Long?,
+    private val expectedSha256: String?,
 ) : Screen() {
 
     @Composable
@@ -33,8 +35,10 @@ class NewUpdateScreen(
             onAcceptUpdate = {
                 AppUpdateDownloadJob.start(
                     context = context,
-                    url = downloadLink,
+                    urls = downloadLinks,
                     title = versionName,
+                    expectedSize = expectedSize,
+                    expectedSha256 = expectedSha256,
                 )
                 navigator.pop()
             },

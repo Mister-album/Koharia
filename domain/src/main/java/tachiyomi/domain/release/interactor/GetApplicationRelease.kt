@@ -48,28 +48,34 @@ class GetApplicationRelease(
         versionName: String,
         versionTag: String,
     ): Boolean {
-        // Removes prefixes like "r" or "v"
-        val newVersion = versionTag.replace("[^\\d.]".toRegex(), "")
         return if (isPreview) {
             // Preview builds: based on releases in "kohariaapp/koharia-preview" repo
             // tagged as something like "r1234"
-            newVersion.toInt() > commitCount
+            versionTag.filter(Char::isDigit).toIntOrNull()?.let { it > commitCount } == true
         } else {
             // Release builds: based on releases in "kohariaapp/koharia" repo
             // tagged as something like "v0.1.2"
-            val oldVersion = versionName.replace("[^\\d.]".toRegex(), "")
+            val newSemVer = versionTag.toVersionComponents()
+            val oldSemVer = versionName.toVersionComponents()
+            if (newSemVer.isEmpty() || oldSemVer.isEmpty()) return false
 
-            val newSemVer = newVersion.split(".").map { it.toInt() }
-            val oldSemVer = oldVersion.split(".").map { it.toInt() }
-
-            oldSemVer.mapIndexed { index, i ->
-                if (newSemVer[index] > i) {
-                    return true
+            repeat(maxOf(newSemVer.size, oldSemVer.size)) { index ->
+                val newPart = newSemVer.getOrElse(index) { 0 }
+                val oldPart = oldSemVer.getOrElse(index) { 0 }
+                when {
+                    newPart > oldPart -> return true
+                    newPart < oldPart -> return false
                 }
             }
 
             false
         }
+    }
+
+    private fun String.toVersionComponents(): List<Int> {
+        return substringBefore('-')
+            .split('.')
+            .mapNotNull { component -> component.filter(Char::isDigit).toIntOrNull() }
     }
 
     data class Arguments(

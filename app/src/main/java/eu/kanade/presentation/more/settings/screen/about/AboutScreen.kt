@@ -121,7 +121,9 @@ object AboutScreen : Screen() {
                                                 val updateScreen = NewUpdateScreen(
                                                     versionName = result.release.version,
                                                     changelogInfo = result.release.info,
-                                                    downloadLink = result.release.downloadLink,
+                                                    downloadLinks = result.release.downloadLinks,
+                                                    expectedSize = result.release.expectedSize,
+                                                    expectedSha256 = result.release.expectedSha256,
                                                 )
                                                 navigator.push(updateScreen)
                                             },
