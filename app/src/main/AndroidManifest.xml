@@ -150,6 +150,13 @@
             android:exported="false"
             android:theme="@android:style/Theme.NoDisplay" />
 
+        <!-- The current widgets use direct actions in a static grid. Keeping Glance's list
+             trampoline registered allows stale launcher PendingIntents without a target Intent
+             to start it and crash the app. -->
+        <activity
+            android:name="androidx.glance.appwidget.action.ActionTrampolineActivity"
+            tools:node="remove" />
+
         <receiver
             android:name=".data.notification.NotificationReceiver"
             android:exported="false" />
