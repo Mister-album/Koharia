@@ -35,7 +35,7 @@ class BangumiInterceptor(private val bangumi: Bangumi) : Interceptor {
         return originalRequest.newBuilder()
             .header(
                 "User-Agent",
-                "antsylich/Koharia/v${BuildConfig.VERSION_NAME} (Android) (http://github.com/kohariaapp/koharia)",
+                "antsylich/Koharia/v${BuildConfig.VERSION_NAME} (Android) (https://koharia.org)",
             )
             .apply {
                 addHeader("Authorization", "Bearer ${currAuth.accessToken}")

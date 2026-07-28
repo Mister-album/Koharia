@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
+import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.release.model.Release
 import tachiyomi.i18n.MR
@@ -42,7 +43,10 @@ internal class AppUpdateNotifier(private val context: Context) {
             release.version,
         )
 
-        val releaseIntent = Intent(Intent.ACTION_VIEW, release.releaseLink.toUri()).run {
+        val releaseIntent = Intent(
+            Intent.ACTION_VIEW,
+            DocumentationUrls.changelog(context, release.version).toUri(),
+        ).run {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             PendingIntent.getActivity(
                 context,

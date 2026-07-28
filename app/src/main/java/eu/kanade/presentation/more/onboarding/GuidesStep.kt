@@ -4,8 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,6 +24,7 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
 internal class GuidesStep(
+    private val onAddServer: () -> Unit,
     private val onRestoreBackup: () -> Unit,
 ) : OnboardingStep {
 
@@ -36,6 +40,17 @@ internal class GuidesStep(
             verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
         ) {
             Text(stringResource(MR.strings.onboarding_guides_new_user, stringResource(MR.strings.app_name)))
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onAddServer,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Add,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Text(stringResource(MR.strings.action_add_server))
+            }
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = { handler.openUri(DocumentationUrls.gettingStarted(context)) },
@@ -64,6 +79,7 @@ internal class GuidesStep(
 private fun GuidesStepPreview() {
     TachiyomiPreviewTheme {
         GuidesStep(
+            onAddServer = {},
             onRestoreBackup = {},
         ).Content()
     }

@@ -58,9 +58,11 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
+import koharia.komga.ui.library.components.KomgaServerSetupPrompt
 import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaServerPreferences
+import koharia.source.komga.KomgaServerSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
@@ -280,7 +282,14 @@ data class KomgaLibraryScreen(
                     .fillMaxSize()
                     .pullRefresh(pullRefreshState),
             ) {
-                if (state.isLibraryScopeEmpty && libraryScope != KomgaLibraryScope.ALL) {
+                if (!state.isServerConfigured) {
+                    KomgaServerSetupPrompt(
+                        onConfigureServer = {
+                            navigator.push(KomgaServerSettingsScreen(sourceId = sourceId))
+                        },
+                        modifier = Modifier.padding(paddingValues),
+                    )
+                } else if (state.isLibraryScopeEmpty && libraryScope != KomgaLibraryScope.ALL) {
                     EmptyScreen(
                         stringRes = MR.strings.komga_library_classification_empty,
                         modifier = Modifier.padding(paddingValues),

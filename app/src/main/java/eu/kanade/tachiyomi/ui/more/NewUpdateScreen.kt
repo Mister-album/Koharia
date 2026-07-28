@@ -9,11 +9,11 @@ import eu.kanade.presentation.more.NewUpdateScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.updater.AppUpdateDownloadJob
 import eu.kanade.tachiyomi.util.system.openInBrowser
+import tachiyomi.core.common.DocumentationUrls
 
 class NewUpdateScreen(
     private val versionName: String,
     private val changelogInfo: String,
-    private val releaseLink: String,
     private val downloadLink: String,
 ) : Screen() {
 
@@ -28,7 +28,7 @@ class NewUpdateScreen(
         NewUpdateScreen(
             versionName = versionName,
             changelogInfo = changelogInfoNoChecksum,
-            onOpenInBrowser = { context.openInBrowser(releaseLink) },
+            onOpenInBrowser = { context.openInBrowser(DocumentationUrls.changelog(context, versionName)) },
             onRejectUpdate = navigator::pop,
             onAcceptUpdate = {
                 AppUpdateDownloadJob.start(

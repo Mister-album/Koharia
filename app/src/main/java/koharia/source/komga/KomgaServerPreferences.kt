@@ -117,9 +117,6 @@ class KomgaServerPreferences(
             if (isFirstInitialization && hasLegacySourcePreferences() && none { it.id == KomgaSource.ID }) {
                 add(defaultProfile())
             }
-
-            // A fresh install has no legacy source preference to inspect.
-            if (isFirstInitialization && isEmpty()) add(defaultProfile())
         }
 
         if (isFirstInitialization || profiles != persistedProfiles) {

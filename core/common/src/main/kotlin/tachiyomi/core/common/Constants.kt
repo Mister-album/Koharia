@@ -4,8 +4,6 @@ object Constants {
     const val URL_DONATE_IFDIAN = "https://ifdian.net/a/album-Koharia"
     const val URL_DONATE_PATREON = "https://patreon.com/mihon/membership"
     const val URL_DONATE_OPENCOLLECTIVE = "https://opencollective.com/mihon/contribute"
-    const val URL_DISCORD = "https://discord.gg/mihon"
-
     const val MANGA_EXTRA = "manga"
     const val FROM_SOURCE_EXTRA = "from_source"
     const val MANGA_SOURCE_EXTRA = "manga_source"

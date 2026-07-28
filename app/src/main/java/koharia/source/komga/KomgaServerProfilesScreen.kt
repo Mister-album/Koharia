@@ -58,7 +58,9 @@ import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class KomgaServerProfilesScreen : Screen() {
+class KomgaServerProfilesScreen(
+    private val openAddDialog: Boolean = false,
+) : Screen() {
 
     @Composable
     override fun Content() {
@@ -76,7 +78,7 @@ class KomgaServerProfilesScreen : Screen() {
         val downloadDirectoryMode by serverPreferences.downloadDirectoryMode.collectAsState()
         val scope = rememberCoroutineScope()
 
-        var showAddDialog by rememberSaveable { mutableStateOf(false) }
+        var showAddDialog by rememberSaveable { mutableStateOf(openAddDialog) }
         var showModeHelpDialog by rememberSaveable { mutableStateOf(false) }
         var showDisableClassificationDialog by rememberSaveable { mutableStateOf(false) }
         var pendingServerName by rememberSaveable { mutableStateOf<String?>(null) }

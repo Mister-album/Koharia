@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,7 +31,6 @@ import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
-import eu.kanade.tachiyomi.data.updater.RELEASE_URL
 import eu.kanade.tachiyomi.ui.more.NewUpdateScreen
 import eu.kanade.tachiyomi.util.CrashLogUtil
 import eu.kanade.tachiyomi.util.lang.toDateTimestampString
@@ -120,7 +121,6 @@ object AboutScreen : Screen() {
                                                 val updateScreen = NewUpdateScreen(
                                                     versionName = result.release.version,
                                                     changelogInfo = result.release.info,
-                                                    releaseLink = result.release.releaseLink,
                                                     downloadLink = result.release.downloadLink,
                                                 )
                                                 navigator.push(updateScreen)
@@ -140,7 +140,7 @@ object AboutScreen : Screen() {
                     item {
                         TextPreferenceWidget(
                             title = stringResource(MR.strings.whats_new),
-                            onPreferenceClick = { uriHandler.openUri(RELEASE_URL) },
+                            onPreferenceClick = { uriHandler.openUri(DocumentationUrls.changelog(context)) },
                         )
                     }
                 }
@@ -166,6 +166,11 @@ object AboutScreen : Screen() {
                             .padding(vertical = 8.dp),
                         horizontalArrangement = Arrangement.Center,
                     ) {
+                        LinkIcon(
+                            label = stringResource(MR.strings.website),
+                            icon = Icons.Outlined.Public,
+                            url = DocumentationUrls.home(context),
+                        )
                         LinkIcon(
                             label = "GitHub",
                             icon = CustomIcons.Github,

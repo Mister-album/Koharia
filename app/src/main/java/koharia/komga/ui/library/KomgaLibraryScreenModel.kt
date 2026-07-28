@@ -69,7 +69,12 @@ class KomgaLibraryScreenModel(
     private val getIncognitoState: GetIncognitoState,
     private val libraryScope: KomgaLibraryScope,
     private val libraryClassificationManager: KomgaLibraryClassificationManager,
-) : StateScreenModel<KomgaLibraryScreenModel.State>(State(Listing.valueOf(listingQuery))) {
+) : StateScreenModel<KomgaLibraryScreenModel.State>(
+    State(
+        listing = Listing.valueOf(listingQuery),
+        isServerConfigured = (sourceManager.getOrStub(sourceId) as? KomgaSource)?.hasValidBaseUrl() == true,
+    ),
+) {
     var displayMode by sourcePreferences.sourceDisplayMode.asState(screenModelScope)
     var cachedOnly by basePreferences.downloadedOnly.asState(screenModelScope)
     private val refreshSignal = MutableStateFlow(0)
@@ -130,12 +135,13 @@ class KomgaLibraryScreenModel(
     val mangaPagerFlow: Flow<PagingData<StateFlow<Manga>>> = combine(
         state.map { it.listing }.distinctUntilChanged(),
         state.map { it.isLibraryScopeEmpty }.distinctUntilChanged(),
+        state.map { it.isServerConfigured }.distinctUntilChanged(),
         basePreferences.downloadedOnly.changes().onStart { emit(basePreferences.downloadedOnly.get()) },
         refreshSignal,
-    ) { listing, scopeEmpty, cachedOnly, refreshSignal ->
-        BrowseRequest(listing, scopeEmpty, cachedOnly, refreshSignal)
+    ) { listing, scopeEmpty, serverConfigured, cachedOnly, refreshSignal ->
+        BrowseRequest(listing, scopeEmpty, serverConfigured, cachedOnly, refreshSignal)
     }.flatMapLatest { request ->
-        if (request.scopeEmpty) {
+        if (request.scopeEmpty || !request.serverConfigured) {
             flowOf(PagingData.empty())
         } else {
             Pager(PagingConfig(pageSize = 25)) {
@@ -427,6 +433,8 @@ class KomgaLibraryScreenModel(
                     komgaLibraries = persistentListOf(),
                     selectedKomgaLibraryId = null,
                     isRefreshing = false,
+                    isServerConfigured = false,
+                    isLibraryScopeEmpty = false,
                     toolbarQuery = null,
                     searchType = TYPE_ALL_INDEX,
                     persistentFilteringEnabled = komgaSource.isPersistentFilteringEnabled(libraryScope),
@@ -435,6 +443,8 @@ class KomgaLibraryScreenModel(
             refreshSignal.value += 1
             return
         }
+
+        mutableState.update { it.copy(isServerConfigured = true) }
 
         try {
             val libraries = komgaSource.getBrowseLibraries(forceRefresh)
@@ -597,6 +607,7 @@ class KomgaLibraryScreenModel(
         val selectedKomgaLibraryId: String? = null,
         val isRefreshing: Boolean = false,
         val isLibraryScopeEmpty: Boolean = false,
+        val isServerConfigured: Boolean = false,
         val persistentFilteringEnabled: Boolean = false,
         val searchType: Int = TYPE_ALL_INDEX,
     ) {
@@ -623,6 +634,7 @@ private val KomgaLibraryScope.kind: KomgaLibraryKind
 private data class BrowseRequest(
     val listing: KomgaLibraryScreenModel.Listing,
     val scopeEmpty: Boolean,
+    val serverConfigured: Boolean,
     val cachedOnly: Boolean,
     @Suppress("unused") val refreshSignal: Int,
 )

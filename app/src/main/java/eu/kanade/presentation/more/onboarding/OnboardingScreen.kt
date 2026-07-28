@@ -27,17 +27,21 @@ import tachiyomi.presentation.core.screens.InfoScreen
 @Composable
 fun OnboardingScreen(
     onComplete: () -> Unit,
+    onAddServer: () -> Unit,
     onRestoreBackup: () -> Unit,
 ) {
     val slideDistance = rememberSlideDistance()
 
     var currentStep by rememberSaveable { mutableIntStateOf(0) }
-    val steps = remember {
+    val steps = remember(onAddServer, onRestoreBackup) {
         listOf(
             ThemeStep(),
             StorageStep(),
             PermissionStep(),
-            GuidesStep(onRestoreBackup = onRestoreBackup),
+            GuidesStep(
+                onAddServer = onAddServer,
+                onRestoreBackup = onRestoreBackup,
+            ),
         )
     }
     val isLastStep = currentStep == steps.lastIndex
