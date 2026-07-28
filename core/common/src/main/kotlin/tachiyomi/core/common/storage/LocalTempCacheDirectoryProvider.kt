@@ -20,6 +20,8 @@ object LocalTempCacheDirectoryProvider {
 
     fun chapterCacheDir(context: Context): File = prepareDirectory(context, CHAPTER_CACHE_DIR)
 
+    fun internalChapterCacheDir(context: Context): File = prepareInternalDirectory(context, CHAPTER_CACHE_DIR)
+
     fun metadataCacheDir(context: Context): File = prepareDirectory(context, METADATA_CACHE_DIR)
 
     fun epubCacheDir(context: Context): File = prepareDirectory(context, EPUB_CACHE_DIR)
@@ -95,6 +97,7 @@ object LocalTempCacheDirectoryProvider {
     private fun temporaryCacheEntries(context: Context): List<File> {
         return listOf(
             chapterCacheDir(context),
+            internalChapterCacheDir(context),
             metadataCacheDir(context),
             epubCacheDir(context),
             networkCacheDir(context),
@@ -137,7 +140,13 @@ object LocalTempCacheDirectoryProvider {
 
     private fun rootDir(context: Context): File {
         return context.getExternalFilesDir(ROOT_DIR)
-            ?: File(context.filesDir, ROOT_DIR).also { it.mkdirs() }
+            ?: internalRootDir(context)
+    }
+
+    private fun internalRootDir(context: Context): File = File(context.filesDir, ROOT_DIR).also { it.mkdirs() }
+
+    private fun prepareInternalDirectory(context: Context, name: String): File {
+        return File(internalRootDir(context), name).also { it.mkdirs() }
     }
 
     private fun legacyDirectory(context: Context, name: String): File = File(context.cacheDir, name)

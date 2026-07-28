@@ -35,5 +35,14 @@
                 android:value="true" />
         </receiver>
 
+        <receiver
+            android:name="tachiyomi.presentation.widget.WidgetRefreshReceiver"
+            android:enabled="@bool/glance_appwidget_available"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>

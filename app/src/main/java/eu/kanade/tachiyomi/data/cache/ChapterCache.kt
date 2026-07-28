@@ -32,16 +32,50 @@ class ChapterCache(
 ) {
 
     /** Cache class used for cache management. */
-    private val diskCache = DiskLruCache.open(
-        LocalTempCacheDirectoryProvider.chapterCacheDir(context),
-        PARAMETER_APP_VERSION,
-        PARAMETER_VALUE_COUNT,
-        calculateCacheSize(context),
-    )
+    private val diskCache = openDiskCache(context)
 
-    private fun calculateCacheSize(context: Context): Long {
+    private fun openDiskCache(context: Context): DiskLruCache {
+        val directoryProviders = listOf<() -> File>(
+            { LocalTempCacheDirectoryProvider.chapterCacheDir(context) },
+            { LocalTempCacheDirectoryProvider.internalChapterCacheDir(context) },
+        )
+        val attemptedPaths = mutableSetOf<String>()
+        var lastFailure: Exception? = null
+
+        for (directoryProvider in directoryProviders) {
+            val directory = try {
+                directoryProvider()
+            } catch (error: Exception) {
+                lastFailure = error
+                logcat(LogPriority.WARN, error) { "Failed to prepare a chapter cache directory" }
+                continue
+            }
+            if (!attemptedPaths.add(directory.absolutePath)) continue
+
+            try {
+                if (!directory.isDirectory && !directory.mkdirs()) {
+                    throw IOException("Unable to create chapter cache directory: $directory")
+                }
+                return DiskLruCache.open(
+                    directory,
+                    PARAMETER_APP_VERSION,
+                    PARAMETER_VALUE_COUNT,
+                    calculateCacheSize(directory),
+                )
+            } catch (error: Exception) {
+                lastFailure = error
+                logcat(LogPriority.WARN, error) {
+                    "Failed to open chapter cache at $directory"
+                }
+            }
+        }
+
+        throw IOException("Unable to open the chapter cache", lastFailure)
+    }
+
+    private fun calculateCacheSize(directory: File): Long {
         return try {
-            val stat = android.os.StatFs(LocalTempCacheDirectoryProvider.chapterCacheDir(context).absolutePath)
+            val stat = android.os.StatFs(directory.absolutePath)
             val totalBytes = stat.blockCountLong * stat.blockSizeLong
             val availableBytes = stat.availableBlocksLong * stat.blockSizeLong
             val minCacheBytes = 100L * 1024 * 1024
