@@ -96,6 +96,7 @@ class MangaScreen(
         val state by screenModel.state.collectAsStateWithLifecycle()
         val chapterCoverGridColumns by screenModel.chapterCoverGridColumns
         val showChapterReadProgress = screenModel.showChapterReadProgress
+        val showChapterFileSize = screenModel.showChapterFileSize
 
         if (state is MangaScreenModel.State.Loading) {
             LoadingScreen()
@@ -118,6 +119,7 @@ class MangaScreen(
             chapterSwipeEndAction = screenModel.chapterSwipeEndAction,
             chapterCoverGridColumns = chapterCoverGridColumns,
             showChapterReadProgress = showChapterReadProgress,
+            showChapterFileSize = showChapterFileSize,
             navigateUp = navigator::pop,
             onChapterClicked = { openChapter(context, scope, epubReaderLauncher, it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
@@ -208,6 +210,10 @@ class MangaScreen(
                 onDisplayModeChanged = screenModel::setDisplayMode,
                 showChapterReadProgress = showChapterReadProgress,
                 onShowChapterReadProgressChanged = screenModel::updateShowChapterReadProgress,
+                showChapterFileSize = showChapterFileSize,
+                onShowChapterFileSizeChanged = screenModel::updateShowChapterFileSize,
+                hideMissingChapters = successState.hideMissingChapters,
+                onHideMissingChaptersChanged = screenModel::updateHideMissingChapters,
                 onSetAsDefault = screenModel::setCurrentSettingsAsDefault,
                 onResetToDefault = screenModel::resetToDefaultSettings,
                 scanlatorFilterActive = successState.scanlatorFilterActive,

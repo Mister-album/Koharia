@@ -1,11 +1,18 @@
 package koharia.source.komga
 
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
@@ -13,8 +20,10 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -25,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -35,8 +45,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -46,10 +61,9 @@ import eu.kanade.presentation.more.settings.widget.PreferenceGroupHeader
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.toImmutableMap
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import me.saket.swipe.SwipeAction
-import me.saket.swipe.SwipeableActionsBox
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -57,6 +71,8 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class KomgaServerProfilesScreen(
     private val openAddDialog: Boolean = false,
@@ -336,35 +352,105 @@ private fun ServerRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val deleteAction = SwipeAction(
-        icon = {
-            Icon(
-                modifier = Modifier.padding(16.dp),
-                imageVector = Icons.Outlined.Delete,
-                contentDescription = stringResource(MR.strings.action_delete),
-            )
-        },
-        background = MaterialTheme.colorScheme.errorContainer,
-        onSwipe = onDelete,
-    )
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val revealDistancePx = with(density) { SERVER_ROW_REVEAL_DISTANCE.toPx() }
+    val revealedOffsetPx = if (layoutDirection == LayoutDirection.Ltr) -revealDistancePx else revealDistancePx
+    var rowOffsetPx by remember(profile.id) { mutableFloatStateOf(0f) }
+    var settleJob by remember(profile.id) { mutableStateOf<Job?>(null) }
 
-    SwipeableActionsBox(
-        modifier = Modifier.clipToBounds(),
-        endActions = listOf(deleteAction),
-        swipeThreshold = serverRowSwipeThreshold,
-        backgroundUntilSwipeThreshold = MaterialTheme.colorScheme.surfaceContainerLowest,
+    fun settleRow(revealed: Boolean) {
+        val targetOffset = if (revealed) revealedOffsetPx else 0f
+        settleJob?.cancel()
+        settleJob = scope.launch {
+            animate(
+                initialValue = rowOffsetPx,
+                targetValue = targetOffset,
+                animationSpec = tween(durationMillis = SERVER_ROW_SETTLE_DURATION_MILLIS),
+            ) { value, _ ->
+                rowOffsetPx = value
+            }
+        }
+    }
+
+    val isDeleteRevealed = abs(rowOffsetPx) > 1f
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clipToBounds(),
     ) {
+        Box(
+            modifier = Modifier.matchParentSize(),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            FilledTonalIconButton(
+                onClick = {
+                    settleRow(revealed = false)
+                    onDelete()
+                },
+                modifier = Modifier
+                    .padding(end = 8.dp)
+                    .size(48.dp),
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Delete,
+                    contentDescription = stringResource(MR.strings.action_delete),
+                )
+            }
+        }
+
         Row(
             modifier = Modifier
+                .absoluteOffset { IntOffset(rowOffsetPx.roundToInt(), 0) }
+                .background(MaterialTheme.colorScheme.surface)
                 .fillMaxWidth()
-                .clickable(onClick = onSelect)
+                .pointerInput(profile.id, revealedOffsetPx) {
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            settleJob?.cancel()
+                        },
+                        onDragCancel = {
+                            settleRow(abs(rowOffsetPx) >= revealDistancePx / 2f)
+                        },
+                        onDragEnd = {
+                            settleRow(abs(rowOffsetPx) >= revealDistancePx / 2f)
+                        },
+                    ) { change, dragAmount ->
+                        val nextOffset = (rowOffsetPx + dragAmount).coerceIn(
+                            minimumValue = minOf(0f, revealedOffsetPx),
+                            maximumValue = maxOf(0f, revealedOffsetPx),
+                        )
+                        if (nextOffset != rowOffsetPx) {
+                            change.consume()
+                            rowOffsetPx = nextOffset
+                        }
+                    }
+                }
+                .clickable {
+                    if (isDeleteRevealed) {
+                        settleRow(revealed = false)
+                    } else {
+                        onSelect()
+                    }
+                }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             RadioButton(
                 selected = isActive,
-                onClick = onSelect,
+                onClick = {
+                    if (isDeleteRevealed) {
+                        settleRow(revealed = false)
+                    } else {
+                        onSelect()
+                    }
+                },
             )
             Text(
                 text = profile.name,
@@ -372,7 +458,15 @@ private fun ServerRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            IconButton(onClick = onEdit) {
+            IconButton(
+                onClick = {
+                    if (isDeleteRevealed) {
+                        settleRow(revealed = false)
+                    } else {
+                        onEdit()
+                    }
+                },
+            ) {
                 Icon(
                     imageVector = Icons.Outlined.Edit,
                     contentDescription = stringResource(MR.strings.action_edit),
@@ -382,7 +476,8 @@ private fun ServerRow(
     }
 }
 
-private val serverRowSwipeThreshold = 72.dp
+private val SERVER_ROW_REVEAL_DISTANCE = 64.dp
+private const val SERVER_ROW_SETTLE_DURATION_MILLIS = 180
 
 @Composable
 private fun EmptyServerState(
@@ -471,7 +566,10 @@ private fun DeleteServerDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = {
             TextButton(onClick = onDelete) {
-                Text(text = stringResource(MR.strings.action_ok))
+                Text(
+                    text = stringResource(MR.strings.action_delete),
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         },
         dismissButton = {

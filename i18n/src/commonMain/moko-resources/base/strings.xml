@@ -250,7 +250,6 @@
     <string name="komga_scoped_settings_disabled_summary">Add or select a server to change server-scoped settings.</string>
     <string name="komga_pref_address_title">Server address</string>
     <string name="komga_pref_address_summary">The server address</string>
-    <string name="komga_pref_address_dialog">The address must not end with a forward slash.</string>
     <string name="komga_pref_address_validation">The URL must start with http:// or https://</string>
     <string name="komga_pref_api_key_title">API key</string>
     <string name="komga_pref_api_key_summary">Optional: Use an API key for authentication</string>
@@ -258,9 +257,8 @@
     <string name="komga_pref_username_summary">The Komga username or email</string>
     <string name="komga_pref_password_title">Password</string>
     <string name="komga_pref_password_summary">The Komga account password</string>
-    <string name="komga_pref_default_libraries_title">Default libraries</string>
-    <string name="komga_pref_default_libraries_summary">Show content from selected libraries by default.</string>
-    <string name="komga_pref_default_libraries_reload_hint">Exit and re-enter the settings page to load options.</string>
+    <string name="komga_pref_default_libraries_title">Show libraries</string>
+    <string name="komga_pref_default_libraries_reload_hint">Exit and re-enter the settings page to load library options.</string>
     <string name="komga_pref_chapter_name_template_title">Chapter title format</string>
     <string name="komga_pref_chapter_name_template_summary">Customize how chapter names appear. Read list books are prefixed by the series title.</string>
     <string name="komga_pref_chapter_name_template_dialog">Supported placeholders:\n- {title}\n- {seriesTitle}\n- {number}\n- {createdDate}\n- {releaseDate}\n- {size}\n- {sizeBytes}</string>
@@ -960,8 +958,8 @@
     <string name="pref_category_epub_reader">Reader</string>
     <string name="pref_prefer_local_epub_file">Prefer local downloaded file</string>
     <string name="pref_prefer_local_epub_file_summary">Use the downloaded file when both local and remote copies are available</string>
-    <string name="pref_sync_epub_progression_komga">Sync reading progress to Komga</string>
-    <string name="pref_sync_epub_progression_komga_summary">Sync locator-based reading progress with Komga</string>
+    <string name="pref_sync_epub_progression_komga">Sync reading progress to server</string>
+    <string name="pref_sync_epub_progression_komga_summary">Sync locator-based reading progress with the server</string>
     <string name="pref_correct_komga_server_timestamps">Correct server timestamps</string>
     <string name="pref_correct_komga_server_timestamps_summary">Use the HTTP server time and recent progress updates to detect and correct abnormal whole-hour offsets. Enable only for affected Komga servers.</string>
     <string name="pref_epub_layout_mode">Layout mode</string>
@@ -1115,6 +1113,7 @@
     <string name="epub_chapter_progress_short">%1$d%%</string>
     <string name="pref_show_chapter_read_progress">Show reading progress and read status</string>
     <string name="pref_show_chapter_read_progress_summary">Show progress, unread markers, and read checkmarks in chapter lists and grids</string>
+    <string name="pref_show_chapter_file_size">Show file size</string>
     <string name="no_next_chapter">Next chapter not found</string>
     <string name="decode_image_error">The image couldn\'t be loaded</string>
     <string name="confirm_set_image_as_cover">Use this image as cover art?</string>

@@ -66,7 +66,7 @@ class KomgaSource(
     override val versionId: Int = SOURCE_VERSION
 
     override val baseUrl: String
-        get() = preferences.getString(PREF_ADDRESS, "")!!.removeSuffix("/")
+        get() = preferences.getString(PREF_ADDRESS, "")!!.trim().trimEnd('/')
 
     private val username: String
         get() = preferences.getString(PREF_USERNAME, "")!!
@@ -81,7 +81,7 @@ class KomgaSource(
         get() = preferences.getString(PREF_API_KEY, null)
             ?: preferences.getString(PREF_API_KEY_WRONG_CASE, "")!!
 
-    private val defaultLibraries: Set<String>
+    private val shelfLibraryIds: Set<String>
         get() = preferences.getStringSet(PREF_DEFAULT_LIBRARIES, emptySet()) ?: emptySet()
 
     private val chapterNameTemplate: String
@@ -138,22 +138,22 @@ class KomgaSource(
         .build()
 
     override fun popularMangaRequest(page: Int): Request =
-        repository.popularMangaRequest(page, defaultLibraries, consumeBrowseCachePolicy())
+        repository.popularMangaRequest(page, shelfLibraryIds, consumeBrowseCachePolicy())
 
     override fun popularMangaParse(response: Response) = repository.parseMangasPage(response)
 
     override fun latestUpdatesRequest(page: Int): Request =
-        repository.latestUpdatesRequest(page, defaultLibraries, consumeBrowseCachePolicy())
+        repository.latestUpdatesRequest(page, shelfLibraryIds, consumeBrowseCachePolicy())
 
     override fun latestUpdatesParse(response: Response) = repository.parseMangasPage(response)
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request =
-        repository.searchMangaRequest(page, query, filters, defaultLibraries, consumeBrowseCachePolicy())
+        repository.searchMangaRequest(page, query, filters, shelfLibraryIds, consumeBrowseCachePolicy())
 
     override fun searchMangaParse(response: Response) = repository.parseMangasPage(response)
 
     override suspend fun getSearchManga(page: Int, query: String, filters: FilterList) =
-        repository.getSearchManga(page, query, filters, defaultLibraries, consumeBrowseCachePolicy())
+        repository.getSearchManga(page, query, filters, shelfLibraryIds, consumeBrowseCachePolicy())
 
     override fun getMangaUrl(manga: eu.kanade.tachiyomi.source.model.SManga): String = manga.url.replace("/api/v1", "")
 
@@ -257,7 +257,7 @@ class KomgaSource(
                     collections.forEach { add(CollectionFilterEntry(it.name, it.id)) }
                 },
             ),
-            LibraryFilter(libraries, defaultLibraries),
+            LibraryFilter(libraries, shelfLibraryIds),
             ReadingStateGroup(),
             UriMultiSelectFilter(
                 "Status",
@@ -466,9 +466,11 @@ class KomgaSource(
             title = screen.context.stringResource(MR.strings.komga_pref_address_title),
             default = "",
             summary = baseUrl.ifBlank { screen.context.stringResource(MR.strings.komga_pref_address_summary) },
-            dialogMessage = screen.context.stringResource(MR.strings.komga_pref_address_dialog),
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
-            validate = { it.startsWith("http://") || it.startsWith("https://") },
+            validate = {
+                val address = it.trim()
+                address.startsWith("http://") || address.startsWith("https://")
+            },
             validationMessage = screen.context.stringResource(MR.strings.komga_pref_address_validation),
             key = PREF_ADDRESS,
         )
@@ -534,7 +536,6 @@ class KomgaSource(
         androidx.preference.Preference(screen.context).apply {
             key = PREF_DEFAULT_LIBRARIES
             title = screen.context.stringResource(MR.strings.komga_pref_default_libraries_title)
-            summary = screen.context.stringResource(MR.strings.komga_pref_default_libraries_summary)
             setDefaultValue(emptySet<String>())
 
             var isFetching = false
@@ -544,7 +545,7 @@ class KomgaSource(
                 isFetching = true
 
                 val dataStore = pref.preferenceManager.preferenceDataStore
-                val currentAddress = (dataStore?.getString(PREF_ADDRESS, "") ?: "").removeSuffix("/")
+                val currentAddress = (dataStore?.getString(PREF_ADDRESS, "") ?: "").trim().trimEnd('/')
                 val currentAuthMode =
                     dataStore?.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
                 val currentUsername = dataStore?.getString(PREF_USERNAME, "") ?: ""
@@ -584,15 +585,33 @@ class KomgaSource(
                         return@launch
                     }
 
-                    val names = fetchedLibraries.map { it.name }.toTypedArray<CharSequence>()
-                    val checkedItems = fetchedLibraries.map { it.id in currentSelection }.toBooleanArray()
-                    val newSelection = currentSelection.toMutableSet()
+                    val availableIds = fetchedLibraries.mapTo(linkedSetOf(), LibraryDto::id)
+                    val newSelection = currentSelection.intersect(availableIds).toMutableSet()
+                    val names = listOf(screen.context.stringResource(MR.strings.all))
+                        .plus(fetchedLibraries.map { it.name })
+                        .toTypedArray<CharSequence>()
+                    val checkedItems = BooleanArray(names.size) { index ->
+                        if (index == 0) newSelection.isEmpty() else fetchedLibraries[index - 1].id in newSelection
+                    }
 
                     com.google.android.material.dialog.MaterialAlertDialogBuilder(screen.context)
                         .setTitle(screen.context.stringResource(MR.strings.komga_pref_default_libraries_title))
-                        .setMultiChoiceItems(names, checkedItems) { _, which, isChecked ->
-                            val id = fetchedLibraries[which].id
-                            if (isChecked) newSelection.add(id) else newSelection.remove(id)
+                        .setMultiChoiceItems(names, checkedItems) { dialog, which, isChecked ->
+                            val alertDialog = dialog as? androidx.appcompat.app.AlertDialog
+                            if (which == 0) {
+                                if (isChecked) {
+                                    newSelection.clear()
+                                    fetchedLibraries.indices.forEach { index ->
+                                        alertDialog?.listView?.setItemChecked(index + 1, false)
+                                    }
+                                } else if (newSelection.isEmpty()) {
+                                    alertDialog?.listView?.setItemChecked(0, true)
+                                }
+                            } else {
+                                val id = fetchedLibraries[which - 1].id
+                                if (isChecked) newSelection.add(id) else newSelection.remove(id)
+                                alertDialog?.listView?.setItemChecked(0, newSelection.isEmpty())
+                            }
                         }
                         .setPositiveButton(android.R.string.ok) { _, _ ->
                             if (newSelection != currentSelection) {
@@ -657,14 +676,16 @@ class KomgaSource(
         forceBrowseRequestsUntil.set(System.currentTimeMillis() + BROWSE_REFRESH_WINDOW_MILLIS)
     }
 
+    fun configuredShelfLibraryIds(): Set<String> = shelfLibraryIds.toSet()
+
     fun registerServerSettingsChangeListener(
-        onChanged: () -> Unit,
+        onChanged: (shelfLibrariesChanged: Boolean) -> Unit,
     ): SharedPreferences.OnSharedPreferenceChangeListener {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key in SERVER_SETTING_KEYS) {
                 searchCapabilities.clear()
                 invalidateBrowseCache()
-                onChanged()
+                onChanged(key == PREF_DEFAULT_LIBRARIES)
             }
         }
         preferences.registerOnSharedPreferenceChangeListener(listener)
@@ -683,7 +704,9 @@ class KomgaSource(
         currentFilters: FilterList? = null,
         preserveSessionFilters: Boolean = false,
         fallbackLibraries: List<LibraryDto>? = null,
+        librarySelectionOverride: Set<String>? = null,
         resetLibrarySelection: Boolean = false,
+        forceConfiguredLibrarySelection: Boolean = false,
     ): FilterList {
         val filters = getFilterList().withFallbackLibraries(fallbackLibraries)
         val currentState = currentFilters
@@ -717,9 +740,24 @@ class KomgaSource(
         }
         scopedFilters.filterIsInstance<LibraryFilter>().firstOrNull()?.state?.let { options ->
             when {
+                librarySelectionOverride != null -> {
+                    val availableSelection = librarySelectionOverride.intersect(options.mapTo(linkedSetOf()) { it.id })
+                    val selection = if (availableSelection.isEmpty() && allowedLibraryIds != null) {
+                        options.mapTo(linkedSetOf()) { it.id }
+                    } else {
+                        availableSelection
+                    }
+                    options.forEach { option -> option.state = option.id in selection }
+                }
                 libraryId != null -> options.forEach { option -> option.state = option.id == libraryId }
-                resetLibrarySelection -> options.forEach { option ->
-                    option.state = allowedLibraryIds != null || option.id in defaultLibraries
+                forceConfiguredLibrarySelection || (resetLibrarySelection && !hasPreservedState) -> {
+                    val availableDefaults = shelfLibraryIds.intersect(options.mapTo(linkedSetOf()) { it.id })
+                    val selection = if (availableDefaults.isEmpty() && allowedLibraryIds != null) {
+                        options.mapTo(linkedSetOf()) { it.id }
+                    } else {
+                        availableDefaults
+                    }
+                    options.forEach { option -> option.state = option.id in selection }
                 }
                 allowedLibraryIds != null && options.none { it.state } -> options.forEach { it.state = true }
             }

@@ -1,5 +1,6 @@
 package eu.kanade.presentation.manga
 
+import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,23 +50,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastAll
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastMap
@@ -114,6 +111,7 @@ fun MangaScreen(
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     chapterCoverGridColumns: Int,
     showChapterReadProgress: Boolean,
+    showChapterFileSize: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
@@ -170,6 +168,7 @@ fun MangaScreen(
             chapterSwipeEndAction = chapterSwipeEndAction,
             chapterCoverGridColumns = chapterCoverGridColumns,
             showChapterReadProgress = showChapterReadProgress,
+            showChapterFileSize = showChapterFileSize,
             isKomgaCacheMode = isKomgaCacheMode,
             navigateUp = navigateUp,
             onChapterClicked = onChapterClicked,
@@ -207,6 +206,7 @@ fun MangaScreen(
             chapterSwipeEndAction = chapterSwipeEndAction,
             chapterCoverGridColumns = chapterCoverGridColumns,
             showChapterReadProgress = showChapterReadProgress,
+            showChapterFileSize = showChapterFileSize,
             isKomgaCacheMode = isKomgaCacheMode,
             navigateUp = navigateUp,
             onChapterClicked = onChapterClicked,
@@ -247,6 +247,7 @@ private fun MangaScreenSmallImpl(
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     chapterCoverGridColumns: Int,
     showChapterReadProgress: Boolean,
+    showChapterFileSize: Boolean,
     isKomgaCacheMode: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
@@ -449,6 +450,7 @@ private fun MangaScreenSmallImpl(
                         isKomgaSource = state.source.isKomgaSource(),
                         chapters = listItem,
                         showChapterReadProgress = showChapterReadProgress,
+                        showChapterFileSize = showChapterFileSize,
                         isAnyChapterSelected = chapters.fastAny { it.selected },
                         onChapterClicked = onChapterClicked,
                         onChapterSelected = onChapterSelected,
@@ -490,6 +492,7 @@ private fun MangaScreenSmallImpl(
                             manga = state.manga,
                             chapters = listItem,
                             showChapterReadProgress = showChapterReadProgress,
+                            showChapterFileSize = showChapterFileSize,
                             isKomgaCacheMode = isKomgaCacheMode,
                             isAnyChapterSelected = chapters.fastAny { it.selected },
                             chapterSwipeStartAction = chapterSwipeStartAction,
@@ -514,6 +517,7 @@ fun MangaScreenLargeImpl(
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     chapterCoverGridColumns: Int,
     showChapterReadProgress: Boolean,
+    showChapterFileSize: Boolean,
     isKomgaCacheMode: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
@@ -727,6 +731,7 @@ fun MangaScreenLargeImpl(
                             chapterHeaderGridItem(
                                 enabled = !isAnySelected,
                                 chapters = chapters,
+                                hideMissingChapters = state.hideMissingChapters,
                                 onClick = onFilterButtonClicked,
                             )
                             sharedChapterGridItems(
@@ -734,6 +739,7 @@ fun MangaScreenLargeImpl(
                                 isKomgaSource = state.source.isKomgaSource(),
                                 chapters = listItem,
                                 showChapterReadProgress = showChapterReadProgress,
+                                showChapterFileSize = showChapterFileSize,
                                 isAnyChapterSelected = chapters.fastAny { it.selected },
                                 onChapterClicked = onChapterClicked,
                                 onChapterSelected = onChapterSelected,
@@ -755,6 +761,7 @@ fun MangaScreenLargeImpl(
                                 chapterHeaderListItem(
                                     enabled = !isAnySelected,
                                     chapters = chapters,
+                                    hideMissingChapters = state.hideMissingChapters,
                                     onClick = onFilterButtonClicked,
                                 )
 
@@ -762,6 +769,7 @@ fun MangaScreenLargeImpl(
                                     manga = state.manga,
                                     chapters = listItem,
                                     showChapterReadProgress = showChapterReadProgress,
+                                    showChapterFileSize = showChapterFileSize,
                                     isKomgaCacheMode = isKomgaCacheMode,
                                     isAnyChapterSelected = chapters.fastAny { it.selected },
                                     chapterSwipeStartAction = chapterSwipeStartAction,
@@ -828,6 +836,7 @@ private fun LazyListScope.sharedChapterItems(
     manga: Manga,
     chapters: List<ChapterList>,
     showChapterReadProgress: Boolean,
+    showChapterFileSize: Boolean,
     isKomgaCacheMode: Boolean,
     isAnyChapterSelected: Boolean,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
@@ -855,14 +864,7 @@ private fun LazyListScope.sharedChapterItems(
             }
             is ChapterList.Item -> {
                 MangaChapterListItem(
-                    title = if (manga.displayMode == Manga.CHAPTER_DISPLAY_NUMBER) {
-                        stringResource(
-                            MR.strings.display_mode_chapter,
-                            formatChapterNumber(item.chapter.chapterNumber),
-                        )
-                    } else {
-                        item.chapter.name
-                    },
+                    title = chapterTitleWithFileSize(manga, item, showChapterFileSize),
                     date = relativeDateText(item.chapter.dateUpload),
                     readProgress = chapterReadProgress(item).takeIf { showChapterReadProgress },
                     scanlator = item.chapter.scanlator.takeIf { !it.isNullOrBlank() },
@@ -965,6 +967,7 @@ private fun LazyListScope.sharedMangaDetailHeaderListItems(
     chapterHeaderListItem(
         enabled = !isAnySelected,
         chapters = chapters,
+        hideMissingChapters = state.hideMissingChapters,
         onClick = onFilterClicked,
     )
 }
@@ -1036,6 +1039,7 @@ private fun LazyGridScope.sharedMangaDetailHeaderGridItems(
     chapterHeaderGridItem(
         enabled = !isAnySelected,
         chapters = chapters,
+        hideMissingChapters = state.hideMissingChapters,
         onClick = onFilterClicked,
     )
 }
@@ -1043,14 +1047,19 @@ private fun LazyGridScope.sharedMangaDetailHeaderGridItems(
 private fun LazyListScope.chapterHeaderListItem(
     enabled: Boolean,
     chapters: List<ChapterList.Item>,
+    hideMissingChapters: Boolean,
     onClick: () -> Unit,
 ) {
     item(
         key = MangaScreenItem.CHAPTER_HEADER,
         contentType = MangaScreenItem.CHAPTER_HEADER,
     ) {
-        val missingChapterCount = remember(chapters) {
-            chapters.map { it.chapter.chapterNumber }.missingChaptersCount()
+        val missingChapterCount = if (hideMissingChapters) {
+            0
+        } else {
+            remember(chapters) {
+                chapters.map { it.chapter.chapterNumber }.missingChaptersCount()
+            }
         }
         ChapterHeader(
             enabled = enabled,
@@ -1064,6 +1073,7 @@ private fun LazyListScope.chapterHeaderListItem(
 private fun LazyGridScope.chapterHeaderGridItem(
     enabled: Boolean,
     chapters: List<ChapterList.Item>,
+    hideMissingChapters: Boolean,
     onClick: () -> Unit,
 ) {
     item(
@@ -1071,8 +1081,12 @@ private fun LazyGridScope.chapterHeaderGridItem(
         span = { GridItemSpan(maxLineSpan) },
         contentType = MangaScreenItem.CHAPTER_HEADER,
     ) {
-        val missingChapterCount = remember(chapters) {
-            chapters.map { it.chapter.chapterNumber }.missingChaptersCount()
+        val missingChapterCount = if (hideMissingChapters) {
+            0
+        } else {
+            remember(chapters) {
+                chapters.map { it.chapter.chapterNumber }.missingChaptersCount()
+            }
         }
         ChapterHeader(
             enabled = enabled,
@@ -1088,6 +1102,7 @@ private fun LazyGridScope.sharedChapterGridItems(
     isKomgaSource: Boolean,
     chapters: List<ChapterList>,
     showChapterReadProgress: Boolean,
+    showChapterFileSize: Boolean,
     isAnyChapterSelected: Boolean,
     onChapterClicked: (Chapter) -> Unit,
     onChapterSelected: (ChapterList.Item, Boolean, Boolean) -> Unit,
@@ -1158,7 +1173,7 @@ private fun LazyGridScope.sharedChapterGridItems(
                 if (manga.chapterCoverDisplayMode == Manga.CHAPTER_COVER_DISPLAY_COMFORTABLE) {
                     MangaComfortableGridItem(
                         coverData = coverData,
-                        title = chapterTitle(manga, item),
+                        title = chapterTitleWithFileSize(manga, item, showChapterFileSize),
                         isSelected = item.selected,
                         coverOverlay = coverOverlay,
                         onLongClick = onLongClick,
@@ -1170,7 +1185,7 @@ private fun LazyGridScope.sharedChapterGridItems(
                         title = if (
                             manga.chapterCoverDisplayMode == Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE
                         ) {
-                            chapterTitle(manga, item)
+                            chapterTitleWithFileSize(manga, item, showChapterFileSize)
                         } else {
                             null
                         },
@@ -1190,74 +1205,51 @@ private fun ChapterProgressCorner(
     progress: String,
     modifier: Modifier = Modifier,
 ) {
-    Layout(
-        modifier = modifier,
-        content = {
-            Text(
-                text = progress,
-                color = Color.White,
-                fontWeight = FontWeight.ExtraBold,
-                maxLines = 1,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    shadow = Shadow(
-                        color = Color.Black,
-                        blurRadius = 4f,
-                    ),
-                ),
-            )
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(
-                        radius = 11.dp,
-                        edgeTreatment = BlurredEdgeTreatment.Unbounded,
-                    ),
-            ) {
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.58f),
-                    topLeft = Offset(size.width / 4f, size.height / 4f),
-                    size = Size(size.width / 2f, size.height / 2f),
-                )
-            }
-        },
-    ) { measurables, constraints ->
-        val textPlaceable = measurables[0].measure(
-            constraints.copy(minWidth = 0, minHeight = 0),
+    val cornerColor = MaterialTheme.colorScheme.primaryContainer
+    val progressColor = MaterialTheme.colorScheme.primary
+    Box(modifier = modifier.size(CHAPTER_STATUS_CORNER_SIZE)) {
+        ChapterStatusCornerBackground(color = cornerColor)
+        Text(
+            text = progress,
+            color = progressColor,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 9.sp,
+                lineHeight = 9.sp,
+            ),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = (-1).dp, y = 5.dp)
+                .rotate(45f),
         )
-        val shadowWidth = (textPlaceable.width * 2)
-            .coerceIn(constraints.minWidth, constraints.maxWidth)
-        val shadowHeight = (textPlaceable.height * 2)
-            .coerceIn(constraints.minHeight, constraints.maxHeight)
-        val shadowPlaceable = measurables[1].measure(
-            Constraints.fixed(shadowWidth, shadowHeight),
-        )
-
-        layout(shadowWidth, shadowHeight) {
-            shadowPlaceable.place(0, 0)
-            textPlaceable.place(
-                x = (shadowWidth - textPlaceable.width) / 2,
-                y = (shadowHeight - textPlaceable.height) / 2,
-            )
-        }
     }
 }
+
+@Composable
+private fun ChapterStatusCornerBackground(color: Color) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        drawPath(
+            path = Path().apply {
+                moveTo(0f, 0f)
+                lineTo(size.width, 0f)
+                lineTo(size.width, size.height)
+                close()
+            },
+            color = color,
+        )
+    }
+}
+
+private val CHAPTER_STATUS_CORNER_SIZE = 32.dp
 
 @Composable
 private fun ChapterReadCorner(modifier: Modifier = Modifier) {
     val cornerColor = MaterialTheme.colorScheme.primaryContainer
     val checkColor = MaterialTheme.colorScheme.primary
-    Box(modifier = modifier.size(28.dp)) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawPath(
-                path = Path().apply {
-                    moveTo(0f, 0f)
-                    lineTo(size.width, 0f)
-                    lineTo(size.width, size.height)
-                    close()
-                },
-                color = cornerColor,
-            )
-        }
+    Box(modifier = modifier.size(CHAPTER_STATUS_CORNER_SIZE)) {
+        ChapterStatusCornerBackground(color = cornerColor)
         Icon(
             imageVector = Icons.Filled.Check,
             contentDescription = null,
@@ -1325,9 +1317,48 @@ private fun chapterTitle(
             formatChapterNumber(item.chapter.chapterNumber),
         )
     } else {
-        item.chapter.name
+        item.chapter.name.withoutEmbeddedFileSize(item.chapter.memo)
     }
 }
+
+@Composable
+private fun chapterTitleWithFileSize(
+    manga: Manga,
+    item: ChapterList.Item,
+    showChapterFileSize: Boolean,
+): String {
+    val title = chapterTitle(manga, item)
+    val fileSize = chapterFileSize(item).takeIf { showChapterFileSize } ?: return title
+    return "$title ($fileSize)"
+}
+
+@Composable
+private fun chapterFileSize(item: ChapterList.Item): String? {
+    val sizeBytes = KomgaChapterMemo.sizeBytes(item.chapter.memo) ?: return null
+    val context = LocalContext.current
+    return remember(sizeBytes, context) {
+        Formatter.formatFileSize(context, sizeBytes)
+    }
+}
+
+private fun String.withoutEmbeddedFileSize(memo: kotlinx.serialization.json.JsonObject): String {
+    if (KomgaChapterMemo.sizeBytes(memo) == null) return this
+    val displaySize = KomgaChapterMemo.displaySize(memo)
+    val withoutRecordedSize = if (displaySize.isNullOrBlank()) {
+        this
+    } else {
+        replace(
+            Regex("\\s*\\(\\s*${Regex.escape(displaySize)}\\s*\\)\\s*$", RegexOption.IGNORE_CASE),
+            "",
+        )
+    }
+    return withoutRecordedSize.replace(TRAILING_FILE_SIZE_REGEX, "").ifBlank { this }
+}
+
+private val TRAILING_FILE_SIZE_REGEX = Regex(
+    pattern = "\\s*\\(\\s*\\d+(?:[.,]\\d+)?\\s*(?:bytes?|[kmgtpe]i?b)\\s*\\)\\s*$",
+    option = RegexOption.IGNORE_CASE,
+)
 
 private fun onChapterItemClick(
     chapterItem: ChapterList.Item,

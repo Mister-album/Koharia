@@ -25,6 +25,7 @@ object KomgaChapterMemo {
     const val SERIES_URL = "seriesUrl"
     const val FILE_HASH = "fileHash"
     const val SIZE_BYTES = "sizeBytes"
+    const val DISPLAY_SIZE = "displaySize"
     const val SERIES_TITLE = "seriesTitle"
     const val BOOK_TITLE = "bookTitle"
     const val NUMBER_SORT = "numberSort"
@@ -55,6 +56,7 @@ object KomgaChapterMemo {
         val fingerprint = buildMemo(buildFingerprint(baseUrl, book))
         return buildJsonObject {
             fingerprint.forEach { (key, value) -> put(key, value) }
+            if (book.size.isNotBlank()) put(DISPLAY_SIZE, book.size)
             put(IS_EPUB, book.isEpub)
             put(EPUB_DIVINA_COMPATIBLE, book.media.epubDivinaCompatible)
             if (book.fileLastModified.isNotBlank()) put(FILE_LAST_MODIFIED, book.fileLastModified)
@@ -181,6 +183,10 @@ object KomgaChapterMemo {
     fun fileLastModified(memo: JsonObject): String? = memo.string(FILE_LAST_MODIFIED)
 
     fun fileName(memo: JsonObject): String? = memo.string(FILE_NAME)
+
+    fun sizeBytes(memo: JsonObject): Long? = memo.long(SIZE_BYTES)?.takeIf { it > 0L }
+
+    fun displaySize(memo: JsonObject): String? = memo.string(DISPLAY_SIZE)
 
     fun pagesCount(memo: JsonObject): Int? = memo.long(PAGES_COUNT)?.toInt()?.takeIf { it > 0 }
 

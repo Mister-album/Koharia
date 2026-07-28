@@ -188,6 +188,8 @@ class MangaScreenModel(
     val chapterCoverGridColumns = libraryPreferences.chapterCoverGridColumns.asState(screenModelScope)
     var showChapterReadProgress by mutableStateOf(libraryPreferences.showChapterReadProgress.get())
         private set
+    var showChapterFileSize by mutableStateOf(libraryPreferences.showChapterFileSize.get())
+        private set
     var autoTrackState = trackPreferences.autoUpdateTrackOnMarkRead.get()
 
     private val skipFiltered by readerPreferences.skipFiltered.asState(screenModelScope)
@@ -1140,6 +1142,14 @@ class MangaScreenModel(
         showChapterReadProgress = show
     }
 
+    fun updateShowChapterFileSize(show: Boolean) {
+        showChapterFileSize = show
+    }
+
+    fun updateHideMissingChapters(hide: Boolean) {
+        updateSuccessState { it.copy(hideMissingChapters = hide) }
+    }
+
     /**
      * Sets the sorting method and requests an UI update.
      * @param sort the sorting mode.
@@ -1155,9 +1165,13 @@ class MangaScreenModel(
     fun setCurrentSettingsAsDefault(applyToExisting: Boolean) {
         val manga = successState?.manga ?: return
         val showReadProgress = showChapterReadProgress
+        val showFileSize = showChapterFileSize
+        val hideMissingChapters = successState?.hideMissingChapters ?: return
         screenModelScope.launchNonCancellable {
             libraryPreferences.setChapterSettingsDefault(manga)
             libraryPreferences.showChapterReadProgress.set(showReadProgress)
+            libraryPreferences.showChapterFileSize.set(showFileSize)
+            libraryPreferences.hideMissingChapters.set(hideMissingChapters)
             if (applyToExisting) {
                 setMangaDefaultChapterFlags.awaitAll()
             }
@@ -1168,6 +1182,8 @@ class MangaScreenModel(
     fun resetToDefaultSettings() {
         val manga = successState?.manga ?: return
         showChapterReadProgress = libraryPreferences.showChapterReadProgress.get()
+        showChapterFileSize = libraryPreferences.showChapterFileSize.get()
+        updateHideMissingChapters(libraryPreferences.hideMissingChapters.get())
         screenModelScope.launchNonCancellable {
             setMangaDefaultChapterFlags.await(manga)
         }
