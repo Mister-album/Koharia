@@ -165,6 +165,7 @@ internal fun EpubReaderBottomArea(
     onToggleNightMode: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleMore: () -> Unit,
+    onOpenFontPicker: () -> Unit,
     morePanel: @Composable () -> Unit,
 ) {
     val backgroundColor = MaterialTheme.colorScheme
@@ -223,6 +224,7 @@ internal fun EpubReaderBottomArea(
                                     readerPreferences = readerPreferences,
                                     epubReaderPreferences = epubReaderPreferences,
                                     modifier = Modifier.heightIn(max = 320.dp),
+                                    onOpenFontPicker = onOpenFontPicker,
                                 )
                             }
                             EpubBottomPanel.MORE -> {

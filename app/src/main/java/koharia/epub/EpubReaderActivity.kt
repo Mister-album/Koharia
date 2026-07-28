@@ -213,6 +213,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private var progressionSeekGeneration = 0L
     private var currentPublisherStyles: Boolean? = null
     private var readerFragment: EpubReaderFragment? = null
+    private var capturedVisibleFontRequirements: Pair<Long, String>? = null
     private var imagePreviewVisible = false
     private var lastTouchXFraction: Float? = null
     private var lastTouchYFraction: Float? = null
@@ -554,6 +555,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                     } else {
                                         EpubBottomPanel.MORE
                                     }
+                                },
+                                onOpenFontPicker = {
+                                    epubReaderFragment()?.prepareFontSelection()
                                 },
                                 morePanel = {
                                     EpubReaderMorePanel(
@@ -1053,8 +1057,16 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         toast(MR.strings.epub_font_load_failed)
     }
 
+    override fun onVisibleFontRequirementsCaptured(chapterId: Long, requirementsJson: String?) {
+        capturedVisibleFontRequirements = requirementsJson?.let { chapterId to it }
+    }
+
     override fun onNavigatorReady(fragment: EpubReaderFragment) {
         readerFragment = fragment
+        capturedVisibleFontRequirements
+            ?.takeIf { (chapterId) -> chapterId == viewModel.state.value.chapterId }
+            ?.second
+            ?.let(fragment::restoreFontSelectionContext)
         if (paginationViewportJob?.isActive != true) {
             applyCurrentReadiumPreferences(fragment)
         }
@@ -1181,6 +1193,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             }
             .launchIn(lifecycleScope)
 
+        val fontSelectionChanges = combine(
+            epubLayoutPreferences.selectedFontId.changes(),
+            epubFontManager.catalogState,
+        ) { selectedFontId, _ ->
+            selectedFontId to epubFontManager.fingerprint(EpubFontId.fromPreference(selectedFontId))
+        }.distinctUntilChanged()
         val paginationAffectingChanges = listOf(
             epubLayoutPreferences.readingMode.changes().map { it as Any },
             epubLayoutPreferences.pageDirection.changes().map { it as Any },
@@ -1190,12 +1208,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             epubLayoutPreferences.paragraphIndent.changes().map { it as Any },
             epubLayoutPreferences.pageMargins.changes().map { it as Any },
             epubLayoutPreferences.verticalMargins.changes().map { it as Any },
-            epubLayoutPreferences.selectedFontId.changes().map { it as Any },
-            epubFontManager.catalogState.map {
-                epubFontManager.fingerprint(
-                    EpubFontId.fromPreference(epubLayoutPreferences.selectedFontId.get()),
-                ) as Any
-            },
+            fontSelectionChanges.map { it as Any },
             epubLayoutPreferences.textAlignment.changes().map { it as Any },
             epubLayoutPreferences.publisherStyles.changes().map { it as Any },
         )

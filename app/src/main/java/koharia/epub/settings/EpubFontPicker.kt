@@ -85,6 +85,7 @@ fun EpubFontPreference(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
+    onPickerOpened: (() -> Unit)? = null,
 ) {
     val manager = remember { Injekt.get<EpubFontManager>() }
     val catalog by manager.catalogState.collectAsState()
@@ -101,6 +102,7 @@ fun EpubFontPreference(
             )
         },
         modifier = modifier.clickable(enabled = enabled) {
+            onPickerOpened?.invoke()
             if (onClick != null) onClick() else showPicker = true
         },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),

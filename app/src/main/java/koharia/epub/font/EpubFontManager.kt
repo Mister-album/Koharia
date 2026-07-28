@@ -25,6 +25,8 @@ import tachiyomi.core.common.util.system.logcat
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -40,7 +42,8 @@ class EpubFontManager(
     private val parser = OpenTypeFontParser()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val catalogMutex = Mutex()
-    private val materializationLock = Any()
+    private val materializationLocks = ConcurrentHashMap<String, Any>()
+    private val extractedCacheTrimLock = Any()
     private val typefaceCache = object : LruCache<String, Typeface>(24) {}
     private val materializedFaceFiles = ConcurrentHashMap<String, File>()
     private var storedCatalog = StoredEpubFontCatalog()
@@ -248,6 +251,7 @@ class EpubFontManager(
             val originalCatalog = storedCatalog
             storedCatalog = storedCatalog.copy(sources = updated)
             removedFaces.forEach { (checksum, faceIndex) ->
+                materializedFaceFile(checksum, faceIndex).delete()
                 File(extractedDirectory, "$checksum-$faceIndex.sfnt").delete()
             }
             val removedFaceKeys = removedFaces.mapTo(mutableSetOf()) { (checksum, faceIndex) ->
@@ -269,7 +273,7 @@ class EpubFontManager(
             ?: catalogState.value.builtInFamilies.first { it.id == EpubFontId.ORIGINAL }
     }
 
-    fun fingerprint(id: EpubFontId): String = resolve(id).fingerprint
+    fun fingerprint(id: EpubFontId): String = resolve(id).renderingFingerprint()
 
     internal fun webPayload(id: EpubFontId): EpubWebFontPayload? {
         val family = resolve(id)
@@ -289,7 +293,7 @@ class EpubFontManager(
             )
         }
         return EpubWebFontPayload(
-            key = "${family.id.value}:${family.fingerprint}",
+            key = "${family.id.value}:${family.renderingFingerprint()}",
             cssFamilyName = requireNotNull(family.cssFamilyName),
             faces = faces,
         )
@@ -351,14 +355,13 @@ class EpubFontManager(
             EpubFontId.MONOSPACE.value, "${EpubFontId.SYSTEM_PREFIX}generic-monospace" -> Typeface.MONOSPACE
             else -> null
         }
-        val file = if (family.source == EpubFontSource.LOCAL) materializeFace(face) else face.sourceFile
+        // Android accepts legacy SFNT layouts directly; only Chromium needs the normalized copy.
+        val file = face.sourceFile
         val typeface = file?.let {
             runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     Typeface.Builder(it).setTtcIndex(
-                        if (family.source ==
-                            EpubFontSource.SYSTEM
-                        ) {
+                        if (family.source == EpubFontSource.SYSTEM || family.source == EpubFontSource.LOCAL) {
                             face.faceIndex
                         } else {
                             0
@@ -563,35 +566,70 @@ class EpubFontManager(
         _catalogState.value = _catalogState.value.copy(localFamilies = families, isLocalLoading = isLoading)
     }
 
-    private fun materializeFace(face: EpubFontFaceDescriptor): File? = synchronized(materializationLock) {
-        materializedFaceFiles[face.key]?.takeIf(File::isFile)?.let { return@synchronized it }
-        val source = face.sourceFile?.takeIf(File::isFile) ?: return@synchronized null
-        val parsed = runCatching { parseFont(source) }.getOrNull() ?: return@synchronized null
-        if (!parsed.isCollection) {
-            materializedFaceFiles[face.key] = source
-            return@synchronized source
+    private fun materializeFace(face: EpubFontFaceDescriptor): File? {
+        materializedFaceFiles[face.key]?.takeIf(File::isFile)?.let { return it }
+        val lock = materializationLocks.computeIfAbsent(face.key) { Any() }
+        return synchronized(lock) {
+            materializedFaceFiles[face.key]?.takeIf(File::isFile)?.let { return@synchronized it }
+            val source = face.sourceFile?.takeIf(File::isFile) ?: return@synchronized null
+            val checksum = face.sourceChecksum ?: return@synchronized null
+            extractedDirectory.mkdirs()
+            val destination = materializedFaceFile(checksum, face.faceIndex)
+            if (!destination.isFile || destination.length() == 0L) {
+                val temporary = File.createTempFile(".${destination.name}-", ".tmp", extractedDirectory)
+                runCatching {
+                    parser.extractFace(source, face.faceIndex, temporary)
+                    moveAtomically(temporary, destination)
+                }.onFailure { error ->
+                    temporary.delete()
+                    destination.takeIf { it.length() == 0L }?.delete()
+                    logcat(logcat.LogPriority.WARN, error) {
+                        "Failed to normalize EPUB font face key=${face.key}"
+                    }
+                }.getOrNull() ?: return@synchronized null
+            }
+            destination.setLastModified(System.currentTimeMillis())
+            materializedFaceFiles[face.key] = destination
+            trimExtractedCache(destination)
+            destination
         }
-        extractedDirectory.mkdirs()
-        val destination = File(extractedDirectory, "${face.sourceChecksum}-${face.faceIndex}.sfnt")
-        if (!destination.isFile || destination.length() == 0L) {
-            runCatching { parser.extractFace(source, face.faceIndex, destination) }
-                .onFailure { destination.delete() }
-                .getOrNull() ?: return@synchronized null
-        }
-        destination.setLastModified(System.currentTimeMillis())
-        materializedFaceFiles[face.key] = destination
-        trimExtractedCache(destination)
-        destination
     }
 
-    private fun trimExtractedCache(protectedFile: File) {
-        var total = extractedDirectory.listFiles()?.sumOf(File::length) ?: return
-        if (total <= MAX_EXTRACTED_CACHE_BYTES) return
+    private fun materializedFaceFile(checksum: String, faceIndex: Int): File {
+        return File(
+            extractedDirectory,
+            "$checksum-$faceIndex-v$MATERIALIZED_FACE_FORMAT_VERSION.sfnt",
+        )
+    }
+
+    private fun EpubFontFamilyDescriptor.renderingFingerprint(): String =
+        if (source == EpubFontSource.LOCAL) {
+            "$fingerprint:sfnt-v$MATERIALIZED_FACE_FORMAT_VERSION"
+        } else {
+            fingerprint
+        }
+
+    private fun moveAtomically(source: File, target: File) {
+        runCatching {
+            Files.move(
+                source.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        }.getOrElse {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    private fun trimExtractedCache(protectedFile: File) = synchronized(extractedCacheTrimLock) {
+        var total = extractedDirectory.listFiles()?.sumOf(File::length) ?: return@synchronized
+        if (total <= MAX_EXTRACTED_CACHE_BYTES) return@synchronized
         extractedDirectory.listFiles()
-            ?.filter { it != protectedFile }
+            ?.filter { it != protectedFile && it.extension == "sfnt" }
             ?.sortedBy(File::lastModified)
             ?.forEach { file ->
-                if (total <= MAX_EXTRACTED_CACHE_BYTES) return
+                if (total <= MAX_EXTRACTED_CACHE_BYTES) return@synchronized
                 val length = file.length()
                 if (file.delete()) total -= length
             }
@@ -688,6 +726,7 @@ class EpubFontManager(
         const val MAX_WEB_FONT_FAMILY_BYTES = 48L * 1024 * 1024
         const val WEB_CHUNK_BYTES = 256 * 1024
         private const val COPY_BUFFER_SIZE = 64 * 1024
+        private const val MATERIALIZED_FACE_FORMAT_VERSION = 3
 
         private fun builtInFamilies(): List<EpubFontFamilyDescriptor> = listOf(
             builtIn(EpubFontId.ORIGINAL, "Original", null),

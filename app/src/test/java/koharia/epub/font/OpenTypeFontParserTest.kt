@@ -135,6 +135,45 @@ class OpenTypeFontParserTest {
     }
 
     @Test
+    fun `normalizes misaligned tables in a standalone font`() {
+        val source = directory.resolve("misaligned.ttf")
+        source.writeBytes(
+            misalignTableOffsets(
+                sfnt("Misaligned Font", "MisalignedFont-Regular"),
+            ),
+        )
+        assertTrue(tableOffsets(source.readBytes()).any { it % 4 != 0 })
+
+        val destination = directory.resolve("normalized.ttf")
+        parser.extractFace(source.toFile(), 0, destination.toFile())
+
+        val normalized = destination.readBytes()
+        assertTrue(tableOffsets(normalized).all { it % 4 == 0 })
+        assertEquals("Misaligned Font", parser.parse(destination.toFile()).faces.single().familyName)
+        assertEquals(0xB1B0_AFBAL, sfntChecksum(normalized))
+    }
+
+    @Test
+    fun `converts legacy Chinese format 2 cmap to Unicode format 12`() {
+        val source = directory.resolve("legacy-cmap.ttf")
+        source.writeBytes(
+            sfnt(
+                family = "Legacy Chinese",
+                postScript = "LegacyChinese-Regular",
+                cmap = legacyChineseFormat2Cmap(),
+            ),
+        )
+
+        val destination = directory.resolve("unicode-cmap.ttf")
+        parser.extractFace(source.toFile(), 0, destination.toFile())
+
+        val cmap = format12Mappings(destination.readBytes())
+        assertEquals(1, cmap[0x0041])
+        assertEquals(2, cmap[0x4E2D])
+        assertEquals(0xB1B0_AFBAL, sfntChecksum(destination.readBytes()))
+    }
+
+    @Test
     fun `rejects truncated and unsupported data`() {
         val truncated = directory.resolve("broken.ttf")
         truncated.writeBytes(byteArrayOf(0, 1, 0, 0))
@@ -182,6 +221,7 @@ class OpenTypeFontParserTest {
         localizedFamily: String? = null,
         macSimplifiedChineseName: Boolean = false,
         windowsMisencodedChineseName: Boolean = false,
+        cmap: ByteArray? = null,
     ): ByteArray {
         val tables = linkedMapOf(
             "name" to nameTable(
@@ -202,6 +242,7 @@ class OpenTypeFontParserTest {
                 if (italic) ByteBuffer.wrap(it).order(ByteOrder.BIG_ENDIAN).putInt(4, 0x0001_0000)
             },
         )
+        cmap?.let { tables["cmap"] = it }
         if (variable) {
             tables["fvar"] = ByteArray(36).also {
                 ByteBuffer.wrap(it).order(ByteOrder.BIG_ENDIAN).apply {
@@ -294,6 +335,91 @@ class OpenTypeFontParserTest {
                 encoded.forEach(output::write)
             }
         }.toByteArray()
+    }
+
+    private fun misalignTableOffsets(font: ByteArray): ByteArray {
+        val input = ByteBuffer.wrap(font).order(ByteOrder.BIG_ENDIAN)
+        val tableCount = input.getShort(4).toInt() and 0xFFFF
+        val tableDataOffset = 12 + tableCount * 16
+        val misaligned = ByteArray(font.size + 1)
+        font.copyInto(misaligned, endIndex = tableDataOffset)
+        font.copyInto(misaligned, destinationOffset = tableDataOffset + 1, startIndex = tableDataOffset)
+        val output = ByteBuffer.wrap(misaligned).order(ByteOrder.BIG_ENDIAN)
+        repeat(tableCount) { index ->
+            val recordOffset = 12 + index * 16
+            output.putInt(recordOffset + 8, input.getInt(recordOffset + 8) + 1)
+        }
+        return misaligned
+    }
+
+    private fun legacyChineseFormat2Cmap(): ByteArray {
+        val subtableLength = 538
+        val subtable = ByteBuffer.allocate(subtableLength).order(ByteOrder.BIG_ENDIAN).apply {
+            putShort(0, 2.toShort())
+            putShort(2, subtableLength.toShort())
+            putShort(4, 0.toShort())
+            putShort(6 + 0xD6 * 2, 8.toShort())
+
+            val subheader0 = 6 + 512
+            putShort(subheader0, 0x41.toShort())
+            putShort(subheader0 + 2, 1.toShort())
+            putShort(subheader0 + 4, 0.toShort())
+            putShort(subheader0 + 6, 10.toShort())
+
+            val subheader1 = subheader0 + 8
+            putShort(subheader1, 0xD0.toShort())
+            putShort(subheader1 + 2, 1.toShort())
+            putShort(subheader1 + 4, 0.toShort())
+            putShort(subheader1 + 6, 4.toShort())
+            putShort(subheader1 + 8, 1.toShort())
+            putShort(subheader1 + 10, 2.toShort())
+        }.array()
+        return ByteBuffer.allocate(12 + subtable.size).order(ByteOrder.BIG_ENDIAN).apply {
+            putShort(0.toShort())
+            putShort(1.toShort())
+            putShort(3.toShort())
+            putShort(3.toShort())
+            putInt(12)
+            put(subtable)
+        }.array()
+    }
+
+    private fun format12Mappings(font: ByteArray): Map<Int, Int> {
+        val buffer = ByteBuffer.wrap(font).order(ByteOrder.BIG_ENDIAN)
+        val tableCount = buffer.getShort(4).toInt() and 0xFFFF
+        val cmapOffset = (0 until tableCount).firstNotNullOf { index ->
+            val recordOffset = 12 + index * 16
+            val tag = font.copyOfRange(recordOffset, recordOffset + 4).toString(Charsets.ISO_8859_1)
+            buffer.getInt(recordOffset + 8).takeIf { tag == "cmap" }
+        }
+        val recordCount = buffer.getShort(cmapOffset + 2).toInt() and 0xFFFF
+        val format12Offset = (0 until recordCount).firstNotNullOf { index ->
+            val recordOffset = cmapOffset + 4 + index * 8
+            val platformId = buffer.getShort(recordOffset).toInt() and 0xFFFF
+            val encodingId = buffer.getShort(recordOffset + 2).toInt() and 0xFFFF
+            val subtableOffset = cmapOffset + buffer.getInt(recordOffset + 4)
+            subtableOffset.takeIf {
+                platformId == 3 && encodingId == 10 && (buffer.getShort(it).toInt() and 0xFFFF) == 12
+            }
+        }
+        val groupCount = buffer.getInt(format12Offset + 12)
+        return buildMap {
+            repeat(groupCount) { index ->
+                val groupOffset = format12Offset + 16 + index * 12
+                val start = buffer.getInt(groupOffset)
+                val end = buffer.getInt(groupOffset + 4)
+                val startGlyph = buffer.getInt(groupOffset + 8)
+                for (codePoint in start..end) {
+                    put(codePoint, startGlyph + codePoint - start)
+                }
+            }
+        }
+    }
+
+    private fun tableOffsets(font: ByteArray): List<Int> {
+        val buffer = ByteBuffer.wrap(font).order(ByteOrder.BIG_ENDIAN)
+        val tableCount = buffer.getShort(4).toInt() and 0xFFFF
+        return List(tableCount) { index -> buffer.getInt(12 + index * 16 + 8) }
     }
 
     private data class TestNameRecord(

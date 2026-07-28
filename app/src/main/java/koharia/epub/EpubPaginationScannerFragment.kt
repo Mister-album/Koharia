@@ -55,6 +55,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
             publisherStyles = epubLayoutPreferences.publisherStyles.get() ||
                 sessionRepository.getForPagination(chapterId)?.publication?.metadata?.layout ==
                 org.readium.r2.shared.publication.Layout.FIXED,
+            prioritizeVisibleContent = false,
         )
     private val tocHrefs by lazy {
         sessionRepository.getForPagination(chapterId)

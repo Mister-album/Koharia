@@ -115,12 +115,14 @@ fun EpubReaderSettingsSheet(
     readerPreferences: ReaderPreferences,
     epubReaderPreferences: EpubReaderPreferences,
     onDismissRequest: () -> Unit,
+    onOpenFontPicker: (() -> Unit)? = null,
 ) {
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         EpubReaderSettingsContent(
             preferences = preferences,
             readerPreferences = readerPreferences,
             epubReaderPreferences = epubReaderPreferences,
+            onOpenFontPicker = onOpenFontPicker,
         )
     }
 }
@@ -132,6 +134,7 @@ fun EpubReaderSettingsContent(
     epubReaderPreferences: EpubReaderPreferences,
     modifier: Modifier = Modifier,
     scrollable: Boolean = true,
+    onOpenFontPicker: (() -> Unit)? = null,
 ) {
     var activeDialog by rememberSaveable { mutableStateOf<EpubSettingsDialog?>(null) }
     val scrollState = rememberScrollState()
@@ -218,6 +221,7 @@ fun EpubReaderSettingsContent(
         EpubSettingsDialog.TYPOGRAPHY -> TypographySettingsSheet(
             preferences = preferences,
             readerPreferences = readerPreferences,
+            onOpenFontPicker = onOpenFontPicker,
             onDismissRequest = { activeDialog = null },
         )
         EpubSettingsDialog.MORE -> MoreReadingSettingsSheet(
@@ -1198,6 +1202,7 @@ private fun CompactSettingRow(
 private fun TypographySettingsSheet(
     preferences: EpubLayoutPreferences,
     readerPreferences: ReaderPreferences,
+    onOpenFontPicker: (() -> Unit)?,
     onDismissRequest: () -> Unit,
 ) {
     var showCustomSpacing by rememberSaveable { mutableStateOf(false) }
@@ -1216,7 +1221,7 @@ private fun TypographySettingsSheet(
                     onOpenCustom = { showCustomSpacing = true },
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-                FontFamilySection(preferences)
+                FontFamilySection(preferences, onOpenFontPicker)
                 TextAlignmentSection(preferences)
                 PublisherStylesSection(preferences)
             }
@@ -1680,12 +1685,16 @@ private fun TapZoneSection(
 }
 
 @Composable
-private fun FontFamilySection(preferences: EpubLayoutPreferences) {
+private fun FontFamilySection(
+    preferences: EpubLayoutPreferences,
+    onOpenFontPicker: (() -> Unit)?,
+) {
     val fontSelectionEnabled = (LocalActivity.current as? EpubReaderActivity)?.supportsFontOverride() ?: true
     EpubFontPreference(
         preferences = preferences,
         modifier = Modifier.padding(horizontal = 8.dp),
         enabled = fontSelectionEnabled,
+        onPickerOpened = onOpenFontPicker,
     )
 }
 
