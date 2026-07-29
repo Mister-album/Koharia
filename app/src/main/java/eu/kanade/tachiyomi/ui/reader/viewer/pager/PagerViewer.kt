@@ -608,17 +608,21 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     internal fun onPagesClassified(classifications: Map<ReaderPage, ReaderPage.SpreadInfo>): Boolean {
-        val stableAnchor = stableSlotAnchor
-        val anchor = if (
-            pendingProgressCommitAnchor != null &&
-            stableAnchor != null &&
-            stableAnchor in classifications
-        ) {
-            classifications.keys.first()
-        } else {
-            stableAnchor ?: classifications.keys.firstOrNull() ?: return false
+        val selection = DoublePageProgressPolicy.classificationAnchor(
+            pendingCommitAnchor = pendingProgressCommitAnchor,
+            stableAnchor = stableSlotAnchor,
+            classifiedPages = classifications.keys.toList(),
+        ) ?: return false
+        val previousPendingCommitAnchor = pendingProgressCommitAnchor
+        if (selection.transfersPendingCommit) {
+            // requestSlotRebuild() can rebuild synchronously while the pager is idle.
+            pendingProgressCommitAnchor = selection.page
         }
-        return adapter.onPagesClassified(classifications, anchor)
+        val layoutChanged = adapter.onPagesClassified(classifications, selection.page)
+        if (!layoutChanged && selection.transfersPendingCommit) {
+            pendingProgressCommitAnchor = previousPendingCommitAnchor
+        }
+        return layoutChanged
     }
 
     internal fun onPagesPrepared(slot: PagerSlot.Pages) {

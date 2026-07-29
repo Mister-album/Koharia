@@ -280,52 +280,73 @@ class PagerPageHolder(
         }
     }
 
-    private suspend fun renderComposite(source: BufferedSource) = withUIContext {
-        clearPairViews()
-        setImage(source, false, imageConfig(landscapeZoom = false))
-        removeErrorLayout()
+    private suspend fun renderComposite(source: BufferedSource) {
+        val background = automaticBackground(source)
+        withUIContext {
+            clearPairViews()
+            pageBackground = background
+            setImage(source, false, imageConfig(landscapeZoom = false))
+            removeErrorLayout()
+        }
     }
 
-    private suspend fun renderTiledPair(firstSource: Buffer, secondSource: Buffer) = withUIContext {
-        recycle()
-        clearPairViews()
-        displayedPairViews = 0
-        spreadDisplayed = false
-        physicalSplitFraction = 0.5f
+    private suspend fun renderTiledPair(firstSource: Buffer, secondSource: Buffer) {
+        val firstBackground = automaticBackground(firstSource)
+        val secondBackground = automaticBackground(secondSource)
+        withUIContext {
+            recycle()
+            clearPairViews()
+            displayedPairViews = 0
+            spreadDisplayed = false
+            physicalSplitFraction = 0.5f
 
-        val physicalPages = if (firstPageOnLeft()) {
-            listOf(page to firstSource, checkNotNull(extraPage) to secondSource)
-        } else {
-            listOf(checkNotNull(extraPage) to secondSource, page to firstSource)
-        }
-        val container = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        val children = physicalPages.map { (physicalPage, source) ->
-            ReaderPageImageView(
-                context = context,
-                basePreferences = viewer.activity.basePreferences,
-            ).apply {
-                onImageLoaded = {
-                    displayedPairViews++
-                    if (displayedPairViews == physicalPages.size && !spreadDisplayed) {
-                        spreadDisplayed = true
-                        progressIndicator?.hide()
-                        viewer.activity.onPagesDisplayed(slot.pages)
-                    }
-                }
-                onImageLoadError = { error -> setError(error, physicalPage) }
-                onScaleChanged = { viewer.activity.hideMenu() }
-                setImage(source.clone(), false, imageConfig(landscapeZoom = false))
+            val physicalPages = if (firstPageOnLeft()) {
+                listOf(
+                    Triple(page, firstSource, firstBackground),
+                    Triple(checkNotNull(extraPage), secondSource, secondBackground),
+                )
+            } else {
+                listOf(
+                    Triple(checkNotNull(extraPage), secondSource, secondBackground),
+                    Triple(page, firstSource, firstBackground),
+                )
             }
+            val container = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+            val children = physicalPages.map { (physicalPage, source, background) ->
+                ReaderPageImageView(
+                    context = context,
+                    basePreferences = viewer.activity.basePreferences,
+                ).apply {
+                    onImageLoaded = {
+                        displayedPairViews++
+                        if (displayedPairViews == physicalPages.size && !spreadDisplayed) {
+                            spreadDisplayed = true
+                            progressIndicator?.hide()
+                            viewer.activity.onPagesDisplayed(slot.pages)
+                        }
+                    }
+                    onImageLoadError = { error -> setError(error, physicalPage) }
+                    onScaleChanged = { viewer.activity.hideMenu() }
+                    pageBackground = background
+                    setImage(source.clone(), false, imageConfig(landscapeZoom = false))
+                }
+            }
+            children.forEach { child ->
+                container.addView(child, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+            }
+            pairViews = children
+            pairContainer = container
+            addView(container, ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            removeErrorLayout()
         }
-        children.forEach { child ->
-            container.addView(child, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
-        }
-        pairViews = children
-        pairContainer = container
-        addView(container, ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        removeErrorLayout()
+    }
+
+    private suspend fun automaticBackground(source: BufferedSource) = if (viewer.config.automaticBackground) {
+        withIOContext { ImageUtil.chooseBackground(context, source.peek().inputStream()) }
+    } else {
+        null
     }
 
     private fun createComposite(firstSource: Buffer, secondSource: Buffer): BufferedSource? {

@@ -374,7 +374,7 @@ internal class HttpPageLoader(
      * Retries a page. This method is only called from user interaction on the viewer.
      */
     override fun retryPage(page: ReaderPage) {
-        if (page.status is Page.State.Error) {
+        if (page.status != Page.State.Queue) {
             page.status = Page.State.Queue
         }
         preemptPrefetchFor(page, reason = "retry")
