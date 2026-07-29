@@ -13,8 +13,14 @@ class DoublePageCompatibilityPolicyTest {
     }
 
     @Test
-    fun `different source resolutions do not prevent matching pages from pairing`() {
-        assertTrue(policy(800, 1200, 2400, 3600))
+    fun `matching proportions with clearly different source sizes stay separate`() {
+        assertFalse(policy(800, 1200, 2400, 3600))
+    }
+
+    @Test
+    fun `a clearly different width or height stays separate`() {
+        assertFalse(policy(1200, 1800, 1700, 1800))
+        assertFalse(policy(1200, 1800, 1200, 2500))
     }
 
     @Test

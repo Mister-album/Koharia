@@ -151,7 +151,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             if (activity.viewModel.state.value.menuVisible || config.longTapEnabled) {
                 val holder = (adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages)
                     ?.let { getPageHolder(it.first) }
-                val page = holder?.pageAt(event.x, event.y)
+                val page = holder?.let {
+                    val holderLocation = IntArray(2)
+                    it.getLocationOnScreen(holderLocation)
+                    it.pageAt(event.rawX - holderLocation[0], event.rawY - holderLocation[1])
+                }
                 if (page != null) {
                     activity.onPageLongTap(page)
                     return@f true

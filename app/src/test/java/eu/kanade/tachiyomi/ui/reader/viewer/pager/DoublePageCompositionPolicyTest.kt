@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -32,6 +33,19 @@ class DoublePageCompositionPolicyTest {
                 maxHeapBytes = 512L * 1024 * 1024,
             ),
         )
+    }
+
+    @Test
+    fun `composition scales both pages to the taller page height`() {
+        val layout = DoublePageCompositionPolicy.compositionLayout(
+            DoublePageCompositionPolicy.Image(1200, 1800, 2_000_000),
+            DoublePageCompositionPolicy.Image(800, 1200, 1_000_000),
+        )
+
+        assertEquals(1200, layout?.firstWidth)
+        assertEquals(1200, layout?.secondWidth)
+        assertEquals(1800, layout?.height)
+        assertEquals(2400, layout?.outputWidth)
     }
 
     @Test

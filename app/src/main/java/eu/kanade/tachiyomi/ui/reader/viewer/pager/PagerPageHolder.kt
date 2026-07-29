@@ -6,6 +6,8 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -38,7 +40,6 @@ import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.decoder.ImageDecoder
 import tachiyomi.i18n.MR
-import kotlin.math.max
 
 /** ViewPager item that renders one physical page or a two-page spread. */
 @SuppressLint("ViewConstructor")
@@ -90,7 +91,13 @@ class PagerPageHolder(
     fun pageAt(x: Float, y: Float): ReaderPage {
         val second = extraPage ?: return page
         val firstOnLeft = firstPageOnLeft()
-        return if ((x < width * physicalSplitFraction) == firstOnLeft) page else second
+        val isLeftPage = if (pairViews.isEmpty()) {
+            sourceXFractionAt(x, y)?.let { it < physicalSplitFraction }
+                ?: (x < width * physicalSplitFraction)
+        } else {
+            x < width * physicalSplitFraction
+        }
+        return if (isLeftPage == firstOnLeft) page else second
     }
 
     fun canNavigatePanLeft(): Boolean = if (pairViews.isEmpty()) {
@@ -176,9 +183,11 @@ class PagerPageHolder(
     private suspend fun renderPages() {
         progressIndicator?.setProgress(0)
         failedPage = null
+        var streamPage: ReaderPage? = null
         val pageBytes = try {
             withIOContext {
                 slot.pages.associateWith { physicalPage ->
+                    streamPage = physicalPage
                     val stream = checkNotNull(physicalPage.stream)
                     stream().use { Buffer().apply { readFrom(it) } }
                 }
@@ -186,7 +195,7 @@ class PagerPageHolder(
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             logcat(LogPriority.ERROR, error)
-            setError(error, page)
+            setError(error, streamPage ?: page)
             return
         }
 
@@ -241,14 +250,18 @@ class PagerPageHolder(
             } else {
                 ReaderPage.SpreadInfo.UNKNOWN
             }
-        val width = decoder.width
-        val height = decoder.height
-        val kind = when {
-            isAnimated -> ReaderPage.SpreadKind.ANIMATED
-            width > height -> ReaderPage.SpreadKind.WIDE
-            else -> ReaderPage.SpreadKind.PAIRABLE
+        return try {
+            val width = decoder.width
+            val height = decoder.height
+            val kind = when {
+                isAnimated -> ReaderPage.SpreadKind.ANIMATED
+                width > height -> ReaderPage.SpreadKind.WIDE
+                else -> ReaderPage.SpreadKind.PAIRABLE
+            }
+            ReaderPage.SpreadInfo(kind, width, height)
+        } finally {
+            decoder.recycle()
         }
-        return ReaderPage.SpreadInfo(kind, width, height)
     }
 
     private suspend fun renderSingle(sourceBuffer: Buffer) {
@@ -317,53 +330,68 @@ class PagerPageHolder(
 
     private fun createComposite(firstSource: Buffer, secondSource: Buffer): BufferedSource? {
         val firstDecoder = ImageDecoder.newInstance(firstSource.peek().inputStream()) ?: return null
-        val secondDecoder = ImageDecoder.newInstance(secondSource.peek().inputStream()) ?: return null
-        val firstWidth = firstDecoder.width
-        val firstHeight = firstDecoder.height
-        val secondWidth = secondDecoder.width
-        val secondHeight = secondDecoder.height
-        if (minOf(firstWidth, firstHeight, secondWidth, secondHeight) <= 0) return null
-
-        val outputWidth = firstWidth.toLong() + secondWidth.toLong()
-        val outputHeight = max(firstHeight, secondHeight).toLong()
-        val runtime = Runtime.getRuntime()
-        val available = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
-        val firstInfo = DoublePageCompositionPolicy.Image(firstWidth, firstHeight, firstSource.size)
-        val secondInfo = DoublePageCompositionPolicy.Image(secondWidth, secondHeight, secondSource.size)
-        if (!DoublePageCompositionPolicy.shouldCompose(firstInfo, secondInfo, available, runtime.maxMemory())) {
-            return null
-        }
-
-        var firstBitmap: Bitmap? = null
-        var secondBitmap: Bitmap? = null
-        var composite: Bitmap? = null
         try {
-            firstBitmap = firstDecoder.decode() ?: return null
-            secondBitmap = secondDecoder.decode() ?: return null
-            composite = Bitmap.createBitmap(outputWidth.toInt(), outputHeight.toInt(), Bitmap.Config.ARGB_8888)
-            val hasAlpha = firstBitmap.hasAlpha() || secondBitmap.hasAlpha()
-            composite.setHasAlpha(hasAlpha)
-            val canvas = Canvas(composite)
-            canvas.drawColor(readerCanvasColor())
-            val firstOnLeft = firstPageOnLeft()
-            val leftBitmap = if (firstOnLeft) firstBitmap else secondBitmap
-            val rightBitmap = if (firstOnLeft) secondBitmap else firstBitmap
-            physicalSplitFraction = leftBitmap.width.toFloat() / outputWidth.toFloat()
-            canvas.drawBitmap(leftBitmap, 0f, ((outputHeight - leftBitmap.height) / 2f), null)
-            canvas.drawBitmap(
-                rightBitmap,
-                leftBitmap.width.toFloat(),
-                ((outputHeight - rightBitmap.height) / 2f),
-                null,
-            )
-            return Buffer().also { buffer ->
-                val format = if (hasAlpha) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
-                check(composite.compress(format, 100, buffer.outputStream()))
+            val secondDecoder = ImageDecoder.newInstance(secondSource.peek().inputStream()) ?: return null
+            try {
+                val firstWidth = firstDecoder.width
+                val firstHeight = firstDecoder.height
+                val secondWidth = secondDecoder.width
+                val secondHeight = secondDecoder.height
+                if (minOf(firstWidth, firstHeight, secondWidth, secondHeight) <= 0) return null
+
+                val runtime = Runtime.getRuntime()
+                val available = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+                val firstInfo = DoublePageCompositionPolicy.Image(firstWidth, firstHeight, firstSource.size)
+                val secondInfo = DoublePageCompositionPolicy.Image(secondWidth, secondHeight, secondSource.size)
+                val layout = DoublePageCompositionPolicy.compositionLayout(firstInfo, secondInfo) ?: return null
+                if (!DoublePageCompositionPolicy.shouldCompose(firstInfo, secondInfo, available, runtime.maxMemory())) {
+                    return null
+                }
+
+                var firstBitmap: Bitmap? = null
+                var secondBitmap: Bitmap? = null
+                var composite: Bitmap? = null
+                try {
+                    firstBitmap = firstDecoder.decode() ?: return null
+                    secondBitmap = secondDecoder.decode() ?: return null
+                    composite = Bitmap.createBitmap(layout.outputWidth, layout.height, Bitmap.Config.ARGB_8888)
+                    val hasAlpha = firstBitmap.hasAlpha() || secondBitmap.hasAlpha()
+                    composite.setHasAlpha(hasAlpha)
+                    val canvas = Canvas(composite)
+                    canvas.drawColor(readerCanvasColor())
+                    val firstOnLeft = firstPageOnLeft()
+                    val leftBitmap = if (firstOnLeft) firstBitmap else secondBitmap
+                    val rightBitmap = if (firstOnLeft) secondBitmap else firstBitmap
+                    val leftWidth = if (firstOnLeft) layout.firstWidth else layout.secondWidth
+                    val rightWidth = if (firstOnLeft) layout.secondWidth else layout.firstWidth
+                    physicalSplitFraction = leftWidth.toFloat() / layout.outputWidth
+                    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                    canvas.drawBitmap(
+                        leftBitmap,
+                        null,
+                        Rect(0, 0, leftWidth, layout.height),
+                        paint,
+                    )
+                    canvas.drawBitmap(
+                        rightBitmap,
+                        null,
+                        Rect(leftWidth, 0, leftWidth + rightWidth, layout.height),
+                        paint,
+                    )
+                    return Buffer().also { buffer ->
+                        val format = if (hasAlpha) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+                        check(composite.compress(format, 100, buffer.outputStream()))
+                    }
+                } finally {
+                    firstBitmap?.recycle()
+                    secondBitmap?.recycle()
+                    composite?.recycle()
+                }
+            } finally {
+                secondDecoder.recycle()
             }
         } finally {
-            firstBitmap?.recycle()
-            secondBitmap?.recycle()
-            composite?.recycle()
+            firstDecoder.recycle()
         }
     }
 

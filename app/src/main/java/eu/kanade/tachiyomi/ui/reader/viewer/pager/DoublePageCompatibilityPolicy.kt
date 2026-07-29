@@ -9,6 +9,7 @@ internal object DoublePageCompatibilityPolicy {
     private const val MIN_PORTRAIT_ASPECT_RATIO = 0.35f
     private const val MAX_PORTRAIT_ASPECT_RATIO = 0.95f
     private const val MAX_ASPECT_RATIO_DIFFERENCE = 1.25f
+    private const val MAX_DIMENSION_DIFFERENCE = 1.35f
 
     fun canPair(first: ReaderPage.SpreadInfo, second: ReaderPage.SpreadInfo): Boolean {
         if (first.kind == ReaderPage.SpreadKind.UNKNOWN || second.kind == ReaderPage.SpreadKind.UNKNOWN) {
@@ -18,7 +19,13 @@ internal object DoublePageCompatibilityPolicy {
 
         val firstAspect = first.aspectRatio() ?: return false
         val secondAspect = second.aspectRatio() ?: return false
-        return max(firstAspect, secondAspect) / min(firstAspect, secondAspect) <= MAX_ASPECT_RATIO_DIFFERENCE
+        if (max(firstAspect, secondAspect) / min(firstAspect, secondAspect) > MAX_ASPECT_RATIO_DIFFERENCE) {
+            return false
+        }
+
+        val widthDifference = dimensionDifference(first.width, second.width) ?: return false
+        val heightDifference = dimensionDifference(first.height, second.height) ?: return false
+        return max(widthDifference, heightDifference) <= MAX_DIMENSION_DIFFERENCE
     }
 
     private fun ReaderPage.SpreadInfo.isRegularPortrait(): Boolean {
@@ -31,5 +38,11 @@ internal object DoublePageCompatibilityPolicy {
         val validWidth = width?.takeIf { it > 0 } ?: return null
         val validHeight = height?.takeIf { it > 0 } ?: return null
         return validWidth.toFloat() / validHeight
+    }
+
+    private fun dimensionDifference(first: Int?, second: Int?): Float? {
+        val validFirst = first?.takeIf { it > 0 } ?: return null
+        val validSecond = second?.takeIf { it > 0 } ?: return null
+        return max(validFirst, validSecond).toFloat() / min(validFirst, validSecond)
     }
 }

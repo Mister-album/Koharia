@@ -19,6 +19,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.VerticalPagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
@@ -60,12 +61,18 @@ internal fun ColumnScope.ReadingModePage(screenModel: ReaderSettingsScreenModel)
     if (viewer is WebtoonViewer) {
         WebtoonViewerSettings(screenModel)
     } else {
-        PagerViewerSettings(screenModel)
+        PagerViewerSettings(
+            screenModel = screenModel,
+            supportsDoublePages = viewer !is VerticalPagerViewer,
+        )
     }
 }
 
 @Composable
-private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenModel) {
+private fun ColumnScope.PagerViewerSettings(
+    screenModel: ReaderSettingsScreenModel,
+    supportsDoublePages: Boolean,
+) {
     val navigationModePager by screenModel.preferences.navigationModePager.collectAsState()
     val pagerNavInverted by screenModel.preferences.pagerNavInverted.collectAsState()
     TapZonesItems(
@@ -118,21 +125,28 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
 
     val pageLayoutValue by screenModel.preferences.pageLayout.collectAsState()
     val pageLayout = PageLayout.fromPreference(pageLayoutValue)
-    SettingsChipRow(MR.strings.pref_page_layout) {
-        PageLayout.selectableEntries.forEach { layout ->
-            FilterChip(
-                selected = pageLayout == layout,
-                onClick = {
-                    if (layout != PageLayout.SINGLE_PAGE) {
-                        screenModel.preferences.dualPageSplitPaged.set(false)
-                    }
-                    screenModel.preferences.pageLayout.set(layout.value)
-                },
-                label = { Text(stringResource(ReaderPreferences.PageLayouts[layout.value])) },
-            )
-        }
+    val effectivePageLayout = if (!supportsDoublePages && pageLayout.usesDoublePages) {
+        PageLayout.SINGLE_PAGE
+    } else {
+        pageLayout
     }
-    if (pageLayout.usesDoublePages) {
+    SettingsChipRow(MR.strings.pref_page_layout) {
+        PageLayout.selectableEntries
+            .filter { supportsDoublePages || !it.usesDoublePages }
+            .forEach { layout ->
+                FilterChip(
+                    selected = effectivePageLayout == layout,
+                    onClick = {
+                        if (layout != PageLayout.SINGLE_PAGE) {
+                            screenModel.preferences.dualPageSplitPaged.set(false)
+                        }
+                        screenModel.preferences.pageLayout.set(layout.value)
+                    },
+                    label = { Text(stringResource(ReaderPreferences.PageLayouts[layout.value])) },
+                )
+            }
+    }
+    if (supportsDoublePages && pageLayout.usesDoublePages) {
         CheckboxItem(
             label = stringResource(MR.strings.pref_shift_double_pages),
             pref = screenModel.preferences.shiftDoublePages,
