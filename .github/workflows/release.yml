@@ -1,42 +1,111 @@
 name: Release
+
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build (for example, v0.3.0)
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.tag }}
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  get_tag:
+  prepare:
     if: github.repository == 'Mister-album/Koharia'
-    name: Extract tag name
-    runs-on: 'ubuntu-24.04'
+    name: Validate release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
-      tag: ${{ steps.extract.outputs.tag }}
+      tag: ${{ steps.release.outputs.tag }}
+      version_name: ${{ steps.release.outputs.version_name }}
+      version_code: ${{ steps.release.outputs.version_code }}
 
     steps:
-      - name: Validate tag
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: |
-          echo "::error::Run this workflow from an existing release tag."
-          exit 1
+      - name: Checkout release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
-      - name: Get tag name
-        id: extract
-        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+      - name: Validate tag and app version
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must use the vMAJOR.MINOR.PATCH format."
+            exit 1
+          fi
+
+          if ! git show-ref --tags --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "::error::Tag $RELEASE_TAG does not exist. Create and push it before running this workflow."
+            exit 1
+          fi
+
+          version_name="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)"/\1/p' app/build.gradle.kts | head -n 1)"
+          version_code="$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+)/\1/p' app/build.gradle.kts | head -n 1)"
+
+          if [[ -z "$version_name" || -z "$version_code" ]]; then
+            echo "::error::Unable to read versionName or versionCode from app/build.gradle.kts."
+            exit 1
+          fi
+
+          if [[ "$RELEASE_TAG" != "v$version_name" ]]; then
+            echo "::error::Tag $RELEASE_TAG does not match app version v$version_name."
+            exit 1
+          fi
+
+          git fetch --no-tags origin "main:refs/remotes/origin/main"
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tag $RELEASE_TAG does not point to a commit contained in main."
+            exit 1
+          fi
+
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "Validated $RELEASE_TAG (versionCode $version_code)."
+
+      - name: Validate signing secrets
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          [[ -n "$SIGNING_KEY" ]] || missing+=("SIGNING_KEY")
+          [[ -n "$ALIAS" ]] || missing+=("ALIAS")
+          [[ -n "$KEY_STORE_PASSWORD" ]] || missing+=("KEY_STORE_PASSWORD")
+          [[ -n "$KEY_PASSWORD" ]] || missing+=("KEY_PASSWORD")
+
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required Actions secrets: ${missing[*]}"
+            exit 1
+          fi
 
   build:
     if: github.repository == 'Mister-album/Koharia'
     name: Build
-    runs-on: 'ubuntu-24.04'
-    needs: get_tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: prepare
 
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up JDK
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
@@ -50,6 +119,28 @@ jobs:
       - name: Build
         run: ./gradlew assembleRelease -Pinclude-telemetry -Penable-updater
 
+      - name: Verify unsigned APK outputs
+        env:
+          VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+        run: |
+          set -euo pipefail
+
+          release_dir="app/build/outputs/apk/release"
+          expected=(
+            "Koharia-v${VERSION_NAME}-release.apk"
+            "Koharia-v${VERSION_NAME}-release-arm64-v8a.apk"
+            "Koharia-v${VERSION_NAME}-release-armeabi-v7a.apk"
+            "Koharia-v${VERSION_NAME}-release-x86.apk"
+            "Koharia-v${VERSION_NAME}-release-x86_64.apk"
+          )
+
+          for file in "${expected[@]}"; do
+            if [[ ! -f "$release_dir/$file" ]]; then
+              echo "::error::Expected APK not found: $release_dir/$file"
+              exit 1
+            fi
+          done
+
       - name: Sign APK
         uses: r0adkll/sign-android-release@a391126403df92c6a0a3988a829dd47f79b89ed7
         with:
@@ -61,36 +152,45 @@ jobs:
         env:
           BUILD_TOOLS_VERSION: '35.0.1'
 
-      - name: Rename APK
+      - name: Prepare release APKs
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
         run: |
-          set -e
+          set -euo pipefail
 
-          mv app/build/outputs/apk/release/app-universal-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-release.apk
-          mv app/build/outputs/apk/release/app-arm64-v8a-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-arm64-v8a-release.apk
-          mv app/build/outputs/apk/release/app-armeabi-v7a-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-armeabi-v7a-release.apk
-          mv app/build/outputs/apk/release/app-x86-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-x86-release.apk
-          mv app/build/outputs/apk/release/app-x86_64-release-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-x86_64-release.apk
+          release_dir="app/build/outputs/apk/release"
+          mv "$release_dir/Koharia-v${VERSION_NAME}-release-signed.apk" "Koharia-${RELEASE_TAG}-release.apk"
+          mv "$release_dir/Koharia-v${VERSION_NAME}-release-arm64-v8a-signed.apk" "Koharia-${RELEASE_TAG}-arm64-v8a-release.apk"
+          mv "$release_dir/Koharia-v${VERSION_NAME}-release-armeabi-v7a-signed.apk" "Koharia-${RELEASE_TAG}-armeabi-v7a-release.apk"
+          mv "$release_dir/Koharia-v${VERSION_NAME}-release-x86-signed.apk" "Koharia-${RELEASE_TAG}-x86-release.apk"
+          mv "$release_dir/Koharia-v${VERSION_NAME}-release-x86_64-signed.apk" "Koharia-${RELEASE_TAG}-x86_64-release.apk"
 
-      - name: Upload APK
+      - name: Upload APKs
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: koharia
+          if-no-files-found: error
+          retention-days: 1
           path: |
-            Koharia-${{ needs.get_tag.outputs.tag }}-release.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-arm64-v8a-release.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-armeabi-v7a-release.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-x86-release.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-x86_64-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-arm64-v8a-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-armeabi-v7a-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-x86-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-x86_64-release.apk
 
   build_foss:
     if: github.repository == 'Mister-album/Koharia'
     name: Build (FOSS)
     runs-on: ubuntu-24.04
-    needs: get_tag
+    timeout-minutes: 60
+    needs: prepare
 
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up JDK
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
@@ -106,10 +206,26 @@ jobs:
       - name: Build
         run: ./gradlew assembleFoss -Penable-updater
 
+      - name: Verify unsigned APK output
+        env:
+          VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+        run: |
+          set -euo pipefail
+
+          apk="app/build/outputs/apk/foss/Koharia-v${VERSION_NAME}-foss.apk"
+          if [[ ! -f "$apk" ]]; then
+            echo "::error::Expected APK not found: $apk"
+            exit 1
+          fi
+
+          signing_dir="app/build/outputs/apk/foss-signing"
+          mkdir -p "$signing_dir"
+          cp "$apk" "$signing_dir/"
+
       - name: Sign APK
         uses: r0adkll/sign-android-release@a391126403df92c6a0a3988a829dd47f79b89ed7
         with:
-          releaseDirectory: app/build/outputs/apk/foss
+          releaseDirectory: app/build/outputs/apk/foss-signing
           signingKeyBase64: ${{ secrets.SIGNING_KEY }}
           alias: ${{ secrets.ALIAS }}
           keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
@@ -117,23 +233,31 @@ jobs:
         env:
           BUILD_TOOLS_VERSION: '35.0.1'
 
-      - name: Rename APK
+      - name: Prepare release APK
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
         run: |
-          set -e
+          set -euo pipefail
 
-          mv app/build/outputs/apk/foss/app-universal-foss-unsigned-signed.apk Koharia-${{ needs.get_tag.outputs.tag }}-foss.apk
+          mv "app/build/outputs/apk/foss-signing/Koharia-v${VERSION_NAME}-foss-signed.apk" "Koharia-${RELEASE_TAG}-foss.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: koharia-foss
-          path: Koharia-${{ needs.get_tag.outputs.tag }}-foss.apk
+          if-no-files-found: error
+          retention-days: 1
+          path: Koharia-${{ needs.prepare.outputs.tag }}-foss.apk
 
   release:
     if: github.repository == 'Mister-album/Koharia'
     name: Create GitHub Release
     runs-on: ubuntu-24.04
-    needs: [get_tag, build, build_foss]
+    timeout-minutes: 15
+    needs: [prepare, build, build_foss]
+    permissions:
+      contents: write
 
     steps:
       - name: Download all artifacts
@@ -141,33 +265,58 @@ jobs:
         with:
           merge-multiple: true
 
-      - name: Delete all artifacts
-        uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
-        with:
-          failOnError: false
-          name: |
-            koharia
-            koharia-foss
+      - name: Verify release files and generate checksums
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
 
-      - name: Create GitHub Release
+          expected=(
+            "Koharia-${RELEASE_TAG}-release.apk"
+            "Koharia-${RELEASE_TAG}-foss.apk"
+            "Koharia-${RELEASE_TAG}-arm64-v8a-release.apk"
+            "Koharia-${RELEASE_TAG}-armeabi-v7a-release.apk"
+            "Koharia-${RELEASE_TAG}-x86-release.apk"
+            "Koharia-${RELEASE_TAG}-x86_64-release.apk"
+          )
+
+          for file in "${expected[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              echo "::error::Release APK not found: $file"
+              exit 1
+            fi
+          done
+
+          printf '%s\n' "${expected[@]}" | sort | xargs sha256sum > SHA256SUMS.txt
+
+      - name: Create draft GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          tag_name: ${{ needs.get_tag.outputs.tag }}
-          name: Koharia ${{ needs.get_tag.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Koharia ${{ needs.prepare.outputs.tag }}
           body: |
-            Check the [past release notes](https://github.com/Mister-album/Koharia/releases) when upgrading from an earlier version.
-            Visit the [Koharia website](https://koharia.org/en/) for downloads, documentation, and support.
+            <!-- koharia-release-notes:zh -->
+            # Koharia ${{ needs.prepare.outputs.tag }}
 
-            > [!TIP]
-            >
-            > If you are unsure which APK to download, use `Koharia-${{ needs.get_tag.outputs.tag }}-release.apk`.
+            发布前请在此处补充中文更新说明。
+
+            如果不确定应下载哪个 APK，请使用 `Koharia-${{ needs.prepare.outputs.tag }}-release.apk`。
+            <!-- koharia-release-notes:en -->
+            # Koharia ${{ needs.prepare.outputs.tag }}
+
+            Add the English release notes here before publishing.
+
+            If you are unsure which APK to download, use `Koharia-${{ needs.prepare.outputs.tag }}-release.apk`.
+            <!-- koharia-release-notes:end -->
           files: |
-            Koharia-${{ needs.get_tag.outputs.tag }}-release.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-foss.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-arm64-v8a-release.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-armeabi-v7a-release.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-x86-release.apk
-            Koharia-${{ needs.get_tag.outputs.tag }}-x86_64-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-foss.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-arm64-v8a-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-armeabi-v7a-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-x86-release.apk
+            Koharia-${{ needs.prepare.outputs.tag }}-x86_64-release.apk
+            SHA256SUMS.txt
+          fail_on_unmatched_files: true
           draft: true
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
