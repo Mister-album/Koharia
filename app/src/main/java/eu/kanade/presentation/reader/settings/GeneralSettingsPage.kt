@@ -56,23 +56,19 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
         }
     }
 
+    val persistReaderSettingsChanges by screenModel.persistReaderSettingsChanges.collectAsState()
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_persist_reader_settings),
+        checked = persistReaderSettingsChanges,
+        onClick = {
+            screenModel.onSetPersistReaderSettingsChanges(!persistReaderSettingsChanges)
+        },
+    )
+
     CheckboxItem(
         label = stringResource(MR.strings.pref_show_page_number),
         pref = screenModel.preferences.showPageNumber,
     )
-
-    val verticalNavigatorForLongStrip by screenModel.preferences.verticalNavigatorForLongStrip.collectAsState()
-    CheckboxItem(
-        label = stringResource(MR.strings.pref_webtoon_vertical_navigator),
-        pref = screenModel.preferences.verticalNavigatorForLongStrip,
-    )
-
-    if (verticalNavigatorForLongStrip) {
-        CheckboxItem(
-            label = stringResource(MR.strings.pref_webtoon_vertical_navigator_on_left),
-            pref = screenModel.preferences.verticalNavigatorOnLeft,
-        )
-    }
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_fullscreen),
@@ -87,6 +83,8 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
         )
     }
 
+    ReaderSettingsGroupDivider()
+
     CheckboxItem(
         label = stringResource(MR.strings.pref_keep_screen_on),
         pref = screenModel.preferences.keepScreenOn,
@@ -96,6 +94,8 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
         label = stringResource(MR.strings.pref_read_with_long_tap),
         pref = screenModel.preferences.readWithLongTap,
     )
+
+    ReaderSettingsGroupDivider()
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_always_show_chapter_transition),

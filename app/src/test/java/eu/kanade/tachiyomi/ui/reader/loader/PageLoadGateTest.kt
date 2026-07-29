@@ -63,4 +63,39 @@ class PageLoadGateTest {
 
         assertEquals(listOf(0), selection.prefetchIndexes)
     }
+
+    @Test
+    fun `double page slot activates both pages and waits for both to display`() {
+        val gate = PageLoadGate(preloadSize = 4)
+
+        val activation = gate.activate(setOf(6, 7), logicalPageIndex = 7, pageCount = 20)
+
+        assertTrue(activation.changed)
+        assertTrue(gate.isActive(6))
+        assertTrue(gate.isActive(7))
+        assertEquals(emptyList<Int>(), gate.onPagesDisplayed(setOf(6), 20))
+        assertEquals(listOf(8, 9, 10, 11), gate.onPagesDisplayed(setOf(6, 7), 20))
+    }
+
+    @Test
+    fun `backward double page prefetch starts before first visible page`() {
+        val gate = PageLoadGate(preloadSize = 4)
+        gate.activate(setOf(10, 11), logicalPageIndex = 11, pageCount = 20)
+        gate.onPagesDisplayed(setOf(10, 11), 20)
+
+        val activation = gate.activate(setOf(8, 9), logicalPageIndex = 9, pageCount = 20)
+
+        assertEquals(listOf(7, 6, 5, 4), activation.prefetchIndexes)
+    }
+
+    @Test
+    fun `late display from an old spread cannot unlock the new spread`() {
+        val gate = PageLoadGate(preloadSize = 4)
+        gate.activate(setOf(2, 3), logicalPageIndex = 3, pageCount = 20)
+        gate.onPagesDisplayed(setOf(2, 3), 20)
+        gate.activate(setOf(8, 9), logicalPageIndex = 9, pageCount = 20)
+
+        assertEquals(emptyList<Int>(), gate.onPagesDisplayed(setOf(2, 3), 20))
+        assertEquals(listOf(10, 11, 12, 13), gate.onPagesDisplayed(setOf(8, 9), 20))
+    }
 }

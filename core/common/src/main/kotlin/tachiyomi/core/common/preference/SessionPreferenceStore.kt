@@ -1,15 +1,13 @@
-package koharia.epub.settings
+package tachiyomi.core.common.preference
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import tachiyomi.core.common.preference.Preference
-import tachiyomi.core.common.preference.PreferenceStore
 
-/** Preference overlay used for reader-only setting changes that must not be persisted. */
-internal class EpubSessionPreferenceStore(
+/** Preference overlay for settings that should remain local to the current session. */
+class SessionPreferenceStore(
     private val backingStore: PreferenceStore,
     persistChanges: Boolean,
 ) : PreferenceStore {
@@ -21,10 +19,9 @@ internal class EpubSessionPreferenceStore(
 
     fun setPersistChanges(enabled: Boolean) {
         synchronized(preferences) {
+            val shouldFlush = enabled && !persistChanges
             persistChanges = enabled
-            if (enabled) {
-                preferences.values.forEach { it.persist() }
-            }
+            if (shouldFlush) preferences.values.forEach { it.persist() }
         }
     }
 

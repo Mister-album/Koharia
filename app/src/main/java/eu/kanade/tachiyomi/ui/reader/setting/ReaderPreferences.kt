@@ -21,6 +21,9 @@ class ReaderPreferences(
 
     // region General
 
+    val persistReaderSettingsChanges: Preference<Boolean> =
+        preferenceStore.getBoolean("reader_persist_settings_changes", true)
+
     val pageTransitions: Preference<Boolean> = preferenceStore.getBoolean("pref_enable_transitions_key", true)
 
     val flashOnPageChange: Preference<Boolean> = preferenceStore.getBoolean("pref_reader_flash", false)
@@ -135,6 +138,12 @@ class ReaderPreferences(
         false,
     )
 
+    val pageLayout: Preference<Int> = preferenceStore.getInt("page_layout", PageLayout.SINGLE_PAGE.value)
+
+    val shiftDoublePages: Preference<Boolean> = preferenceStore.getBoolean("pref_shift_double_pages", false)
+
+    val invertDoublePages: Preference<Boolean> = preferenceStore.getBoolean("invert_double_pages", false)
+
     // endregion
 
     // region Color filter
@@ -245,6 +254,13 @@ class ReaderPreferences(
             MR.strings.zoom_start_left,
             MR.strings.zoom_start_right,
             MR.strings.zoom_start_center,
+        )
+
+        val PageLayouts = listOf(
+            MR.strings.page_layout_single,
+            MR.strings.page_layout_double,
+            MR.strings.page_layout_automatic_double,
+            MR.strings.page_layout_automatic_single,
         )
 
         val ColorFilterMode = buildList {

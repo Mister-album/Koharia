@@ -54,7 +54,20 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     /**
      * Currently active item. It can be a chapter page or a chapter transition.
      */
-    private var currentPage: Any? = null
+    private var currentSlot: PagerSlot? = null
+
+    /** Physical page that must remain visible while the current spread is rebuilt. */
+    private var stableSlotAnchor: ReaderPage? = null
+
+    private var awaitingSlotRebuildAnchor: ReaderPage? = null
+
+    private var awaitingPreparedSlot: PendingPreparedSlot? = null
+
+    private var pendingPageMove: PendingPageMove? = null
+
+    private var pendingProgressCommitAnchor: ReaderPage? = null
+
+    private var awaitingImageRefresh = false
 
     /**
      * Viewer chapters to set when the pager enters idle mode. Otherwise, if the view was settling
@@ -70,6 +83,14 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         set(value) {
             field = value
             if (value) {
+                awaitingSlotRebuildAnchor?.let { anchor ->
+                    awaitingSlotRebuildAnchor = null
+                    rebuildSlots(anchor)
+                }
+                if (awaitingImageRefresh) {
+                    awaitingImageRefresh = false
+                    refreshAdapter()
+                }
                 awaitingIdleViewerChapters?.let { viewerChapters ->
                     setChaptersInternal(viewerChapters)
                     awaitingIdleViewerChapters = null
@@ -85,7 +106,15 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             if (!activity.isScrollingThroughPages) {
                 activity.hideMenu()
             }
-            onPageChange(position)
+            val pendingMove = pendingPageMove?.takeIf { it.position == position }
+            if (pendingMove != null) {
+                pendingPageMove = null
+            }
+            onPageChange(
+                position = position,
+                cause = pendingMove?.cause ?: PageChangeCause.USER_NAVIGATION,
+                anchor = pendingMove?.anchor,
+            )
         }
 
         override fun onPageScrollStateChanged(state: Int) {
@@ -118,11 +147,13 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 NavigationRegion.LEFT -> moveLeft()
             }
         }
-        pager.longTapListener = f@{
+        pager.longTapListener = f@{ event ->
             if (activity.viewModel.state.value.menuVisible || config.longTapEnabled) {
-                val item = adapter.items.getOrNull(pager.currentItem)
-                if (item is ReaderPage) {
-                    activity.onPageLongTap(item)
+                val holder = (adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages)
+                    ?.let { getPageHolder(it.first) }
+                val page = holder?.pageAt(event.x, event.y)
+                if (page != null) {
+                    activity.onPageLongTap(page)
                     return@f true
                 }
             }
@@ -135,8 +166,21 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             }
         }
 
+        config.doublePageLayoutChangedListener = {
+            pendingProgressCommitAnchor = null
+            val anchor = stableSlotAnchor ?: (currentSlot as? PagerSlot.Pages)?.progressPage
+            if (!config.dualPageSplit && !config.automaticallySplitsWidePages) {
+                adapter.cleanupPageSplit()
+            }
+            requestSlotRebuild(anchor)
+        }
+
         config.imagePropertyChangedListener = {
-            refreshAdapter()
+            if (isIdle) {
+                refreshAdapter()
+            } else {
+                awaitingImageRefresh = true
+            }
         }
 
         config.navigationModeChangedListener = {
@@ -148,6 +192,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     override fun destroy() {
         super.destroy()
         scope.cancel()
+    }
+
+    fun onConfigurationChanged() {
+        config.onConfigurationChanged()
     }
 
     /**
@@ -168,33 +216,71 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun getPageHolder(page: ReaderPage): PagerPageHolder? =
         pager.children
             .filterIsInstance(PagerPageHolder::class.java)
-            .firstOrNull { it.item == page }
+            .firstOrNull { it.slot.contains(page) }
 
     /**
      * Called when a new page (either a [ReaderPage] or [ChapterTransition]) is marked as active
      */
-    private fun onPageChange(position: Int) {
-        val page = adapter.items.getOrNull(position)
-        if (page != null && currentPage != page) {
-            val allowPreload = checkAllowPreload(page as? ReaderPage)
+    private fun onPageChange(
+        position: Int,
+        cause: PageChangeCause = PageChangeCause.USER_NAVIGATION,
+        anchor: ReaderPage? = null,
+        force: Boolean = false,
+    ) {
+        val slot = adapter.slots.getOrNull(position)
+        if (slot != null && (force || currentSlot != slot)) {
+            val page = (slot as? PagerSlot.Pages)?.progressPage
+            val previousPage = (currentSlot as? PagerSlot.Pages)?.progressPage
+            val allowPreload = checkAllowPreload(page)
             val forward = when {
-                currentPage is ReaderPage && page is ReaderPage -> {
+                previousPage != null && page != null -> {
                     // if both pages have the same number, it's a split page with an InsertPage
-                    if (page.number == (currentPage as ReaderPage).number) {
+                    if (page.number == previousPage.number) {
                         // the InsertPage is always the second in the reading direction
                         page is InsertPage
                     } else {
-                        page.number > (currentPage as ReaderPage).number
+                        page.number > previousPage.number
                     }
                 }
-                currentPage is ChapterTransition.Prev && page is ReaderPage ->
+                (currentSlot as? PagerSlot.Transition)?.transition is ChapterTransition.Prev && page != null ->
                     false
                 else -> true
             }
-            currentPage = page
-            when (page) {
-                is ReaderPage -> onReaderPageSelected(page, allowPreload, forward)
-                is ChapterTransition -> onTransitionSelected(page)
+            if (cause == PageChangeCause.USER_NAVIGATION &&
+                slot is PagerSlot.Transition &&
+                slot.transition is ChapterTransition.Next
+            ) {
+                (currentSlot as? PagerSlot.Pages)?.let { previousSlot ->
+                    activity.onPagesSelected(previousSlot.pages)
+                    pendingProgressCommitAnchor = null
+                }
+            }
+            currentSlot = slot
+            when (slot) {
+                is PagerSlot.Pages -> {
+                    val selectionAnchor = when (cause) {
+                        PageChangeCause.USER_NAVIGATION -> slot.progressPage.also {
+                            pendingProgressCommitAnchor = it
+                        }
+                        PageChangeCause.RESTORE,
+                        PageChangeCause.LAYOUT_REBUILD,
+                        -> anchor?.takeIf(slot::contains)
+                            ?: stableSlotAnchor?.takeIf(slot::contains)
+                            ?: slot.first
+                    }
+                    stableSlotAnchor = selectionAnchor
+                    val commitProgress = !config.doublePages ||
+                        cause == PageChangeCause.USER_NAVIGATION ||
+                        pendingProgressCommitAnchor?.let(slot::contains) == true
+                    onReaderPagesSelected(
+                        slot = slot,
+                        allowPreload = allowPreload,
+                        forward = forward,
+                        commitProgress = commitProgress,
+                        anchor = selectionAnchor,
+                    )
+                }
+                is PagerSlot.Transition -> onTransitionSelected(slot.transition)
             }
         }
     }
@@ -204,15 +290,15 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         page ?: return true
 
         // Initial opening - preload allowed
-        currentPage ?: return true
+        currentSlot ?: return true
 
         // Allow preload for
         // 1. Going to next chapter from chapter transition
         // 2. Going between pages of same chapter
         // 3. Next chapter page
         return when (page.chapter) {
-            (currentPage as? ChapterTransition.Next)?.to -> true
-            (currentPage as? ReaderPage)?.chapter -> true
+            ((currentSlot as? PagerSlot.Transition)?.transition as? ChapterTransition.Next)?.to -> true
+            (currentSlot as? PagerSlot.Pages)?.progressPage?.chapter -> true
             adapter.nextTransition?.to -> true
             else -> false
         }
@@ -222,10 +308,42 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Called when a [ReaderPage] is marked as active. It notifies the
      * activity of the change and requests the preload of the next chapter if this is the last page.
      */
-    private fun onReaderPageSelected(page: ReaderPage, allowPreload: Boolean, forward: Boolean) {
+    private fun onReaderPagesSelected(
+        slot: PagerSlot.Pages,
+        allowPreload: Boolean,
+        forward: Boolean,
+        commitProgress: Boolean,
+        anchor: ReaderPage,
+    ) {
+        if (config.doublePages && slot.pages.any { it.spreadKind == ReaderPage.SpreadKind.UNKNOWN }) {
+            awaitingPreparedSlot = PendingPreparedSlot(slot, allowPreload, forward, commitProgress, anchor)
+            activity.onPagesActivated(slot.pages, anchor)
+            getPageHolder(slot.progressPage)?.onPageSelected(forward)
+            return
+        }
+        awaitingPreparedSlot = null
+        commitReaderPagesSelected(slot, allowPreload, forward, commitProgress, anchor)
+    }
+
+    private fun commitReaderPagesSelected(
+        slot: PagerSlot.Pages,
+        allowPreload: Boolean,
+        forward: Boolean,
+        commitProgress: Boolean,
+        anchor: ReaderPage,
+    ) {
+        val page = slot.progressPage
         val pages = page.chapter.pages ?: return
-        logcat { "onReaderPageSelected: ${page.number}/${pages.size}" }
-        activity.onPageSelected(page)
+        logcat {
+            "onReaderPagesSelected: ${slot.pages.joinToString { it.number.toString() }}/${pages.size} " +
+                "commitProgress=$commitProgress anchor=${anchor.number}"
+        }
+        if (commitProgress) {
+            activity.onPagesSelected(slot.pages)
+            pendingProgressCommitAnchor = null
+        } else {
+            activity.onPagesActivated(slot.pages, anchor)
+        }
 
         // Notify holder of page change
         getPageHolder(page)?.onPageSelected(forward)
@@ -279,33 +397,56 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.removeOnPageChangeListener(pagerListener)
 
         val forceTransition = config.alwaysShowChapterTransition ||
-            adapter.items.getOrNull(pager.currentItem) is ChapterTransition
-        adapter.setChapters(chapters, forceTransition)
+            adapter.slots.getOrNull(pager.currentItem) is PagerSlot.Transition
+        adapter.setChapters(chapters, forceTransition, stableSlotAnchor)
 
         // Layout the pager once a chapter is being set
+        val firstLayout = pager.isGone
         if (pager.isGone) {
             logcat { "Pager first layout" }
             val pages = chapters.currChapter.pages ?: return
-            moveToPage(pages[min(chapters.currChapter.requestedPage, pages.lastIndex)])
+            val openingPage = pages[min(chapters.currChapter.requestedPage, pages.lastIndex)]
+            pendingProgressCommitAnchor = null
+            stableSlotAnchor = openingPage
+            adapter.positionOf(openingPage)
+                .takeIf { it >= 0 }
+                ?.let { pager.setCurrentItem(it, false) }
             pager.isVisible = true
         }
 
         pager.addOnPageChangeListener(pagerListener)
         // Manually call onPageChange to update the UI
-        onPageChange(pager.currentItem)
+        pendingPageMove = null
+        onPageChange(
+            position = pager.currentItem,
+            cause = if (firstLayout) PageChangeCause.RESTORE else PageChangeCause.LAYOUT_REBUILD,
+            anchor = stableSlotAnchor,
+        )
     }
 
     /**
      * Tells this viewer to move to the given [page].
      */
     override fun moveToPage(page: ReaderPage) {
-        val position = adapter.items.indexOf(page)
+        moveToPage(page, PageChangeCause.USER_NAVIGATION)
+    }
+
+    override fun restorePage(page: ReaderPage) {
+        pendingProgressCommitAnchor = null
+        moveToPage(page, PageChangeCause.RESTORE)
+    }
+
+    private fun moveToPage(page: ReaderPage, cause: PageChangeCause) {
+        val position = adapter.positionOf(page)
         if (position != -1) {
             val currentPosition = pager.currentItem
+            stableSlotAnchor = page
+            pendingPageMove = PendingPageMove(position, page, cause)
             pager.setCurrentItem(position, true)
             // manually call onPageChange since ViewPager listener is not triggered in this case
             if (currentPosition == position) {
-                onPageChange(position)
+                pendingPageMove = null
+                onPageChange(position, cause, page, force = true)
             }
         } else {
             logcat { "Page $page not found in adapter" }
@@ -331,9 +472,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     protected open fun moveRight() {
         if (pager.currentItem != adapter.count - 1) {
-            val holder = (currentPage as? ReaderPage)?.let(::getPageHolder)
-            if (holder != null && config.navigateToPan && holder.canPanRight()) {
-                holder.panRight()
+            val holder = (currentSlot as? PagerSlot.Pages)?.progressPage?.let(::getPageHolder)
+            if (holder != null && config.navigateToPan && holder.canNavigatePanRight()) {
+                holder.navigatePanRight()
             } else {
                 pager.setCurrentItem(pager.currentItem + 1, config.usePageTransitions)
             }
@@ -345,9 +486,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     protected open fun moveLeft() {
         if (pager.currentItem != 0) {
-            val holder = (currentPage as? ReaderPage)?.let(::getPageHolder)
-            if (holder != null && config.navigateToPan && holder.canPanLeft()) {
-                holder.panLeft()
+            val holder = (currentSlot as? PagerSlot.Pages)?.progressPage?.let(::getPageHolder)
+            if (holder != null && config.navigateToPan && holder.canNavigatePanLeft()) {
+                holder.navigatePanLeft()
             } else {
                 pager.setCurrentItem(pager.currentItem - 1, config.usePageTransitions)
             }
@@ -444,6 +585,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     fun onPageSplit(currentPage: ReaderPage, newPage: InsertPage) {
         activity.runOnUiThread {
+            if (!config.dualPageSplit && !config.automaticallySplitsWidePages) return@runOnUiThread
             // Need to insert on UI thread else images will go blank
             adapter.onPageSplit(currentPage, newPage)
         }
@@ -451,5 +593,74 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private fun cleanupPageSplit() {
         adapter.cleanupPageSplit()
+    }
+
+    internal fun requestSlotRebuild(anchor: ReaderPage?) {
+        if (isIdle) {
+            rebuildSlots(anchor)
+        } else {
+            awaitingSlotRebuildAnchor = anchor
+        }
+    }
+
+    internal fun onPagesClassified(classifications: Map<ReaderPage, ReaderPage.SpreadInfo>): Boolean {
+        val stableAnchor = stableSlotAnchor
+        val anchor = if (
+            pendingProgressCommitAnchor != null &&
+            stableAnchor != null &&
+            stableAnchor in classifications
+        ) {
+            classifications.keys.first()
+        } else {
+            stableAnchor ?: classifications.keys.firstOrNull() ?: return false
+        }
+        return adapter.onPagesClassified(classifications, anchor)
+    }
+
+    internal fun onPagesPrepared(slot: PagerSlot.Pages) {
+        val pending = awaitingPreparedSlot ?: return
+        if (currentSlot != slot || pending.slot != slot) return
+        awaitingPreparedSlot = null
+        commitReaderPagesSelected(
+            slot = slot,
+            allowPreload = pending.allowPreload,
+            forward = pending.forward,
+            commitProgress = pending.commitProgress,
+            anchor = pending.anchor,
+        )
+    }
+
+    private fun rebuildSlots(anchor: ReaderPage?) {
+        val resolvedAnchor = anchor ?: stableSlotAnchor
+        stableSlotAnchor = resolvedAnchor
+        pager.removeOnPageChangeListener(pagerListener)
+        adapter.rebuildSlots(resolvedAnchor)
+        currentSlot = null
+        pager.addOnPageChangeListener(pagerListener)
+        onPageChange(
+            position = pager.currentItem,
+            cause = PageChangeCause.LAYOUT_REBUILD,
+            anchor = resolvedAnchor,
+        )
+    }
+
+    private data class PendingPreparedSlot(
+        val slot: PagerSlot.Pages,
+        val allowPreload: Boolean,
+        val forward: Boolean,
+        val commitProgress: Boolean,
+        val anchor: ReaderPage,
+    )
+
+    private data class PendingPageMove(
+        val position: Int,
+        val anchor: ReaderPage,
+        val cause: PageChangeCause,
+    )
+
+    private enum class PageChangeCause {
+        USER_NAVIGATION,
+        RESTORE,
+        LAYOUT_REBUILD,
     }
 }

@@ -19,11 +19,17 @@ import eu.kanade.presentation.theme.TachiyomiPreviewTheme
 fun ReaderPageIndicator(
     currentPage: Int,
     totalPages: Int,
+    visiblePageStart: Int = currentPage,
     modifier: Modifier = Modifier,
 ) {
     if (currentPage <= 0 || totalPages <= 0) return
 
-    val text = "$currentPage / $totalPages"
+    val currentText = if (visiblePageStart in 1 until currentPage) {
+        "$visiblePageStart\u2013$currentPage"
+    } else {
+        currentPage.toString()
+    }
+    val text = "$currentText / $totalPages"
 
     val style = TextStyle(
         color = Color(235, 235, 235),

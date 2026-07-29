@@ -86,6 +86,15 @@ object ImageUtil {
         }
     }
 
+    fun isAnimated(source: BufferedSource): Boolean {
+        return try {
+            val type = getImageType(source.peek().inputStream()) ?: return false
+            type.format == Format.Gif || type.isAnimated
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun getImageType(stream: InputStream): tachiyomi.decoder.ImageType? {
         val bytes = ByteArray(32)
 
