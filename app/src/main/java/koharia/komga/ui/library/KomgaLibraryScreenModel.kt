@@ -27,6 +27,7 @@ import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLibraryKind
 import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaSource
+import koharia.source.komga.LibraryFilter
 import koharia.source.komga.TYPE_ALL_INDEX
 import koharia.source.komga.TYPE_BOOKS_INDEX
 import koharia.source.komga.TYPE_READ_LISTS_INDEX
@@ -85,6 +86,7 @@ class KomgaLibraryScreenModel(
     @Volatile
     private var filtersInitialized = false
     private var listingBeforeSearch: Listing? = null
+    private var libraryFilterBeforeQuickSelection: Set<String>? = null
 
     init {
         if (source is CatalogueSource) {
@@ -109,10 +111,16 @@ class KomgaLibraryScreenModel(
         }
 
         if (source is KomgaSource) {
-            komgaSettingsChangeListener = source.registerServerSettingsChangeListener {
+            komgaSettingsChangeListener = source.registerServerSettingsChangeListener { shelfLibrariesChanged ->
                 screenModelScope.launchIO {
                     source.invalidateBrowseCache()
-                    reloadKomgaState(source, showRefreshing = true, resetSelection = true, forceRefresh = true)
+                    reloadKomgaState(
+                        komgaSource = source,
+                        showRefreshing = true,
+                        resetSelection = true,
+                        forceRefresh = true,
+                        forceShelfLibrarySelection = shelfLibrariesChanged,
+                    )
                 }
             }
             screenModelScope.launchIO {
@@ -393,12 +401,20 @@ class KomgaLibraryScreenModel(
 
     fun selectKomgaLibrary(libraryId: String?) {
         val komgaSource = source as? KomgaSource ?: return
+        val currentState = state.value
+        if (currentState.selectedKomgaLibraryId == libraryId) return
+
+        if (currentState.selectedKomgaLibraryId == null && libraryId != null) {
+            libraryFilterBeforeQuickSelection = currentState.filters.selectedLibraryIds()
+        }
+        val restoredLibraryIds = if (libraryId == null) libraryFilterBeforeQuickSelection else null
         val filters = komgaSource.buildFilterListForLibrary(
             libraryId = libraryId,
             allowedLibraryIds = currentAllowedLibraryIds(),
             libraryScope = libraryScope,
-            currentFilters = state.value.filters,
-            resetLibrarySelection = libraryId == null,
+            currentFilters = currentState.filters,
+            librarySelectionOverride = restoredLibraryIds,
+            resetLibrarySelection = libraryId == null && restoredLibraryIds == null,
         )
         mutableState.update {
             it.copy(
@@ -408,6 +424,9 @@ class KomgaLibraryScreenModel(
                 toolbarQuery = null,
                 searchType = TYPE_ALL_INDEX,
             )
+        }
+        if (libraryId == null) {
+            libraryFilterBeforeQuickSelection = null
         }
         komgaSource.saveSessionFilterState(filters, libraryScope)
         komgaSource.refreshBrowseRequests()
@@ -419,7 +438,11 @@ class KomgaLibraryScreenModel(
         showRefreshing: Boolean,
         resetSelection: Boolean,
         forceRefresh: Boolean,
+        forceShelfLibrarySelection: Boolean = false,
     ) {
+        if (resetSelection) {
+            libraryFilterBeforeQuickSelection = null
+        }
         if (showRefreshing) {
             mutableState.update { it.copy(isRefreshing = true) }
         }
@@ -463,6 +486,8 @@ class KomgaLibraryScreenModel(
                 libraryScope = libraryScope,
                 currentFilters = currentFiltersForReload(),
                 preserveSessionFilters = true,
+                resetLibrarySelection = resetSelection,
+                forceConfiguredLibrarySelection = forceShelfLibrarySelection,
             )
 
             mutableState.update {
@@ -479,6 +504,9 @@ class KomgaLibraryScreenModel(
             }
             filtersInitialized = true
             komgaSource.saveSessionFilterState(filters, libraryScope)
+            if (forceShelfLibrarySelection) {
+                komgaSource.savePersistentFilterState(filters, libraryScope)
+            }
             if (forceRefresh) {
                 komgaSource.refreshBrowseRequests()
             }
@@ -522,8 +550,12 @@ class KomgaLibraryScreenModel(
         libraries: List<KomgaClassifiedLibrary>,
     ) {
         if (libraryScope == KomgaLibraryScope.ALL) return
+        val configuredLibraryIds = komgaSource.configuredShelfLibraryIds()
         val visibleLibraries = libraries
-            .filter { it.kind == libraryScope.kind }
+            .filter { library ->
+                library.kind == libraryScope.kind &&
+                    (configuredLibraryIds.isEmpty() || library.id in configuredLibraryIds)
+            }
             .map { LibraryDto(it.id, it.name) }
         if (filtersInitialized && state.value.komgaLibraries == visibleLibraries) return
         val selectedLibraryId = state.value.selectedKomgaLibraryId
@@ -554,15 +586,26 @@ class KomgaLibraryScreenModel(
     }
 
     private fun librariesForScope(libraries: List<LibraryDto>): List<LibraryDto> {
-        if (libraryScope == KomgaLibraryScope.ALL) return libraries
+        val configuredLibraryIds = (source as? KomgaSource)?.configuredShelfLibraryIds().orEmpty()
+        val shelfLibraries = if (configuredLibraryIds.isEmpty()) {
+            libraries
+        } else {
+            libraries.filter { it.id in configuredLibraryIds }
+        }
+        if (libraryScope == KomgaLibraryScope.ALL) return shelfLibraries
         val kindById = libraryClassificationManager.getLibraries(sourceId).associate { it.id to it.kind }
-        return libraries.filter { library ->
+        return shelfLibraries.filter { library ->
             (kindById[library.id] ?: KomgaLibraryKind.COMIC) == libraryScope.kind
         }
     }
 
     private fun List<LibraryDto>.idsForScope(): Set<String>? {
-        return if (libraryScope == KomgaLibraryScope.ALL) null else mapTo(linkedSetOf(), LibraryDto::id)
+        val shelfIsRestricted = (source as? KomgaSource)?.configuredShelfLibraryIds()?.isNotEmpty() == true
+        return if (libraryScope == KomgaLibraryScope.ALL && !shelfIsRestricted) {
+            null
+        } else {
+            mapTo(linkedSetOf(), LibraryDto::id)
+        }
     }
 
     private fun currentAllowedLibraryIds(): Set<String>? {
@@ -572,6 +615,15 @@ class KomgaLibraryScreenModel(
     private fun currentFiltersForReload(): FilterList? {
         if (!filtersInitialized) return null
         return state.value.filters.takeIf { it.isNotEmpty() }
+    }
+
+    private fun FilterList.selectedLibraryIds(): Set<String> {
+        return filterIsInstance<LibraryFilter>()
+            .firstOrNull()
+            ?.state
+            .orEmpty()
+            .filter { it.state }
+            .mapTo(linkedSetOf()) { it.id }
     }
 
     sealed class Listing(open val query: String?, open val filters: FilterList) {

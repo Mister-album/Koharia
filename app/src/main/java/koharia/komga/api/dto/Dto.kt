@@ -234,7 +234,8 @@ fun BookDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
     artist = author
 }
 
-fun BookDto.toChapterMemo(baseUrl: String): JsonObject = KomgaChapterMemo.buildMemo(baseUrl, this)
+fun BookDto.toChapterMemo(baseUrl: String, embeddedFileSize: String? = null): JsonObject =
+    KomgaChapterMemo.buildMemo(baseUrl, this, embeddedFileSize)
 
 fun ReadListDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
     title = name

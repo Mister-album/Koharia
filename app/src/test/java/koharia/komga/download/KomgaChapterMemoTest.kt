@@ -110,4 +110,35 @@ class KomgaChapterMemoTest {
         assertEquals(imageUrl, KomgaChapterMemo.networkPageImageUrl(first))
         assertEquals(first, KomgaChapterMemo.versionedPageImageUrl(first, firstMemo))
     }
+
+    @Test
+    fun `only structured embedded file size is removed from chapter title`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.SIZE_BYTES, 64L * 1024 * 1024)
+            put(KomgaChapterMemo.DISPLAY_SIZE, "64 MB")
+            put(KomgaChapterMemo.EMBEDDED_FILE_SIZE, "64 MB")
+        }
+
+        assertEquals(
+            "Chapter 1",
+            KomgaChapterMemo.removeTrailingEmbeddedFileSize("Chapter 1 (64 MB)", memo),
+        )
+        assertEquals(
+            "Chapter 1 (32 MB)",
+            KomgaChapterMemo.removeTrailingEmbeddedFileSize("Chapter 1 (32 MB)", memo),
+        )
+    }
+
+    @Test
+    fun `title suffix resembling file size is preserved without embedded marker`() {
+        val memo = buildJsonObject {
+            put(KomgaChapterMemo.SIZE_BYTES, 64L * 1024 * 1024)
+            put(KomgaChapterMemo.DISPLAY_SIZE, "64 MB")
+        }
+
+        assertEquals(
+            "A Story (64 MB)",
+            KomgaChapterMemo.removeTrailingEmbeddedFileSize("A Story (64 MB)", memo),
+        )
+    }
 }

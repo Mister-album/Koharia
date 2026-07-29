@@ -181,6 +181,11 @@ class LibraryPreferences(
         true,
     )
 
+    val showChapterFileSize: Preference<Boolean> = preferenceStore.getBoolean(
+        "show_chapter_file_size",
+        true,
+    )
+
     val sortChapterByAscendingOrDescending: Preference<Long> = preferenceStore.getLong(
         "default_chapter_sort_by_ascending_or_descending",
         Manga.CHAPTER_SORT_DESC,

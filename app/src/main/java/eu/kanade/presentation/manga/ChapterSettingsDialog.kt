@@ -59,6 +59,10 @@ fun ChapterSettingsDialog(
     onDisplayModeChanged: (Long) -> Unit,
     showChapterReadProgress: Boolean,
     onShowChapterReadProgressChanged: (Boolean) -> Unit,
+    showChapterFileSize: Boolean,
+    onShowChapterFileSizeChanged: (Boolean) -> Unit,
+    hideMissingChapters: Boolean,
+    onHideMissingChaptersChanged: (Boolean) -> Unit,
     onSetAsDefault: (applyToExistingManga: Boolean) -> Unit,
     onResetToDefault: () -> Unit,
 ) {
@@ -129,6 +133,11 @@ fun ChapterSettingsDialog(
                         onDisplayModeSelected = onDisplayModeChanged,
                         showChapterReadProgress = showChapterReadProgress,
                         onShowChapterReadProgressChanged = onShowChapterReadProgressChanged,
+                        showChapterFileSize = showChapterFileSize,
+                        onShowChapterFileSizeChanged = onShowChapterFileSizeChanged,
+                        showChapterFileSizeOption = isKomgaCacheMode,
+                        hideMissingChapters = hideMissingChapters,
+                        onHideMissingChaptersChanged = onHideMissingChaptersChanged,
                     )
                 }
             }
@@ -226,12 +235,29 @@ private fun ColumnScope.DisplayPage(
     onDisplayModeSelected: (Long) -> Unit,
     showChapterReadProgress: Boolean,
     onShowChapterReadProgressChanged: (Boolean) -> Unit,
+    showChapterFileSize: Boolean,
+    onShowChapterFileSizeChanged: (Boolean) -> Unit,
+    showChapterFileSizeOption: Boolean,
+    hideMissingChapters: Boolean,
+    onHideMissingChaptersChanged: (Boolean) -> Unit,
 ) {
     SwitchPreferenceWidget(
         title = stringResource(MR.strings.pref_show_chapter_read_progress),
         subtitle = stringResource(MR.strings.pref_show_chapter_read_progress_summary),
         checked = showChapterReadProgress,
         onCheckedChanged = onShowChapterReadProgressChanged,
+    )
+    if (showChapterFileSizeOption) {
+        SwitchPreferenceWidget(
+            title = stringResource(MR.strings.pref_show_chapter_file_size),
+            checked = showChapterFileSize,
+            onCheckedChanged = onShowChapterFileSizeChanged,
+        )
+    }
+    SwitchPreferenceWidget(
+        title = stringResource(MR.strings.pref_hide_missing_chapter_indicators),
+        checked = hideMissingChapters,
+        onCheckedChanged = onHideMissingChaptersChanged,
     )
 
     Text(

@@ -279,6 +279,14 @@ object SettingsLibraryScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_show_chapter_read_progress),
                     subtitle = stringResource(MR.strings.pref_show_chapter_read_progress_summary),
                 ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = libraryPreferences.showChapterFileSize,
+                    title = stringResource(MR.strings.pref_show_chapter_file_size),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = libraryPreferences.hideMissingChapters,
+                    title = stringResource(MR.strings.pref_hide_missing_chapter_indicators),
+                ),
             ),
         )
     }
