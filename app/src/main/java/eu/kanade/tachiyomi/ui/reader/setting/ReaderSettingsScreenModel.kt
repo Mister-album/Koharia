@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import tachiyomi.core.common.preference.Preference
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -16,6 +17,8 @@ class ReaderSettingsScreenModel(
     val onChangeReadingMode: (ReadingMode) -> Unit,
     val onChangeOrientation: (ReaderOrientation) -> Unit,
     val preferences: ReaderPreferences = Injekt.get(),
+    val persistReaderSettingsChanges: Preference<Boolean> = preferences.persistReaderSettingsChanges,
+    val onSetPersistReaderSettingsChanges: (Boolean) -> Unit = persistReaderSettingsChanges::set,
 ) : ScreenModel {
 
     val viewerFlow = readerState

@@ -36,7 +36,6 @@ import koharia.epub.service.EpubPublicationResolver
 import koharia.epub.session.EpubReaderSession
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubReaderPreferences
-import koharia.epub.settings.EpubSessionPreferenceStore
 import koharia.komga.api.dto.isDivinaCompatibleEpub
 import koharia.komga.api.dto.isEpub
 import koharia.komga.download.KomgaChapterMemo
@@ -73,6 +72,7 @@ import org.readium.r2.shared.publication.services.search.search
 import org.readium.r2.shared.util.getOrElse
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.preference.SessionPreferenceStore
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
@@ -234,11 +234,11 @@ class EpubReaderViewModel @JvmOverloads constructor(
         persistChanges: Boolean,
     ): PreferenceStore {
         return transientReaderSettingsStore
-            ?: EpubSessionPreferenceStore(backingStore, persistChanges).also { transientReaderSettingsStore = it }
+            ?: SessionPreferenceStore(backingStore, persistChanges).also { transientReaderSettingsStore = it }
     }
 
     internal fun setPersistReaderSettingsChanges(enabled: Boolean) {
-        (transientReaderSettingsStore as? EpubSessionPreferenceStore)?.setPersistChanges(enabled)
+        (transientReaderSettingsStore as? SessionPreferenceStore)?.setPersistChanges(enabled)
     }
 
     internal fun setPublisherStylesOverride(enabled: Boolean?) {

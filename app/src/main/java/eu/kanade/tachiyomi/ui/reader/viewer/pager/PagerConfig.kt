@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerConfig
@@ -22,7 +23,7 @@ import uy.kohesive.injekt.api.get
 class PagerConfig(
     private val viewer: PagerViewer,
     scope: CoroutineScope,
-    readerPreferences: ReaderPreferences = Injekt.get(),
+    private val readerPreferences: ReaderPreferences = Injekt.get(),
 ) : ViewerConfig(readerPreferences, scope) {
 
     var theme = readerPreferences.readerTheme.get()
@@ -32,6 +33,26 @@ class PagerConfig(
         private set
 
     var dualPageSplitChangedListener: ((Boolean) -> Unit)? = null
+
+    var doublePageLayoutChangedListener: (() -> Unit)? = null
+
+    var doublePages = false
+        private set
+
+    var pageLayout = PageLayout.SINGLE_PAGE
+        private set
+
+    val automaticallySplitsWidePages: Boolean
+        get() = pageLayout.automaticallySplitsWidePages
+
+    val usesContentAwarePairing: Boolean
+        get() = pageLayout.usesContentAwarePairing
+
+    var shiftDoublePages = false
+        private set
+
+    var invertDoublePages = false
+        private set
 
     var imageScaleType = 1
         private set
@@ -85,10 +106,14 @@ class PagerConfig(
 
         readerPreferences.dualPageSplitPaged
             .register(
-                { dualPageSplit = it },
+                {
+                    dualPageSplit = it
+                    updateDoublePages(readerPreferences.pageLayout.get())
+                },
                 {
                     imagePropertyChangedListener?.invoke()
                     dualPageSplitChangedListener?.invoke(it)
+                    doublePageLayoutChangedListener?.invoke()
                 },
             )
 
@@ -106,6 +131,36 @@ class PagerConfig(
                 { dualPageRotateToFitInvert = it },
                 { imagePropertyChangedListener?.invoke() },
             )
+
+        readerPreferences.pageLayout
+            .register(
+                { updateDoublePages(it) },
+                { doublePageLayoutChangedListener?.invoke() },
+            )
+
+        readerPreferences.shiftDoublePages
+            .register(
+                { shiftDoublePages = it },
+                { doublePageLayoutChangedListener?.invoke() },
+            )
+
+        readerPreferences.invertDoublePages
+            .register(
+                { invertDoublePages = it },
+                { imagePropertyChangedListener?.invoke() },
+            )
+    }
+
+    private fun updateDoublePages(value: Int) {
+        val horizontalViewer = viewer is L2RPagerViewer || viewer is R2LPagerViewer
+        pageLayout = PageLayout.fromPreference(value)
+        doublePages = horizontalViewer && !dualPageSplit && pageLayout.usesDoublePages
+    }
+
+    fun onConfigurationChanged() {
+        val previous = doublePages
+        updateDoublePages(readerPreferences.pageLayout.get())
+        if (previous != doublePages) doublePageLayoutChangedListener?.invoke()
     }
 
     private fun zoomTypeFromPreference(value: Int) {

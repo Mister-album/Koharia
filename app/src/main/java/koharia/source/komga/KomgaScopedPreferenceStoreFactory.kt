@@ -76,6 +76,10 @@ class KomgaScopedPreferenceStoreFactory(
         return sourceIdFrom(savedState)?.let(::readerPreferences)
     }
 
+    fun storeForSavedSource(savedState: SavedStateHandle): ScopedPreferenceStore? {
+        return sourceIdFrom(savedState)?.let(::storeForServer)
+    }
+
     fun epubReaderPreferencesForSavedSource(savedState: SavedStateHandle): EpubReaderPreferences? {
         return sourceIdFrom(savedState)?.let(::epubReaderPreferences)
     }

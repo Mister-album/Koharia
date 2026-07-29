@@ -61,6 +61,8 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
+import tachiyomi.core.common.preference.ScopedPreferenceStore
+import tachiyomi.core.common.preference.SessionPreferenceStore
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
@@ -93,7 +95,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val downloadManager: DownloadManager = Injekt.get(),
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val imageSaver: ImageSaver = Injekt.get(),
-    globalReaderPreferences: ReaderPreferences = Injekt.get(),
+    globalReaderPreferenceStore: ScopedPreferenceStore = Injekt.get(),
     globalBasePreferences: BasePreferences = Injekt.get(),
     globalDownloadPreferences: DownloadPreferences = Injekt.get(),
     globalTrackPreferences: TrackPreferences = Injekt.get(),
@@ -111,8 +113,15 @@ class ReaderViewModel @JvmOverloads constructor(
     private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
 ) : ViewModel() {
 
-    val readerPreferences: ReaderPreferences =
-        scopedPreferenceStoreFactory.readerPreferencesForSavedSource(savedState) ?: globalReaderPreferences
+    private val persistentReaderSettingsStore =
+        scopedPreferenceStoreFactory.storeForSavedSource(savedState) ?: globalReaderPreferenceStore
+    private val persistentReaderPreferences = ReaderPreferences(persistentReaderSettingsStore)
+    private val readerSettingsStore = SessionPreferenceStore(
+        backingStore = persistentReaderSettingsStore,
+        persistChanges = persistentReaderPreferences.persistReaderSettingsChanges.get(),
+    )
+    val readerPreferences = ReaderPreferences(readerSettingsStore)
+    val persistReaderSettingsChanges = persistentReaderPreferences.persistReaderSettingsChanges
     private val basePreferences: BasePreferences =
         scopedPreferenceStoreFactory.basePreferencesForSavedSource(savedState) ?: globalBasePreferences
     private val downloadPreferences: DownloadPreferences =
@@ -166,6 +175,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val currentChapterAutoCacheRequests = mutableSetOf<Long>()
     private val remoteProgressChecksStarted = mutableSetOf<Long>()
     private val remoteProgressVersionsHandled = mutableSetOf<String>()
+    private val remoteProgressOpeningPages = mutableMapOf<Long, Int>()
 
     private val unfilteredChapterList by lazy {
         val manga = manga!!
@@ -252,6 +262,10 @@ class ReaderViewModel @JvmOverloads constructor(
     private val cacheCurrentChapterWhileReading = downloadPreferences.cacheCurrentChapterWhileReading.get()
 
     init {
+        persistReaderSettingsChanges.changes()
+            .onEach(readerSettingsStore::setPersistChanges)
+            .launchIn(viewModelScope)
+
         // To save state
         state.map { it.viewerChapters?.currChapter }
             .distinctUntilChanged()
@@ -264,6 +278,9 @@ class ReaderViewModel @JvmOverloads constructor(
                     currentChapter.requestedPage = currentChapter.chapter.last_page_read
                 }
                 chapterId = currentChapter.chapter.id!!
+                synchronized(remoteProgressOpeningPages) {
+                    remoteProgressOpeningPages.putIfAbsent(chapterId, currentChapter.requestedPage)
+                }
                 cacheCurrentChapterForOffline(currentChapter)
             }
             .launchIn(viewModelScope)
@@ -285,6 +302,11 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     fun onActivityFinish() {
         deletePendingChapters()
+    }
+
+    fun setPersistReaderSettingsChanges(enabled: Boolean) {
+        readerSettingsStore.setPersistChanges(enabled)
+        persistReaderSettingsChanges.set(enabled)
     }
 
     /**
@@ -475,11 +497,22 @@ class ReaderViewModel @JvmOverloads constructor(
             return
         }
 
+        onPagesSelected(listOf(page))
+    }
+
+    fun onPagesSelected(visiblePages: List<ReaderPage>) {
+        val physicalPages = visiblePages.filterNot { it is InsertPage }.distinctBy { it.index }
+        val page = physicalPages.maxByOrNull { it.index } ?: return
+
         val selectedChapter = page.chapter
         val pages = selectedChapter.pages ?: return
+        if (physicalPages.any { it.chapter !== selectedChapter }) return
         selectedChapter.requestedPage = page.index
         chapterPageIndex = page.index
-        selectedChapter.pageLoader?.setActivePage(page)
+        selectedChapter.pageLoader?.setActivePages(physicalPages)
+        mutableState.update {
+            it.copy(visiblePageStart = physicalPages.minOf { visiblePage -> visiblePage.index } + 1)
+        }
 
         // Save last page read and mark as read if needed
         viewModelScope.launchNonCancellable {
@@ -499,12 +532,43 @@ class ReaderViewModel @JvmOverloads constructor(
         eventChannel.trySend(Event.PageChanged)
     }
 
+    fun onPagesActivated(visiblePages: List<ReaderPage>, anchorPage: ReaderPage? = null) {
+        val physicalPages = visiblePages.filterNot { it is InsertPage }.distinctBy { it.index }
+        val chapter = physicalPages.firstOrNull()?.chapter ?: return
+        if (physicalPages.any { it.chapter !== chapter }) return
+        chapter.pageLoader?.setActivePages(physicalPages)
+        val displayPage = physicalPages.maxByOrNull { it.index } ?: return
+        val anchor = anchorPage?.takeIf { candidate ->
+            candidate.chapter === chapter && physicalPages.any { it.index == candidate.index }
+        }
+        anchor?.let { stableAnchor ->
+            stableAnchor.chapter.chapter.id?.let { chapterId ->
+                synchronized(remoteProgressOpeningPages) {
+                    remoteProgressOpeningPages.putIfAbsent(chapterId, stableAnchor.index)
+                }
+            }
+        }
+        mutableState.update {
+            it.copy(
+                currentPage = displayPage.index + 1,
+                visiblePageStart = physicalPages.minOf { page -> page.index } + 1,
+            )
+        }
+    }
+
     fun onPageDisplayed(page: ReaderPage) {
-        page.chapter.pageLoader?.onPageDisplayed(page)
+        onPagesDisplayed(listOf(page))
+    }
+
+    fun onPagesDisplayed(visiblePages: List<ReaderPage>) {
+        val physicalPages = visiblePages.filterNot { it is InsertPage }.distinctBy { it.index }
+        val page = physicalPages.maxByOrNull { it.index } ?: return
+        page.chapter.pageLoader?.onPagesDisplayed(physicalPages)
         val currentChapter = getCurrentChapter() ?: return
-        if (currentChapter !== page.chapter || currentChapter.requestedPage != page.index) return
+        if (currentChapter !== page.chapter || physicalPages.none { it.index == currentChapter.requestedPage }) return
         logcat {
-            "MangaStartup: active image displayed chapterId=${page.chapter.chapter.id} page=${page.number}"
+            "MangaStartup: active images displayed chapterId=${page.chapter.chapter.id} " +
+                "pages=${physicalPages.joinToString { it.number.toString() }}"
         }
         if (incognitoMode) return
         val manga = manga ?: return
@@ -623,8 +687,11 @@ class ReaderViewModel @JvmOverloads constructor(
             }
         if (remotePageIndex !in pages.indices) return
         val localPageIndex = readerChapter.requestedPage.coerceIn(0, pages.lastIndex)
+        val openingLocalPageIndex = synchronized(remoteProgressOpeningPages) {
+            remoteProgressOpeningPages[chapterId]
+        }?.coerceIn(0, pages.lastIndex) ?: localPageIndex
         val migratesLegacyEpubProgress = legacyEpubProgress != null
-        if (remotePageIndex == localPageIndex) {
+        if (!RemoteProgressConflictPolicy.hasConflict(openingLocalPageIndex, localPageIndex, remotePageIndex)) {
             if (migratesLegacyEpubProgress) {
                 komgaProgressSyncService.pushPageProgress(
                     sourceId = manga.source,
@@ -699,6 +766,9 @@ class ReaderViewModel @JvmOverloads constructor(
         val currentChapter = getCurrentChapter()?.takeIf { it.chapter.id == conflict.chapterId } ?: return
         val pages = currentChapter.pages ?: return
         val localPageIndex = currentChapter.requestedPage.coerceIn(0, pages.lastIndex)
+        synchronized(remoteProgressOpeningPages) {
+            remoteProgressOpeningPages[conflict.chapterId] = localPageIndex
+        }
         viewModelScope.launchIO {
             komgaProgressSyncService.pushPageProgress(
                 sourceId = manga?.source ?: return@launchIO,
@@ -719,7 +789,10 @@ class ReaderViewModel @JvmOverloads constructor(
         currentChapter.chapter.last_page_read = targetPage.index
         chapterPageIndex = targetPage.index
         currentChapter.pageLoader?.setActivePage(targetPage)
-        state.value.viewer?.moveToPage(targetPage)
+        synchronized(remoteProgressOpeningPages) {
+            remoteProgressOpeningPages[conflict.chapterId] = targetPage.index
+        }
+        state.value.viewer?.restorePage(targetPage)
         if (!incognitoMode) {
             viewModelScope.launchNonCancellable {
                 updateChapter.await(
@@ -1282,6 +1355,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val dialog: Dialog? = null,
         val remoteProgressConflict: MangaRemoteProgressConflict? = null,
         val menuVisible: Boolean = false,
+        val visiblePageStart: Int = -1,
         @IntRange(from = -100, to = 100) val brightnessOverlayValue: Int = 0,
     ) {
         val currentChapter: ReaderChapter?

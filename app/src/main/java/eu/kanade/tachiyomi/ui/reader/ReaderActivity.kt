@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
@@ -78,6 +79,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.isNightMode
@@ -122,14 +124,7 @@ class ReaderActivity : BaseActivity() {
     }
 
     private val scopedPreferenceStoreFactory = Injekt.get<KomgaScopedPreferenceStoreFactory>()
-    val readerPreferences: ReaderPreferences by lazy {
-        val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
-        if (sourceId > 0L) {
-            scopedPreferenceStoreFactory.readerPreferences(sourceId)
-        } else {
-            Injekt.get<ReaderPreferences>()
-        }
-    }
+    val readerPreferences: ReaderPreferences by lazy { viewModel.readerPreferences }
     val basePreferences: BasePreferences by lazy {
         val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
         if (sourceId > 0L) {
@@ -275,6 +270,8 @@ class ReaderActivity : BaseActivity() {
                 onChangeReadingMode = viewModel::setMangaReadingMode,
                 onChangeOrientation = viewModel::setMangaOrientationType,
                 preferences = readerPreferences,
+                persistReaderSettingsChanges = viewModel.persistReaderSettingsChanges,
+                onSetPersistReaderSettingsChanges = viewModel::setPersistReaderSettingsChanges,
             )
         }
 
@@ -283,6 +280,7 @@ class ReaderActivity : BaseActivity() {
                 ReaderPageIndicator(
                     currentPage = state.currentPage,
                     totalPages = state.totalPages,
+                    visiblePageStart = state.visiblePageStart,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding(),
@@ -394,6 +392,11 @@ class ReaderActivity : BaseActivity() {
         config = null
         menuToggleToast?.cancel()
         readingModeToast?.cancel()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        (viewModel.state.value.viewer as? PagerViewer)?.onConfigurationChanged()
     }
 
     override fun onPause() {
@@ -545,6 +548,7 @@ class ReaderActivity : BaseActivity() {
             onPreviousChapter = ::loadPreviousChapter,
             enabledPrevious = state.viewerChapters?.prevChapter != null,
             currentPage = state.currentPage,
+            visiblePageStart = state.visiblePageStart,
             totalPages = state.totalPages,
             onPageIndexChange = {
                 isScrollingThroughPages = true
@@ -745,8 +749,20 @@ class ReaderActivity : BaseActivity() {
         viewModel.onPageSelected(page)
     }
 
+    fun onPagesSelected(pages: List<ReaderPage>) {
+        viewModel.onPagesSelected(pages)
+    }
+
+    fun onPagesActivated(pages: List<ReaderPage>, anchorPage: ReaderPage? = null) {
+        viewModel.onPagesActivated(pages, anchorPage)
+    }
+
     fun onPageDisplayed(page: ReaderPage) {
         viewModel.onPageDisplayed(page)
+    }
+
+    fun onPagesDisplayed(pages: List<ReaderPage>) {
+        viewModel.onPagesDisplayed(pages)
     }
 
     /**

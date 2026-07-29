@@ -206,42 +206,74 @@ internal class HttpPageLoader(
     }
 
     override fun setActivePage(page: ReaderPage) {
-        val pages = page.chapter.pages
-        val activation = pageLoadGate.activate(page.index, pages?.size ?: 0)
-        val needsUrgentLoad = page.status != Page.State.Ready
-        if (needsUrgentLoad) {
-            preemptPrefetchFor(page, reason = "active-page-missing")
-        }
+        setActivePages(listOf(page))
+    }
+
+    override fun setActivePages(pages: List<ReaderPage>) {
+        val activePages = pages.distinctBy { it.index }
+        val chapterPages = activePages.firstOrNull()?.chapter?.pages ?: return
+        if (activePages.any { it.chapter !== activePages.first().chapter }) return
+        val activeSet = activePages.toSet()
+        val progressPage = activePages.maxByOrNull { it.index } ?: return
+        val activation = pageLoadGate.activate(
+            pageIndexes = activePages.mapTo(linkedSetOf()) { it.index },
+            logicalPageIndex = progressPage.index,
+            pageCount = chapterPages.size,
+        )
+        val needsUrgentLoad = activePages.any { it.status != Page.State.Ready }
+        preemptLoadsOutside(activeSet, reason = "active-pages-changed")
         synchronized(schedulerLock) {
             removeQueuedPagesLocked { queued ->
                 queued.priority == PriorityPage.ADJACENT ||
-                    (queued.priority == PriorityPage.DEFAULT && queued.page !== page)
+                    (queued.priority == PriorityPage.DEFAULT && queued.page !in activeSet)
             }
-            enqueuePageLocked(page, PriorityPage.DEFAULT)
-            if (!needsUrgentLoad && pages != null) {
-                enqueuePrefetchWindowLocked(pages, activation.prefetchIndexes)
+            activePages.forEach { enqueuePageLocked(it, PriorityPage.DEFAULT) }
+            if (!needsUrgentLoad) {
+                enqueuePrefetchWindowLocked(chapterPages, activation.prefetchIndexes)
             }
         }
         if (activation.changed) {
             logcat {
-                "MangaStartup: active page chapterId=${chapter.chapter.id} page=${page.number}"
+                "MangaStartup: active pages chapterId=${chapter.chapter.id} " +
+                    "pages=${activePages.joinToString { it.number.toString() }}"
             }
         }
         if (!needsUrgentLoad && activation.prefetchIndexes.isNotEmpty()) {
-            logPrefetchWindow(page, activation.prefetchIndexes, reason = "page-selected")
+            logPrefetchWindow(progressPage, activation.prefetchIndexes, reason = "pages-selected")
         }
     }
 
     override fun onPageDisplayed(page: ReaderPage) {
-        val pages = page.chapter.pages ?: return
-        if (!pageLoadGate.isActive(page.index)) return
-        val prefetchIndexes = pageLoadGate.onPageDisplayed(page.index, pages.size)
+        onPagesDisplayed(listOf(page))
+    }
+
+    override fun onPagesDisplayed(pages: List<ReaderPage>) {
+        val activePages = pages.distinctBy { it.index }
+        val chapterPages = activePages.firstOrNull()?.chapter?.pages ?: return
+        val activeIndexes = activePages.mapTo(linkedSetOf()) { it.index }
+        if (activeIndexes.any { !pageLoadGate.isActive(it) }) return
+        val prefetchIndexes = pageLoadGate.onPagesDisplayed(activeIndexes, chapterPages.size)
         synchronized(schedulerLock) {
             removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT }
-            enqueuePrefetchWindowLocked(pages, prefetchIndexes)
+            enqueuePrefetchWindowLocked(chapterPages, prefetchIndexes)
         }
         if (prefetchIndexes.isNotEmpty()) {
-            logPrefetchWindow(page, prefetchIndexes, reason = "page-displayed")
+            logPrefetchWindow(activePages.maxBy { it.index }, prefetchIndexes, reason = "pages-displayed")
+        }
+    }
+
+    private fun preemptLoadsOutside(activePages: Set<ReaderPage>, reason: String) {
+        val staleLoads = synchronized(schedulerLock) {
+            activeLoads.filter {
+                it.priority != PriorityPage.RETRY && it.page !in activePages && it.job.isActive
+            }
+        }
+        staleLoads.forEach { load ->
+            load.job.cancel()
+            logcat {
+                "MangaStartup: stale page load cancelled chapterId=${chapter.chapter.id} " +
+                    "page=${load.page.number} reason=$reason"
+            }
         }
     }
 
@@ -342,7 +374,7 @@ internal class HttpPageLoader(
      * Retries a page. This method is only called from user interaction on the viewer.
      */
     override fun retryPage(page: ReaderPage) {
-        if (page.status is Page.State.Error) {
+        if (page.status != Page.State.Queue) {
             page.status = Page.State.Queue
         }
         preemptPrefetchFor(page, reason = "retry")

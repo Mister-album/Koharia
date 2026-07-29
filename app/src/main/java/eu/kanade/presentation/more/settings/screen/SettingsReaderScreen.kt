@@ -8,6 +8,7 @@ import androidx.compose.ui.platform.LocalView
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -661,11 +662,14 @@ object SettingsReaderScreen : SearchableSettings {
     private fun getPagedGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
         val navModePref = readerPreferences.navigationModePager
         val imageScaleTypePref = readerPreferences.imageScaleType
+        val pageLayoutPref = readerPreferences.pageLayout
         val dualPageSplitPref = readerPreferences.dualPageSplitPaged
         val rotateToFitPref = readerPreferences.dualPageRotateToFit
 
         val navMode by navModePref.collectAsState()
         val imageScaleType by imageScaleTypePref.collectAsState()
+        val pageLayoutValue by pageLayoutPref.collectAsState()
+        val pageLayout = PageLayout.fromPreference(pageLayoutValue)
         val dualPageSplit by dualPageSplitPref.collectAsState()
         val rotateToFit by rotateToFitPref.collectAsState()
 
@@ -723,11 +727,35 @@ object SettingsReaderScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_navigate_pan),
                     enabled = navMode != 5,
                 ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = pageLayoutPref,
+                    entries = PageLayout.selectableEntries
+                        .associate { it.value to stringResource(ReaderPreferences.PageLayouts[it.value]) }
+                        .toImmutableMap(),
+                    title = stringResource(MR.strings.pref_page_layout),
+                    onValueChanged = { value ->
+                        if (value != PageLayout.SINGLE_PAGE.value) dualPageSplitPref.set(false)
+                        true
+                    },
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.shiftDoublePages,
+                    title = stringResource(MR.strings.pref_shift_double_pages),
+                    subtitle = stringResource(MR.strings.pref_shift_double_pages_summary),
+                    enabled = pageLayout.usesDoublePages,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.invertDoublePages,
+                    title = stringResource(MR.strings.pref_invert_double_pages),
+                    subtitle = stringResource(MR.strings.pref_invert_double_pages_summary),
+                    enabled = pageLayout.usesDoublePages,
+                ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = dualPageSplitPref,
                     title = stringResource(MR.strings.pref_dual_page_split),
-                    onValueChanged = {
+                    onValueChanged = { enabled ->
                         rotateToFitPref.set(false)
+                        if (enabled) pageLayoutPref.set(PageLayout.SINGLE_PAGE.value)
                         true
                     },
                 ),
@@ -735,7 +763,7 @@ object SettingsReaderScreen : SearchableSettings {
                     preference = readerPreferences.dualPageInvertPaged,
                     title = stringResource(MR.strings.pref_dual_page_invert),
                     subtitle = stringResource(MR.strings.pref_dual_page_invert_summary),
-                    enabled = dualPageSplit,
+                    enabled = dualPageSplit || pageLayout.automaticallySplitsWidePages,
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = rotateToFitPref,

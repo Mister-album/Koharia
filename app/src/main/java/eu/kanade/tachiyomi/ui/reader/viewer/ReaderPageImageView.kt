@@ -196,6 +196,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
         it.isVisible = false
     }
 
+    /** Maps a point in this container to its horizontal position in the decoded image. */
+    fun sourceXFractionAt(x: Float, y: Float): Float? {
+        val view = pageView as? SubsamplingScaleImageView ?: return null
+        if (!view.isReady || view.sWidth <= 0) return null
+        val sourcePoint = view.viewToSourceCoord(x - view.x, y - view.y) ?: return null
+        return sourcePoint.x / view.sWidth.toFloat()
+    }
+
     /**
      * Check if the image can be panned to the left
      */

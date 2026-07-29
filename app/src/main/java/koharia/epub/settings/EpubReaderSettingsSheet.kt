@@ -1524,7 +1524,7 @@ private fun ColumnScope.EpubGeneralSettingsPage(
     epubReaderPreferences: EpubReaderPreferences,
 ) {
     CheckboxItem(
-        label = stringResource(MR.strings.pref_epub_persist_reader_settings),
+        label = stringResource(MR.strings.pref_persist_reader_settings),
         pref = epubReaderPreferences.persistReaderSettingsChanges,
     )
 

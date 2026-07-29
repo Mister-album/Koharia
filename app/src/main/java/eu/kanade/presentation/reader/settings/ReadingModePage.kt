@@ -1,23 +1,28 @@
 package eu.kanade.presentation.reader.settings
 
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
+import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.VerticalPagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
-import tachiyomi.presentation.core.components.HeadingItem
 import tachiyomi.presentation.core.components.SettingsChipRow
 import tachiyomi.presentation.core.components.SliderItem
 import tachiyomi.presentation.core.i18n.stringResource
@@ -26,7 +31,6 @@ import java.text.NumberFormat
 
 @Composable
 internal fun ColumnScope.ReadingModePage(screenModel: ReaderSettingsScreenModel) {
-    HeadingItem(MR.strings.pref_category_for_this_series)
     val manga by screenModel.mangaFlow.collectAsState()
 
     val readingMode = remember(manga) { ReadingMode.fromPreference(manga?.readingMode?.toInt()) }
@@ -51,18 +55,24 @@ internal fun ColumnScope.ReadingModePage(screenModel: ReaderSettingsScreenModel)
         }
     }
 
+    ReaderSettingsGroupDivider()
+
     val viewer by screenModel.viewerFlow.collectAsState()
     if (viewer is WebtoonViewer) {
         WebtoonViewerSettings(screenModel)
     } else {
-        PagerViewerSettings(screenModel)
+        PagerViewerSettings(
+            screenModel = screenModel,
+            supportsDoublePages = viewer !is VerticalPagerViewer,
+        )
     }
 }
 
 @Composable
-private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenModel) {
-    HeadingItem(MR.strings.pager_viewer)
-
+private fun ColumnScope.PagerViewerSettings(
+    screenModel: ReaderSettingsScreenModel,
+    supportsDoublePages: Boolean,
+) {
     val navigationModePager by screenModel.preferences.navigationModePager.collectAsState()
     val pagerNavInverted by screenModel.preferences.pagerNavInverted.collectAsState()
     TapZonesItems(
@@ -71,6 +81,13 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
         invertMode = pagerNavInverted,
         onSelectInvertMode = screenModel.preferences.pagerNavInverted::set,
     )
+
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_navigate_pan),
+        pref = screenModel.preferences.navigateToPan,
+    )
+
+    ReaderSettingsGroupDivider()
 
     val imageScaleType by screenModel.preferences.imageScaleType.collectAsState()
     SettingsChipRow(MR.strings.pref_image_scale_type) {
@@ -104,18 +121,56 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
         pref = screenModel.preferences.landscapeZoom,
     )
 
-    CheckboxItem(
-        label = stringResource(MR.strings.pref_navigate_pan),
-        pref = screenModel.preferences.navigateToPan,
-    )
+    ReaderSettingsGroupDivider()
+
+    val pageLayoutValue by screenModel.preferences.pageLayout.collectAsState()
+    val pageLayout = PageLayout.fromPreference(pageLayoutValue)
+    val effectivePageLayout = if (!supportsDoublePages && pageLayout.usesDoublePages) {
+        PageLayout.SINGLE_PAGE
+    } else {
+        pageLayout
+    }
+    SettingsChipRow(MR.strings.pref_page_layout) {
+        PageLayout.selectableEntries
+            .filter { supportsDoublePages || !it.usesDoublePages }
+            .forEach { layout ->
+                FilterChip(
+                    selected = effectivePageLayout == layout,
+                    onClick = {
+                        if (layout != PageLayout.SINGLE_PAGE) {
+                            screenModel.preferences.dualPageSplitPaged.set(false)
+                        }
+                        screenModel.preferences.pageLayout.set(layout.value)
+                    },
+                    label = { Text(stringResource(ReaderPreferences.PageLayouts[layout.value])) },
+                )
+            }
+    }
+    if (supportsDoublePages && pageLayout.usesDoublePages) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_shift_double_pages),
+            pref = screenModel.preferences.shiftDoublePages,
+        )
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_invert_double_pages),
+            pref = screenModel.preferences.invertDoublePages,
+        )
+    }
+
+    ReaderSettingsGroupDivider()
 
     val dualPageSplitPaged by screenModel.preferences.dualPageSplitPaged.collectAsState()
     CheckboxItem(
         label = stringResource(MR.strings.pref_dual_page_split),
-        pref = screenModel.preferences.dualPageSplitPaged,
+        checked = dualPageSplitPaged,
+        onClick = {
+            val enabled = !dualPageSplitPaged
+            if (enabled) screenModel.preferences.pageLayout.set(PageLayout.SINGLE_PAGE.value)
+            screenModel.preferences.dualPageSplitPaged.set(enabled)
+        },
     )
 
-    if (dualPageSplitPaged) {
+    if (dualPageSplitPaged || pageLayout.automaticallySplitsWidePages) {
         CheckboxItem(
             label = stringResource(MR.strings.pref_dual_page_invert),
             pref = screenModel.preferences.dualPageInvertPaged,
@@ -140,8 +195,6 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
 private fun ColumnScope.WebtoonViewerSettings(screenModel: ReaderSettingsScreenModel) {
     val numberFormat = remember { NumberFormat.getPercentInstance() }
 
-    HeadingItem(MR.strings.webtoon_viewer)
-
     val navigationModeWebtoon by screenModel.preferences.navigationModeWebtoon.collectAsState()
     val webtoonNavInverted by screenModel.preferences.webtoonNavInverted.collectAsState()
     TapZonesItems(
@@ -150,6 +203,20 @@ private fun ColumnScope.WebtoonViewerSettings(screenModel: ReaderSettingsScreenM
         invertMode = webtoonNavInverted,
         onSelectInvertMode = screenModel.preferences.webtoonNavInverted::set,
     )
+
+    val verticalNavigatorForLongStrip by screenModel.preferences.verticalNavigatorForLongStrip.collectAsState()
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_webtoon_vertical_navigator),
+        pref = screenModel.preferences.verticalNavigatorForLongStrip,
+    )
+    if (verticalNavigatorForLongStrip) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_webtoon_vertical_navigator_on_left),
+            pref = screenModel.preferences.verticalNavigatorOnLeft,
+        )
+    }
+
+    ReaderSettingsGroupDivider()
 
     val webtoonSidePadding by screenModel.preferences.webtoonSidePadding.collectAsState()
     SliderItem(
@@ -167,6 +234,17 @@ private fun ColumnScope.WebtoonViewerSettings(screenModel: ReaderSettingsScreenM
         label = stringResource(MR.strings.pref_crop_borders),
         pref = screenModel.preferences.cropBordersWebtoon,
     )
+
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_double_tap_zoom),
+        pref = screenModel.preferences.webtoonDoubleTapZoomEnabled,
+    )
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_webtoon_disable_zoom_out),
+        pref = screenModel.preferences.webtoonDisableZoomOut,
+    )
+
+    ReaderSettingsGroupDivider()
 
     val dualPageSplitWebtoon by screenModel.preferences.dualPageSplitWebtoon.collectAsState()
     CheckboxItem(
@@ -193,14 +271,13 @@ private fun ColumnScope.WebtoonViewerSettings(screenModel: ReaderSettingsScreenM
             pref = screenModel.preferences.dualPageRotateToFitInvertWebtoon,
         )
     }
+}
 
-    CheckboxItem(
-        label = stringResource(MR.strings.pref_double_tap_zoom),
-        pref = screenModel.preferences.webtoonDoubleTapZoomEnabled,
-    )
-    CheckboxItem(
-        label = stringResource(MR.strings.pref_webtoon_disable_zoom_out),
-        pref = screenModel.preferences.webtoonDisableZoomOut,
+@Composable
+internal fun ReaderSettingsGroupDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
     )
 }
 

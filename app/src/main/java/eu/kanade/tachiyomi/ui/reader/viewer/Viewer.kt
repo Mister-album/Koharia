@@ -32,6 +32,13 @@ interface Viewer {
     fun moveToPage(page: ReaderPage)
 
     /**
+     * Moves to [page] without treating the resulting layout callback as new reading progress.
+     */
+    fun restorePage(page: ReaderPage) {
+        moveToPage(page)
+    }
+
+    /**
      * Called from the containing activity when a key [event] is received. It should return true
      * if the event was handled, false otherwise.
      */

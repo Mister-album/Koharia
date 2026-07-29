@@ -32,8 +32,18 @@ abstract class PageLoader {
     /** Marks the page that must be loaded ahead of all speculative work. */
     open fun setActivePage(page: ReaderPage) {}
 
+    /** Marks every physical page in the visible pager slot as active. */
+    open fun setActivePages(pages: List<ReaderPage>) {
+        pages.lastOrNull()?.let(::setActivePage)
+    }
+
     /** Releases speculative work only after the active page has actually been displayed. */
     open fun onPageDisplayed(page: ReaderPage) {}
+
+    /** Releases speculative work after every physical page in the active slot is visible. */
+    open fun onPagesDisplayed(pages: List<ReaderPage>) {
+        pages.lastOrNull()?.let(::onPageDisplayed)
+    }
 
     /** Reloads the page list without reusing its local or HTTP cache. */
     open suspend fun refreshPages(): List<ReaderPage>? = null

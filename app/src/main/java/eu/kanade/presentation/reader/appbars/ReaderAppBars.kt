@@ -60,6 +60,7 @@ fun ReaderAppBars(
     onPreviousChapter: () -> Unit,
     enabledPrevious: Boolean,
     currentPage: Int,
+    visiblePageStart: Int,
     totalPages: Int,
     onPageIndexChange: (Int) -> Unit,
 
@@ -120,6 +121,7 @@ fun ReaderAppBars(
                                 currentPage = currentPage,
                                 totalPages = totalPages,
                                 onPageIndexChange = onPageIndexChange,
+                                displayCurrentText = visiblePageRangeText(visiblePageStart, currentPage),
                             )
                         }
                     }
@@ -146,6 +148,7 @@ fun ReaderAppBars(
                         currentPage = currentPage,
                         totalPages = totalPages,
                         onPageIndexChange = onPageIndexChange,
+                        displayCurrentText = visiblePageRangeText(visiblePageStart, currentPage),
                     )
                 }
                 ReaderBottomBar(
@@ -166,3 +169,6 @@ fun ReaderAppBars(
         }
     }
 }
+
+private fun visiblePageRangeText(start: Int, end: Int): String? =
+    if (start in 1 until end) "$start\u2013$end" else null

@@ -482,6 +482,15 @@
     <string name="pref_dual_page_split">Split wide pages</string>
     <string name="pref_dual_page_invert">Invert split page placement</string>
     <string name="pref_dual_page_invert_summary">If the placement of the split wide pages don\'t match reading direction</string>
+    <string name="pref_page_layout">Page layout</string>
+    <string name="page_layout_single">Single page</string>
+    <string name="page_layout_double">Double pages</string>
+    <string name="page_layout_automatic_single">Automatic single page</string>
+    <string name="page_layout_automatic_double">Automatic double pages</string>
+    <string name="pref_shift_double_pages">Shift double pages by one</string>
+    <string name="pref_shift_double_pages_summary">Show the first page alone, then pair pages 2–3, 4–5, and so on</string>
+    <string name="pref_invert_double_pages">Swap double-page placement</string>
+    <string name="pref_invert_double_pages_summary">Swap the left and right pages without changing reading direction</string>
     <string name="pref_page_rotate">Rotate wide pages to fit</string>
     <string name="pref_page_rotate_invert">Flip orientation of rotated wide pages</string>
     <string name="pref_double_tap_zoom">Double tap to zoom</string>
@@ -550,9 +559,9 @@
     <string name="nav_zone_next">Next</string>
     <string name="nav_zone_left">Left</string>
     <string name="nav_zone_right">Right</string>
-    <string name="left_to_right_viewer">Paged (left to right)</string>
-    <string name="right_to_left_viewer">Paged (right to left)</string>
-    <string name="vertical_viewer">Paged (vertical)</string>
+    <string name="left_to_right_viewer">Left to right</string>
+    <string name="right_to_left_viewer">Right to left</string>
+    <string name="vertical_viewer">Top to bottom</string>
     <string name="webtoon_viewer">Long strip</string>
     <string name="vertical_plus_viewer">Long strip with gaps</string>
     <string name="pager_viewer">Paged</string>
@@ -1058,7 +1067,7 @@
     <string name="pref_mark_epub_completed_at_threshold_summary">Mirror completion to Komga and local chapter status when progress reaches the threshold</string>
     <string name="pref_epub_completion_threshold">Completion threshold</string>
     <string name="pref_epub_completion_threshold_summary">Used when marking books as completed automatically</string>
-    <string name="pref_epub_persist_reader_settings">Save changes made while reading</string>
+    <string name="pref_persist_reader_settings">Save changes made while reading</string>
     <string name="epub_reader_settings">Settings</string>
     <string name="epub_reader_reload_hint">Some layout and typography changes apply after reloading the current book.</string>
     <string name="epub_reader_navigation">Navigation</string>

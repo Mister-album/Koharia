@@ -11,4 +11,30 @@ open class ReaderPage(
 ) : Page(index, url, imageUrl, null) {
 
     open lateinit var chapter: ReaderChapter
+
+    var spreadInfo: SpreadInfo = SpreadInfo.UNKNOWN
+
+    val spreadKind: SpreadKind
+        get() = spreadInfo.kind
+
+    data class SpreadInfo(
+        val kind: SpreadKind,
+        val width: Int? = null,
+        val height: Int? = null,
+    ) {
+        companion object {
+            val UNKNOWN = SpreadInfo(SpreadKind.UNKNOWN)
+        }
+    }
+
+    enum class SpreadKind {
+        UNKNOWN,
+        PAIRABLE,
+        WIDE,
+        ANIMATED,
+        ;
+
+        val occupiesFullSlot: Boolean
+            get() = this == WIDE || this == ANIMATED
+    }
 }
