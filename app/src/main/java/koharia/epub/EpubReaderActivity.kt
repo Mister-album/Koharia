@@ -512,22 +512,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                         }
                                     }
                                 },
-                                onPreviousChapter = {
-                                    val previousSection = adjacentTocEntries.first
-                                    if (previousSection != null) {
-                                        epubReaderFragment()?.goTo(previousSection.link)
-                                    } else {
-                                        state.previousBookChapterId?.let(::openAdjacentBook)
-                                    }
-                                },
-                                onNextChapter = {
-                                    val nextSection = adjacentTocEntries.second
-                                    if (nextSection != null) {
-                                        epubReaderFragment()?.goTo(nextSection.link)
-                                    } else {
-                                        state.nextBookChapterId?.let(::openAdjacentBook)
-                                    }
-                                },
+                                onPreviousChapter = { navigateAdjacentChapter(forward = false) },
+                                onNextChapter = { navigateAdjacentChapter(forward = true) },
                                 onOpenContents = {
                                     activePanel = EpubBottomPanel.NONE
                                     scope.launch {
@@ -1091,11 +1077,18 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
             event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
+        val isSpenPageKey = event.metaState.and(KeyEvent.META_CTRL_ON) > 0 &&
+            (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT)
+        val isSpenChapterKey = event.keyCode == KeyEvent.KEYCODE_N || event.keyCode == KeyEvent.KEYCODE_P
         val state = viewModel.state.value
-        if (!isVolumeKey || !epubLayoutPreferences.readWithVolumeKeys.get() ||
-            state.menuVisible || state.isSearchActive || viewModel.imageState.value.isVisible ||
+        val hasBlockingOverlay = state.isSearchActive || viewModel.imageState.value.isVisible ||
             viewModel.footnoteState.value != null
-        ) {
+        val canHandleSpenPageKey = isSpenPageKey && !hasBlockingOverlay
+        val canHandleSpenChapterKey = isSpenChapterKey && !hasBlockingOverlay
+        val canHandleVolumeKey = isVolumeKey && epubLayoutPreferences.readWithVolumeKeys.get() &&
+            !state.menuVisible && !hasBlockingOverlay
+        val isReaderNavigationKey = canHandleSpenPageKey || canHandleSpenChapterKey || canHandleVolumeKey
+        if (!isReaderNavigationKey) {
             return super.dispatchKeyEvent(event)
         }
 
@@ -1103,12 +1096,13 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             return true
         }
         if (event.action == KeyEvent.ACTION_UP) {
-            val forward = (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) !=
-                epubLayoutPreferences.readWithVolumeKeysInverted.get()
-            if (forward) {
-                epubReaderFragment()?.goForward()
-            } else {
-                epubReaderFragment()?.goBackward()
+            when {
+                isSpenChapterKey -> navigateAdjacentChapter(forward = event.keyCode == KeyEvent.KEYCODE_N)
+                isSpenPageKey -> navigatePage(forward = event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
+                else -> navigatePage(
+                    forward = (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) !=
+                        epubLayoutPreferences.readWithVolumeKeysInverted.get(),
+                )
             }
             return true
         }
@@ -1338,6 +1332,31 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     private fun epubReaderFragment(): EpubReaderFragment? {
         return readerFragment?.takeIf { it.isAdded && it.view != null }
+    }
+
+    private fun navigatePage(forward: Boolean) {
+        if (forward) {
+            epubReaderFragment()?.goForward()
+        } else {
+            epubReaderFragment()?.goBackward()
+        }
+    }
+
+    private fun navigateAdjacentChapter(forward: Boolean) {
+        val state = viewModel.state.value
+        val adjacentSections = viewModel.adjacentTocEntries(
+            entries = viewModel.tableOfContents(),
+            currentPosition = state.currentPosition,
+            currentHref = state.currentHref,
+        )
+        val section = if (forward) adjacentSections.second else adjacentSections.first
+        if (section != null) {
+            epubReaderFragment()?.goTo(section.link)
+            return
+        }
+
+        val adjacentBookChapterId = if (forward) state.nextBookChapterId else state.previousBookChapterId
+        adjacentBookChapterId?.let(::openAdjacentBook)
     }
 
     private fun openAdjacentBook(chapterId: Long) {
