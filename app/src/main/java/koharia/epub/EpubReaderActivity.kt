@@ -1091,11 +1091,16 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
             event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
+        val isSpenPageKey = event.metaState.and(KeyEvent.META_CTRL_ON) > 0 &&
+            (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT)
         val state = viewModel.state.value
-        if (!isVolumeKey || !epubLayoutPreferences.readWithVolumeKeys.get() ||
-            state.menuVisible || state.isSearchActive || viewModel.imageState.value.isVisible ||
+        val hasBlockingOverlay = state.isSearchActive || viewModel.imageState.value.isVisible ||
             viewModel.footnoteState.value != null
-        ) {
+        val canHandleSpenPageKey = isSpenPageKey && !hasBlockingOverlay
+        val canHandleVolumeKey = isVolumeKey && epubLayoutPreferences.readWithVolumeKeys.get() &&
+            !state.menuVisible && !hasBlockingOverlay
+        val isPageNavigationKey = canHandleSpenPageKey || canHandleVolumeKey
+        if (!isPageNavigationKey) {
             return super.dispatchKeyEvent(event)
         }
 
@@ -1103,8 +1108,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             return true
         }
         if (event.action == KeyEvent.ACTION_UP) {
-            val forward = (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) !=
-                epubLayoutPreferences.readWithVolumeKeysInverted.get()
+            val forward = if (isSpenPageKey) {
+                event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+            } else {
+                (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) !=
+                    epubLayoutPreferences.readWithVolumeKeysInverted.get()
+            }
             if (forward) {
                 epubReaderFragment()?.goForward()
             } else {
