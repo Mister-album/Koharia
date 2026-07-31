@@ -196,6 +196,34 @@ open class ReaderPageImageView @JvmOverloads constructor(
         it.isVisible = false
     }
 
+    /** Returns the visible decoded-image bounds in this container, excluding its background. */
+    internal open fun visibleImageBounds(): RectF? {
+        val view = pageView ?: return null
+        val imageBounds = when (view) {
+            is SubsamplingScaleImageView -> {
+                if (!view.isReady || view.sWidth <= 0 || view.sHeight <= 0) return null
+                val topLeft = view.sourceToViewCoord(0f, 0f) ?: return null
+                val bottomRight = view.sourceToViewCoord(view.sWidth.toFloat(), view.sHeight.toFloat()) ?: return null
+                RectF(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y)
+            }
+            is PhotoView -> view.displayRect?.let(::RectF) ?: return null
+            is AppCompatImageView -> {
+                val drawable = view.drawable ?: return null
+                if (drawable.intrinsicWidth <= 0 || drawable.intrinsicHeight <= 0) return null
+                RectF(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat()).also {
+                    view.imageMatrix.mapRect(it)
+                }
+            }
+            else -> return null
+        }
+        imageBounds.offset(view.x, view.y)
+        val containerBounds = RectF(0f, 0f, width.toFloat(), height.toFloat())
+        if (!imageBounds.intersect(containerBounds) || imageBounds.width() < 2f || imageBounds.height() < 2f) {
+            return null
+        }
+        return imageBounds
+    }
+
     /** Maps a point in this container to its horizontal position in the decoded image. */
     fun sourceXFractionAt(x: Float, y: Float): Float? {
         val view = pageView as? SubsamplingScaleImageView ?: return null

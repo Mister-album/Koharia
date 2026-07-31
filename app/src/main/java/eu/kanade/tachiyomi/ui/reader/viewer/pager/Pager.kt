@@ -4,8 +4,10 @@ import android.content.Context
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import androidx.viewpager.widget.DirectionalViewPager
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
+import kotlin.math.abs
 
 /**
  * Pager implementation that listens for tap and long tap and allows temporarily disabling touch
@@ -14,8 +16,8 @@ import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
  */
 open class Pager(
     context: Context,
-    isHorizontal: Boolean = true,
-) : DirectionalViewPager(context, isHorizontal) {
+    val horizontalPaging: Boolean = true,
+) : DirectionalViewPager(context, horizontalPaging) {
 
     /**
      * Tap listener function to execute when a tap is detected.
@@ -37,6 +39,7 @@ open class Pager(
         }
 
         override fun onLongTapConfirmed(ev: MotionEvent) {
+            if (!isTouchNavigationEnabled) return
             val listener = longTapListener
             if (listener != null && listener.invoke(ev)) {
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -55,14 +58,51 @@ open class Pager(
     private var isGestureDetectorEnabled = true
 
     /**
+     * Whether touch events should reach ViewPager and the current page. Page-flip animation keeps
+     * the tap detector active while disabling dragging, zooming, and long-press actions below it.
+     */
+    private var isTouchNavigationEnabled = true
+
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private var queuedTapEligible = false
+    private var queuedTapDownX = 0f
+    private var queuedTapDownY = 0f
+
+    /**
      * Dispatches a touch event.
      */
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (!isTouchNavigationEnabled) {
+            handleQueuedPageFlipTap(ev)
+            return true
+        }
         val handled = super.dispatchTouchEvent(ev)
         if (isGestureDetectorEnabled) {
             gestureDetector.onTouchEvent(ev)
         }
         return handled
+    }
+
+    private fun handleQueuedPageFlipTap(ev: MotionEvent) {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                queuedTapEligible = true
+                queuedTapDownX = ev.x
+                queuedTapDownY = ev.y
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (abs(ev.x - queuedTapDownX) > touchSlop || abs(ev.y - queuedTapDownY) > touchSlop) {
+                    queuedTapEligible = false
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (queuedTapEligible) {
+                    tapListener?.invoke(ev)
+                }
+                queuedTapEligible = false
+            }
+            MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> queuedTapEligible = false
+        }
     }
 
     /**
@@ -107,5 +147,12 @@ open class Pager(
      */
     fun setGestureDetectorEnabled(enabled: Boolean) {
         isGestureDetectorEnabled = enabled
+    }
+
+    fun setTouchNavigationEnabled(enabled: Boolean) {
+        isTouchNavigationEnabled = enabled
+        if (enabled) {
+            queuedTapEligible = false
+        }
     }
 }

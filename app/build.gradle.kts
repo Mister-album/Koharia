@@ -299,6 +299,7 @@ dependencies {
     implementation(libs.directionalViewPager) {
         exclude(group = "androidx.viewpager", module = "viewpager")
     }
+    implementation(projects.pageflip)
     implementation(libs.composeRichEditor)
     implementation(libs.aboutLibraries.compose)
     implementation(libs.bundles.voyager)

@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.epub.settings.EpubBackgroundSettingsPreference
 import koharia.epub.settings.EpubFontPreference
@@ -132,10 +133,6 @@ object SettingsReaderScreen : SearchableSettings {
                 preference = readerPreferences.showNavigationOverlayOnStart,
                 title = stringResource(MR.strings.pref_show_navigation_mode),
                 subtitle = stringResource(MR.strings.pref_show_navigation_mode_summary),
-            ),
-            Preference.PreferenceItem.SwitchPreference(
-                preference = readerPreferences.pageTransitions,
-                title = stringResource(MR.strings.pref_page_transitions),
             ),
             getDisplayGroup(readerPreferences = readerPreferences),
             getEInkGroup(readerPreferences = readerPreferences),
@@ -387,6 +384,17 @@ object SettingsReaderScreen : SearchableSettings {
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_reader_navigation),
             preferenceItems = persistentListOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = epubLayoutPreferences.pageTransitionEffect,
+                    entries = pageTransitionEntries(),
+                    title = stringResource(MR.strings.pref_page_transition_effect),
+                    subtitle = if (readingMode == EpubLayoutPreferences.ReadingMode.SCROLL) {
+                        stringResource(MR.strings.pref_page_transition_paginated_only)
+                    } else {
+                        null
+                    },
+                    enabled = readingMode == EpubLayoutPreferences.ReadingMode.PAGINATED,
+                ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = epubLayoutPreferences.readWithVolumeKeys,
                     title = stringResource(MR.strings.pref_read_with_volume_keys),
@@ -728,6 +736,11 @@ object SettingsReaderScreen : SearchableSettings {
                     enabled = navMode != 5,
                 ),
                 Preference.PreferenceItem.ListPreference(
+                    preference = readerPreferences.pagerPageTransitionEffect,
+                    entries = pageTransitionEntries(),
+                    title = stringResource(MR.strings.pref_page_transition_effect),
+                ),
+                Preference.PreferenceItem.ListPreference(
                     preference = pageLayoutPref,
                     entries = PageLayout.selectableEntries
                         .associate { it.value to stringResource(ReaderPreferences.PageLayouts[it.value]) }
@@ -799,6 +812,10 @@ object SettingsReaderScreen : SearchableSettings {
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.webtoon_viewer),
             preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.webtoonSmoothScroll,
+                    title = stringResource(MR.strings.pref_webtoon_smooth_scroll),
+                ),
                 Preference.PreferenceItem.ListPreference(
                     preference = navModePref,
                     entries = ReaderPreferences.TapZones
@@ -881,6 +898,11 @@ object SettingsReaderScreen : SearchableSettings {
             ),
         )
     }
+
+    @Composable
+    private fun pageTransitionEntries() = PageTransitionEffect.entries
+        .associate { it.value to stringResource(it.titleRes) }
+        .toImmutableMap()
 
     @Composable
     private fun getNavigationGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {

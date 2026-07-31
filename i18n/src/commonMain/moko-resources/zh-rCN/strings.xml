@@ -162,6 +162,16 @@
 \n信任此插件即代表你愿意承担上述风险。</string>
     <string name="pref_fullscreen">全屏</string>
     <string name="pref_page_transitions">翻页动画</string>
+    <string name="pref_page_transition_effect">翻页效果</string>
+    <string name="pref_page_transition_paginated_only">仅分页阅读模式可用</string>
+    <string name="pref_webtoon_smooth_scroll">连续滚动平滑过渡</string>
+    <string name="page_transition_slide">平移</string>
+    <string name="page_transition_cover">覆盖</string>
+    <string name="page_transition_curl">仿真</string>
+    <string name="page_transition_vertical">上下</string>
+    <string name="page_transition_fade">淡入</string>
+    <string name="page_transition_depth">缩放</string>
+    <string name="page_transition_none">无</string>
     <string name="pref_double_tap_anim_speed">双击动画速度</string>
     <string name="pref_show_page_number">显示页码</string>
     <string name="pref_webtoon_vertical_navigator">长条阅读使用竖向导航条</string>

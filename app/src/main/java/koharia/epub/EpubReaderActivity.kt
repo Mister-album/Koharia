@@ -80,6 +80,8 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderNavigationOverlayView
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.openInBrowser
@@ -936,6 +938,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     override fun onTap(positionX: Float, positionY: Float): Boolean {
         if (viewModel.imageState.value.isVisible || viewModel.footnoteState.value != null) return true
+        val turnOrigin = PageTurnOrigin(positionX, positionY, PageTurnCause.TAP).normalized()
         val isRightToLeft = epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
             epubLayoutPreferences.pageDirection.get() == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
         return when (resolveNavigationAction(positionX, positionY)) {
@@ -944,23 +947,23 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 true
             }
             ViewerNavigation.NavigationRegion.NEXT,
-            -> epubReaderFragment()?.goForward() ?: false
+            -> epubReaderFragment()?.goForward(turnOrigin) ?: false
 
             ViewerNavigation.NavigationRegion.PREV,
-            -> epubReaderFragment()?.goBackward() ?: false
+            -> epubReaderFragment()?.goBackward(turnOrigin) ?: false
 
             ViewerNavigation.NavigationRegion.RIGHT -> {
                 if (isRightToLeft) {
-                    epubReaderFragment()?.goBackward() ?: false
+                    epubReaderFragment()?.goBackward(turnOrigin) ?: false
                 } else {
-                    epubReaderFragment()?.goForward() ?: false
+                    epubReaderFragment()?.goForward(turnOrigin) ?: false
                 }
             }
             ViewerNavigation.NavigationRegion.LEFT -> {
                 if (isRightToLeft) {
-                    epubReaderFragment()?.goForward() ?: false
+                    epubReaderFragment()?.goForward(turnOrigin) ?: false
                 } else {
-                    epubReaderFragment()?.goBackward() ?: false
+                    epubReaderFragment()?.goBackward(turnOrigin) ?: false
                 }
             }
         }
@@ -1215,6 +1218,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     "EPUB pagination settings changed values=$values phase=${state.paginationPhase} " +
                         "pages=${state.currentVisualPage}/${state.totalVisualPages}"
                 }
+                epubReaderFragment()?.cancelPageTransition()
                 viewModel.onLayoutPreferencesChanged()
                 paginationJob?.cancel()
                 viewModel.invalidatePaginationDisplay()
@@ -1231,6 +1235,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     applyCurrentReadiumPreferences()
                 }
             }
+            .launchIn(lifecycleScope)
+
+        epubLayoutPreferences.pageTransitionEffect.changes()
+            .distinctUntilChanged()
+            .drop(1)
+            .onEach { epubReaderFragment()?.cancelPageTransition() }
             .launchIn(lifecycleScope)
     }
 

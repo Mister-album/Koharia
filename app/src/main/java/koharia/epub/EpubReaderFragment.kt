@@ -19,6 +19,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
 import koharia.epub.locator.toNavigatorLocator
@@ -35,6 +38,7 @@ import logcat.LogPriority
 import org.readium.r2.navigator.HyperlinkNavigator
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.epub.EpubPreferences
+import org.readium.r2.navigator.input.DragEvent
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.shared.ExperimentalReadiumApi
@@ -48,6 +52,7 @@ import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.WeakHashMap
+import kotlin.math.abs
 
 @OptIn(ExperimentalReadiumApi::class)
 class EpubReaderFragment : Fragment() {
@@ -102,6 +107,10 @@ class EpubReaderFragment : Fragment() {
     private var scannerContainerId: Int = View.NO_ID
     private var observedNavigator: EpubNavigatorFragment? = null
     private var navigatorInputListener: InputListener? = null
+    private var pageTransitionController: EpubPageTransitionController? = null
+    private var pageTransitionOverlay: EpubPageTransitionOverlayView? = null
+    private var pageTurnDragAccepted = false
+    private var currentTransitionPageIndex = -1
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
     private var readerFontScale = 1f
@@ -156,6 +165,7 @@ class EpubReaderFragment : Fragment() {
             val footnote = context as? HyperlinkNavigator.FootnoteContext ?: return true
             val contentHtml = footnote.noteContent.trim().takeIf { it.isNotEmpty() } ?: return true
             val currentHost = host ?: return true
+            pageTransitionController?.cancel()
             currentHost.onFootnoteActivated(link, contentHtml)
             return false
         }
@@ -164,8 +174,14 @@ class EpubReaderFragment : Fragment() {
     @Suppress("DEPRECATION")
     private val paginationListener = object : EpubNavigatorFragment.PaginationListener {
         override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+            pageTransitionController?.onPageChanged(pageIndex, locator.href.toString())
+            currentTransitionPageIndex = pageIndex
             host?.onPageChanged(pageIndex, totalPages, locator)
             scheduleImageInteractionsInstall()
+        }
+
+        override fun onPageLoaded() {
+            pageTransitionController?.onPageLoaded()
         }
     }
 
@@ -240,6 +256,18 @@ class EpubReaderFragment : Fragment() {
                     FrameLayout.LayoutParams.MATCH_PARENT,
                 ),
             )
+            addView(
+                EpubPageTransitionOverlayView(requireContext()).also {
+                    pageTransitionOverlay = it
+                    it.visibility = View.GONE
+                    it.isClickable = false
+                    it.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
         }
     }
 
@@ -267,6 +295,29 @@ class EpubReaderFragment : Fragment() {
         observeNavigator(navigator)
         observeNavigatorViewReady(navigator)
         val viewportView = view.findViewById<View>(containerId) ?: view
+        val root = view as FrameLayout
+        val overlay = pageTransitionOverlay
+        if (overlay != null) {
+            pageTransitionController = EpubPageTransitionController(
+                fragment = this,
+                root = root,
+                content = viewportView,
+                overlay = overlay,
+                effectProvider = {
+                    PageTransitionEffect.fromPreference(epubLayoutPreferences.pageTransitionEffect.get())
+                },
+                rightToLeftProvider = {
+                    epubLayoutPreferences.pageDirection.get() == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
+                },
+                currentLocationProvider = {
+                    navigator.currentLocator.value.href.toString() to currentTransitionPageIndex
+                },
+                navigate = { forward, animated ->
+                    clearContinuousScrollState()
+                    if (forward) navigator.goForward(animated) else navigator.goBackward(animated)
+                },
+            )
+        }
         viewportView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
             val width = right - left
             val height = bottom - top
@@ -275,6 +326,7 @@ class EpubReaderFragment : Fragment() {
             ) {
                 return@addOnLayoutChangeListener
             }
+            pageTransitionController?.cancel()
             val configuration = resources.configuration
             host?.onPaginationViewportChanged(
                 EpubPaginationViewport(
@@ -294,6 +346,9 @@ class EpubReaderFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        pageTransitionController?.cancel()
+        pageTransitionController = null
+        pageTransitionOverlay = null
         clearContinuousScrollState()
         imageInteractionInstallJob?.cancel()
         imageInteractionInstallJob = null
@@ -313,29 +368,45 @@ class EpubReaderFragment : Fragment() {
 
     fun goTo(link: Link): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
+        pageTransitionController?.cancel()
         clearContinuousScrollState()
         return navigator.go(link)
     }
 
     fun goTo(locator: Locator): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
+        pageTransitionController?.cancel()
         val publication = sessionRepository.get(chapterId)?.publication ?: return false
         clearContinuousScrollState()
         return navigator.go(publication.toNavigatorLocator(locator))
     }
 
-    fun goForward(): Boolean {
+    fun goForward(origin: PageTurnOrigin? = null): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
         navigateContinuousScroll(forward = true)?.let { return it }
-        clearContinuousScrollState()
-        return navigator.goForward()
+        return pageTransitionController?.turnPage(
+            forward = true,
+            currentHref = navigator.currentLocator.value.href.toString(),
+            currentPageIndex = currentTransitionPageIndex,
+            origin = origin ?: PageTurnOrigin.center(PageTurnCause.PROGRAMMATIC),
+        )
+            ?: navigator.goForward()
     }
 
-    fun goBackward(): Boolean {
+    fun goBackward(origin: PageTurnOrigin? = null): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
         navigateContinuousScroll(forward = false)?.let { return it }
-        clearContinuousScrollState()
-        return navigator.goBackward()
+        return pageTransitionController?.turnPage(
+            forward = false,
+            currentHref = navigator.currentLocator.value.href.toString(),
+            currentPageIndex = currentTransitionPageIndex,
+            origin = origin ?: PageTurnOrigin.center(PageTurnCause.PROGRAMMATIC),
+        )
+            ?: navigator.goBackward()
+    }
+
+    fun cancelPageTransition() {
+        pageTransitionController?.cancel()
     }
 
     fun prepareFontSelection() {
@@ -652,6 +723,42 @@ class EpubReaderFragment : Fragment() {
                     positionY = event.point.y / height,
                 ) ?: false
             }
+
+            override fun onDrag(event: DragEvent): Boolean {
+                if (epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.PAGINATED) {
+                    pageTurnDragAccepted = false
+                    return false
+                }
+                return when (event.type) {
+                    DragEvent.Type.Start -> {
+                        pageTurnDragAccepted = abs(event.offset.x) > abs(event.offset.y) * DRAG_AXIS_RATIO
+                        pageTurnDragAccepted
+                    }
+                    DragEvent.Type.Move -> pageTurnDragAccepted
+                    DragEvent.Type.End -> {
+                        val accepted = pageTurnDragAccepted
+                        pageTurnDragAccepted = false
+                        if (accepted && abs(event.offset.x) >= navigator.publicationView.width * DRAG_TURN_FRACTION) {
+                            val towardLeft = event.offset.x < 0f
+                            val forward = if (
+                                epubLayoutPreferences.pageDirection.get() ==
+                                EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
+                            ) {
+                                !towardLeft
+                            } else {
+                                towardLeft
+                            }
+                            val origin = PageTurnOrigin(
+                                xFraction = event.start.x / navigator.publicationView.width,
+                                yFraction = event.start.y / navigator.publicationView.height,
+                                cause = PageTurnCause.GESTURE,
+                            ).normalized()
+                            if (forward) goForward(origin) else goBackward(origin)
+                        }
+                        accepted
+                    }
+                }
+            }
         }
         observedNavigator = navigator
         navigatorInputListener = inputListener
@@ -674,6 +781,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     private fun clearNavigatorInputListener() {
+        pageTurnDragAccepted = false
         navigatorInputListener?.let { listener ->
             observedNavigator?.removeInputListener(listener)
         }
@@ -1096,6 +1204,7 @@ class EpubReaderFragment : Fragment() {
                 if (interaction == EpubImageInteraction.ACTIONS) {
                     view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                 }
+                pageTransitionController?.cancel()
                 host?.onImageInteraction(
                     reference = EpubImageReference(
                         documentHref = documentHref,
@@ -1208,6 +1317,8 @@ class EpubReaderFragment : Fragment() {
         private const val CONTINUOUS_SCROLL_INSTALL_DELAY_MS = 180L
         private const val IMAGE_INTERACTION_INSTALL_DELAY_MS = 80L
         private const val IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS = 250L
+        private const val DRAG_AXIS_RATIO = 1.25f
+        private const val DRAG_TURN_FRACTION = 0.12f
         private const val FONT_PREPARATION_DRAW_TIMEOUT_MS = 8_000L
         private const val FONT_PREPARATION_POLL_MS = 40L
         private const val FONT_BACKGROUND_WAIT_TIMEOUT_MS = 6_000L

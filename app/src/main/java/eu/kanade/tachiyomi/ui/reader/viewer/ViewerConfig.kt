@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
@@ -16,9 +17,12 @@ abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val sc
 
     var navigationModeChangedListener: (() -> Unit)? = null
 
+    var pageTransitionEffectChangedListener: (() -> Unit)? = null
+
     var tappingInverted = ReaderPreferences.TappingInvertMode.NONE
     var longTapEnabled = true
-    var usePageTransitions = false
+    var pageTransitionEffect = PageTransitionEffect.SLIDE
+    var webtoonSmoothScroll = true
     var doubleTapAnimDuration = 500
     var volumeKeysEnabled = false
     var volumeKeysInverted = false
@@ -49,8 +53,14 @@ abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val sc
         readerPreferences.readWithLongTap
             .register({ longTapEnabled = it })
 
-        readerPreferences.pageTransitions
-            .register({ usePageTransitions = it })
+        readerPreferences.pagerPageTransitionEffect
+            .register(
+                valueAssignment = { pageTransitionEffect = PageTransitionEffect.fromPreference(it) },
+                onChanged = { pageTransitionEffectChangedListener?.invoke() },
+            )
+
+        readerPreferences.webtoonSmoothScroll
+            .register({ webtoonSmoothScroll = it })
 
         readerPreferences.doubleTapAnimSpeed
             .register({ doubleTapAnimDuration = it })

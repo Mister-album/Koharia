@@ -1,5 +1,6 @@
 package koharia.epub.settings
 
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import koharia.epub.font.EpubFontId
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
@@ -15,6 +16,9 @@ class EpubLayoutPreferences(
 
     val pageDirection: Preference<PageDirection> =
         preferenceStore.getEnum("epub_layout_page_direction", PageDirection.LEFT_TO_RIGHT)
+
+    val pageTransitionEffect: Preference<Int> =
+        preferenceStore.getInt("epub_page_transition_effect", PageTransitionEffect.SLIDE.value)
 
     val theme: Preference<Theme> =
         preferenceStore.getEnum("epub_layout_theme", Theme.LIGHT)

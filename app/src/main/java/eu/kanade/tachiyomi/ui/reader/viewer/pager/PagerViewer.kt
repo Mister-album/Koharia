@@ -1,11 +1,15 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+import android.animation.ValueAnimator
+import android.graphics.Color
 import android.graphics.PointF
+import android.graphics.drawable.ColorDrawable
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams
+import android.widget.FrameLayout
 import androidx.core.view.children
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
@@ -17,10 +21,16 @@ import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
 import kotlin.math.min
@@ -30,6 +40,11 @@ import kotlin.math.min
  */
 @Suppress("LeakingThis")
 abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
+
+    private data class PendingCoverTurn(
+        val target: Int,
+        val slot: PagerSlot.Pages,
+    )
 
     val downloadManager: DownloadManager by injectLazy()
 
@@ -51,6 +66,31 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private val adapter = PagerViewerAdapter(this)
 
+    private val viewerContainer = FrameLayout(activity).apply {
+        addView(
+            pager,
+            FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
+        )
+    }
+
+    private val pageFlipController = ComicPageFlipController(
+        container = viewerContainer,
+        pager = pager,
+        canAnimateTarget = { target -> adapter.slots.getOrNull(target) is PagerSlot.Pages },
+        isTargetReady = { target ->
+            (adapter.slots.getOrNull(target) as? PagerSlot.Pages)
+                ?.progressPage
+                ?.let(::getPageHolder)
+                ?.isTransitionTargetReady() == true
+        },
+        contentBoundsInWindow = { target ->
+            (adapter.slots.getOrNull(target) as? PagerSlot.Pages)
+                ?.progressPage
+                ?.let(::getPageHolder)
+                ?.visibleImageBoundsInWindow()
+        },
+    )
+
     /**
      * Currently active item. It can be a chapter page or a chapter transition.
      */
@@ -68,6 +108,16 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private var pendingProgressCommitAnchor: ReaderPage? = null
 
     private var awaitingImageRefresh = false
+
+    private var awaitingPageTransitionUpdate = false
+
+    private var activePageTurnOrigin: PageTurnOrigin? = null
+
+    private var pageTransitionTransformer: PagerPageTransformer? = null
+
+    private var pendingCoverTurn: PendingCoverTurn? = null
+
+    private var pendingCoverTurnTimeout: Job? = null
 
     /**
      * Viewer chapters to set when the pager enters idle mode. Otherwise, if the view was settling
@@ -90,6 +140,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 if (awaitingImageRefresh) {
                     awaitingImageRefresh = false
                     refreshAdapter()
+                }
+                if (awaitingPageTransitionUpdate) {
+                    awaitingPageTransitionUpdate = false
+                    applyPageTransitionEffect()
                 }
                 awaitingIdleViewerChapters?.let { viewerChapters ->
                     setChaptersInternal(viewerChapters)
@@ -118,13 +172,16 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
 
         override fun onPageScrollStateChanged(state: Int) {
+            if (state == ViewPager.SCROLL_STATE_DRAGGING) {
+                cancelPendingCoverTurn(reactivateCurrent = true)
+            }
             isIdle = state == ViewPager.SCROLL_STATE_IDLE
         }
     }
 
     init {
         pager.isVisible = false // Don't layout the pager yet
-        pager.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        pager.layoutParams = FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         pager.isFocusable = false
         pager.offscreenPageLimit = 1
         pager.id = R.id.reader_pager
@@ -139,12 +196,13 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 (event.rawX - viewPosition[0] + viewPositionRelativeToWindow[0]) / pager.width,
                 (event.rawY - viewPosition[1] + viewPositionRelativeToWindow[1]) / pager.height,
             )
+            val turnOrigin = PageTurnOrigin(pos.x, pos.y, PageTurnCause.TAP).normalized()
             when (config.navigator.getAction(pos)) {
                 NavigationRegion.MENU -> activity.toggleMenu()
-                NavigationRegion.NEXT -> moveToNext()
-                NavigationRegion.PREV -> moveToPrevious()
-                NavigationRegion.RIGHT -> moveRight()
-                NavigationRegion.LEFT -> moveLeft()
+                NavigationRegion.NEXT -> withPageTurnOrigin(turnOrigin) { moveToNext() }
+                NavigationRegion.PREV -> withPageTurnOrigin(turnOrigin) { moveToPrevious() }
+                NavigationRegion.RIGHT -> withPageTurnOrigin(turnOrigin) { moveRight() }
+                NavigationRegion.LEFT -> withPageTurnOrigin(turnOrigin) { moveLeft() }
             }
         }
         pager.longTapListener = f@{ event ->
@@ -187,13 +245,25 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             }
         }
 
+        config.pageTransitionEffectChangedListener = {
+            if (isIdle) {
+                applyPageTransitionEffect()
+            } else {
+                awaitingPageTransitionUpdate = true
+            }
+        }
+
         config.navigationModeChangedListener = {
             val showOnStart = config.navigationOverlayOnStart || config.forceNavigationOverlay
             activity.binding.navigationOverlay.setNavigation(config.navigator, showOnStart)
         }
+
+        applyPageTransitionEffect()
     }
 
     override fun destroy() {
+        cancelPendingCoverTurn(reactivateCurrent = false)
+        pageFlipController.cancel()
         super.destroy()
         scope.cancel()
     }
@@ -211,7 +281,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Returns the view this viewer uses.
      */
     override fun getView(): View {
-        return pager
+        return viewerContainer
     }
 
     /**
@@ -397,6 +467,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Sets the active [chapters] on this pager.
      */
     private fun setChaptersInternal(chapters: ViewerChapters) {
+        cancelPendingCoverTurn(reactivateCurrent = false)
         // Remove listener so the change in item doesn't trigger it
         pager.removeOnPageChangeListener(pagerListener)
 
@@ -446,7 +517,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             val currentPosition = pager.currentItem
             stableSlotAnchor = page
             pendingPageMove = PendingPageMove(position, page, cause)
-            pager.setCurrentItem(position, true)
+            // Slider jumps, chapter changes, restores, and layout rebuilds are programmatic
+            // navigation. Only direct page turns should run the selected transition.
+            pager.setCurrentItem(position, false)
             // manually call onPageChange since ViewPager listener is not triggered in this case
             if (currentPosition == position) {
                 pendingPageMove = null
@@ -480,7 +553,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             if (holder != null && config.navigateToPan && holder.canNavigatePanRight()) {
                 holder.navigatePanRight()
             } else {
-                pager.setCurrentItem(pager.currentItem + 1, config.usePageTransitions)
+                setCurrentItemForPageTurn(pager.currentItem + 1)
             }
         }
     }
@@ -494,7 +567,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             if (holder != null && config.navigateToPan && holder.canNavigatePanLeft()) {
                 holder.navigatePanLeft()
             } else {
-                pager.setCurrentItem(pager.currentItem - 1, config.usePageTransitions)
+                setCurrentItemForPageTurn(pager.currentItem - 1)
             }
         }
     }
@@ -518,10 +591,169 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * changed.
      */
     private fun refreshAdapter() {
+        cancelPendingCoverTurn(reactivateCurrent = false)
         val currentItem = pager.currentItem
         adapter.refresh()
         pager.adapter = adapter
         pager.setCurrentItem(currentItem, false)
+    }
+
+    private fun shouldAnimatePageTurn(): Boolean =
+        config.pageTransitionEffect != PageTransitionEffect.NONE && ValueAnimator.areAnimatorsEnabled()
+
+    private fun setCurrentItemForPageTurn(target: Int) {
+        if (config.pageTransitionEffect == PageTransitionEffect.COVER &&
+            ValueAnimator.areAnimatorsEnabled() &&
+            prepareCoverPageTurn(target)
+        ) {
+            return
+        }
+        if (config.pageTransitionEffect == PageTransitionEffect.CURL && ValueAnimator.areAnimatorsEnabled()) {
+            val origin = activePageTurnOrigin ?: PageTurnOrigin.center(PageTurnCause.KEY)
+            val sourceIsPage = adapter.slots.getOrNull(pager.currentItem) is PagerSlot.Pages
+            val targetIsPage = adapter.slots.getOrNull(target) is PagerSlot.Pages
+            if (sourceIsPage && targetIsPage && pageFlipController.start(target, origin)) {
+                return
+            }
+        }
+        pager.setCurrentItem(target, shouldAnimatePageTurn())
+    }
+
+    private fun prepareCoverPageTurn(target: Int): Boolean {
+        if (target == pager.currentItem) return false
+        val targetSlot = adapter.slots.getOrNull(target) as? PagerSlot.Pages ?: return false
+        if (adapter.slots.getOrNull(pager.currentItem) !is PagerSlot.Pages) return false
+        if (getPageHolder(targetSlot.progressPage)?.isTransitionTargetReady() == true) {
+            cancelPendingCoverTurn(reactivateCurrent = false)
+            pager.setCurrentItem(target, true)
+            return true
+        }
+        if (pendingCoverTurn?.target == target) return true
+
+        cancelPendingCoverTurn(reactivateCurrent = false)
+        if (!activateSlotForTransition(targetSlot)) {
+            pager.setCurrentItem(target, false)
+            return true
+        }
+        pendingCoverTurn = PendingCoverTurn(target, targetSlot)
+        pendingCoverTurnTimeout = scope.launch {
+            delay(COVER_TARGET_READY_TIMEOUT_MS)
+            val pending = pendingCoverTurn?.takeIf { it.target == target && it.slot == targetSlot }
+                ?: return@launch
+            pendingCoverTurn = null
+            pendingCoverTurnTimeout = null
+            pager.setCurrentItem(pending.target, false)
+        }
+        return true
+    }
+
+    internal fun onTransitionTargetReady(slot: PagerSlot.Pages) {
+        val pending = pendingCoverTurn?.takeIf { it.slot == slot } ?: return
+        if (config.pageTransitionEffect != PageTransitionEffect.COVER ||
+            adapter.slots.getOrNull(pending.target) != slot
+        ) {
+            cancelPendingCoverTurn(reactivateCurrent = true)
+            return
+        }
+        pendingCoverTurn = null
+        pendingCoverTurnTimeout?.cancel()
+        pendingCoverTurnTimeout = null
+        pager.post {
+            if (config.pageTransitionEffect == PageTransitionEffect.COVER &&
+                adapter.slots.getOrNull(pending.target) == slot &&
+                pager.currentItem != pending.target
+            ) {
+                pager.setCurrentItem(pending.target, true)
+            }
+        }
+    }
+
+    internal fun onTransitionTargetFailed(slot: PagerSlot.Pages) {
+        val pending = pendingCoverTurn?.takeIf { it.slot == slot } ?: return
+        pendingCoverTurn = null
+        pendingCoverTurnTimeout?.cancel()
+        pendingCoverTurnTimeout = null
+        pager.setCurrentItem(pending.target, false)
+    }
+
+    private fun activateSlotForTransition(slot: PagerSlot.Pages): Boolean {
+        val physicalPages = slot.pages.filterNot { it is InsertPage }.distinctBy { it.index }
+        val chapter = physicalPages.firstOrNull()?.chapter ?: return false
+        if (physicalPages.any { it.chapter !== chapter }) return false
+        val loader = chapter.pageLoader ?: return false
+        loader.setActivePages(physicalPages)
+        return true
+    }
+
+    private fun cancelPendingCoverTurn(reactivateCurrent: Boolean) {
+        if (pendingCoverTurn == null && pendingCoverTurnTimeout == null) return
+        pendingCoverTurn = null
+        pendingCoverTurnTimeout?.cancel()
+        pendingCoverTurnTimeout = null
+        if (reactivateCurrent) {
+            (adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages)
+                ?.let(::activateSlotForTransition)
+        }
+    }
+
+    private inline fun withPageTurnOrigin(origin: PageTurnOrigin, action: () -> Unit) {
+        val previous = activePageTurnOrigin
+        activePageTurnOrigin = origin
+        try {
+            action()
+        } finally {
+            activePageTurnOrigin = previous
+        }
+    }
+
+    private fun applyPageTransitionEffect() {
+        cancelPendingCoverTurn(reactivateCurrent = true)
+        pageFlipController.cancel()
+        pageTransitionTransformer?.clear(pager.children.asIterable())
+        val effect = config.pageTransitionEffect.takeIf { ValueAnimator.areAnimatorsEnabled() }
+            ?: PageTransitionEffect.NONE
+        val transformer = effect
+            .takeUnless {
+                it == PageTransitionEffect.SLIDE ||
+                    it == PageTransitionEffect.NONE ||
+                    (it == PageTransitionEffect.CURL && pager.horizontalPaging)
+            }
+            ?.let {
+                PagerPageTransformer(
+                    effect = it,
+                    horizontalPager = pager.horizontalPaging,
+                    rightToLeft = this is R2LPagerViewer,
+                    readerBackgroundColor = ::currentReaderBackgroundColor,
+                )
+            }
+        pageTransitionTransformer = transformer
+        pager.setPageTransformer(false, transformer)
+        pager.children.forEach { child ->
+            child.alpha = 1f
+            child.translationX = 0f
+            child.translationY = 0f
+            child.translationZ = 0f
+            child.rotationX = 0f
+            child.rotationY = 0f
+            child.scaleX = 1f
+            child.scaleY = 1f
+            child.cameraDistance = child.resources.displayMetrics.density * 1_280f
+            child.pivotX = child.width / 2f
+            child.pivotY = child.height / 2f
+        }
+    }
+
+    private fun currentReaderBackgroundColor(): Int {
+        return (activity.binding.readerContainer.background as? ColorDrawable)?.color
+            ?: when (config.theme) {
+                0 -> Color.WHITE
+                2 -> Color.rgb(0x20, 0x21, 0x25)
+                else -> Color.BLACK
+            }
+    }
+
+    private companion object {
+        const val COVER_TARGET_READY_TIMEOUT_MS = 1_200L
     }
 
     /**
@@ -639,6 +871,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun rebuildSlots(anchor: ReaderPage?) {
+        cancelPendingCoverTurn(reactivateCurrent = false)
         val resolvedAnchor = anchor ?: stableSlotAnchor
         stableSlotAnchor = resolvedAnchor
         pager.removeOnPageChangeListener(pagerListener)

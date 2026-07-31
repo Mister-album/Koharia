@@ -88,6 +88,7 @@ import eu.kanade.presentation.components.TabbedDialogPaddings
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.epub.EpubBrightnessAwareDialogContent
 import koharia.epub.EpubReaderActivity
@@ -1496,6 +1497,28 @@ private fun ColumnScope.EpubReadingSettingsPage(
                     label = { Text(stringResource(orientation.stringRes)) },
                 )
             }
+    }
+
+    val readingMode by preferences.readingMode.changes().collectAsState(preferences.readingMode.get())
+    val transitionEffect by preferences.pageTransitionEffect.changes()
+        .collectAsState(preferences.pageTransitionEffect.get())
+    ChipSection(title = stringResource(MR.strings.pref_page_transition_effect)) {
+        PageTransitionEffect.entries.forEach { effect ->
+            FilterChip(
+                selected = transitionEffect == effect.value,
+                onClick = { preferences.pageTransitionEffect.set(effect.value) },
+                enabled = readingMode == EpubLayoutPreferences.ReadingMode.PAGINATED,
+                label = { Text(stringResource(effect.titleRes)) },
+            )
+        }
+    }
+    if (readingMode == EpubLayoutPreferences.ReadingMode.SCROLL) {
+        Text(
+            text = stringResource(MR.strings.pref_page_transition_paginated_only),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
     }
 
     HeadingItem(stringResource(MR.strings.pref_reader_navigation))
