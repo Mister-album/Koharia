@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.ViewConfiguration
 import androidx.viewpager.widget.DirectionalViewPager
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
@@ -69,7 +70,16 @@ open class Pager(
      */
     private var isTouchNavigationEnabled = true
 
-    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val viewConfiguration = ViewConfiguration.get(context)
+    private val touchSlop = viewConfiguration.scaledTouchSlop
+    private val minimumFlingVelocity = maxOf(
+        viewConfiguration.scaledMinimumFlingVelocity,
+        (MINIMUM_FLING_VELOCITY_DP * resources.displayMetrics.density).toInt(),
+    )
+    private val minimumFlingDistance = maxOf(
+        touchSlop * 2f,
+        MINIMUM_FLING_DISTANCE_DP * resources.displayMetrics.density,
+    )
     private var queuedTapEligible = false
     private var queuedTapDownX = 0f
     private var queuedTapDownY = 0f
@@ -80,6 +90,7 @@ open class Pager(
     private var pageTurnSwipeDelta = 0
     private var pageTurnSwipeDownX = 0f
     private var pageTurnSwipeDownY = 0f
+    private var pageTurnSwipeVelocityTracker: VelocityTracker? = null
 
     /**
      * Dispatches a touch event.
@@ -101,6 +112,12 @@ open class Pager(
         if (pageTurnSwipeListener == null || canInterceptPageTurnSwipe == null) {
             resetPageTurnSwipe()
             return false
+        }
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            resetPageTurnSwipe()
+            pageTurnSwipeVelocityTracker = VelocityTracker.obtain().also { it.addMovement(ev) }
+        } else {
+            pageTurnSwipeVelocityTracker?.addMovement(ev)
         }
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -143,7 +160,7 @@ open class Pager(
             }
             MotionEvent.ACTION_UP -> {
                 if (pageTurnSwipeConsumed) {
-                    if (!pageTurnSwipeCanceled) {
+                    if (!pageTurnSwipeCanceled && shouldCommitPageTurnSwipe(ev)) {
                         val originX = (pageTurnSwipeDownX / width.coerceAtLeast(1)).coerceIn(0f, 1f)
                         val originY = (pageTurnSwipeDownY / height.coerceAtLeast(1)).coerceIn(0f, 1f)
                         pageTurnSwipeListener?.invoke(pageTurnSwipeDelta, originX, originY)
@@ -160,6 +177,20 @@ open class Pager(
             }
         }
         return false
+    }
+
+    private fun shouldCommitPageTurnSwipe(ev: MotionEvent): Boolean {
+        val displacement = ev.x - pageTurnSwipeDownX
+        val directionMatches = if (pageTurnSwipeDelta > 0) displacement < 0f else displacement > 0f
+        if (!directionMatches) return false
+        val distance = abs(displacement)
+        val distanceThreshold = maxOf(touchSlop * 2f, width * SWIPE_COMMIT_FRACTION)
+        if (distance >= distanceThreshold) return true
+
+        pageTurnSwipeVelocityTracker?.computeCurrentVelocity(1_000)
+        val velocity = pageTurnSwipeVelocityTracker?.xVelocity ?: 0f
+        val velocityMatches = if (pageTurnSwipeDelta > 0) velocity < 0f else velocity > 0f
+        return distance >= minimumFlingDistance && velocityMatches && abs(velocity) >= minimumFlingVelocity
     }
 
     private fun cancelTouchForChildren(ev: MotionEvent) {
@@ -182,6 +213,8 @@ open class Pager(
         pageTurnSwipeConsumed = false
         pageTurnSwipeCanceled = false
         pageTurnSwipeDelta = 0
+        pageTurnSwipeVelocityTracker?.recycle()
+        pageTurnSwipeVelocityTracker = null
     }
 
     private fun handleQueuedPageFlipTap(ev: MotionEvent) {
@@ -260,5 +293,8 @@ open class Pager(
 
     private companion object {
         const val SWIPE_AXIS_RATIO = 1.25f
+        const val SWIPE_COMMIT_FRACTION = 0.18f
+        const val MINIMUM_FLING_DISTANCE_DP = 25f
+        const val MINIMUM_FLING_VELOCITY_DP = 400f
     }
 }

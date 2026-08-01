@@ -307,7 +307,11 @@ internal class EpubPageTransitionController(
 
     private fun drainPending() {
         val pending = pendingTurns.removeFirstOrNull() ?: return
+        val postedGeneration = generation
         root.post {
+            if (generation != postedGeneration || active != null || !fragment.isAdded || fragment.view == null) {
+                return@post
+            }
             val (href, pageIndex) = currentLocationProvider()
             turnPage(pending.forward, href, pageIndex, pending.origin)
         }

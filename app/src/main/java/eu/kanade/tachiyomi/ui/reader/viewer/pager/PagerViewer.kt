@@ -119,6 +119,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private var pendingCoverTurnTimeout: Job? = null
 
+    private val pendingCoverTurns = ArrayDeque<Int>(MAX_PENDING_COVER_TURNS)
+
     /**
      * Viewer chapters to set when the pager enters idle mode. Otherwise, if the view was settling
      * or dragging, there'd be a noticeable and annoying jump.
@@ -152,6 +154,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                         adapter.nextTransition?.to?.let(activity::requestPreloadChapter)
                     }
                 }
+                drainPendingCoverTurn()
             }
         }
 
@@ -650,19 +653,24 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun prepareCoverPageTurn(target: Int): Boolean {
-        if (target == pager.currentItem) return false
+        val delta = target.compareTo(pager.currentItem)
+        if (delta == 0) return false
+        if (pendingCoverTurn != null || !isIdle) {
+            enqueueCoverTurn(delta)
+            return true
+        }
         val targetSlot = adapter.slots.getOrNull(target) as? PagerSlot.Pages ?: return false
         if (adapter.slots.getOrNull(pager.currentItem) !is PagerSlot.Pages) return false
         if (getPageHolder(targetSlot.progressPage)?.isTransitionTargetReady() == true) {
-            cancelPendingCoverTurn(reactivateCurrent = false)
+            cancelPendingCoverTurn(reactivateCurrent = false, clearQueuedTurns = false)
             pager.setCurrentItem(target, true)
             return true
         }
-        if (pendingCoverTurn?.target == target) return true
 
-        cancelPendingCoverTurn(reactivateCurrent = false)
+        cancelPendingCoverTurn(reactivateCurrent = false, clearQueuedTurns = false)
         if (!activateSlotForTransition(targetSlot)) {
             pager.setCurrentItem(target, false)
+            pager.post(::drainPendingCoverTurn)
             return true
         }
         pendingCoverTurn = PendingCoverTurn(target, targetSlot)
@@ -673,6 +681,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             pendingCoverTurn = null
             pendingCoverTurnTimeout = null
             pager.setCurrentItem(pending.target, false)
+            pager.post(::drainPendingCoverTurn)
         }
         return true
     }
@@ -685,15 +694,18 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             cancelPendingCoverTurn(reactivateCurrent = true)
             return
         }
-        pendingCoverTurn = null
         pendingCoverTurnTimeout?.cancel()
         pendingCoverTurnTimeout = null
         pager.post {
+            val committed = pendingCoverTurn?.takeIf { it == pending } ?: return@post
+            pendingCoverTurn = null
             if (config.pageTransitionEffect == PageTransitionEffect.COVER &&
                 adapter.slots.getOrNull(pending.target) == slot &&
                 pager.currentItem != pending.target
             ) {
-                pager.setCurrentItem(pending.target, true)
+                pager.setCurrentItem(committed.target, true)
+            } else {
+                pendingCoverTurns.clear()
             }
         }
     }
@@ -704,6 +716,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pendingCoverTurnTimeout?.cancel()
         pendingCoverTurnTimeout = null
         pager.setCurrentItem(pending.target, false)
+        pager.post(::drainPendingCoverTurn)
     }
 
     private fun activateSlotForTransition(slot: PagerSlot.Pages): Boolean {
@@ -715,8 +728,33 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         return true
     }
 
-    private fun cancelPendingCoverTurn(reactivateCurrent: Boolean) {
-        if (pendingCoverTurn == null && pendingCoverTurnTimeout == null) return
+    private fun enqueueCoverTurn(delta: Int) {
+        if (pendingCoverTurns.size >= MAX_PENDING_COVER_TURNS) return
+        pendingCoverTurns.addLast(delta)
+    }
+
+    private fun drainPendingCoverTurn() {
+        if (!isIdle || pendingCoverTurn != null) return
+        if (config.pageTransitionEffect != PageTransitionEffect.COVER || !ValueAnimator.areAnimatorsEnabled()) {
+            pendingCoverTurns.clear()
+            return
+        }
+        val delta = pendingCoverTurns.removeFirstOrNull() ?: return
+        val target = pager.currentItem + delta
+        if (target !in 0 until adapter.count) {
+            pendingCoverTurns.clear()
+            return
+        }
+        setCurrentItemForPageTurn(target)
+    }
+
+    private fun cancelPendingCoverTurn(
+        reactivateCurrent: Boolean,
+        clearQueuedTurns: Boolean = true,
+    ) {
+        val hadPendingTarget = pendingCoverTurn != null || pendingCoverTurnTimeout != null
+        if (clearQueuedTurns) pendingCoverTurns.clear()
+        if (!hadPendingTarget) return
         pendingCoverTurn = null
         pendingCoverTurnTimeout?.cancel()
         pendingCoverTurnTimeout = null
@@ -784,6 +822,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private companion object {
         const val COVER_TARGET_READY_TIMEOUT_MS = 1_200L
+        const val MAX_PENDING_COVER_TURNS = 3
     }
 
     /**
