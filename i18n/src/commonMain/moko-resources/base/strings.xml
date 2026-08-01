@@ -496,6 +496,16 @@
     <string name="pref_double_tap_zoom">Double tap to zoom</string>
     <string name="pref_cutout_short">Show content in cutout area</string>
     <string name="pref_page_transitions">Animate page transitions</string>
+    <string name="pref_page_transition_effect">Page transition</string>
+    <string name="pref_page_transition_paginated_only">Available in paginated reading modes</string>
+    <string name="pref_webtoon_smooth_scroll">Smooth continuous scrolling</string>
+    <string name="page_transition_slide">Slide</string>
+    <string name="page_transition_cover">Cover</string>
+    <string name="page_transition_curl">Page turn</string>
+    <string name="page_transition_vertical">Vertical</string>
+    <string name="page_transition_fade">Fade</string>
+    <string name="page_transition_depth">Zoom</string>
+    <string name="page_transition_none">None</string>
     <string name="pref_flash_page">Flash on page change</string>
     <string name="pref_flash_page_summ">Reduces ghosting on e-ink displays</string>
     <string name="pref_flash_duration">Flash duration</string>

@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -40,6 +41,8 @@ import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.decoder.ImageDecoder
 import tachiyomi.i18n.MR
+import kotlin.math.ceil
+import kotlin.math.floor
 
 /** ViewPager item that renders one physical page or a two-page spread. */
 @SuppressLint("ViewConstructor")
@@ -98,6 +101,34 @@ class PagerPageHolder(
             x < width * physicalSplitFraction
         }
         return if (isLeftPage == firstOnLeft) page else second
+    }
+
+    internal fun isTransitionTargetReady(): Boolean = spreadDisplayed
+
+    override fun visibleImageBounds(): RectF? {
+        if (pairViews.isEmpty()) return super.visibleImageBounds()
+        val container = pairContainer ?: return null
+        var combined: RectF? = null
+        pairViews.forEach { child ->
+            val childBounds = child.visibleImageBounds() ?: return@forEach
+            childBounds.offset(container.x + child.x, container.y + child.y)
+            combined = combined?.apply { union(childBounds) } ?: childBounds
+        }
+        val bounds = combined ?: return null
+        if (!bounds.intersect(0f, 0f, width.toFloat(), height.toFloat())) return null
+        return bounds
+    }
+
+    internal fun visibleImageBoundsInWindow(): Rect? {
+        val bounds = visibleImageBounds() ?: return null
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        return Rect(
+            floor(bounds.left + location[0]).toInt(),
+            floor(bounds.top + location[1]).toInt(),
+            ceil(bounds.right + location[0]).toInt(),
+            ceil(bounds.bottom + location[1]).toInt(),
+        )
     }
 
     fun canNavigatePanLeft(): Boolean = if (pairViews.isEmpty()) {
@@ -324,6 +355,7 @@ class PagerPageHolder(
                         if (displayedPairViews == physicalPages.size && !spreadDisplayed) {
                             spreadDisplayed = true
                             progressIndicator?.hide()
+                            viewer.onTransitionTargetReady(slot)
                             viewer.activity.onPagesDisplayed(slot.pages)
                         }
                     }
@@ -492,11 +524,13 @@ class PagerPageHolder(
         if (spreadDisplayed) return
         spreadDisplayed = true
         progressIndicator?.hide()
+        viewer.onTransitionTargetReady(slot)
         viewer.activity.onPagesDisplayed(slot.pages)
     }
 
     override fun onImageLoadError(error: Throwable?) {
         super.onImageLoadError(error)
+        viewer.onTransitionTargetFailed(slot)
         setError(error, failedPage ?: page)
     }
 

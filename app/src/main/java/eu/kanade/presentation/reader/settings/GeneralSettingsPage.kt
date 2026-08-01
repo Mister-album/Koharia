@@ -6,9 +6,12 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
@@ -33,6 +36,7 @@ private val flashColors = listOf(
 
 @Composable
 internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
+    val viewer by screenModel.viewerFlow.collectAsState()
     val readerTheme by screenModel.preferences.readerTheme.collectAsState()
 
     val flashPageState by screenModel.preferences.flashOnPageChange.collectAsState()
@@ -102,10 +106,23 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
         pref = screenModel.preferences.alwaysShowChapterTransition,
     )
 
-    CheckboxItem(
-        label = stringResource(MR.strings.pref_page_transitions),
-        pref = screenModel.preferences.pageTransitions,
-    )
+    if (viewer is WebtoonViewer) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_webtoon_smooth_scroll),
+            pref = screenModel.preferences.webtoonSmoothScroll,
+        )
+    } else {
+        val transitionEffect by screenModel.preferences.pagerPageTransitionEffect.collectAsState()
+        SettingsChipRow(MR.strings.pref_page_transition_effect) {
+            PageTransitionEffect.entries.forEach { effect ->
+                FilterChip(
+                    selected = transitionEffect == effect.value,
+                    onClick = { screenModel.preferences.pagerPageTransitionEffect.set(effect.value) },
+                    label = { Text(stringResource(effect.titleRes)) },
+                )
+            }
+        }
+    }
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_flash_page),

@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.setting
 import android.os.Build
 import androidx.compose.ui.graphics.BlendMode
 import dev.icerock.moko.resources.StringResource
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,7 +25,17 @@ class ReaderPreferences(
     val persistReaderSettingsChanges: Preference<Boolean> =
         preferenceStore.getBoolean("reader_persist_settings_changes", true)
 
-    val pageTransitions: Preference<Boolean> = preferenceStore.getBoolean("pref_enable_transitions_key", true)
+    private val legacyPageTransitions = preferenceStore.getBoolean("pref_enable_transitions_key", true)
+
+    val pagerPageTransitionEffect: Preference<Int> = preferenceStore
+        .getInt("pref_page_transition_effect", PageTransitionEffect.SLIDE.value)
+        .migrateFrom(legacyPageTransitions) { enabled ->
+            if (enabled) PageTransitionEffect.SLIDE.value else PageTransitionEffect.NONE.value
+        }
+
+    val webtoonSmoothScroll: Preference<Boolean> = preferenceStore
+        .getBoolean("pref_webtoon_smooth_scroll", true)
+        .migrateFrom(legacyPageTransitions) { it }
 
     val flashOnPageChange: Preference<Boolean> = preferenceStore.getBoolean("pref_reader_flash", false)
 
@@ -281,6 +292,15 @@ class ReaderPreferences(
                 )
             }
         }
+    }
+}
+
+private fun <T, R> Preference<T>.migrateFrom(
+    legacy: Preference<R>,
+    transform: (R) -> T,
+): Preference<T> = apply {
+    if (!isSet() && legacy.isSet()) {
+        set(transform(legacy.get()))
     }
 }
 
