@@ -29,6 +29,12 @@ open class Pager(
      */
     var longTapListener: ((MotionEvent) -> Boolean)? = null
 
+    /** Whether a horizontal swipe should be handled as a discrete page turn. */
+    var canInterceptPageTurnSwipe: ((Int) -> Boolean)? = null
+
+    /** Called after an intercepted horizontal swipe is released. */
+    var pageTurnSwipeListener: ((Int, Float, Float) -> Unit)? = null
+
     /**
      * Gesture listener that implements tap and long tap events.
      */
@@ -68,6 +74,13 @@ open class Pager(
     private var queuedTapDownX = 0f
     private var queuedTapDownY = 0f
 
+    private var pageTurnSwipeCandidate = false
+    private var pageTurnSwipeConsumed = false
+    private var pageTurnSwipeCanceled = false
+    private var pageTurnSwipeDelta = 0
+    private var pageTurnSwipeDownX = 0f
+    private var pageTurnSwipeDownY = 0f
+
     /**
      * Dispatches a touch event.
      */
@@ -76,11 +89,99 @@ open class Pager(
             handleQueuedPageFlipTap(ev)
             return true
         }
+        if (handlePageTurnSwipe(ev)) return true
         val handled = super.dispatchTouchEvent(ev)
         if (isGestureDetectorEnabled) {
             gestureDetector.onTouchEvent(ev)
         }
         return handled
+    }
+
+    private fun handlePageTurnSwipe(ev: MotionEvent): Boolean {
+        if (pageTurnSwipeListener == null || canInterceptPageTurnSwipe == null) {
+            resetPageTurnSwipe()
+            return false
+        }
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                pageTurnSwipeCandidate = true
+                pageTurnSwipeConsumed = false
+                pageTurnSwipeCanceled = false
+                pageTurnSwipeDelta = 0
+                pageTurnSwipeDownX = ev.x
+                pageTurnSwipeDownY = ev.y
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                pageTurnSwipeCandidate = false
+                if (pageTurnSwipeConsumed) {
+                    pageTurnSwipeCanceled = true
+                    return true
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (pageTurnSwipeConsumed) return true
+                if (!pageTurnSwipeCandidate || ev.pointerCount != 1) return false
+                val deltaX = ev.x - pageTurnSwipeDownX
+                val deltaY = ev.y - pageTurnSwipeDownY
+                val horizontalDistance = abs(deltaX)
+                val verticalDistance = abs(deltaY)
+                if (verticalDistance > touchSlop && verticalDistance >= horizontalDistance) {
+                    pageTurnSwipeCandidate = false
+                    return false
+                }
+                if (horizontalDistance > touchSlop && horizontalDistance > verticalDistance * SWIPE_AXIS_RATIO) {
+                    val itemDelta = if (deltaX < 0f) 1 else -1
+                    if (canInterceptPageTurnSwipe?.invoke(itemDelta) == true) {
+                        cancelTouchForChildren(ev)
+                        pageTurnSwipeCandidate = false
+                        pageTurnSwipeConsumed = true
+                        pageTurnSwipeDelta = itemDelta
+                        return true
+                    }
+                    pageTurnSwipeCandidate = false
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (pageTurnSwipeConsumed) {
+                    if (!pageTurnSwipeCanceled) {
+                        val originX = (pageTurnSwipeDownX / width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                        val originY = (pageTurnSwipeDownY / height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                        pageTurnSwipeListener?.invoke(pageTurnSwipeDelta, originX, originY)
+                    }
+                    resetPageTurnSwipe()
+                    return true
+                }
+                resetPageTurnSwipe()
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                val consumed = pageTurnSwipeConsumed
+                resetPageTurnSwipe()
+                return consumed
+            }
+        }
+        return false
+    }
+
+    private fun cancelTouchForChildren(ev: MotionEvent) {
+        val cancel = MotionEvent.obtain(ev)
+        cancel.action = MotionEvent.ACTION_CANCEL
+        try {
+            super.dispatchTouchEvent(cancel)
+        } catch (_: NullPointerException) {
+        } catch (_: IndexOutOfBoundsException) {
+        } catch (_: IllegalArgumentException) {
+        }
+        if (isGestureDetectorEnabled) {
+            gestureDetector.onTouchEvent(cancel)
+        }
+        cancel.recycle()
+    }
+
+    private fun resetPageTurnSwipe() {
+        pageTurnSwipeCandidate = false
+        pageTurnSwipeConsumed = false
+        pageTurnSwipeCanceled = false
+        pageTurnSwipeDelta = 0
     }
 
     private fun handleQueuedPageFlipTap(ev: MotionEvent) {
@@ -153,6 +254,11 @@ open class Pager(
         isTouchNavigationEnabled = enabled
         if (enabled) {
             queuedTapEligible = false
+            resetPageTurnSwipe()
         }
+    }
+
+    private companion object {
+        const val SWIPE_AXIS_RATIO = 1.25f
     }
 }

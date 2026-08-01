@@ -144,7 +144,7 @@ internal class ComicPageFlipController(
     }
 
     private fun awaitTarget(current: Session, origin: PageTurnOrigin, attempt: Int = 0) {
-        if (!isCurrentTarget(current)) return
+        if (!ensureCurrentTarget(current, "wait for destination")) return
         val elapsed = SystemClock.elapsedRealtime() - current.startedAt
         if (isTargetReady(current.targetItem)) {
             // Two choreographer frames let the newly visible SSIV holder submit its tiles. Drawing
@@ -152,9 +152,9 @@ internal class ComicPageFlipController(
             // source of the black textures in the previous implementation.
             pager.postOnAnimation {
                 pager.postOnAnimation destinationFrame@{
-                    if (!isCurrentTarget(current)) return@destinationFrame
+                    if (!ensureCurrentTarget(current, "prepare destination frame")) return@destinationFrame
                     capturePager { destination ->
-                        if (!isCurrentTarget(current)) {
+                        if (!ensureCurrentTarget(current, "capture destination")) {
                             destination?.recycle()
                             return@capturePager
                         }
@@ -202,10 +202,7 @@ internal class ComicPageFlipController(
     }
 
     private fun createFlipSurface(current: Session, origin: PageTurnOrigin, destination: Bitmap) {
-        if (!isCurrentTarget(current)) {
-            destination.recycle()
-            return
-        }
+        if (!ensureCurrentTarget(current, "create flip surface")) return
         val source = current.sourcePage ?: run {
             failSession(current, "resolve source texture")
             return
@@ -221,18 +218,18 @@ internal class ComicPageFlipController(
             forward = current.targetItem > current.sourceItem,
             origin = origin,
             onFirstFrame = firstFrame@{
-                if (!isCurrentTarget(current)) return@firstFrame
+                if (!ensureCurrentTarget(current, "show first GL frame")) return@firstFrame
                 // onDrawFrame is called before EGL swaps the buffer. Waiting for the following UI
                 // frame guarantees that the GL surface contains the source page before revealing it.
                 pager.postOnAnimation firstSurfaceFrame@{
-                    if (!isCurrentTarget(current)) return@firstSurfaceFrame
+                    if (!ensureCurrentTarget(current, "commit first GL frame")) return@firstSurfaceFrame
                     val activeFlipView = current.flipView ?: return@firstSurfaceFrame
                     activeFlipView.alpha = 1f
                     // SurfaceView alpha and PopupWindow dismissal are committed through different
                     // surfaces. Let the visible, static GL source frame reach SurfaceFlinger before
                     // dismissing the blocker and starting the curl, so there is no uncovered frame.
                     pager.postOnAnimation surfaceVisibleFrame@{
-                        if (!isCurrentTarget(current)) return@surfaceVisibleFrame
+                        if (!ensureCurrentTarget(current, "start GL animation")) return@surfaceVisibleFrame
                         removeBlocker(current)
                         current.flipView?.startFlip()
                         logcat(LogPriority.DEBUG) {
@@ -516,6 +513,17 @@ internal class ComicPageFlipController(
 
     private fun isCurrentTarget(current: Session): Boolean =
         isActive(current) && pager.currentItem == current.targetItem
+
+    private fun ensureCurrentTarget(current: Session, stage: String): Boolean {
+        if (!isActive(current)) return false
+        if (isCurrentTarget(current)) return true
+        logcat(LogPriority.WARN) {
+            "Comic page flip target invalidated while attempting to $stage " +
+                "generation=${current.generation} expected=${current.targetItem} actual=${pager.currentItem}"
+        }
+        finishSession(current, animatePending = false)
+        return false
+    }
 
     private fun pagerBoundsInWindow(): Rect? {
         if (pager.width <= 0 || pager.height <= 0 || !pager.isAttachedToWindow) return null

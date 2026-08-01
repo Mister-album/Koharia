@@ -14,6 +14,8 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * OpenGL page-flip surface used only by the paged comic reader.
@@ -54,6 +56,10 @@ internal class ComicPageFlipView(
     private var texturesReady = false
     private var firstFrameReported = false
     private var completionReported = false
+    private var sourceTexture = source
+    private var destinationTexture = destination
+    private var ownedSourceTexture: Bitmap? = null
+    private var ownedDestinationTexture: Bitmap? = null
 
     init {
         setEGLContextClientVersion(2)
@@ -70,12 +76,14 @@ internal class ComicPageFlipView(
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         try {
             pageFlip.onSurfaceCreated()
+            prepareTextureBitmaps()
             // The upstream renderer clears to opaque black. A newly attached SurfaceView can
             // expose that empty buffer for one compositor frame before the first page texture is
             // swapped. Keep the surface transparent so the protected source page remains visible.
             GLES20.glClearColor(0f, 0f, 0f, 0f)
             logcat(LogPriority.DEBUG) { "Comic page flip translucent GL surface created" }
-        } catch (error: PageFlipException) {
+        } catch (error: Throwable) {
+            recycleOwnedTextureBitmaps()
             reportFailure("create GL surface", error)
         }
     }
@@ -139,7 +147,8 @@ internal class ComicPageFlipView(
             drawState = DrawState.ANIMATING
             logcat(LogPriority.DEBUG) {
                 "Comic page flip GL animation started direction=${if (forward) "forward" else "backward"} " +
-                    "origin=${origin.xFraction},${origin.yFraction} texture=${source.width}x${source.height}"
+                    "origin=${origin.xFraction},${origin.yFraction} " +
+                    "texture=${sourceTexture.width}x${sourceTexture.height}"
             }
             requestRender()
         }
@@ -155,6 +164,7 @@ internal class ComicPageFlipView(
             }
         }
         onPause()
+        recycleOwnedTextureBitmaps()
     }
 
     override fun canFlipForward(): Boolean = forward
@@ -170,26 +180,63 @@ internal class ComicPageFlipView(
     private fun prepareTextures() {
         if (texturesReady) return
         val page = pageFlip.getFirstPage()
-        page.setFirstTexture(source)
+        page.setFirstTexture(sourceTexture)
         if (forward) {
-            page.setSecondTexture(destination)
-            page.setBackTexture(destination)
+            page.setSecondTexture(destinationTexture)
+            page.setBackTexture(destinationTexture)
         }
         texturesReady = true
         logcat(LogPriority.DEBUG) {
-            "Comic page flip textures ready source=${source.width}x${source.height} " +
-                "destination=${destination.width}x${destination.height} forward=$forward"
+            "Comic page flip textures ready source=${sourceTexture.width}x${sourceTexture.height} " +
+                "destination=${destinationTexture.width}x${destinationTexture.height} forward=$forward"
         }
     }
 
     private fun prepareAnimatedTextures() {
         val page = pageFlip.getFirstPage()
         if (forward) {
-            if (!page.isSecondTextureSet) page.setSecondTexture(destination)
+            if (!page.isSecondTextureSet) page.setSecondTexture(destinationTexture)
         } else if (!page.isFirstTextureSet) {
-            page.setFirstTexture(destination)
+            page.setFirstTexture(destinationTexture)
         }
-        if (!page.isBackTextureSet) page.setBackTexture(destination)
+        if (!page.isBackTextureSet) page.setBackTexture(destinationTexture)
+    }
+
+    private fun prepareTextureBitmaps() {
+        recycleOwnedTextureBitmaps()
+        val limit = IntArray(1).also {
+            GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, it, 0)
+        }[0].takeIf { it > 0 } ?: MINIMUM_GL_TEXTURE_SIZE
+        sourceTexture = source.fitWithinTextureLimit(limit).also {
+            if (it !== source) ownedSourceTexture = it
+        }
+        destinationTexture = destination.fitWithinTextureLimit(limit).also {
+            if (it !== destination) ownedDestinationTexture = it
+        }
+        logcat(LogPriority.DEBUG) {
+            "Comic page flip GL texture limit=$limit source=${source.width}x${source.height}->" +
+                "${sourceTexture.width}x${sourceTexture.height} " +
+                "destination=${destination.width}x${destination.height}->" +
+                "${destinationTexture.width}x${destinationTexture.height}"
+        }
+    }
+
+    private fun Bitmap.fitWithinTextureLimit(limit: Int): Bitmap {
+        if (width <= limit && height <= limit) return this
+        val scale = min(limit.toFloat() / width, limit.toFloat() / height)
+        return Bitmap.createScaledBitmap(
+            this,
+            (width * scale).roundToInt().coerceIn(1, limit),
+            (height * scale).roundToInt().coerceIn(1, limit),
+            true,
+        )
+    }
+
+    private fun recycleOwnedTextureBitmaps() {
+        ownedSourceTexture?.takeUnless(Bitmap::isRecycled)?.recycle()
+        ownedDestinationTexture?.takeUnless(Bitmap::isRecycled)?.recycle()
+        ownedSourceTexture = null
+        ownedDestinationTexture = null
     }
 
     private fun finish(completed: Boolean) {
@@ -212,5 +259,6 @@ internal class ComicPageFlipView(
         const val DURATION_MS = 560
         const val MESH_PIXELS = 14
         const val EDGE_INSET_PX = 1f
+        const val MINIMUM_GL_TEXTURE_SIZE = 2_048
     }
 }

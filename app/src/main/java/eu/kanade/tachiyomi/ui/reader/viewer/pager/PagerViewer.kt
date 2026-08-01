@@ -205,6 +205,13 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 NavigationRegion.LEFT -> withPageTurnOrigin(turnOrigin) { moveLeft() }
             }
         }
+        pager.canInterceptPageTurnSwipe = { delta -> canInterceptCurlSwipe(delta) }
+        pager.pageTurnSwipeListener = { delta, xFraction, yFraction ->
+            val origin = PageTurnOrigin(xFraction, yFraction, PageTurnCause.GESTURE).normalized()
+            withPageTurnOrigin(origin) {
+                setCurrentItemForPageTurn(pager.currentItem + delta)
+            }
+        }
         pager.longTapListener = f@{ event ->
             if (activity.viewModel.state.value.menuVisible || config.longTapEnabled) {
                 val holder = (adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages)
@@ -468,6 +475,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private fun setChaptersInternal(chapters: ViewerChapters) {
         cancelPendingCoverTurn(reactivateCurrent = false)
+        pageFlipController.cancel()
         // Remove listener so the change in item doesn't trigger it
         pager.removeOnPageChangeListener(pagerListener)
 
@@ -514,6 +522,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun moveToPage(page: ReaderPage, cause: PageChangeCause) {
         val position = adapter.positionOf(page)
         if (position != -1) {
+            pageFlipController.cancel()
             val currentPosition = pager.currentItem
             stableSlotAnchor = page
             pendingPageMove = PendingPageMove(position, page, cause)
@@ -592,6 +601,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private fun refreshAdapter() {
         cancelPendingCoverTurn(reactivateCurrent = false)
+        pageFlipController.cancel()
         val currentItem = pager.currentItem
         adapter.refresh()
         pager.adapter = adapter
@@ -617,6 +627,26 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             }
         }
         pager.setCurrentItem(target, shouldAnimatePageTurn())
+    }
+
+    private fun canInterceptCurlSwipe(delta: Int): Boolean {
+        if (!pager.horizontalPaging ||
+            config.pageTransitionEffect != PageTransitionEffect.CURL ||
+            !ValueAnimator.areAnimatorsEnabled() ||
+            pageFlipController.isRunning
+        ) {
+            return false
+        }
+        val sourceSlot = adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages ?: return false
+        val target = pager.currentItem + delta
+        if (adapter.slots.getOrNull(target) !is PagerSlot.Pages) return false
+        val holder = getPageHolder(sourceSlot.progressPage) ?: return false
+        val canPanTowardSwipe = if (delta > 0) {
+            holder.canNavigatePanRight()
+        } else {
+            holder.canNavigatePanLeft()
+        }
+        return !canPanTowardSwipe
     }
 
     private fun prepareCoverPageTurn(target: Int): Boolean {
@@ -872,6 +902,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private fun rebuildSlots(anchor: ReaderPage?) {
         cancelPendingCoverTurn(reactivateCurrent = false)
+        pageFlipController.cancel()
         val resolvedAnchor = anchor ?: stableSlotAnchor
         stableSlotAnchor = resolvedAnchor
         pager.removeOnPageChangeListener(pagerListener)
