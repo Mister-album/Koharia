@@ -43,6 +43,29 @@ class EpubImageFileNameTest {
     }
 
     @Test
+    fun `long original resource names reserve space for distinct book titles`() {
+        val originalFileName = "very-long-resource-name-".repeat(20)
+        val firstBook = buildEpubImageBaseName(
+            seriesTitle = "Series",
+            bookTitle = "Book One",
+            originalFileName = originalFileName,
+            extension = "jpg",
+        )
+        val secondBook = buildEpubImageBaseName(
+            seriesTitle = "Series",
+            bookTitle = "Book Two",
+            originalFileName = originalFileName,
+            extension = "jpg",
+        )
+
+        assertTrue(firstBook.startsWith("Series - Book One - very-long-resource-name-"))
+        assertTrue(secondBook.startsWith("Series - Book Two - very-long-resource-name-"))
+        assertNotEquals(firstBook, secondBook)
+        assertTrue("$firstBook.jpg".toByteArray().size <= DiskUtil.MAX_FILE_NAME_BYTES)
+        assertTrue("$secondBook.jpg".toByteArray().size <= DiskUtil.MAX_FILE_NAME_BYTES)
+    }
+
+    @Test
     fun `blank components fall back to a stable image name`() {
         assertEquals(
             "Series - image",
