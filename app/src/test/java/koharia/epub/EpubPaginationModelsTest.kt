@@ -2,6 +2,7 @@ package koharia.epub
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class EpubPaginationModelsTest {
@@ -13,6 +14,7 @@ class EpubPaginationModelsTest {
 
         assertEquals(first.json, second.json)
         assertEquals(first.key, second.key)
+        assertTrue(first.json.contains("\"algorithmVersion\":8"))
     }
 
     @Test

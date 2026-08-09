@@ -887,15 +887,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     private fun EpubImageContent.toImage(location: Location): Image.Page {
-        val baseName = DiskUtil.buildValidFilename(
-            listOfNotNull(
-                state.value.mangaTitle?.takeIf(String::isNotBlank),
-                originalFileName.takeIf(String::isNotBlank),
-            ).joinToString(" - ").ifBlank { "image" },
-        )
         return Image.Page(
             inputStream = { bytes.toByteArray().inputStream() },
-            name = baseName,
+            name = buildEpubImageBaseName(
+                seriesTitle = state.value.mangaTitle,
+                bookTitle = state.value.chapterTitle,
+                originalFileName = originalFileName,
+                extension = extension,
+            ),
             location = location,
             encodedFormat = EncodedFormat(mimeType, extension).takeIf { isSvg },
         )
