@@ -138,6 +138,7 @@ class EpubReaderFragment : Fragment() {
         preserveImageColors = preserveImageColors,
         parentColorsInverted = parentColorsInverted,
         readerFontScale = readerFontScale,
+        longWordWrappingEnabled = true,
     )
     private var fontPreparation = buildEpubFontPreparationScript(
         fontManager = fontManager,
@@ -695,6 +696,7 @@ class EpubReaderFragment : Fragment() {
             preserveImageColors = preserveImageColors,
             parentColorsInverted = parentColorsInverted,
             readerFontScale = readerFontScale,
+            longWordWrappingEnabled = !fontOverridesDisabled(),
         )
         imageColorPolicyScript = """
             (function() {
@@ -1068,6 +1070,7 @@ class EpubReaderFragment : Fragment() {
                                 ${buildEpubTypographyPreparationScript(
                             paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
                             textAlignment = textAlignmentOverride,
+                            longWordWrappingEnabled = !fontOverridesDisabled(),
                         )};
                                 ${buildEpubFootnoteCompatibilityScript(
                             applyReaderStyles = paragraphIndentOverrideEnabled,

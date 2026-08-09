@@ -8,6 +8,12 @@ internal const val EPUB_ORPHANED_INLINE_PADDING_ATTRIBUTE = "data-koharia-orphan
 internal const val EPUB_TEXT_ALIGNMENT_STYLE_ID = "koharia-text-alignment"
 internal const val EPUB_TEXT_ALIGNMENT_TARGET_ATTRIBUTE = "data-koharia-text-alignment-target"
 internal const val EPUB_RIGHT_INDENT_SPACER_ATTRIBUTE = "data-koharia-right-indent-spacer"
+internal const val EPUB_LONG_WORD_WRAP_STYLE_ID = "koharia-long-word-wrap"
+
+internal const val EPUB_LONG_WORD_WRAP_CSS =
+    "html:root:root:root body, html:root:root:root body * { " +
+        "word-wrap: break-word !important; overflow-wrap: anywhere !important; " +
+        "}"
 
 // Readium's paragraph preference targets every <p>. A higher-specificity exception keeps
 // paragraph-shaped headings, signatures and media containers from inheriting body indentation.
@@ -78,6 +84,30 @@ internal const val REMOVE_EPUB_PARAGRAPH_INDENT_SCRIPT =
         });
         return true;
     })()"""
+
+internal fun buildEpubLongWordWrapScript(enabled: Boolean): String {
+    val updateStyle = if (enabled) {
+        """
+            if (!style) {
+                style = document.createElementNS('http://www.w3.org/1999/xhtml', 'style');
+                style.id = '$EPUB_LONG_WORD_WRAP_STYLE_ID';
+                style.setAttribute('type', 'text/css');
+                (document.head || document.documentElement).appendChild(style);
+            }
+            style.textContent = '$EPUB_LONG_WORD_WRAP_CSS';
+        """.trimIndent()
+    } else {
+        "if (style) style.remove();"
+    }
+    return """
+        (function() {
+            if (!document.documentElement || document.documentElement.localName.toLowerCase() !== 'html') return false;
+            var style = document.getElementById('$EPUB_LONG_WORD_WRAP_STYLE_ID');
+            $updateStyle
+            return true;
+        })()
+    """.trimIndent()
+}
 
 internal fun buildEpubTextAlignmentOverrideScript(
     textAlignment: EpubLayoutPreferences.TextAlignment?,
@@ -187,6 +217,7 @@ internal fun buildEpubTextAlignmentOverrideScript(
 internal fun buildEpubTypographyPreparationScript(
     paragraphIndentOverrideEnabled: Boolean,
     textAlignment: EpubLayoutPreferences.TextAlignment?,
+    longWordWrappingEnabled: Boolean = true,
 ): String {
     val paragraphIndentScript = if (paragraphIndentOverrideEnabled) {
         APPLY_EPUB_PARAGRAPH_INDENT_SCRIPT
@@ -197,6 +228,7 @@ internal fun buildEpubTypographyPreparationScript(
         (function() {
             $paragraphIndentScript;
             ${buildEpubTextAlignmentOverrideScript(textAlignment)};
+            ${buildEpubLongWordWrapScript(longWordWrappingEnabled)};
             return true;
         })()
     """.trimIndent()
@@ -207,10 +239,15 @@ internal fun buildEpubLayoutPreparationScript(
     textAlignment: EpubLayoutPreferences.TextAlignment?,
     tocHrefs: List<String>,
     chapterBreaksEnabled: Boolean,
+    longWordWrappingEnabled: Boolean = true,
 ): String =
     """
         (function() {
-            ${buildEpubTypographyPreparationScript(paragraphIndentOverrideEnabled, textAlignment)};
+            ${buildEpubTypographyPreparationScript(
+        paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
+        textAlignment = textAlignment,
+        longWordWrappingEnabled = longWordWrappingEnabled,
+    )};
             ${buildEpubChapterBreakOverrideScript(tocHrefs, chapterBreaksEnabled)};
             return true;
         })()
@@ -224,12 +261,14 @@ internal fun buildEpubDocumentPreparationScript(
     preserveImageColors: Boolean,
     parentColorsInverted: Boolean,
     readerFontScale: Float,
+    longWordWrappingEnabled: Boolean = true,
 ): String {
     val layoutPreparationScript = buildEpubLayoutPreparationScript(
         paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
         textAlignment = textAlignment,
         tocHrefs = tocHrefs,
         chapterBreaksEnabled = chapterBreaksEnabled,
+        longWordWrappingEnabled = longWordWrappingEnabled,
     )
     return """
         (function() {

@@ -94,6 +94,10 @@ internal class EpubPaginationScannerFragment : Fragment() {
                             textAlignment = epubLayoutPreferences.textAlignment.get().takeIf { !publisherStyles },
                             tocHrefs = tocHrefs,
                             chapterBreaksEnabled = true,
+                            longWordWrappingEnabled = sessionRepository.getForPagination(chapterId)
+                                ?.publication
+                                ?.metadata
+                                ?.layout != org.readium.r2.shared.publication.Layout.FIXED,
                         )};
                                 return ${fontPreparation.script};
                             })()

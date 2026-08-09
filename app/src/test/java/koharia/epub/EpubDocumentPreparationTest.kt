@@ -22,6 +22,8 @@ class EpubDocumentPreparationTest {
         assertTrue(script.contains(EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE))
         assertTrue(script.contains("text-align: justify !important"))
         assertTrue(script.contains("hyphens: auto !important"))
+        assertTrue(script.contains("overflow-wrap: anywhere !important"))
+        assertTrue(script.contains("word-wrap: break-word !important"))
         assertTrue(script.contains("break-before: column !important"))
         assertTrue(script.contains("'duokan-footnote'"))
         assertTrue(script.contains("setAttributeNS(epubNamespace, 'epub:type', updated)"))
@@ -131,5 +133,27 @@ class EpubDocumentPreparationTest {
                 "document.documentElement.localName.toLowerCase() !== 'html'",
             ),
         )
+        assertTrue(
+            buildEpubLongWordWrapScript(enabled = true).contains(
+                "document.documentElement.localName.toLowerCase() !== 'html'",
+            ),
+        )
+    }
+
+    @Test
+    fun `fixed layout removes long word wrapping policy`() {
+        val script = buildEpubDocumentPreparationScript(
+            paragraphIndentOverrideEnabled = false,
+            textAlignment = null,
+            tocHrefs = emptyList(),
+            chapterBreaksEnabled = false,
+            preserveImageColors = true,
+            parentColorsInverted = false,
+            readerFontScale = 1f,
+            longWordWrappingEnabled = false,
+        )
+
+        assertTrue(script.contains("if (style) style.remove();"))
+        assertFalse(script.contains("overflow-wrap: anywhere !important"))
     }
 }
