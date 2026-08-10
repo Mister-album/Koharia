@@ -17,7 +17,7 @@ fun DownloadDropdownMenu(
     expanded: Boolean,
     onDismissRequest: () -> Unit,
     onDownloadClicked: (DownloadAction) -> Unit,
-    isKomgaCacheMode: Boolean = false,
+    isConnectionCacheMode: Boolean = false,
     offset: DpOffset? = null,
 ) {
     if (offset != null) {
@@ -30,7 +30,7 @@ fun DownloadDropdownMenu(
                 DownloadDropdownMenuItems(
                     onDismissRequest = onDismissRequest,
                     onDownloadClicked = onDownloadClicked,
-                    isKomgaCacheMode = isKomgaCacheMode,
+                    isConnectionCacheMode = isConnectionCacheMode,
                 )
             },
         )
@@ -43,7 +43,7 @@ fun DownloadDropdownMenu(
                 DownloadDropdownMenuItems(
                     onDismissRequest = onDismissRequest,
                     onDownloadClicked = onDownloadClicked,
-                    isKomgaCacheMode = isKomgaCacheMode,
+                    isConnectionCacheMode = isConnectionCacheMode,
                 )
             },
         )
@@ -54,14 +54,14 @@ fun DownloadDropdownMenu(
 private fun DownloadDropdownMenuItems(
     onDismissRequest: () -> Unit,
     onDownloadClicked: (DownloadAction) -> Unit,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
 ) {
-    val unreadLabel = if (isKomgaCacheMode) {
+    val unreadLabel = if (isConnectionCacheMode) {
         stringResource(MR.strings.download_unread)
     } else {
         stringResource(MR.strings.download_unread)
     }
-    val bookmarkedLabel = if (isKomgaCacheMode) {
+    val bookmarkedLabel = if (isConnectionCacheMode) {
         stringResource(MR.strings.download_bookmarked)
     } else {
         stringResource(MR.strings.download_bookmarked)

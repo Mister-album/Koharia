@@ -451,7 +451,7 @@ internal fun EpubBookInfoDialog(
                         if (state.isUsingLocalFile) {
                             MR.strings.epub_reader_book_info_source_local
                         } else {
-                            MR.strings.epub_reader_book_info_source_komga
+                            MR.strings.epub_reader_book_info_source_remote
                         },
                     ),
                 )

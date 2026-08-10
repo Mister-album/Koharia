@@ -16,11 +16,7 @@ enum class KomgaLibraryKind {
     BOOK,
 }
 
-enum class KomgaLibraryScope {
-    ALL,
-    COMIC,
-    BOOK,
-}
+typealias KomgaLibraryScope = koharia.connection.LibraryContentScope
 
 @Serializable
 data class KomgaLibraryClassification(
@@ -106,7 +102,7 @@ class KomgaLibraryClassificationManager(
 
     fun enableClassification() {
         if (serverPreferences.localConfigMode.get() != LocalConfigMode.Separate) {
-            localConfigManager.setLocalConfigMode(LocalConfigMode.Separate)
+            localConfigManager.setConnectionConfigMode(LocalConfigMode.Separate)
         }
         enabled.set(true)
     }
@@ -117,7 +113,7 @@ class KomgaLibraryClassificationManager(
 
     fun disableClassificationAndUseSharedConfig() {
         enabled.set(false)
-        localConfigManager.setLocalConfigMode(LocalConfigMode.Shared)
+        localConfigManager.setConnectionConfigMode(LocalConfigMode.Shared)
     }
 
     fun clearServer(serverId: Long) {

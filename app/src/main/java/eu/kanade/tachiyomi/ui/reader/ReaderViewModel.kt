@@ -21,7 +21,6 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
-import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
@@ -39,13 +38,13 @@ import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import koharia.connection.ConnectionEpubProgressAdapter
+import koharia.connection.ConnectionPageProgressAdapter
+import koharia.connection.ConnectionPublicationAdapter
+import koharia.connection.ConnectionRawDownloadAdapter
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.domain.epub.interactor.GetEpubProgress
-import koharia.epub.cache.EpubCacheManager
 import koharia.epub.progress.EpubPageProgress
-import koharia.epub.progress.KomgaEpubProgressSyncService
-import koharia.komga.download.KomgaChapterMemo
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
-import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -107,11 +106,8 @@ class ReaderViewModel @JvmOverloads constructor(
     private val updateChapter: UpdateChapter = Injekt.get(),
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
     globalLibraryPreferences: LibraryPreferences = Injekt.get(),
-    private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
-    private val komgaEpubProgressSyncService: KomgaEpubProgressSyncService = Injekt.get(),
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
-    private val epubCacheManager: EpubCacheManager = Injekt.get(),
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
+    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get(),
 ) : ViewModel() {
 
     private val persistentReaderSettingsStore =
@@ -249,6 +245,7 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             .run {
                 if (basePreferences.downloadedOnly.get()) {
+                    val publicationAdapter = sourceManager.get(manga.source) as? ConnectionPublicationAdapter
                     filter { chapter ->
                         downloadManager.isChapterDownloaded(
                             chapter.name,
@@ -256,7 +253,7 @@ class ReaderViewModel @JvmOverloads constructor(
                             chapter.url,
                             manga.title,
                             manga.source,
-                        ) || epubCacheManager.hasCompleteBook(manga.source, chapter)
+                        ) || publicationAdapter?.hasCompleteCachedPublication(chapter) == true
                     }
                 } else {
                     this
@@ -581,22 +578,26 @@ class ReaderViewModel @JvmOverloads constructor(
         }
         if (incognitoMode) return
         val manga = manga ?: return
-        if (sourceManager.get(manga.source) !is KomgaSource) return
+        val progressAdapter = sourceManager.get(manga.source) as? ConnectionPageProgressAdapter ?: return
         val currentChapterId = currentChapter.chapter.id ?: return
         if (!remoteProgressChecksStarted.add(currentChapterId)) return
 
         viewModelScope.launchIO {
-            refreshKomgaBookProgress(manga, currentChapter)
+            refreshConnectionBookProgress(progressAdapter, manga, currentChapter)
         }
     }
 
-    private suspend fun refreshKomgaBookProgress(manga: Manga, readerChapter: ReaderChapter) {
+    private suspend fun refreshConnectionBookProgress(
+        progressAdapter: ConnectionPageProgressAdapter,
+        manga: Manga,
+        readerChapter: ReaderChapter,
+    ) {
         val chapter = readerChapter.chapter
         val chapterId = chapter.id ?: return
         logcat { "MangaStartup: remote progress check start chapterId=$chapterId" }
-        val remote = komgaProgressSyncService.pullBookProgress(
-            sourceId = manga.source,
+        val remote = progressAdapter.pullPageProgress(
             chapterUrl = chapter.url,
+            chapterMemo = chapter.memo,
         )
         logcat {
             "MangaStartup: remote progress check complete chapterId=$chapterId " +
@@ -605,20 +606,10 @@ class ReaderViewModel @JvmOverloads constructor(
         if (remote == null) return
 
         val oldMemo = chapter.memo
-        val oldPublicationVersion = KomgaChapterMemo.publicationVersion(oldMemo)
-        val updatedMemo = KomgaChapterMemo.mergePublicationMetadata(
-            existing = oldMemo,
-            bookUrl = remote.url,
-            fileHash = remote.fileHash,
-            fileLastModified = remote.fileLastModified,
-            sizeBytes = remote.sizeBytes,
-            fileName = remote.fileName,
-            isEpub = remote.isEpub,
-            epubDivinaCompatible = remote.isDivinaCompatibleEpub.takeIf { remote.isEpub },
-            pagesCount = remote.totalPages,
-        )
-        val opensAsImagePages = remote.isEpub && KomgaChapterMemo.canOpenEpubAsPages(updatedMemo)
-        val newPublicationVersion = KomgaChapterMemo.publicationVersion(updatedMemo)
+        val oldPublicationVersion = remote.previousPublicationVersion
+        val updatedMemo = remote.updatedChapterMemo
+        val opensAsImagePages = remote.canOpenAsPages
+        val newPublicationVersion = remote.publicationVersion
         val publicationMetadataInitialized = oldPublicationVersion == null && newPublicationVersion != null
         val publicationChanged = hasPublicationChanged(oldPublicationVersion, newPublicationVersion)
         var pages = readerChapter.pages ?: return
@@ -676,10 +667,11 @@ class ReaderViewModel @JvmOverloads constructor(
 
         val legacyEpubProgress = if (opensAsImagePages && remote.pageIndex == null && !remote.completed) {
             runCatching {
-                komgaEpubProgressSyncService.pullProgression(manga.source, remote.url).progression
+                (sourceManager.get(manga.source) as? ConnectionEpubProgressAdapter)
+                    ?.pullEpubProgress(remote.resourceId)
             }.onFailure { error ->
                 logcat(LogPriority.WARN, error) {
-                    "MangaStartup: failed to read legacy EPUB progression chapterId=$chapterId"
+                    "MangaStartup: failed to read legacy remote EPUB progression chapterId=$chapterId"
                 }
             }.getOrNull()
         } else {
@@ -702,8 +694,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val migratesLegacyEpubProgress = legacyEpubProgress != null
         if (!RemoteProgressConflictPolicy.hasConflict(openingLocalPageIndex, localPageIndex, remotePageIndex)) {
             if (migratesLegacyEpubProgress) {
-                komgaProgressSyncService.pushPageProgress(
-                    sourceId = manga.source,
+                progressAdapter.pushPageProgress(
                     chapterUrl = chapter.url,
                     pageIndex = localPageIndex,
                     totalPages = pages.size,
@@ -742,16 +733,21 @@ class ReaderViewModel @JvmOverloads constructor(
 
     private suspend fun restoreDivinaEpubPage(readerChapter: ReaderChapter): Int? {
         val chapter = readerChapter.chapter
-        if (!isDivinaEpub(readerChapter) || KomgaChapterMemo.isEpubPageProgressMigrated(chapter.memo)) return null
+        val publicationAdapter = connectionPublicationAdapter() ?: return null
+        if (!publicationAdapter.canOpenAsPages(chapter.memo) ||
+            publicationAdapter.hasMigratedPageProgress(chapter.memo)
+        ) {
+            return null
+        }
         val chapterId = chapter.id ?: return null
-        val totalPages = KomgaChapterMemo.pagesCount(chapter.memo) ?: return null
+        val totalPages = publicationAdapter.pageCountFromMemo(chapter.memo) ?: return null
         val migratedPage = if (chapter.last_page_read > 0) {
             null
         } else {
             EpubPageProgress.pageIndex(getEpubProgress.await(chapterId)?.progression, totalPages)
         }
         if (!incognitoMode) {
-            val migratedMemo = KomgaChapterMemo.markEpubPageProgressMigrated(chapter.memo)
+            val migratedMemo = publicationAdapter.markPageProgressMigrated(chapter.memo)
             chapter.memo = migratedMemo
             migratedPage?.let { chapter.last_page_read = it }
             updateChapter.await(
@@ -766,7 +762,17 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     private fun isDivinaEpub(readerChapter: ReaderChapter): Boolean {
-        return KomgaChapterMemo.canOpenEpubAsPages(readerChapter.chapter.memo)
+        return connectionPublicationAdapter()?.canOpenAsPages(readerChapter.chapter.memo) == true
+    }
+
+    private fun connectionPublicationAdapter(): ConnectionPublicationAdapter? {
+        val sourceId = manga?.source ?: return null
+        return sourceManager.get(sourceId) as? ConnectionPublicationAdapter
+    }
+
+    private fun connectionPageProgressAdapter(): ConnectionPageProgressAdapter? {
+        val sourceId = manga?.source ?: return null
+        return sourceManager.get(sourceId) as? ConnectionPageProgressAdapter
     }
 
     fun keepLocalProgress() {
@@ -779,8 +785,7 @@ class ReaderViewModel @JvmOverloads constructor(
             remoteProgressOpeningPages[conflict.chapterId] = localPageIndex
         }
         viewModelScope.launchIO {
-            komgaProgressSyncService.pushPageProgress(
-                sourceId = manga?.source ?: return@launchIO,
+            connectionPageProgressAdapter()?.pushPageProgress(
                 chapterUrl = currentChapter.chapter.url,
                 pageIndex = localPageIndex,
                 totalPages = pages.size,
@@ -812,8 +817,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     ),
                 )
                 if (conflict.migratesLegacyEpubProgress) {
-                    komgaProgressSyncService.pushPageProgress(
-                        sourceId = manga?.source ?: return@launchNonCancellable,
+                    connectionPageProgressAdapter()?.pushPageProgress(
                         chapterUrl = currentChapter.chapter.url,
                         pageIndex = targetPage.index,
                         totalPages = pages.size,
@@ -861,7 +865,7 @@ class ReaderViewModel @JvmOverloads constructor(
         if (currentChapter.pageLoader is DownloadPageLoader) return
 
         val manga = manga ?: return
-        if (sourceManager.get(manga.source) is KomgaSource) return
+        if (sourceManager.get(manga.source) is ConnectionRawDownloadAdapter) return
         val chapter = currentChapter.chapter.toDomainChapter() ?: return
         val chapterId = chapter.id
         synchronized(currentChapterAutoCacheRequests) {
@@ -951,8 +955,7 @@ class ReaderViewModel @JvmOverloads constructor(
         updateTrackChapterRead(readerChapter)
         deleteChapterIfNeeded(readerChapter)
 
-        komgaProgressSyncService.pushPageProgress(
-            sourceId = manga?.source ?: return,
+        connectionPageProgressAdapter()?.pushPageProgress(
             chapterUrl = readerChapter.chapter.url,
             pageIndex = readerChapter.pages?.lastIndex ?: 0,
             totalPages = readerChapter.pages?.size ?: 0,
@@ -993,8 +996,7 @@ class ReaderViewModel @JvmOverloads constructor(
             val sessionReadDuration = chapterReadStartTime?.let { endTime.time - it } ?: 0
 
             if (sessionReadDuration > 0) {
-                komgaProgressSyncService.pushPageProgress(
-                    sourceId = manga?.source ?: return@let,
+                connectionPageProgressAdapter()?.pushPageProgress(
                     chapterUrl = readerChapter.chapter.url,
                     pageIndex = readerChapter.chapter.last_page_read,
                     totalPages = readerChapter.pages?.size ?: 0,

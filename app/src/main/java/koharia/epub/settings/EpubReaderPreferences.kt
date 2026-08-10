@@ -9,13 +9,13 @@ class EpubReaderPreferences(
 
     val preferLocalFile: Preference<Boolean> = preferenceStore.getBoolean("epub_reader_prefer_local_file", true)
 
-    val syncProgressionToKomga: Preference<Boolean> =
+    val syncRemoteProgression: Preference<Boolean> =
         preferenceStore.getBoolean("epub_reader_sync_progression_komga", true)
 
-    val correctKomgaServerTimestamps: Preference<Boolean> =
+    val correctRemoteServerTimestamps: Preference<Boolean> =
         preferenceStore.getBoolean("epub_reader_correct_komga_server_timestamps", true)
 
-    fun komgaServerTimestampOffsetMinutes(sourceId: Long): Preference<Long> =
+    fun remoteServerTimestampOffsetMinutes(sourceId: Long): Preference<Long> =
         preferenceStore.getLong("epub_reader_komga_server_timestamp_offset_minutes_$sourceId", 0L)
 
     val completionThresholdPercent: Preference<Int> =

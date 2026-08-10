@@ -563,12 +563,11 @@ private fun ColumnScope.MangaContentInfo(
         }
     }
 
-    // Komga metadata info row
-    KomgaMetadataRow(memo = memo, textAlign = textAlign)
+    ConnectionMetadataRow(memo = memo, textAlign = textAlign)
 }
 
 @Composable
-private fun ColumnScope.KomgaMetadataRow(
+private fun ColumnScope.ConnectionMetadataRow(
     memo: JsonObject,
     textAlign: TextAlign?,
 ) {

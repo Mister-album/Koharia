@@ -14,12 +14,13 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
+import koharia.connection.ConnectionConfigMode
+import koharia.connection.ConnectionPreferences
+import koharia.connection.NO_ACTIVE_CONNECTION
 import koharia.epub.settings.EpubBackgroundSettingsPreference
 import koharia.epub.settings.EpubFontPreference
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
-import koharia.source.komga.KomgaServerPreferences
-import koharia.source.komga.LocalConfigMode
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableList
@@ -57,20 +58,20 @@ object SettingsBookReaderScreen : SearchableSettings {
         val readerPref = remember { Injekt.get<ReaderPreferences>() }
         val epubReaderPref = remember { Injekt.get<EpubReaderPreferences>() }
         val epubLayoutPreferences = remember { Injekt.get<EpubLayoutPreferences>() }
-        val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
-        val localConfigMode by serverPreferences.localConfigMode.collectAsState()
-        val activeServerId by serverPreferences.activeServerId.collectAsState()
+        val connectionPreferences = remember { Injekt.get<ConnectionPreferences>() }
+        val localConfigMode by connectionPreferences.configMode.collectAsState()
+        val activeServerId by connectionPreferences.activeConnectionId.collectAsState()
 
         val profileName = remember(activeServerId) {
-            serverPreferences.getProfiles()
+            connectionPreferences.getProfiles()
                 .firstOrNull { it.id == activeServerId }
                 ?.name
                 ?: activeServerId.toString()
         }
         val scopeSummary = when {
-            activeServerId == KomgaServerPreferences.NO_ACTIVE_SERVER ->
+            activeServerId == NO_ACTIVE_CONNECTION ->
                 stringResource(MR.strings.komga_scoped_settings_disabled_summary)
-            localConfigMode == LocalConfigMode.Shared ->
+            localConfigMode == ConnectionConfigMode.Shared ->
                 stringResource(MR.strings.pref_server_scope_shared)
             else ->
                 stringResource(MR.strings.pref_server_scope_server, profileName)
@@ -944,7 +945,7 @@ object SettingsReaderScreen : SearchableSettings {
 
     @Composable
     private fun getEpubReaderGroup(epubReaderPreferences: EpubReaderPreferences): Preference.PreferenceGroup {
-        val syncProgressionToKomga by epubReaderPreferences.syncProgressionToKomga.collectAsState()
+        val syncRemoteProgression by epubReaderPreferences.syncRemoteProgression.collectAsState()
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_category_epub_reader),
             preferenceItems = persistentListOf(
@@ -954,15 +955,15 @@ object SettingsReaderScreen : SearchableSettings {
                     subtitle = stringResource(MR.strings.pref_prefer_local_epub_file_summary),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = epubReaderPreferences.syncProgressionToKomga,
+                    preference = epubReaderPreferences.syncRemoteProgression,
                     title = stringResource(MR.strings.pref_sync_epub_progression_komga),
                     subtitle = stringResource(MR.strings.pref_sync_epub_progression_komga_summary),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = epubReaderPreferences.correctKomgaServerTimestamps,
+                    preference = epubReaderPreferences.correctRemoteServerTimestamps,
                     title = stringResource(MR.strings.pref_correct_komga_server_timestamps),
                     subtitle = stringResource(MR.strings.pref_correct_komga_server_timestamps_summary),
-                    enabled = syncProgressionToKomga,
+                    enabled = syncRemoteProgression,
                 ),
                 Preference.PreferenceItem.ListPreference(
                     preference = epubReaderPreferences.completionThresholdPercent,

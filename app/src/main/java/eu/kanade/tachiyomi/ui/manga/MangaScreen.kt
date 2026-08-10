@@ -39,7 +39,6 @@ import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.tachiyomi.source.isKomgaSource
 import eu.kanade.tachiyomi.source.isLocalOrStub
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
@@ -49,8 +48,11 @@ import eu.kanade.tachiyomi.ui.manga.track.TrackInfoDialogHomeScreen
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.connection.ConnectionBrowseAdapter
+import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionMangaBehavior
+import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.epub.EpubReaderLauncher
-import koharia.komga.ui.library.KomgaLibraryScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -110,6 +112,10 @@ class MangaScreen(
 
         val successState = state as MangaScreenModel.State.Success
         val isHttpSource = remember { successState.source is HttpSource }
+        val mangaBehavior = remember(successState.source) {
+            (successState.source as? ConnectionMangaBehaviorAdapter)?.mangaBehavior
+                ?: ConnectionMangaBehavior.Default
+        }
 
         MangaScreen(
             state = successState,
@@ -126,7 +132,7 @@ class MangaScreen(
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            }.takeIf { !successState.source.isKomgaSource() },
+            }.takeIf { mangaBehavior.allowsLocalLibraryManagement },
             onWebViewClicked = null,
             onWebViewLongClicked = null,
             onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
@@ -141,7 +147,7 @@ class MangaScreen(
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
             onDownloadActionClicked = screenModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
             onEditCategoryClicked = screenModel::showChangeCategoryDialog.takeIf {
-                successState.manga.favorite && !successState.source.isKomgaSource()
+                successState.manga.favorite && mangaBehavior.allowsLocalLibraryManagement
             },
             onMigrateClicked = null,
             onEditNotesClicked = { navigator.push(MangaNotesScreen(manga = successState.manga)) },
@@ -161,7 +167,7 @@ class MangaScreen(
         when (val dialog = successState.dialog) {
             null -> {}
             is MangaScreenModel.Dialog.ChangeCategory -> {
-                if (!successState.source.isKomgaSource()) {
+                if (mangaBehavior.allowsLocalLibraryManagement) {
                     ChangeCategoryDialog(
                         initialSelection = dialog.initialSelection,
                         onDismissRequest = onDismissRequest,
@@ -185,7 +191,7 @@ class MangaScreen(
             }
 
             is MangaScreenModel.Dialog.DuplicateManga -> {
-                if (!successState.source.isKomgaSource()) {
+                if (mangaBehavior.allowsLocalLibraryManagement) {
                     DuplicateMangaDialog(
                         duplicates = dialog.duplicates,
                         onDismissRequest = onDismissRequest,
@@ -202,7 +208,7 @@ class MangaScreen(
             MangaScreenModel.Dialog.SettingsSheet -> ChapterSettingsDialog(
                 onDismissRequest = onDismissRequest,
                 manga = successState.manga,
-                isKomgaCacheMode = successState.source.isKomgaSource(),
+                isConnectionCacheMode = mangaBehavior.usesCacheTerminology,
                 onDownloadFilterChanged = screenModel::setDownloadedFilter,
                 onUnreadFilterChanged = screenModel::setUnreadFilter,
                 onBookmarkedFilterChanged = screenModel::setBookmarkedFilter,
@@ -338,7 +344,7 @@ class MangaScreen(
                 navigator.pop()
                 previousController.search(query)
             }
-            is KomgaLibraryScreen -> {
+            is ConnectionBrowseScreen -> {
                 navigator.pop()
                 previousController.search(query)
             }
@@ -361,14 +367,14 @@ class MangaScreen(
                 "sourceType=${source::class.qualifiedName} previous=${previousController::class.qualifiedName}"
         }
 
-        if (source.isKomgaSource()) {
+        if (source is ConnectionBrowseAdapter) {
             when (previousController) {
                 is HomeScreen -> {
                     navigator.pop()
                     previousController.searchGenre(genreName)
                     return
                 }
-                is KomgaLibraryScreen -> {
+                is ConnectionBrowseScreen -> {
                     navigator.pop()
                     previousController.searchGenre(genreName)
                     return

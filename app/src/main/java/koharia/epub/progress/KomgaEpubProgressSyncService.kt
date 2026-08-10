@@ -114,7 +114,7 @@ class KomgaEpubProgressSyncService(
         source.client.newCall(request).await().use { response ->
             response.requireSuccess("push")
             if (scopedPreferenceStoreFactory.epubReaderPreferences(sourceId)
-                    .correctKomgaServerTimestamps.get()
+                    .correctRemoteServerTimestamps.get()
             ) {
                 recentPushes[ProgressionKey(sourceId, normalizedBookUrl)] = RecentPush(
                     modifiedAtMillis = modifiedAt.time,
@@ -131,9 +131,9 @@ class KomgaEpubProgressSyncService(
         serverDate: Date?,
     ): Date {
         val preferences = scopedPreferenceStoreFactory.epubReaderPreferences(sourceId)
-        if (!preferences.correctKomgaServerTimestamps.get()) return rawModifiedAt
+        if (!preferences.correctRemoteServerTimestamps.get()) return rawModifiedAt
 
-        val offsetPreference = preferences.komgaServerTimestampOffsetMinutes(sourceId)
+        val offsetPreference = preferences.remoteServerTimestampOffsetMinutes(sourceId)
         val storedOffsetMinutes = offsetPreference.get()
         val key = ProgressionKey(sourceId, normalizedBookUrl)
         val now = System.currentTimeMillis()

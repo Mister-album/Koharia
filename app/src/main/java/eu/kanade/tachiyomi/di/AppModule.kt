@@ -23,6 +23,10 @@ import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
+import koharia.connection.ConnectionContentScopeController
+import koharia.connection.ConnectionPreferences
+import koharia.connection.ConnectionProfileManager
+import koharia.connection.ConnectionRegistry
 import koharia.epub.cache.EpubCacheManager
 import koharia.epub.cache.EpubCachePreferences
 import koharia.epub.font.EpubFontManager
@@ -35,6 +39,8 @@ import koharia.epub.service.KomgaReadiumHttpClient
 import koharia.epub.service.LocalEpubPublicationService
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.komga.api.KomgaActiveServerSseManager
+import koharia.source.komga.KomgaConnectionMigration
+import koharia.source.komga.KomgaConnectionProvider
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
 import kotlinx.coroutines.runBlocking
@@ -181,10 +187,29 @@ class AppModule(val app: Application) : InjektModule {
             }
         }
         addSingletonFactory {
+            ConnectionPreferences(
+                preferenceStore = get<PreferenceStore>(),
+                json = get<Json>(),
+            )
+        }
+        addSingletonFactory {
+            KomgaConnectionMigration(
+                context = app,
+                preferenceStore = get<PreferenceStore>(),
+                connectionPreferences = get<ConnectionPreferences>(),
+                json = get<Json>(),
+            )
+        }
+        addSingletonFactory { ConnectionProfileManager(get(), get(), get()) }
+        addSingletonFactory { ConnectionRegistry(listOf(KomgaConnectionProvider())) }
+        addSingletonFactory { ConnectionContentScopeController(get(), get()) }
+        addSingletonFactory {
+            get<KomgaConnectionMigration>().migrate()
             KomgaServerPreferences(
                 context = app,
                 preferenceStore = get<PreferenceStore>(),
                 json = get<Json>(),
+                connectionPreferences = get<ConnectionPreferences>(),
             ).also(KomgaServerPreferences::ensureProfilesInitialized)
         }
         addSingletonFactory {
@@ -212,7 +237,10 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { NetworkHelper(app, get()) }
         addSingletonFactory { JavaScriptEngine(app) }
 
-        addSingletonFactory<SourceManager> { AndroidSourceManager(app, get(), get()) }
+        addSingletonFactory<SourceManager> {
+            get<KomgaConnectionMigration>().migrate()
+            AndroidSourceManager(app, get(), get(), get())
+        }
         addSingletonFactory { KomgaActiveServerSseManager(app, get(), get(), get(), lazy { get() }) }
 
         addSingletonFactory { DownloadProvider(app) }
@@ -241,6 +269,7 @@ class AppModule(val app: Application) : InjektModule {
         ContextCompat.getMainExecutor(app).execute {
             get<NetworkHelper>()
 
+            get<ConnectionPreferences>()
             get<KomgaServerPreferences>()
             get<KomgaLocalConfigManager>()
 

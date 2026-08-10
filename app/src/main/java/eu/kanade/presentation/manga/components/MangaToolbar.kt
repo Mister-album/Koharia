@@ -36,7 +36,7 @@ import tachiyomi.presentation.core.theme.active
 fun MangaToolbar(
     title: String,
     hasFilters: Boolean,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     chapterCoverDisplayMode: Long?,
     navigateUp: () -> Unit,
     onClickFilter: () -> Unit,
@@ -81,7 +81,7 @@ fun MangaToolbar(
                     expanded = downloadExpanded,
                     onDismissRequest = onDismissRequest,
                     onDownloadClicked = onClickDownload,
-                    isKomgaCacheMode = isKomgaCacheMode,
+                    isConnectionCacheMode = isConnectionCacheMode,
                 )
             }
 
@@ -130,7 +130,11 @@ fun MangaToolbar(
                         add(
                             AppBar.Action(
                                 title = stringResource(
-                                    if (isKomgaCacheMode) MR.strings.komga_action_cache else MR.strings.manga_download,
+                                    if (isConnectionCacheMode) {
+                                        MR.strings.komga_action_cache
+                                    } else {
+                                        MR.strings.manga_download
+                                    },
                                 ),
                                 icon = Icons.Outlined.Download,
                                 onClick = { downloadExpanded = !downloadExpanded },

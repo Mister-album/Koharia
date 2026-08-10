@@ -87,7 +87,7 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -123,7 +123,7 @@ class ReaderActivity : BaseActivity() {
         }
     }
 
-    private val scopedPreferenceStoreFactory = Injekt.get<KomgaScopedPreferenceStoreFactory>()
+    private val scopedPreferenceStoreFactory = Injekt.get<ConnectionScopedPreferenceStoreFactory>()
     val readerPreferences: ReaderPreferences by lazy { viewModel.readerPreferences }
     val basePreferences: BasePreferences by lazy {
         val sourceId = intent.extras?.getLong("source", -1L) ?: -1L

@@ -1,4 +1,4 @@
-package koharia.komga.ui.library.components
+package koharia.connection.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,8 +21,8 @@ import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
-fun KomgaServerSetupPrompt(
-    onConfigureServer: () -> Unit,
+fun LibraryConnectionSetupPrompt(
+    onConfigureConnection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -39,12 +39,12 @@ fun KomgaServerSetupPrompt(
             modifier = Modifier.size(48.dp),
         )
         Text(
-            text = stringResource(MR.strings.komga_no_servers_title),
+            text = stringResource(MR.strings.connection_no_profiles_title),
             style = MaterialTheme.typography.titleLarge,
             textAlign = TextAlign.Center,
         )
         FilledTonalButton(
-            onClick = onConfigureServer,
+            onClick = onConfigureConnection,
             modifier = Modifier.padding(top = 8.dp),
         ) {
             Icon(
@@ -52,7 +52,7 @@ fun KomgaServerSetupPrompt(
                 contentDescription = null,
                 modifier = Modifier.padding(end = 8.dp),
             )
-            Text(text = stringResource(MR.strings.action_add_server))
+            Text(text = stringResource(MR.strings.action_add_connection))
         }
     }
 }

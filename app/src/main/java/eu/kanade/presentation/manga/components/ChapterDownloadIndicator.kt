@@ -52,14 +52,14 @@ fun ChapterDownloadIndicator(
     downloadStateProvider: () -> Download.State,
     downloadProgressProvider: () -> Int,
     onClick: (ChapterDownloadAction) -> Unit,
-    isKomgaCacheMode: Boolean = false,
+    isConnectionCacheMode: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     when (val downloadState = downloadStateProvider()) {
         Download.State.NOT_DOWNLOADED -> NotDownloadedIndicator(
             enabled = enabled,
             modifier = modifier,
-            isKomgaCacheMode = isKomgaCacheMode,
+            isConnectionCacheMode = isConnectionCacheMode,
             onClick = onClick,
         )
         Download.State.QUEUE, Download.State.DOWNLOADING, Download.State.PAUSED -> DownloadingIndicator(
@@ -67,13 +67,13 @@ fun ChapterDownloadIndicator(
             modifier = modifier,
             downloadState = downloadState,
             downloadProgressProvider = downloadProgressProvider,
-            isKomgaCacheMode = isKomgaCacheMode,
+            isConnectionCacheMode = isConnectionCacheMode,
             onClick = onClick,
         )
         Download.State.DOWNLOADED -> DownloadedIndicator(
             enabled = enabled,
             modifier = modifier,
-            isKomgaCacheMode = isKomgaCacheMode,
+            isConnectionCacheMode = isConnectionCacheMode,
             onClick = onClick,
         )
         Download.State.ERROR -> ErrorIndicator(
@@ -87,7 +87,7 @@ fun ChapterDownloadIndicator(
 @Composable
 private fun NotDownloadedIndicator(
     enabled: Boolean,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     modifier: Modifier = Modifier,
     onClick: (ChapterDownloadAction) -> Unit,
 ) {
@@ -106,7 +106,7 @@ private fun NotDownloadedIndicator(
         Icon(
             painter = painterResource(R.drawable.ic_download_chapter_24dp),
             contentDescription = stringResource(
-                if (isKomgaCacheMode) MR.strings.komga_action_cache else MR.strings.manga_download,
+                if (isConnectionCacheMode) MR.strings.komga_action_cache else MR.strings.manga_download,
             ),
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -119,7 +119,7 @@ private fun DownloadingIndicator(
     enabled: Boolean,
     downloadState: Download.State,
     downloadProgressProvider: () -> Int,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     onClick: (ChapterDownloadAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -175,7 +175,7 @@ private fun DownloadingIndicator(
                 text = {
                     Text(
                         text = stringResource(
-                            if (isKomgaCacheMode) {
+                            if (isConnectionCacheMode) {
                                 MR.strings.komga_action_start_caching_now
                             } else {
                                 MR.strings.action_start_downloading_now
@@ -208,7 +208,7 @@ private fun DownloadingIndicator(
 @Composable
 private fun DownloadedIndicator(
     enabled: Boolean,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     modifier: Modifier = Modifier,
     onClick: (ChapterDownloadAction) -> Unit,
 ) {
@@ -235,7 +235,11 @@ private fun DownloadedIndicator(
                 text = {
                     Text(
                         text = stringResource(
-                            if (isKomgaCacheMode) MR.strings.komga_action_remove_cache else MR.strings.action_delete,
+                            if (isConnectionCacheMode) {
+                                MR.strings.komga_action_remove_cache
+                            } else {
+                                MR.strings.action_delete
+                            },
                         ),
                     )
                 },

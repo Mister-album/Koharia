@@ -7,10 +7,9 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import koharia.connection.ConnectionPagePublication
+import koharia.connection.ConnectionPublicationAdapter
 import koharia.epub.cache.EpubCacheManager
-import koharia.epub.cache.EpubCachePolicy
-import koharia.komga.download.KomgaChapterMemo
-import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
@@ -21,7 +20,6 @@ import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.File
 
 /**
  * Loader used to retrieve the [PageLoader] for a given chapter.
@@ -152,9 +150,9 @@ class ChapterLoader(
                 downloadProvider,
             )
             completeEpubCache != null -> CompleteEpubCachePageLoader(
-                file = completeEpubCache,
+                file = completeEpubCache.file,
                 cacheManager = epubCacheManager,
-                expectedPageCount = checkNotNull(KomgaChapterMemo.pagesCount(dbChapter.memo)),
+                expectedPageCount = completeEpubCache.pageCount,
             )
             source is HttpSource -> HttpPageLoader(chapter, source)
             source is StubSource -> error(context.stringResource(MR.strings.source_not_installed, source.toString()))
@@ -162,16 +160,9 @@ class ChapterLoader(
         }
     }
 
-    private fun findCompleteEpubCache(chapter: eu.kanade.tachiyomi.data.database.models.Chapter): File? {
-        val komgaSource = source as? KomgaSource ?: return null
-        if (!KomgaChapterMemo.canOpenEpubAsPages(chapter.memo)) return null
-        val fingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
-        val publicationKey = EpubCachePolicy.publicationKey(
-            fileHash = fingerprint?.fileHash,
-            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
-            sizeBytes = fingerprint?.sizeBytes ?: 0L,
-            fallback = "book:${chapter.id}:${chapter.url}",
-        )
-        return epubCacheManager.completeBookFile(komgaSource.id, publicationKey)
+    private fun findCompleteEpubCache(
+        chapter: eu.kanade.tachiyomi.data.database.models.Chapter,
+    ): ConnectionPagePublication? {
+        return (source as? ConnectionPublicationAdapter)?.findCompletePagePublication(chapter)
     }
 }

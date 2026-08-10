@@ -13,13 +13,12 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.Notifications
-import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.system.NetworkState
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.networkStateFlow
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
-import koharia.source.komga.KomgaSource
+import koharia.connection.ConnectionHealthAdapter
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combineTransform
@@ -27,7 +26,6 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import logcat.LogPriority
-import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.download.service.DownloadPreferences
 import uy.kohesive.injekt.Injekt
@@ -128,10 +126,11 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
             return true
         }
 
-        if (hasQueuedKomgaDownload()) {
-            val komgaReachable = isQueuedKomgaSourceReachable()
+        if (hasQueuedConnectionAllowingUnvalidatedNetwork()) {
+            val connectionReachable = isQueuedConnectionReachable()
             logcat(LogPriority.INFO) {
-                "DownloadJob.checkNetworkState(): allowing unvalidated connected network for Komga queue, probeReachable=$komgaReachable"
+                "DownloadJob.checkNetworkState(): allowing unvalidated connected network for connection queue, " +
+                    "probeReachable=$connectionReachable"
             }
             return true
         }
@@ -140,30 +139,19 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
         return false
     }
 
-    private fun hasQueuedKomgaDownload(): Boolean {
-        return downloadManager.queueState.value.any { it.source is KomgaSource }
+    private fun hasQueuedConnectionAllowingUnvalidatedNetwork(): Boolean {
+        return downloadManager.queueState.value.any {
+            (it.source as? ConnectionHealthAdapter)?.allowsUnvalidatedNetwork == true
+        }
     }
 
-    private suspend fun isQueuedKomgaSourceReachable(): Boolean {
-        val komgaSource = downloadManager.queueState.value.firstOrNull()?.source as? KomgaSource ?: return false
-        if (komgaSource.baseUrl.isBlank()) return false
-
-        return runCatching {
-            withIOContext {
-                komgaSource.client.newCall(
-                    GET("${komgaSource.baseUrl}/api/v1/libraries?size=1", komgaSource.currentHeaders()),
-                )
-                    .execute()
-                    .use { response ->
-                        logcat(LogPriority.INFO) {
-                            "DownloadJob.isQueuedKomgaSourceReachable(): probe code=${response.code}"
-                        }
-                        response.isSuccessful
-                    }
-            }
-        }.getOrElse { error ->
+    private suspend fun isQueuedConnectionReachable(): Boolean {
+        val adapter = downloadManager.queueState.value
+            .firstNotNullOfOrNull { it.source as? ConnectionHealthAdapter }
+            ?: return false
+        return runCatching { adapter.isConnectionReachable() }.getOrElse { error ->
             logcat(LogPriority.WARN, error) {
-                "DownloadJob.isQueuedKomgaSourceReachable(): probe failed"
+                "DownloadJob.isQueuedConnectionReachable(): probe failed"
             }
             false
         }

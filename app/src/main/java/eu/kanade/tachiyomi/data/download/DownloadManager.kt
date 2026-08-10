@@ -4,9 +4,8 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
-import koharia.source.komga.DownloadDirectoryMode
-import koharia.source.komga.KomgaServerPreferences
-import koharia.source.komga.KomgaSource
+import koharia.connection.ConnectionDownloadStorageAdapter
+import koharia.connection.ConnectionRawDownloadAdapter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,11 +42,9 @@ class DownloadManager(
     private val context: Context,
     private val provider: DownloadProvider = Injekt.get(),
     private val cache: DownloadCache = Injekt.get(),
-    private val komgaSharedDownloadIndexManager: KomgaSharedDownloadIndexManager = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
-    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -157,7 +154,11 @@ class DownloadManager(
                 source = download.source,
                 manga = download.manga,
                 chapter = download.chapter,
-                mode = mode ?: if (download.source is KomgaSource) Download.Mode.RAW_FILE else Download.Mode.PAGE_CACHE,
+                mode = mode ?: if (download.source is ConnectionRawDownloadAdapter) {
+                    Download.Mode.RAW_FILE
+                } else {
+                    Download.Mode.PAGE_CACHE
+                },
             )
         } ?: return
         toAdd.status = Download.State.QUEUE
@@ -317,17 +318,18 @@ class DownloadManager(
             removeFromDownloadQueue(filteredChapters)
 
             val (mangaDirs, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
+            val storageAdapter = provider.storageAdapter(source)
             chapterDirs.distinctBy { it.uri.toString() }.forEach {
-                komgaSharedDownloadIndexManager.deleteIndexedPath(it)
+                storageAdapter?.deleteIndexedFile(it)
                 it.delete()
             }
             val remainingMangaDirs = mangaDirs.filterNot { mangaDir ->
                 if (mangaDir.listFiles()?.isEmpty() != true) return@filterNot false
 
-                val relativePath = komgaSharedDownloadIndexManager.relativePathOf(mangaDir)
+                val relativePath = storageAdapter?.indexedRelativePath(mangaDir)
                 val deleted = mangaDir.delete()
                 if (deleted) {
-                    relativePath?.let { komgaSharedDownloadIndexManager.deleteIndexedPathPrefix(it) }
+                    relativePath?.let { storageAdapter.deleteIndexedPathPrefix(it) }
                 }
                 deleted
             }
@@ -354,18 +356,16 @@ class DownloadManager(
      */
     fun deleteManga(manga: Manga, source: Source, removeQueued: Boolean = true) {
         scope.launchIO {
+            val storageAdapter = provider.storageAdapter(source)
             if (removeQueued) {
                 downloader.removeFromQueue(manga)
             }
-            if (
-                source is KomgaSource &&
-                komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
-            ) {
-                komgaSharedDownloadIndexManager.deleteMangaIndexedDownloads(manga.id, source.id)
+            if (storageAdapter?.usesSharedDownloadStorage == true) {
+                storageAdapter.deleteIndexedManga(manga.id)
             }
             provider.findMangaDirs(manga.title, source).forEach { mangaDir ->
-                komgaSharedDownloadIndexManager.relativePathOf(mangaDir)?.let {
-                    komgaSharedDownloadIndexManager.deleteIndexedPathPrefix(it)
+                storageAdapter?.indexedRelativePath(mangaDir)?.let {
+                    storageAdapter.deleteIndexedPathPrefix(it)
                 }
                 mangaDir.delete()
             }
@@ -435,9 +435,8 @@ class DownloadManager(
      */
     fun renameSource(oldSource: Source, newSource: Source) {
         if (
-            oldSource is KomgaSource &&
-            newSource is KomgaSource &&
-            komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
+            (oldSource as? ConnectionDownloadStorageAdapter)?.usesSharedDownloadStorage == true &&
+            (newSource as? ConnectionDownloadStorageAdapter)?.usesSharedDownloadStorage == true
         ) {
             return
         }
@@ -469,6 +468,7 @@ class DownloadManager(
      */
     suspend fun renameManga(manga: Manga, newTitle: String) {
         val source = sourceManager.getOrStub(manga.source)
+        val storageAdapter = provider.storageAdapter(source)
         val oldFolders = provider.findMangaDirs(manga.title, source)
         if (oldFolders.isEmpty()) return
         val newName = provider.getMangaDirName(newTitle)
@@ -483,7 +483,7 @@ class DownloadManager(
             if (oldName == newName) return@forEach
 
             val parent = oldFolder.parentFile
-            val oldRelativePathPrefix = komgaSharedDownloadIndexManager.relativePathOf(oldFolder)
+            val oldRelativePathPrefix = storageAdapter?.indexedRelativePath(oldFolder)
             var currentFolder = oldFolder
             val capitalizationChanged = oldName.equals(newName, ignoreCase = true)
             if (capitalizationChanged) {
@@ -501,8 +501,8 @@ class DownloadManager(
             if (currentFolder.renameTo(newName)) {
                 val renamedFolder = parent?.findFile(newName) ?: currentFolder
                 oldRelativePathPrefix?.let { oldPrefix ->
-                    komgaSharedDownloadIndexManager.relativePathOf(renamedFolder)?.let { newPrefix ->
-                        komgaSharedDownloadIndexManager.updateIndexedPathPrefix(oldPrefix, newPrefix)
+                    storageAdapter.indexedRelativePath(renamedFolder)?.let { newPrefix ->
+                        storageAdapter.updateIndexedPathPrefix(oldPrefix, newPrefix)
                     }
                 }
             } else {
@@ -524,6 +524,7 @@ class DownloadManager(
      * @param newChapter the target chapter with the new name.
      */
     suspend fun renameChapter(source: Source, manga: Manga, oldChapter: Chapter, newChapter: Chapter) {
+        val storageAdapter = provider.storageAdapter(source)
         val oldNames = provider.getValidChapterDirNames(oldChapter.name, oldChapter.scanlator, oldChapter.url)
         val mangaDir = provider.getMangaDir(manga.title, source).getOrElse { e ->
             logcat(LogPriority.ERROR, e) { "Manga download folder doesn't exist. Skipping renaming after source sync" }
@@ -542,13 +543,13 @@ class DownloadManager(
 
         if (oldDownload.name == newName) return
 
-        val oldRelativePath = komgaSharedDownloadIndexManager.relativePathOf(oldDownload)
+        val oldRelativePath = storageAdapter?.indexedRelativePath(oldDownload)
         if (oldDownload.renameTo(newName)) {
             cache.removeChapter(oldChapter, manga)
             cache.addChapter(newName, mangaDir, manga)
             oldRelativePath?.let { oldPath ->
                 mangaDir.findFile(newName)?.let { renamedFile ->
-                    komgaSharedDownloadIndexManager.updateIndexedPath(oldPath, renamedFile)
+                    storageAdapter.updateIndexedFilePath(oldPath, renamedFile)
                 }
             }
         } else {

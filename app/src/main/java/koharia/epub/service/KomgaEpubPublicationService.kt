@@ -39,7 +39,11 @@ class KomgaEpubPublicationService(
         request: EpubOpenRequest,
         initialLocator: Locator?,
     ): EpubReaderSession {
-        val bookUrl = requireNotNull(request.bookUrl) { "Missing Komga book URL" }
+        val remotePublication = requireNotNull(request.remotePublication) { "Missing Komga publication reference" }
+        require(remotePublication.providerId == koharia.source.komga.KomgaConnectionProvider.ID) {
+            "Unsupported publication provider ${remotePublication.providerId}"
+        }
+        val bookUrl = remotePublication.resourceId
         val manifestUrl = requireNotNull(AbsoluteUrl("$bookUrl/manifest/epub")) {
             "Invalid Komga manifest URL"
         }

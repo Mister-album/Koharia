@@ -57,9 +57,10 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
+import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ui.LibraryConnectionSetupPrompt
 import koharia.epub.cache.EpubCacheManager
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
-import koharia.komga.ui.library.components.KomgaServerSetupPrompt
 import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
@@ -90,11 +91,11 @@ import kotlin.jvm.Transient
 import kotlin.math.roundToInt
 
 data class KomgaLibraryScreen(
-    val sourceId: Long,
+    override val sourceId: Long,
     private val listingQuery: String?,
     private val showNavigationUp: Boolean = true,
     private val libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
-) : Screen(), AssistContentScreen {
+) : Screen(), AssistContentScreen, ConnectionBrowseScreen {
 
     private var assistUrl: String? = null
 
@@ -293,8 +294,8 @@ data class KomgaLibraryScreen(
                     .pullRefresh(pullRefreshState),
             ) {
                 if (!state.isServerConfigured) {
-                    KomgaServerSetupPrompt(
-                        onConfigureServer = {
+                    LibraryConnectionSetupPrompt(
+                        onConfigureConnection = {
                             navigator.push(KomgaServerSettingsScreen(sourceId = sourceId))
                         },
                         modifier = Modifier.padding(paddingValues),
@@ -383,9 +384,9 @@ data class KomgaLibraryScreen(
         }
     }
 
-    suspend fun search(query: String) = events().query.send(SearchType.Text(query))
-    suspend fun searchGenre(name: String) = events().query.send(SearchType.Genre(name))
-    suspend fun refresh() = events().refresh.send(Unit)
+    override suspend fun search(query: String) = events().query.send(SearchType.Text(query))
+    override suspend fun searchGenre(name: String) = events().query.send(SearchType.Genre(name))
+    override suspend fun refresh() = events().refresh.send(Unit)
 
     private class RuntimeEvents {
         val query = Channel<SearchType>()

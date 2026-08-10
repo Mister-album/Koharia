@@ -24,6 +24,7 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.connection.ConnectionPublicationAdapter
 import koharia.epub.cache.EpubCacheManager
 import koharia.komga.api.dto.KOMGA_LIBRARY_IDS_MEMO_KEY
 import koharia.komga.api.dto.KOMGA_LIBRARY_ID_MEMO_KEY
@@ -234,12 +235,15 @@ class KomgaLibraryScreenModel(
                 val selectedContentType = request.listing.filters.selectedContentType()
                 val selectedAdvancedFilters = request.listing.filters.cachedAdvancedFilterSelection()
                 val hasCompleteEpubCache = epubCacheManager.hasAnyCompleteBook(sourceId)
+                val publicationAdapter = source as? ConnectionPublicationAdapter
                 val locallyAvailableManga = buildList {
                     for (manga in localManga) {
                         val isAvailable = downloadManager.getDownloadCount(manga) > 0 ||
                             (
                                 hasCompleteEpubCache &&
-                                    chaptersFor(manga).any { epubCacheManager.hasCompleteBook(sourceId, it) }
+                                    chaptersFor(manga).any {
+                                        publicationAdapter?.hasCompleteCachedPublication(it) == true
+                                    }
                                 )
                         if (isAvailable) add(manga)
                     }

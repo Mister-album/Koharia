@@ -44,7 +44,7 @@ class KomgaServerRemovalManager(
                 }
                 epubCacheManager.clearServer(serverId)
                 libraryClassificationManager.clearServer(serverId)
-                localConfigManager.clearScopeForServer(serverId)
+                localConfigManager.clearScopeForConnection(serverId)
                 clearServerSettings(serverId)
             }
             // Read the profiles again after cleanup. The settings screen can edit or add

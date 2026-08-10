@@ -8,11 +8,11 @@ import androidx.fragment.app.FragmentContainerView
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.lifecycleScope
 import eu.kanade.tachiyomi.R
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.epub.font.EpubFontManager
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -28,7 +28,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
     private val fontManager: EpubFontManager = Injekt.get()
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
+    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get()
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
         get() = requireArguments().getLong(ARG_CHAPTER_ID)

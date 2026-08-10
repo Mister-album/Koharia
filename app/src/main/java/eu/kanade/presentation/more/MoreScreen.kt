@@ -28,7 +28,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
 fun MoreScreen(
-    user: koharia.komga.api.dto.UserDto? = null,
+    user: koharia.connection.ConnectionAccount? = null,
     downloadQueueStateProvider: () -> DownloadQueueState,
     downloadedOnly: Boolean,
     downloadedOnlyEnabled: Boolean,
