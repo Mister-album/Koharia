@@ -5,22 +5,25 @@ import android.util.Log
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.paging.LoadState
+import androidx.paging.LoadStates
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
-import androidx.paging.filter
 import androidx.paging.map
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.util.ioCoroutineScope
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
+import koharia.komga.api.dto.KOMGA_LIBRARY_ID_MEMO_KEY
 import koharia.komga.api.dto.LibraryDto
 import koharia.source.komga.KomgaClassifiedLibrary
 import koharia.source.komga.KomgaLibraryClassificationManager
@@ -47,12 +50,17 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.domain.source.service.SourceManager
 import eu.kanade.tachiyomi.source.model.Filter as SourceModelFilter
@@ -67,6 +75,7 @@ class KomgaLibraryScreenModel(
     private val downloadManager: DownloadManager,
     private val getRemoteManga: GetRemoteManga,
     private val getManga: GetManga,
+    private val updateManga: UpdateManga,
     private val getIncognitoState: GetIncognitoState,
     private val libraryScope: KomgaLibraryScope,
     private val libraryClassificationManager: KomgaLibraryClassificationManager,
@@ -114,17 +123,30 @@ class KomgaLibraryScreenModel(
             komgaSettingsChangeListener = source.registerServerSettingsChangeListener { shelfLibrariesChanged ->
                 screenModelScope.launchIO {
                     source.invalidateBrowseCache()
-                    reloadKomgaState(
-                        komgaSource = source,
-                        showRefreshing = true,
-                        resetSelection = true,
-                        forceRefresh = true,
-                        forceShelfLibrarySelection = shelfLibrariesChanged,
-                    )
+                    if (basePreferences.downloadedOnly.get()) {
+                        refreshSignal.value += 1
+                    } else {
+                        reloadKomgaState(
+                            komgaSource = source,
+                            showRefreshing = true,
+                            resetSelection = true,
+                            forceRefresh = true,
+                            forceShelfLibrarySelection = shelfLibrariesChanged,
+                        )
+                    }
+                }
+            }
+            if (!basePreferences.downloadedOnly.get()) {
+                screenModelScope.launchIO {
+                    reloadKomgaState(source, showRefreshing = false, resetSelection = true, forceRefresh = true)
                 }
             }
             screenModelScope.launchIO {
-                reloadKomgaState(source, showRefreshing = false, resetSelection = true, forceRefresh = true)
+                basePreferences.downloadedOnly.changes().collect { cachedOnly ->
+                    if (!cachedOnly) {
+                        reloadKomgaState(source, showRefreshing = true, resetSelection = true, forceRefresh = true)
+                    }
+                }
             }
             if (libraryScope != KomgaLibraryScope.ALL) {
                 screenModelScope.launchIO {
@@ -151,6 +173,27 @@ class KomgaLibraryScreenModel(
     }.flatMapLatest { request ->
         if (request.scopeEmpty || !request.serverConfigured) {
             flowOf(PagingData.empty())
+        } else if (request.cachedOnly) {
+            combine(
+                getManga.subscribeBySourceId(sourceId),
+                downloadManager.queueState,
+            ) { localManga, _ ->
+                val query = (request.listing as? Listing.Search)?.query
+                val selectedLibraryIds = request.listing.filters.selectedLibraryIds()
+                val downloadedManga = localManga.asSequence()
+                    .filter { downloadManager.getDownloadCount(it) > 0 }
+                    .toList()
+                val cachedManga = downloadedManga.withCachedLibraryIds()
+                val cachedItems = cachedManga.asSequence()
+                    .filter { it.matchesCachedLibraryFilter(selectedLibraryIds) }
+                    .filter { it.matchesCachedOnlyQuery(query) }
+                    .map { MutableStateFlow(it) as StateFlow<Manga> }
+                    .toList()
+                PagingData.from(
+                    data = cachedItems,
+                    sourceLoadStates = CACHED_ONLY_LOAD_STATES,
+                )
+            }
         } else {
             Pager(PagingConfig(pageSize = 25)) {
                 getRemoteManga(sourceId, request.listing.query ?: "", request.listing.filters)
@@ -164,14 +207,27 @@ class KomgaLibraryScreenModel(
                             initialValue = remoteManga,
                         )
                 }
-                    .filter { mangaStateFlow ->
-                        !request.cachedOnly ||
-                            downloadManager.getDownloadCount(mangaStateFlow.value) > 0
-                    }
             }
         }
     }
         .cachedIn(ioCoroutineScope)
+
+    private suspend fun List<Manga>.withCachedLibraryIds(): List<Manga> {
+        val komgaSource = source as? KomgaSource ?: return this
+        val updates = mutableListOf<MangaUpdate>()
+        val enriched = map { manga ->
+            if (manga.cachedLibraryId != null) return@map manga
+
+            val libraryId = komgaSource.findCachedLibraryId(manga.url) ?: return@map manga
+            val updatedMemo = JsonObject(manga.memo + (KOMGA_LIBRARY_ID_MEMO_KEY to JsonPrimitive(libraryId)))
+            updates += MangaUpdate(id = manga.id, memo = updatedMemo)
+            manga.copy(memo = updatedMemo)
+        }
+        if (updates.isNotEmpty()) {
+            updateManga.awaitAll(updates)
+        }
+        return enriched
+    }
 
     fun resetFilters() {
         if (source !is CatalogueSource) return
@@ -383,6 +439,10 @@ class KomgaLibraryScreenModel(
     }
 
     fun refresh() {
+        if (basePreferences.downloadedOnly.get()) {
+            refreshSignal.value += 1
+            return
+        }
         val komgaSource = source as? KomgaSource
         if (komgaSource != null) {
             screenModelScope.launchIO {
@@ -429,7 +489,9 @@ class KomgaLibraryScreenModel(
             libraryFilterBeforeQuickSelection = null
         }
         komgaSource.saveSessionFilterState(filters, libraryScope)
-        komgaSource.refreshBrowseRequests()
+        if (!basePreferences.downloadedOnly.get()) {
+            komgaSource.refreshBrowseRequests()
+        }
         refreshSignal.value += 1
     }
 
@@ -712,3 +774,30 @@ private fun mergeRemoteWithLocal(remote: Manga, local: Manga?): Manga {
         notes = local.notes,
     )
 }
+
+internal fun Manga.matchesCachedOnlyQuery(query: String?): Boolean {
+    val normalizedQuery = query?.trim().orEmpty()
+    if (normalizedQuery.isEmpty()) return true
+
+    return title.contains(normalizedQuery, ignoreCase = true) ||
+        author?.contains(normalizedQuery, ignoreCase = true) == true ||
+        artist?.contains(normalizedQuery, ignoreCase = true) == true ||
+        genre.orEmpty().any { it.contains(normalizedQuery, ignoreCase = true) }
+}
+
+internal fun Manga.matchesCachedLibraryFilter(selectedLibraryIds: Set<String>): Boolean {
+    if (selectedLibraryIds.isEmpty()) return true
+    return cachedLibraryId in selectedLibraryIds
+}
+
+private val Manga.cachedLibraryId: String?
+    get() = memo[KOMGA_LIBRARY_ID_MEMO_KEY]
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.takeIf { it.isNotBlank() }
+
+internal val CACHED_ONLY_LOAD_STATES = LoadStates(
+    refresh = LoadState.NotLoading(endOfPaginationReached = true),
+    prepend = LoadState.NotLoading(endOfPaginationReached = true),
+    append = LoadState.NotLoading(endOfPaginationReached = true),
+)

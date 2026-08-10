@@ -450,7 +450,7 @@
     <string name="in_library">在书架中</string>
     <string name="label_downloaded_only">仅限已下载内容</string>
     <string name="komga_label_cached_only">仅显示已缓存</string>
-    <string name="komga_cached_only_summary">仅显示已完成离线缓存的内容</string>
+    <string name="komga_cached_only_summary">仅显示已完成离线缓存的内容，并暂停服务器连接</string>
     <string name="creating_backup_error">备份失败</string>
     <string name="restoring_backup_canceled">已取消还原</string>
     <string name="restoring_backup_error">还原备份失败</string>

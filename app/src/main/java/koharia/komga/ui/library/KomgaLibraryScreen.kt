@@ -45,6 +45,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.core.util.ifSourcesLoaded
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.browse.BrowseSourceContent
@@ -127,6 +128,7 @@ data class KomgaLibraryScreen(
         val downloadManager: DownloadManager = Injekt.get()
         val getRemoteManga: GetRemoteManga = Injekt.get()
         val getManga: GetManga = Injekt.get()
+        val updateManga: UpdateManga = Injekt.get()
         val getIncognitoState: GetIncognitoState = Injekt.get()
         val libraryClassificationManager: KomgaLibraryClassificationManager = Injekt.get()
 
@@ -141,6 +143,7 @@ data class KomgaLibraryScreen(
                 downloadManager = downloadManager,
                 getRemoteManga = getRemoteManga,
                 getManga = getManga,
+                updateManga = updateManga,
                 getIncognitoState = getIncognitoState,
                 libraryScope = libraryScope,
                 libraryClassificationManager = libraryClassificationManager,

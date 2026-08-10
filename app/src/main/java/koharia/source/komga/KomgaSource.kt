@@ -93,6 +93,7 @@ class KomgaSource(
 
     private val repository: KomgaRepository
         get() = KomgaRepository(baseUrl, apiClient)
+    private val metadataCacheStore by lazy { KomgaMetadataCacheStore(application.applicationContext) }
     private val forceBrowseRequestsUntil = AtomicLong(0L)
 
     fun currentHeaders(): Headers = headersBuilder().build()
@@ -677,6 +678,8 @@ class KomgaSource(
     }
 
     fun configuredShelfLibraryIds(): Set<String> = shelfLibraryIds.toSet()
+
+    fun findCachedLibraryId(contentUrl: String): String? = metadataCacheStore.findLibraryId(contentUrl)
 
     fun registerServerSettingsChangeListener(
         onChanged: (shelfLibrariesChanged: Boolean) -> Unit,

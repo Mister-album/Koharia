@@ -1,6 +1,10 @@
 package koharia.source.komga
 
 import android.content.Context
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
@@ -60,6 +64,28 @@ internal class KomgaMetadataCacheStore(
             .body(bodyBytes.toResponseBody(contentType))
             .build()
     }
+
+    fun findLibraryId(contentUrl: String): String? {
+        val content = readJsonObject(contentUrl) ?: return null
+        content[LIBRARY_ID_FIELD]?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+
+        val seriesId = content[SERIES_ID_FIELD]?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val baseUrl = contentUrl.substringBefore(API_PATH, missingDelimiterValue = "")
+        if (baseUrl.isBlank()) return null
+
+        return readJsonObject("$baseUrl$API_PATH/series/$seriesId")
+            ?.get(LIBRARY_ID_FIELD)
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun readJsonObject(url: String) = readEntry(url)
+        ?.let { entry -> runCatching { Json.parseToJsonElement(entry.body.decodeToString()).jsonObject }.getOrNull() }
 
     private fun readEntry(identity: String): CacheEntry? {
         val bodyFile = bodyFile(identity)
@@ -144,6 +170,9 @@ internal class KomgaMetadataCacheStore(
 
         private val PAGE_IMAGE_REGEX = Regex("/pages/\\d+(?:\\?.*)?$")
         private val SEARCH_LIST_PATHS = setOf("/api/v1/books/list", "/api/v1/series/list")
+        private const val API_PATH = "/api/v1"
+        private const val LIBRARY_ID_FIELD = "libraryId"
+        private const val SERIES_ID_FIELD = "seriesId"
     }
 }
 

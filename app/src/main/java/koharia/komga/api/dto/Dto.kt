@@ -161,6 +161,7 @@ data class BookDto(
     val id: String,
     val seriesId: String = "",
     val seriesTitle: String = "",
+    val libraryId: String = "",
     val name: String,
     val number: Float = 0F,
     val created: String? = null,
@@ -220,7 +221,7 @@ fun SeriesDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
         author = authors["writer"]?.distinct()?.joinToString()
         artist = authors["penciller"]?.distinct()?.joinToString()
     }
-    memo = buildMemo(metadata, booksMetadata, booksCount)
+    memo = buildMemo(metadata, booksMetadata, booksCount, libraryId)
 }
 
 fun BookDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
@@ -232,6 +233,11 @@ fun BookDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
     description = metadata.summary
     author = metadata.authors.joinToString { it.name }
     artist = author
+    memo = buildJsonObject {
+        if (libraryId.isNotBlank()) {
+            put(KOMGA_LIBRARY_ID_MEMO_KEY, libraryId)
+        }
+    }
 }
 
 fun BookDto.toChapterMemo(baseUrl: String, embeddedFileSize: String? = null): JsonObject =
@@ -273,7 +279,11 @@ private fun buildMemo(
     metadata: SeriesMetadataDto,
     booksMetadata: BookMetadataAggregationDto = BookMetadataAggregationDto(),
     booksCount: Int = 0,
+    libraryId: String = "",
 ): JsonObject = buildJsonObject {
+    if (libraryId.isNotBlank()) {
+        put(KOMGA_LIBRARY_ID_MEMO_KEY, libraryId)
+    }
     if (metadata.readingDirection.isNotBlank()) {
         put("readingDirection", metadata.readingDirection)
     }
@@ -296,3 +306,5 @@ private fun buildMemo(
         put("releaseDate", booksMetadata.releaseDate)
     }
 }
+
+const val KOMGA_LIBRARY_ID_MEMO_KEY = "komgaLibraryId"

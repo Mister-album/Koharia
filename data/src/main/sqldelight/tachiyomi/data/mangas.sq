@@ -77,6 +77,12 @@ WHERE url = :url
 AND source = :source
 LIMIT 1;
 
+getMangaBySourceId:
+SELECT *
+FROM mangas
+WHERE source = :sourceId
+ORDER BY title COLLATE NOCASE;
+
 getFavorites:
 SELECT *
 FROM mangas
