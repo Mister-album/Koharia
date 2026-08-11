@@ -256,7 +256,6 @@ class ReaderViewModel @JvmOverloads constructor(
                             chapter.url,
                             manga.title,
                             manga.source,
-                            allowSharedLookup = false,
                         ) || epubCacheManager.hasCompleteBook(manga.source, chapter)
                     }
                 } else {

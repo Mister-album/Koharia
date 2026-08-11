@@ -115,7 +115,18 @@ internal fun JsonObject.offlineFilterMetadata(): KomgaOfflineFilterMetadata? {
 internal fun mergeKomgaOfflineMemo(localMemo: JsonObject, remoteMemo: JsonObject): JsonObject? {
     if (remoteMemo.isEmpty()) return null
     return if (KOMGA_OFFLINE_FILTERS_MEMO_KEY in remoteMemo) {
-        JsonObject(localMemo + remoteMemo)
+        val mergedMemo = localMemo + remoteMemo
+        val remoteLibraryId = remoteMemo[KOMGA_LIBRARY_ID_MEMO_KEY]
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.takeIf(String::isNotBlank)
+        JsonObject(
+            if (remoteLibraryId != null) {
+                mergedMemo + (KOMGA_LIBRARY_IDS_MEMO_KEY to JsonArray(listOf(JsonPrimitive(remoteLibraryId))))
+            } else {
+                mergedMemo
+            },
+        )
     } else {
         remoteMemo
     }

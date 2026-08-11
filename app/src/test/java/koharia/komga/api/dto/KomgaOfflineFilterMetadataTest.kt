@@ -3,6 +3,7 @@ package koharia.komga.api.dto
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -92,5 +93,39 @@ class KomgaOfflineFilterMetadataTest {
         assertTrue(KOMGA_LIBRARY_IDS_MEMO_KEY in merged)
         assertEquals("Title", merged.offlineFilterMetadata()?.titleSort)
         assertFalse(merged.isEmpty())
+    }
+
+    @Test
+    fun `series details replace stale plural library membership`() {
+        val localMemo = buildJsonObject {
+            put(KOMGA_LIBRARY_ID_MEMO_KEY, "library-a")
+            put(KOMGA_LIBRARY_IDS_MEMO_KEY, JsonArray(listOf(JsonPrimitive("library-a"))))
+        }
+        val remoteMemo = buildJsonObject {
+            put(KOMGA_LIBRARY_ID_MEMO_KEY, "library-b")
+        }.withOfflineFilterMetadata(KomgaOfflineFilterMetadata(titleSort = "Moved series"))
+
+        val merged = requireNotNull(mergeKomgaOfflineMemo(localMemo, remoteMemo))
+
+        assertEquals("library-b", merged[KOMGA_LIBRARY_ID_MEMO_KEY]?.jsonPrimitive?.content)
+        assertEquals(
+            JsonArray(listOf(JsonPrimitive("library-b"))),
+            merged[KOMGA_LIBRARY_IDS_MEMO_KEY],
+        )
+    }
+
+    @Test
+    fun `read list details preserve plural library membership`() {
+        val libraryIds = JsonArray(listOf(JsonPrimitive("library-a"), JsonPrimitive("library-b")))
+        val localMemo = buildJsonObject {
+            put(KOMGA_LIBRARY_IDS_MEMO_KEY, libraryIds)
+        }
+        val remoteMemo = buildJsonObject {}
+            .withOfflineFilterMetadata(KomgaOfflineFilterMetadata(titleSort = "Reading order"))
+
+        val merged = requireNotNull(mergeKomgaOfflineMemo(localMemo, remoteMemo))
+
+        assertEquals(libraryIds, merged[KOMGA_LIBRARY_IDS_MEMO_KEY])
+        assertFalse(KOMGA_LIBRARY_ID_MEMO_KEY in merged)
     }
 }

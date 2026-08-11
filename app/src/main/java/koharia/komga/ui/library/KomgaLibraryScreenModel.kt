@@ -153,7 +153,15 @@ class KomgaLibraryScreenModel(
                 screenModelScope.launchIO {
                     source.invalidateBrowseCache()
                     if (basePreferences.downloadedOnly.get()) {
-                        refreshSignal.value += 1
+                        if (shelfLibrariesChanged) {
+                            applyClassifiedLibraries(
+                                source,
+                                libraryClassificationManager.getLibraries(sourceId),
+                                forceShelfLibrarySelection = true,
+                            )
+                        } else {
+                            refreshSignal.value += 1
+                        }
                     } else {
                         reloadKomgaState(
                             komgaSource = source,
@@ -719,6 +727,7 @@ class KomgaLibraryScreenModel(
     private fun applyClassifiedLibraries(
         komgaSource: KomgaSource,
         libraries: List<KomgaClassifiedLibrary>,
+        forceShelfLibrarySelection: Boolean = false,
     ) {
         val configuredLibraryIds = komgaSource.configuredShelfLibraryIds()
         val visibleLibraries = libraries
@@ -727,7 +736,7 @@ class KomgaLibraryScreenModel(
                     (configuredLibraryIds.isEmpty() || library.id in configuredLibraryIds)
             }
             .map { LibraryDto(it.id, it.name) }
-        if (filtersInitialized && state.value.komgaLibraries == visibleLibraries) return
+        if (!forceShelfLibrarySelection && filtersInitialized && state.value.komgaLibraries == visibleLibraries) return
         val selectedLibraryId = state.value.selectedKomgaLibraryId
             ?.takeIf { selectedId -> visibleLibraries.any { it.id == selectedId } }
         val filters = komgaSource.buildFilterListForLibrary(
@@ -738,6 +747,7 @@ class KomgaLibraryScreenModel(
             currentFilters = currentFiltersForReload(),
             preserveSessionFilters = true,
             fallbackLibraries = visibleLibraries,
+            forceConfiguredLibrarySelection = forceShelfLibrarySelection,
         ).let { filters ->
             if (basePreferences.downloadedOnly.get()) filters.withoutUnsupportedCachedSelections() else filters
         }
@@ -754,6 +764,9 @@ class KomgaLibraryScreenModel(
         }
         filtersInitialized = true
         komgaSource.saveSessionFilterState(filters, libraryScope)
+        if (forceShelfLibrarySelection) {
+            komgaSource.savePersistentFilterState(filters, libraryScope)
+        }
         refreshSignal.value += 1
     }
 
