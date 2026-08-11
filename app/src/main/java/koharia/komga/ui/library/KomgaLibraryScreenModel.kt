@@ -23,19 +23,39 @@ import eu.kanade.presentation.util.ioCoroutineScope
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.SManga
 import koharia.epub.cache.EpubCacheManager
+import koharia.komga.api.dto.KOMGA_LIBRARY_IDS_MEMO_KEY
 import koharia.komga.api.dto.KOMGA_LIBRARY_ID_MEMO_KEY
+import koharia.komga.api.dto.KomgaOfflineAuthor
+import koharia.komga.api.dto.KomgaOfflineFilterMetadata
 import koharia.komga.api.dto.LibraryDto
+import koharia.komga.api.dto.mergeKomgaOfflineMemo
+import koharia.komga.api.dto.offlineFilterMetadata
+import koharia.komga.domain.repository.KomgaRepository
+import koharia.komga.download.KomgaChapterMemo
+import koharia.source.komga.AuthorFilter
+import koharia.source.komga.AuthorGroup
+import koharia.source.komga.CollectionSelect
+import koharia.source.komga.InProgressFilter
 import koharia.source.komga.KomgaClassifiedLibrary
 import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLibraryKind
 import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaSource
 import koharia.source.komga.LibraryFilter
+import koharia.source.komga.OneshotFilter
+import koharia.source.komga.ReadFilter
+import koharia.source.komga.ReadingStateGroup
+import koharia.source.komga.SeriesSort
 import koharia.source.komga.TYPE_ALL_INDEX
 import koharia.source.komga.TYPE_BOOKS_INDEX
 import koharia.source.komga.TYPE_READ_LISTS_INDEX
 import koharia.source.komga.TYPE_SERIES_INDEX
+import koharia.source.komga.TypeSelect
+import koharia.source.komga.UnreadFilter
+import koharia.source.komga.UriMultiSelectFilter
+import koharia.source.komga.UriMultiSelectOption
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -51,6 +71,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -59,6 +80,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
@@ -100,6 +122,9 @@ class KomgaLibraryScreenModel(
     private var filtersInitialized = false
     private var listingBeforeSearch: Listing? = null
     private var libraryFilterBeforeQuickSelection: Set<String>? = null
+
+    @Volatile
+    private var latestCachedManga = emptyList<Manga>()
 
     init {
         if (source is CatalogueSource) {
@@ -147,7 +172,15 @@ class KomgaLibraryScreenModel(
             }
             screenModelScope.launchIO {
                 basePreferences.downloadedOnly.changes().collect { cachedOnly ->
-                    if (!cachedOnly) {
+                    if (cachedOnly) {
+                        val filters = state.value.filters.withoutUnsupportedCachedSelections()
+                        mutableState.update { current ->
+                            current.copy(
+                                filters = filters,
+                                listing = Listing.Search(current.listing.query, filters),
+                            )
+                        }
+                    } else {
                         reloadKomgaState(source, showRefreshing = true, resetSelection = true, forceRefresh = true)
                     }
                 }
@@ -182,19 +215,46 @@ class KomgaLibraryScreenModel(
                 downloadManager.cacheChanges,
                 epubCacheManager.changes,
             ) { localManga, _, _ ->
+                val chaptersByMangaId = mutableMapOf<Long, List<Chapter>>()
+                suspend fun chaptersFor(manga: Manga): List<Chapter> {
+                    chaptersByMangaId[manga.id]?.let { return it }
+                    return getChaptersByMangaId.await(manga.id).also { chaptersByMangaId[manga.id] = it }
+                }
+
                 val query = (request.listing as? Listing.Search)?.query
                 val selectedLibraryIds = request.listing.filters.selectedLibraryIds()
                 val selectedContentType = request.listing.filters.selectedContentType()
+                val selectedAdvancedFilters = request.listing.filters.cachedAdvancedFilterSelection()
                 val hasCompleteEpubCache = epubCacheManager.hasAnyCompleteBook(sourceId)
-                val locallyAvailableManga = localManga.filter { manga ->
-                    downloadManager.getDownloadCount(manga) > 0 ||
-                        (hasCompleteEpubCache && manga.hasCompleteEpubCache())
+                val locallyAvailableManga = buildList {
+                    for (manga in localManga) {
+                        val isAvailable = downloadManager.getDownloadCount(manga) > 0 ||
+                            (
+                                hasCompleteEpubCache &&
+                                    chaptersFor(manga).any { epubCacheManager.hasCompleteBook(sourceId, it) }
+                                )
+                        if (isAvailable) add(manga)
+                    }
                 }
-                val cachedManga = locallyAvailableManga.withCachedLibraryIds()
-                val cachedItems = cachedManga.asSequence()
-                    .filter { it.matchesCachedLibraryFilter(selectedLibraryIds) }
-                    .filter { it.matchesCachedContentType(selectedContentType) }
-                    .filter { it.matchesCachedOnlyQuery(query) }
+                val cachedManga = locallyAvailableManga.withCachedLibraryIds(::chaptersFor)
+                latestCachedManga = cachedManga
+                val filteredManga = buildList {
+                    for (manga in cachedManga) {
+                        if (!manga.matchesCachedLibraryFilter(selectedLibraryIds)) continue
+                        if (!manga.matchesCachedContentType(selectedContentType)) continue
+                        if (!manga.matchesCachedOnlyQuery(query)) continue
+                        val chapters = if (selectedAdvancedFilters.requiresReadingStatus) {
+                            chaptersFor(manga)
+                        } else {
+                            emptyList()
+                        }
+                        if (!manga.matchesCachedAdvancedFilters(selectedAdvancedFilters, chapters)) continue
+                        add(manga)
+                    }
+                }
+                val cachedItems = filteredManga
+                    .sortedForCachedFilters(selectedAdvancedFilters, request.refreshSignal)
+                    .asSequence()
                     .map { MutableStateFlow(it) as StateFlow<Manga> }
                     .toList()
                 PagingData.from(
@@ -220,14 +280,25 @@ class KomgaLibraryScreenModel(
     }
         .cachedIn(ioCoroutineScope)
 
-    private suspend fun List<Manga>.withCachedLibraryIds(): List<Manga> {
+    private suspend fun List<Manga>.withCachedLibraryIds(
+        chaptersFor: suspend (Manga) -> List<Chapter>,
+    ): List<Manga> {
         val komgaSource = source as? KomgaSource ?: return this
         val updates = mutableListOf<MangaUpdate>()
         val enriched = map { manga ->
-            if (manga.cachedLibraryId != null) return@map manga
+            if (manga.cachedLibraryIds.isNotEmpty()) return@map manga
 
-            val libraryId = komgaSource.findCachedLibraryId(manga.url) ?: return@map manga
-            val updatedMemo = JsonObject(manga.memo + (KOMGA_LIBRARY_ID_MEMO_KEY to JsonPrimitive(libraryId)))
+            val libraryIds = manga.resolveCachedLibraryIds(komgaSource, chaptersFor)
+            if (libraryIds.isEmpty()) return@map manga
+            val updatedMemo = JsonObject(
+                manga.memo +
+                    (KOMGA_LIBRARY_IDS_MEMO_KEY to JsonArray(libraryIds.map(::JsonPrimitive))) +
+                    if (libraryIds.size == 1) {
+                        mapOf(KOMGA_LIBRARY_ID_MEMO_KEY to JsonPrimitive(libraryIds.single()))
+                    } else {
+                        emptyMap()
+                    },
+            )
             updates += MangaUpdate(id = manga.id, memo = updatedMemo)
             manga.copy(memo = updatedMemo)
         }
@@ -237,9 +308,16 @@ class KomgaLibraryScreenModel(
         return enriched
     }
 
-    private suspend fun Manga.hasCompleteEpubCache(): Boolean {
-        return getChaptersByMangaId.await(id).any { chapter ->
-            epubCacheManager.hasCompleteBook(sourceId, chapter)
+    private suspend fun Manga.resolveCachedLibraryIds(
+        komgaSource: KomgaSource,
+        chaptersFor: suspend (Manga) -> List<Chapter>,
+    ): Set<String> {
+        val cachedIds = komgaSource.findCachedLibraryIds(url)
+        if (cachedIds.isNotEmpty()) return cachedIds
+
+        return chaptersFor(this).mapNotNullTo(linkedSetOf()) { chapter ->
+            KomgaChapterMemo.libraryId(chapter.memo)
+                ?: KomgaChapterMemo.readFingerprint(chapter.memo)?.bookUrl?.let(komgaSource::findCachedLibraryId)
         }
     }
 
@@ -250,11 +328,19 @@ class KomgaLibraryScreenModel(
             resetPersistentFilters(libraryScope)
             resetSessionFilterState(libraryScope)
         }
-        val filters = (source as? KomgaSource)?.buildFilterListForLibrary(
-            libraryId = state.value.selectedKomgaLibraryId,
-            allowedLibraryIds = currentAllowedLibraryIds(),
-            libraryScope = libraryScope,
-        ) ?: source.getFilterList()
+        val filters = (
+            (source as? KomgaSource)?.buildFilterListForLibrary(
+                libraryId = state.value.selectedKomgaLibraryId,
+                allowedLibraryIds = currentAllowedLibraryIds(),
+                libraryScope = libraryScope,
+            ) ?: source.getFilterList()
+            ).let { filters ->
+            if (basePreferences.downloadedOnly.get()) {
+                filters.withCachedMetadataOptions(latestCachedManga).withoutUnsupportedCachedSelections()
+            } else {
+                filters
+            }
+        }
         mutableState.update { it.copy(filters = filters) }
     }
 
@@ -401,6 +487,15 @@ class KomgaLibraryScreenModel(
     }
 
     fun openFilterSheet() {
+        if (basePreferences.downloadedOnly.get()) {
+            val filters = state.value.filters.withCachedMetadataOptions(latestCachedManga)
+            mutableState.update { current ->
+                current.copy(
+                    filters = filters,
+                    listing = Listing.Search(current.listing.query, filters),
+                )
+            }
+        }
         setDialog(Dialog.Filter)
     }
 
@@ -643,7 +738,9 @@ class KomgaLibraryScreenModel(
             currentFilters = currentFiltersForReload(),
             preserveSessionFilters = true,
             fallbackLibraries = visibleLibraries,
-        )
+        ).let { filters ->
+            if (basePreferences.downloadedOnly.get()) filters.withoutUnsupportedCachedSelections() else filters
+        }
         mutableState.update {
             it.copy(
                 listing = Listing.Search(query = null, filters = filters),
@@ -770,7 +867,7 @@ private data class BrowseRequest(
     val scopeEmpty: Boolean,
     val serverConfigured: Boolean,
     val cachedOnly: Boolean,
-    @Suppress("unused") val refreshSignal: Int,
+    val refreshSignal: Int,
 )
 
 private fun mergeRemoteWithLocal(remote: Manga, local: Manga?): Manga {
@@ -792,6 +889,7 @@ private fun mergeRemoteWithLocal(remote: Manga, local: Manga?): Manga {
         favoriteModifiedAt = local.favoriteModifiedAt,
         version = local.version,
         notes = local.notes,
+        memo = mergeKomgaOfflineMemo(local.memo, remote.memo) ?: local.memo,
     )
 }
 
@@ -807,7 +905,7 @@ internal fun Manga.matchesCachedOnlyQuery(query: String?): Boolean {
 
 internal fun Manga.matchesCachedLibraryFilter(selectedLibraryIds: Set<String>): Boolean {
     if (selectedLibraryIds.isEmpty()) return true
-    return cachedLibraryId in selectedLibraryIds
+    return cachedLibraryIds.any { it in selectedLibraryIds }
 }
 
 internal fun Manga.matchesCachedContentType(contentType: Int): Boolean {
@@ -820,11 +918,220 @@ internal fun Manga.matchesCachedContentType(contentType: Int): Boolean {
     }
 }
 
+internal data class CachedAdvancedFilterSelection(
+    val readingStatuses: Set<String> = emptySet(),
+    val statuses: Set<String> = emptySet(),
+    val genres: Set<String> = emptySet(),
+    val tags: Set<String> = emptySet(),
+    val publishers: Set<String> = emptySet(),
+    val authors: Set<KomgaOfflineAuthor> = emptySet(),
+    val oneShot: Boolean = false,
+    val sortIndex: Int = 0,
+    val sortAscending: Boolean = true,
+) {
+    val requiresReadingStatus: Boolean get() = readingStatuses.isNotEmpty()
+}
+
+internal fun FilterList.cachedAdvancedFilterSelection(): CachedAdvancedFilterSelection {
+    val readingFilters = filterIsInstance<ReadingStateGroup>().firstOrNull()?.state.orEmpty()
+    val contentType = filterIsInstance<TypeSelect>().firstOrNull()?.state ?: TYPE_ALL_INDEX
+    val readingStatuses = buildSet {
+        if (readingFilters.filterIsInstance<UnreadFilter>().firstOrNull()?.state == true) {
+            add("UNREAD")
+            add("IN_PROGRESS")
+        }
+        if (readingFilters.filterIsInstance<InProgressFilter>().firstOrNull()?.state == true) {
+            add("IN_PROGRESS")
+        }
+        if (readingFilters.filterIsInstance<ReadFilter>().firstOrNull()?.state == true) {
+            add("READ")
+        }
+    }
+    val sort = filterIsInstance<SeriesSort>().firstOrNull()?.state
+    return CachedAdvancedFilterSelection(
+        readingStatuses = readingStatuses,
+        statuses = selectedCachedOptions("Status"),
+        genres = selectedCachedOptions("Genres"),
+        tags = selectedCachedOptions("Tags"),
+        publishers = selectedCachedOptions("Publishers"),
+        authors = filterIsInstance<AuthorGroup>()
+            .flatMap { group ->
+                group.state.filter { it.state }.map { KomgaOfflineAuthor(it.author.name, it.author.role) }
+            }
+            .toSet(),
+        oneShot = contentType == TYPE_SERIES_INDEX &&
+            readingFilters.filterIsInstance<OneshotFilter>().firstOrNull()?.state == true,
+        sortIndex = sort?.index ?: 0,
+        sortAscending = sort?.ascending ?: true,
+    )
+}
+
+internal fun Manga.matchesCachedAdvancedFilters(
+    filters: CachedAdvancedFilterSelection,
+    chapters: List<Chapter> = emptyList(),
+): Boolean {
+    val metadata = memo.offlineFilterMetadata()
+    if (filters.statuses.isNotEmpty() && !(cachedSeriesStatus(metadata) inIgnoreCase filters.statuses)) return false
+    if (filters.genres.isNotEmpty() && metadata?.genres.orEmpty() hasNoValueIn filters.genres) return false
+    if (filters.tags.isNotEmpty() && metadata?.tags.orEmpty() hasNoValueIn filters.tags) return false
+    if (filters.publishers.isNotEmpty() && setOfNotNull(cachedPublisher(metadata)) hasNoValueIn filters.publishers) {
+        return false
+    }
+    if (filters.authors.isNotEmpty() && metadata?.authors.orEmpty().none { cachedAuthor ->
+            filters.authors.any { selected ->
+                cachedAuthor.name.equals(selected.name, ignoreCase = true) &&
+                    cachedAuthor.role.equals(selected.role, ignoreCase = true)
+            }
+        }
+    ) {
+        return false
+    }
+    if (filters.oneShot && metadata?.oneShot != true) return false
+    if (filters.readingStatuses.isNotEmpty() && chapters.cachedReadingStatus() !in filters.readingStatuses) return false
+    return true
+}
+
+internal fun List<Manga>.sortedForCachedFilters(
+    filters: CachedAdvancedFilterSelection,
+    randomSeed: Int,
+): List<Manga> {
+    val sorted = when (filters.sortIndex) {
+        1 -> sortedWith(compareBy<Manga> { it.cachedTitleSort().lowercase() }.thenBy { it.id })
+        2 -> sortedWith(compareBy<Manga> { it.cachedCreatedTimestamp() }.thenBy { it.id })
+        3 -> sortedWith(compareBy<Manga> { it.cachedModifiedTimestamp() }.thenBy { it.id })
+        4 -> sortedWith(compareBy<Manga> { cachedRandomKey(it.id, randomSeed) }.thenBy { it.id })
+        else -> this
+    }
+    return if (filters.sortAscending) sorted else sorted.asReversed()
+}
+
+internal fun FilterList.withCachedMetadataOptions(mangas: List<Manga>): FilterList {
+    val metadata = mangas.mapNotNull { manga -> manga.memo.offlineFilterMetadata()?.let { manga to it } }
+    val cachedValues = mapOf(
+        "Status" to mangas.mapNotNullTo(linkedSetOf()) { it.cachedSeriesStatus(it.memo.offlineFilterMetadata()) },
+        "Genres" to metadata.flatMapTo(linkedSetOf()) { it.second.genres },
+        "Tags" to metadata.flatMapTo(linkedSetOf()) { it.second.tags },
+        "Publishers" to mangas.mapNotNullTo(linkedSetOf()) { it.cachedPublisher(it.memo.offlineFilterMetadata()) },
+    )
+    val updated = map { filter ->
+        if (filter is UriMultiSelectFilter && filter !is LibraryFilter) {
+            val selected = filter.state.filter { it.state }.mapTo(linkedSetOf()) { it.id }
+            val labels = filter.state.associate { it.id to it.name }
+            val values = cachedValues[filter.name].orEmpty() + selected
+            UriMultiSelectFilter(
+                filter.name,
+                values.sortedWith(String.CASE_INSENSITIVE_ORDER).map { id ->
+                    UriMultiSelectOption(labels[id] ?: id, id).apply { state = id in selected }
+                },
+            )
+        } else {
+            filter
+        }
+    }.toMutableList()
+
+    val selectedAuthors = filterIsInstance<AuthorGroup>()
+        .flatMap { group -> group.state.filter { it.state }.map { it.author } }
+        .associateBy { it.name to it.role }
+    val cachedAuthors = metadata.flatMapTo(linkedSetOf()) { it.second.authors }
+    val authors = (cachedAuthors + selectedAuthors.values.map { KomgaOfflineAuthor(it.name, it.role) })
+        .groupBy(KomgaOfflineAuthor::role)
+    val firstAuthorIndex = updated.indexOfFirst { it is AuthorGroup }
+    updated.removeAll { it is AuthorGroup }
+    val insertionIndex = firstAuthorIndex.takeIf { it >= 0 }
+        ?: updated.indexOfFirst { it is SeriesSort }.takeIf { it >= 0 }
+        ?: updated.size
+    updated.addAll(
+        insertionIndex,
+        authors.toSortedMap(String.CASE_INSENSITIVE_ORDER).map { (role, roleAuthors) ->
+            AuthorGroup(
+                role,
+                roleAuthors.sortedBy { it.name.lowercase() }.map { author ->
+                    AuthorFilter(koharia.komga.api.dto.AuthorDto(author.name, author.role)).apply {
+                        state = (author.name to author.role) in selectedAuthors
+                    }
+                },
+            )
+        },
+    )
+    return FilterList(updated)
+}
+
+private fun FilterList.withoutUnsupportedCachedSelections(): FilterList = FilterList(
+    map { filter ->
+        if (filter is CollectionSelect && filter.state != 0) {
+            CollectionSelect(filter.collections).apply { state = 0 }
+        } else {
+            filter
+        }
+    },
+)
+
+private fun FilterList.selectedCachedOptions(name: String): Set<String> =
+    filterIsInstance<UriMultiSelectFilter>()
+        .firstOrNull { it.name == name }
+        ?.state
+        .orEmpty()
+        .filter { it.state }
+        .mapTo(linkedSetOf()) { it.id }
+
+private fun Manga.cachedSeriesStatus(metadata: KomgaOfflineFilterMetadata?): String? =
+    metadata?.status ?: when (status.toInt()) {
+        SManga.ONGOING -> "ONGOING"
+        SManga.COMPLETED, SManga.PUBLISHING_FINISHED -> "ENDED"
+        SManga.CANCELLED -> "ABANDONED"
+        SManga.ON_HIATUS -> "HIATUS"
+        else -> null
+    }
+
+private fun Manga.cachedPublisher(metadata: KomgaOfflineFilterMetadata?): String? =
+    metadata?.publisher ?: memo["publisher"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+
+private fun Manga.cachedTitleSort(): String =
+    memo.offlineFilterMetadata()?.titleSort ?: title
+
+private fun Manga.cachedCreatedTimestamp(): Long =
+    memo.offlineFilterMetadata()?.createdDate?.let { KomgaRepository.parseDateTime(it) }?.takeIf { it > 0L }
+        ?: dateAdded
+
+private fun Manga.cachedModifiedTimestamp(): Long =
+    memo.offlineFilterMetadata()?.lastModifiedDate?.let { KomgaRepository.parseDateTime(it) }?.takeIf { it > 0L }
+        ?: lastModifiedAt
+
+private fun List<Chapter>.cachedReadingStatus(): String? = when {
+    isEmpty() -> null
+    all(Chapter::read) -> "READ"
+    any { it.read || it.lastPageRead > 0L } -> "IN_PROGRESS"
+    else -> "UNREAD"
+}
+
+private infix fun String?.inIgnoreCase(values: Set<String>): Boolean =
+    this != null && values.any { equals(it, ignoreCase = true) }
+
+private infix fun Set<String>.hasNoValueIn(values: Set<String>): Boolean =
+    none { cached -> values.any { cached.equals(it, ignoreCase = true) } }
+
+private fun cachedRandomKey(mangaId: Long, seed: Int): Long {
+    var value = mangaId xor (seed.toLong() shl 32)
+    value = (value xor (value ushr 33)) * -49064778989728563L
+    value = (value xor (value ushr 33)) * -4265267296055464877L
+    return value xor (value ushr 33)
+}
+
 private val Manga.cachedLibraryId: String?
     get() = memo[KOMGA_LIBRARY_ID_MEMO_KEY]
         ?.jsonPrimitive
         ?.contentOrNull
         ?.takeIf { it.isNotBlank() }
+
+private val Manga.cachedLibraryIds: Set<String>
+    get() = buildSet {
+        cachedLibraryId?.let(::add)
+        (memo[KOMGA_LIBRARY_IDS_MEMO_KEY] as? JsonArray)
+            .orEmpty()
+            .mapNotNullTo(this) { element ->
+                element.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank)
+            }
+    }
 
 internal val CACHED_ONLY_LOAD_STATES = LoadStates(
     refresh = LoadState.NotLoading(endOfPaginationReached = true),

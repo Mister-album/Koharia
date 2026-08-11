@@ -37,6 +37,7 @@ object KomgaChapterMemo {
     const val FILE_LAST_MODIFIED = "fileLastModified"
     const val FILE_NAME = "fileName"
     const val PAGES_COUNT = "pagesCount"
+    const val LIBRARY_ID = "libraryId"
 
     private const val PAGE_CACHE_VERSION_FRAGMENT = "#koharia-publication="
 
@@ -68,6 +69,7 @@ object KomgaChapterMemo {
             if (book.fileLastModified.isNotBlank()) put(FILE_LAST_MODIFIED, book.fileLastModified)
             if (book.name.isNotBlank()) put(FILE_NAME, book.name)
             if (book.media.pagesCount > 0) put(PAGES_COUNT, book.media.pagesCount)
+            if (book.libraryId.isNotBlank()) put(LIBRARY_ID, book.libraryId)
         }
     }
 
@@ -204,6 +206,8 @@ object KomgaChapterMemo {
     }
 
     fun pagesCount(memo: JsonObject): Int? = memo.long(PAGES_COUNT)?.toInt()?.takeIf { it > 0 }
+
+    fun libraryId(memo: JsonObject): String? = memo.string(LIBRARY_ID)
 
     fun publicationVersion(memo: JsonObject): String? {
         val fileHash = memo.string(FILE_HASH)

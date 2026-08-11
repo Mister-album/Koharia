@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import koharia.komga.api.dto.mergeKomgaOfflineMemo
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -87,7 +88,7 @@ class UpdateManga(
                 updateStrategy = remoteManga.update_strategy,
                 initialized = true,
                 viewerFlags = viewerFlags,
-                memo = remoteManga.memo.takeIf { it.isNotEmpty() },
+                memo = mergeKomgaOfflineMemo(localManga.memo, remoteManga.memo),
             ),
         )
         if (success && title != null) {

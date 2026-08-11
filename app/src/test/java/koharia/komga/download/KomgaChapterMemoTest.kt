@@ -35,6 +35,21 @@ class KomgaChapterMemoTest {
     }
 
     @Test
+    fun `book memo keeps library membership for offline read lists`() {
+        val book = BookDto(
+            id = "book-id",
+            libraryId = "library-id",
+            name = "book.cbz",
+            fileLastModified = "2026-08-11T00:00:00Z",
+            metadata = BookMetadataDto(title = "Book"),
+        )
+
+        val memo = KomgaChapterMemo.buildMemo("https://komga.test", book)
+
+        assertEquals("library-id", KomgaChapterMemo.libraryId(memo))
+    }
+
+    @Test
     fun `legacy memo without page compatibility remains unknown`() {
         val memo = buildJsonObject {
             put(KomgaChapterMemo.IS_EPUB, true)

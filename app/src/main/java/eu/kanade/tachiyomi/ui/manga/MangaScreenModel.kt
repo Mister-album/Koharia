@@ -49,6 +49,7 @@ import koharia.domain.epub.model.EpubProgress
 import koharia.domain.epub.model.EpubRemoteProgressCache
 import koharia.epub.cache.EpubCacheManager
 import koharia.epub.progress.KomgaEpubRemoteProgressCoordinator
+import koharia.komga.api.dto.offlineFilterMetadata
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -314,7 +315,8 @@ class MangaScreenModel(
 
             val shouldRefreshKomga = source.isKomgaSource() &&
                 (
-                    !manga.initialized ||
+                    manga.memo.offlineFilterMetadata() == null ||
+                        !manga.initialized ||
                         manga.lastUpdate <= 0L ||
                         System.currentTimeMillis() - manga.lastUpdate >= KOMGA_DETAILS_REFRESH_INTERVAL_MS
                     )

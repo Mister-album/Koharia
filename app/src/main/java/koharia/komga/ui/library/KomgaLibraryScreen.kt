@@ -355,6 +355,7 @@ data class KomgaLibraryScreen(
                 KomgaFilterDialog(
                     onDismissRequest = onDismissRequest,
                     filters = state.filters,
+                    cachedOnly = screenModel.cachedOnly,
                     persistentFilteringEnabled = state.persistentFilteringEnabled,
                     onReset = screenModel::resetFilters,
                     onFilter = { screenModel.search(filters = state.filters) },

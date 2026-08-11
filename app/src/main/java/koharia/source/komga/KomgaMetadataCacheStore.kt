@@ -2,6 +2,8 @@ package koharia.source.komga
 
 import android.content.Context
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -67,11 +69,26 @@ internal class KomgaMetadataCacheStore(
 
     fun findLibraryId(contentUrl: String): String? {
         val content = readJsonObject(contentUrl) ?: return null
-        content[LIBRARY_ID_FIELD]?.jsonPrimitive?.contentOrNull
+        return content.findLibraryId(contentUrl)
+    }
+
+    fun findLibraryIds(contentUrl: String): Set<String> {
+        findLibraryId(contentUrl)?.let { return setOf(it) }
+        if (!contentUrl.substringBefore('?').trimEnd('/').contains("$API_PATH/readlists/")) return emptySet()
+
+        val booksUrl = contentUrl.trimEnd('/') + READ_LIST_BOOKS_QUERY
+        val books = readJsonObject(booksUrl)?.get(CONTENT_FIELD) as? JsonArray ?: return emptySet()
+        return books.mapNotNullTo(linkedSetOf()) { element ->
+            runCatching { element.jsonObject.findLibraryId(contentUrl) }.getOrNull()
+        }
+    }
+
+    private fun JsonObject.findLibraryId(contentUrl: String): String? {
+        this[LIBRARY_ID_FIELD]?.jsonPrimitive?.contentOrNull
             ?.takeIf { it.isNotBlank() }
             ?.let { return it }
 
-        val seriesId = content[SERIES_ID_FIELD]?.jsonPrimitive?.contentOrNull
+        val seriesId = this[SERIES_ID_FIELD]?.jsonPrimitive?.contentOrNull
             ?.takeIf { it.isNotBlank() }
             ?: return null
         val baseUrl = contentUrl.substringBefore(API_PATH, missingDelimiterValue = "")
@@ -171,8 +188,10 @@ internal class KomgaMetadataCacheStore(
         private val PAGE_IMAGE_REGEX = Regex("/pages/\\d+(?:\\?.*)?$")
         private val SEARCH_LIST_PATHS = setOf("/api/v1/books/list", "/api/v1/series/list")
         private const val API_PATH = "/api/v1"
+        private const val CONTENT_FIELD = "content"
         private const val LIBRARY_ID_FIELD = "libraryId"
         private const val SERIES_ID_FIELD = "seriesId"
+        private const val READ_LIST_BOOKS_QUERY = "/books?unpaged=true&media_status=READY&deleted=false"
     }
 }
 

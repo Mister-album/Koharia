@@ -222,6 +222,7 @@ fun SeriesDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
         artist = authors["penciller"]?.distinct()?.joinToString()
     }
     memo = buildMemo(metadata, booksMetadata, booksCount, libraryId)
+        .withOfflineFilterMetadata(offlineFilterMetadata())
 }
 
 fun BookDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
@@ -237,7 +238,7 @@ fun BookDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
         if (libraryId.isNotBlank()) {
             put(KOMGA_LIBRARY_ID_MEMO_KEY, libraryId)
         }
-    }
+    }.withOfflineFilterMetadata(offlineFilterMetadata())
 }
 
 fun BookDto.toChapterMemo(baseUrl: String, embeddedFileSize: String? = null): JsonObject =
@@ -249,6 +250,7 @@ fun ReadListDto.toSManga(baseUrl: String): SManga = SManga.create().apply {
     url = "$baseUrl/api/v1/readlists/$id"
     thumbnail_url = "$url/thumbnail"
     status = SManga.UNKNOWN
+    memo = JsonObject(emptyMap()).withOfflineFilterMetadata(offlineFilterMetadata())
 }
 
 fun BookDto.formatChapterName(template: String, isFromReadList: Boolean): String {
@@ -308,3 +310,4 @@ private fun buildMemo(
 }
 
 const val KOMGA_LIBRARY_ID_MEMO_KEY = "komgaLibraryId"
+const val KOMGA_LIBRARY_IDS_MEMO_KEY = "komgaLibraryIds"

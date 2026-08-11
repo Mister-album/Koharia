@@ -684,6 +684,8 @@ class KomgaSource(
 
     fun findCachedLibraryId(contentUrl: String): String? = metadataCacheStore.findLibraryId(contentUrl)
 
+    fun findCachedLibraryIds(contentUrl: String): Set<String> = metadataCacheStore.findLibraryIds(contentUrl)
+
     fun registerServerSettingsChangeListener(
         onChanged: (shelfLibrariesChanged: Boolean) -> Unit,
     ): SharedPreferences.OnSharedPreferenceChangeListener {
