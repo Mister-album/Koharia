@@ -14,6 +14,7 @@ import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.Try
 import org.readium.r2.shared.util.http.DefaultHttpClient
 import org.readium.r2.shared.util.http.HttpClient
+import org.readium.r2.shared.util.http.HttpError
 import org.readium.r2.shared.util.http.HttpRequest
 import org.readium.r2.shared.util.http.HttpResponse
 import org.readium.r2.shared.util.http.HttpStatus
@@ -24,6 +25,7 @@ import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.net.URI
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
@@ -48,6 +50,7 @@ class KomgaReadiumHttpClient(
         publicationKey: String = "source:$sourceId",
         persistCache: Boolean = true,
     ): HttpClient {
+        val cachedOnlyPreference = scopedPreferenceStoreFactory.basePreferences(sourceId).downloadedOnly
         val client = DefaultHttpClient()
         client.callback = object : DefaultHttpClient.Callback {
             override suspend fun onStartRequest(request: HttpRequest) = Try.success(
@@ -77,6 +80,7 @@ class KomgaReadiumHttpClient(
             sourceId = sourceId,
             publicationKey = publicationKey,
             persistCache = persistCache,
+            cachedOnlyProvider = cachedOnlyPreference::get,
         )
         return ParagraphIndentNormalizingHttpClient(cachedClient) {
             !(
@@ -87,33 +91,42 @@ class KomgaReadiumHttpClient(
     }
 }
 
+internal fun shouldUseKomgaReadiumNetwork(cachedOnly: Boolean): Boolean = !cachedOnly
+
 private class EpubResourceCacheHttpClient(
     private val delegate: HttpClient,
     private val cacheManager: EpubCacheManager,
     private val sourceId: Long,
     private val publicationKey: String,
     private val persistCache: Boolean,
+    private val cachedOnlyProvider: () -> Boolean,
 ) : HttpClient {
 
     private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override suspend fun stream(request: HttpRequest): org.readium.r2.shared.util.http.HttpTry<HttpStreamResponse> {
-        if (!isCacheable(request)) return delegate.stream(request)
-
-        cacheManager.getResource(sourceId, publicationKey, request.url.toString())?.let { cached ->
-            return Try.success(
-                HttpStreamResponse(
-                    response = HttpResponse(
-                        request = request,
-                        url = request.url,
-                        statusCode = HttpStatus(200),
-                        headers = emptyMap(),
-                        mediaType = cached.mediaType?.let { value -> MediaType(value) },
+        if (isCacheable(request)) {
+            cacheManager.getResource(sourceId, publicationKey, request.url.toString())?.let { cached ->
+                return Try.success(
+                    HttpStreamResponse(
+                        response = HttpResponse(
+                            request = request,
+                            url = request.url,
+                            statusCode = HttpStatus(200),
+                            headers = emptyMap(),
+                            mediaType = cached.mediaType?.let { value -> MediaType(value) },
+                        ),
+                        body = ByteArrayInputStream(cached.bytes),
                     ),
-                    body = ByteArrayInputStream(cached.bytes),
-                ),
-            )
+                )
+            }
         }
+
+        if (!shouldUseKomgaReadiumNetwork(cachedOnlyProvider())) {
+            return Try.failure(HttpError.IO(IOException("Komga network access disabled in cached-only mode")))
+        }
+
+        if (!isCacheable(request)) return delegate.stream(request)
 
         return delegate.stream(request).map { response ->
             if (response.response.statusCode != HttpStatus(200) ||
@@ -146,7 +159,7 @@ private class EpubResourceCacheHttpClient(
     }
 
     private fun isCacheable(request: HttpRequest): Boolean {
-        if (!persistCache || request.method != HttpRequest.Method.GET) return false
+        if (request.method != HttpRequest.Method.GET) return false
         if (request.headers.keys.any { it.equals("Range", ignoreCase = true) }) return false
         val url = request.url.toString().substringBefore('?')
         return url.contains("/manifest/epub") ||

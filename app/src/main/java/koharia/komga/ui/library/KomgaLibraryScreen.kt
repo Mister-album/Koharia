@@ -44,7 +44,6 @@ import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.core.util.ifSourcesLoaded
-import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
@@ -58,10 +57,12 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
+import koharia.epub.cache.EpubCacheManager
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
 import koharia.komga.ui.library.components.KomgaServerSetupPrompt
 import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLibraryScope
+import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaServerSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
@@ -69,6 +70,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import tachiyomi.core.common.DocumentationUrls
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.source.interactor.GetRemoteManga
@@ -122,13 +124,16 @@ data class KomgaLibraryScreen(
 
         val sourceManager: SourceManager = Injekt.get()
         val sourcePreferences: SourcePreferences = Injekt.get()
-        val basePreferences: BasePreferences = Injekt.get()
+        val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
+        val basePreferences = remember(sourceId) { scopedPreferenceStoreFactory.basePreferences(sourceId) }
         val libraryPreferences: LibraryPreferences = Injekt.get()
         val komgaServerPreferences: KomgaServerPreferences = Injekt.get()
         val downloadManager: DownloadManager = Injekt.get()
         val getRemoteManga: GetRemoteManga = Injekt.get()
         val getManga: GetManga = Injekt.get()
         val updateManga: UpdateManga = Injekt.get()
+        val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get()
+        val epubCacheManager: EpubCacheManager = Injekt.get()
         val getIncognitoState: GetIncognitoState = Injekt.get()
         val libraryClassificationManager: KomgaLibraryClassificationManager = Injekt.get()
 
@@ -144,6 +149,8 @@ data class KomgaLibraryScreen(
                 getRemoteManga = getRemoteManga,
                 getManga = getManga,
                 updateManga = updateManga,
+                getChaptersByMangaId = getChaptersByMangaId,
+                epubCacheManager = epubCacheManager,
                 getIncognitoState = getIncognitoState,
                 libraryScope = libraryScope,
                 libraryClassificationManager = libraryClassificationManager,

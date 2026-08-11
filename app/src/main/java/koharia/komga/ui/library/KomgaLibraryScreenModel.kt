@@ -23,6 +23,7 @@ import eu.kanade.presentation.util.ioCoroutineScope
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
+import koharia.epub.cache.EpubCacheManager
 import koharia.komga.api.dto.KOMGA_LIBRARY_ID_MEMO_KEY
 import koharia.komga.api.dto.LibraryDto
 import koharia.source.komga.KomgaClassifiedLibrary
@@ -57,6 +58,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
@@ -76,6 +78,8 @@ class KomgaLibraryScreenModel(
     private val getRemoteManga: GetRemoteManga,
     private val getManga: GetManga,
     private val updateManga: UpdateManga,
+    private val getChaptersByMangaId: GetChaptersByMangaId,
+    private val epubCacheManager: EpubCacheManager,
     private val getIncognitoState: GetIncognitoState,
     private val libraryScope: KomgaLibraryScope,
     private val libraryClassificationManager: KomgaLibraryClassificationManager,
@@ -148,11 +152,10 @@ class KomgaLibraryScreenModel(
                     }
                 }
             }
-            if (libraryScope != KomgaLibraryScope.ALL) {
-                screenModelScope.launchIO {
-                    libraryClassificationManager.classificationsChanges(sourceId).collect { libraries ->
-                        applyClassifiedLibraries(source, libraries)
-                    }
+            applyClassifiedLibraries(source, libraryClassificationManager.getLibraries(sourceId))
+            screenModelScope.launchIO {
+                libraryClassificationManager.classificationsChanges(sourceId).collect { libraries ->
+                    applyClassifiedLibraries(source, libraries)
                 }
             }
         }
@@ -176,16 +179,21 @@ class KomgaLibraryScreenModel(
         } else if (request.cachedOnly) {
             combine(
                 getManga.subscribeBySourceId(sourceId),
-                downloadManager.queueState,
-            ) { localManga, _ ->
+                downloadManager.cacheChanges,
+                epubCacheManager.changes,
+            ) { localManga, _, _ ->
                 val query = (request.listing as? Listing.Search)?.query
                 val selectedLibraryIds = request.listing.filters.selectedLibraryIds()
-                val downloadedManga = localManga.asSequence()
-                    .filter { downloadManager.getDownloadCount(it) > 0 }
-                    .toList()
-                val cachedManga = downloadedManga.withCachedLibraryIds()
+                val selectedContentType = request.listing.filters.selectedContentType()
+                val hasCompleteEpubCache = epubCacheManager.hasAnyCompleteBook(sourceId)
+                val locallyAvailableManga = localManga.filter { manga ->
+                    downloadManager.getDownloadCount(manga) > 0 ||
+                        (hasCompleteEpubCache && manga.hasCompleteEpubCache())
+                }
+                val cachedManga = locallyAvailableManga.withCachedLibraryIds()
                 val cachedItems = cachedManga.asSequence()
                     .filter { it.matchesCachedLibraryFilter(selectedLibraryIds) }
+                    .filter { it.matchesCachedContentType(selectedContentType) }
                     .filter { it.matchesCachedOnlyQuery(query) }
                     .map { MutableStateFlow(it) as StateFlow<Manga> }
                     .toList()
@@ -227,6 +235,12 @@ class KomgaLibraryScreenModel(
             updateManga.awaitAll(updates)
         }
         return enriched
+    }
+
+    private suspend fun Manga.hasCompleteEpubCache(): Boolean {
+        return getChaptersByMangaId.await(id).any { chapter ->
+            epubCacheManager.hasCompleteBook(sourceId, chapter)
+        }
     }
 
     fun resetFilters() {
@@ -611,11 +625,10 @@ class KomgaLibraryScreenModel(
         komgaSource: KomgaSource,
         libraries: List<KomgaClassifiedLibrary>,
     ) {
-        if (libraryScope == KomgaLibraryScope.ALL) return
         val configuredLibraryIds = komgaSource.configuredShelfLibraryIds()
         val visibleLibraries = libraries
             .filter { library ->
-                library.kind == libraryScope.kind &&
+                (libraryScope == KomgaLibraryScope.ALL || library.kind == libraryScope.kind) &&
                     (configuredLibraryIds.isEmpty() || library.id in configuredLibraryIds)
             }
             .map { LibraryDto(it.id, it.name) }
@@ -625,7 +638,7 @@ class KomgaLibraryScreenModel(
         val filters = komgaSource.buildFilterListForLibrary(
             libraryId = selectedLibraryId,
             preservePersistentFilters = selectedLibraryId == null,
-            allowedLibraryIds = visibleLibraries.mapTo(linkedSetOf(), LibraryDto::id),
+            allowedLibraryIds = visibleLibraries.idsForScope(),
             libraryScope = libraryScope,
             currentFilters = currentFiltersForReload(),
             preserveSessionFilters = true,
@@ -639,7 +652,7 @@ class KomgaLibraryScreenModel(
                 searchType = TYPE_ALL_INDEX,
                 komgaLibraries = visibleLibraries.toImmutableList(),
                 selectedKomgaLibraryId = selectedLibraryId,
-                isLibraryScopeEmpty = visibleLibraries.isEmpty(),
+                isLibraryScopeEmpty = libraryScope != KomgaLibraryScope.ALL && visibleLibraries.isEmpty(),
             )
         }
         filtersInitialized = true
@@ -686,6 +699,13 @@ class KomgaLibraryScreenModel(
             .orEmpty()
             .filter { it.state }
             .mapTo(linkedSetOf()) { it.id }
+    }
+
+    private fun FilterList.selectedContentType(): Int {
+        return filterIsInstance<koharia.source.komga.TypeSelect>()
+            .firstOrNull()
+            ?.state
+            ?: TYPE_ALL_INDEX
     }
 
     sealed class Listing(open val query: String?, open val filters: FilterList) {
@@ -788,6 +808,16 @@ internal fun Manga.matchesCachedOnlyQuery(query: String?): Boolean {
 internal fun Manga.matchesCachedLibraryFilter(selectedLibraryIds: Set<String>): Boolean {
     if (selectedLibraryIds.isEmpty()) return true
     return cachedLibraryId in selectedLibraryIds
+}
+
+internal fun Manga.matchesCachedContentType(contentType: Int): Boolean {
+    val path = url.substringBefore('?').trimEnd('/')
+    return when (contentType) {
+        TYPE_SERIES_INDEX -> path.contains("/api/v1/series/")
+        TYPE_READ_LISTS_INDEX -> path.contains("/api/v1/readlists/")
+        TYPE_BOOKS_INDEX -> path.contains("/api/v1/books/")
+        else -> true
+    }
 }
 
 private val Manga.cachedLibraryId: String?

@@ -1,7 +1,6 @@
 package koharia.source.komga
 
 import android.content.Context
-import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.util.system.isOnline
 import logcat.LogPriority
 import okhttp3.CacheControl
@@ -10,14 +9,12 @@ import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class KomgaOfflineInterceptor(
     private val context: Context,
-    private val cachedOnlyProvider: () -> Boolean = { Injekt.get<BasePreferences>().downloadedOnly.get() },
+    private val cachedOnlyProvider: () -> Boolean,
 ) : Interceptor {
     private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext)
 

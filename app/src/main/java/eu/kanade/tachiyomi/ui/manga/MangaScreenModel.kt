@@ -20,8 +20,6 @@ import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.interactor.GetExcludedScanlators
 import eu.kanade.domain.manga.interactor.SetExcludedScanlators
 import eu.kanade.domain.manga.interactor.UpdateManga
-import eu.kanade.domain.manga.model.chaptersFiltered
-import eu.kanade.domain.manga.model.downloadedFilter
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.domain.track.interactor.RefreshTracks
@@ -49,7 +47,9 @@ import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
 import koharia.domain.epub.model.EpubProgress
 import koharia.domain.epub.model.EpubRemoteProgressCache
+import koharia.epub.cache.EpubCacheManager
 import koharia.epub.progress.KomgaEpubRemoteProgressCoordinator
+import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
@@ -60,6 +60,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -159,6 +160,8 @@ class MangaScreenModel(
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
     private val getEpubRemoteProgressCache: GetEpubRemoteProgressCache = Injekt.get(),
     private val epubRemoteProgressCoordinator: KomgaEpubRemoteProgressCoordinator = Injekt.get(),
+    private val epubCacheManager: EpubCacheManager = Injekt.get(),
+    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -226,6 +229,7 @@ class MangaScreenModel(
                 return@launchIO
             }
             val resolvedMangaId = manga.id
+            val cachedOnlyPreference = scopedPreferenceStoreFactory.basePreferences(manga.source).downloadedOnly
 
             val chaptersDeferred = async {
                 getMangaAndChapters.awaitChapters(resolvedMangaId, applyScanlatorFilter = true)
@@ -256,7 +260,7 @@ class MangaScreenModel(
             val source = Injekt.get<SourceManager>().getOrStub(manga.source)
 
             launch {
-                combine(
+                val chapterUpdates = combine(
                     getMangaAndChapters.subscribe(resolvedMangaId, applyScanlatorFilter = true).distinctUntilChanged(),
                     getEpubProgress.subscribeByMangaId(resolvedMangaId),
                     getEpubRemoteProgressCache.subscribeByMangaId(resolvedMangaId),
@@ -265,7 +269,15 @@ class MangaScreenModel(
                 ) { mangaAndChapters, localProgresses, remoteProgresses, _, _ ->
                     Triple(mangaAndChapters, localProgresses, remoteProgresses)
                 }
-                    .collectLatest { (mangaAndChapters, localProgresses, remoteProgresses) ->
+                combine(
+                    chapterUpdates,
+                    epubCacheManager.changes,
+                    cachedOnlyPreference.changes().onStart { emit(cachedOnlyPreference.get()) },
+                ) { chapterUpdate, _, cachedOnly ->
+                    chapterUpdate to cachedOnly
+                }
+                    .collectLatest { (chapterUpdate, cachedOnly) ->
+                        val (mangaAndChapters, localProgresses, remoteProgresses) = chapterUpdate
                         val (updatedManga, chapters) = mangaAndChapters
                         updateSuccessState {
                             it.copy(
@@ -274,6 +286,7 @@ class MangaScreenModel(
                                     updatedManga,
                                     mergeEpubProgressions(localProgresses, remoteProgresses),
                                 ),
+                                cachedOnly = cachedOnly,
                             )
                         }
                     }
@@ -320,6 +333,7 @@ class MangaScreenModel(
                     isRefreshingData = needRefreshInfo || needRefreshChapter,
                     dialog = null,
                     hideMissingChapters = libraryPreferences.hideMissingChapters.get(),
+                    cachedOnly = cachedOnlyPreference.get(),
                 )
             }
 
@@ -333,6 +347,7 @@ class MangaScreenModel(
                                 item.copy(
                                     downloadState = resolved.downloadState,
                                     downloadProgress = resolved.downloadProgress,
+                                    isCompleteEpubCached = resolved.isCompleteEpubCached,
                                 )
                             } ?: item
                         },
@@ -754,6 +769,7 @@ class MangaScreenModel(
                 chapter = chapter,
                 downloadState = downloadState,
                 downloadProgress = activeDownload?.progress ?: 0,
+                isCompleteEpubCached = epubCacheManager.hasCompleteBook(manga.source, chapter),
                 epubProgressPercent = epubProgresses[chapter.id]
                     ?.let { progression ->
                         (progression.coerceIn(0.0, 1.0) * 100)
@@ -1374,6 +1390,7 @@ class MangaScreenModel(
             val dialog: Dialog? = null,
             val hasPromptedToAddBefore: Boolean = false,
             val hideMissingChapters: Boolean = false,
+            val cachedOnly: Boolean = false,
         ) : State {
             val processedChapters by lazy {
                 chapters.applyFilters(manga).toList()
@@ -1418,7 +1435,11 @@ class MangaScreenModel(
                 get() = excludedScanlators.intersect(availableScanlators).isNotEmpty()
 
             val filterActive: Boolean
-                get() = scanlatorFilterActive || manga.chaptersFiltered()
+                get() = scanlatorFilterActive ||
+                    cachedOnly ||
+                    manga.unreadFilter != TriState.DISABLED ||
+                    manga.downloadedFilterRaw != Manga.SHOW_ALL ||
+                    manga.bookmarkedFilter != TriState.DISABLED
 
             /**
              * Applies the view filters to the list of chapters obtained from the database.
@@ -1426,12 +1447,22 @@ class MangaScreenModel(
              */
             private fun List<ChapterList.Item>.applyFilters(manga: Manga): Sequence<ChapterList.Item> {
                 val unreadFilter = manga.unreadFilter
-                val downloadedFilter = manga.downloadedFilter
+                val downloadedFilter = when (manga.downloadedFilterRaw) {
+                    Manga.CHAPTER_SHOW_DOWNLOADED -> TriState.ENABLED_IS
+                    Manga.CHAPTER_SHOW_NOT_DOWNLOADED -> TriState.ENABLED_NOT
+                    else -> TriState.DISABLED
+                }
                 val bookmarkedFilter = manga.bookmarkedFilter
                 return asSequence()
                     .filter { (chapter) -> applyFilter(unreadFilter) { !chapter.read } }
                     .filter { (chapter) -> applyFilter(bookmarkedFilter) { chapter.bookmark } }
-                    .filter { applyFilter(downloadedFilter) { it.isDownloaded } }
+                    .filter {
+                        if (cachedOnly) {
+                            it.isAvailableOffline
+                        } else {
+                            applyFilter(downloadedFilter) { it.isDownloaded }
+                        }
+                    }
                     .sortedWith { (chapter1), (chapter2) -> getChapterSort(manga).invoke(chapter1, chapter2) }
             }
         }
@@ -1451,10 +1482,12 @@ sealed class ChapterList {
         val chapter: Chapter,
         val downloadState: Download.State,
         val downloadProgress: Int,
+        val isCompleteEpubCached: Boolean = false,
         val epubProgressPercent: Int? = null,
         val selected: Boolean = false,
     ) : ChapterList() {
         val id = chapter.id
         val isDownloaded = downloadState == Download.State.DOWNLOADED
+        val isAvailableOffline = isDownloaded || isCompleteEpubCached
     }
 }

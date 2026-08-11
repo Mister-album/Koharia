@@ -68,6 +68,9 @@ class DownloadManager(
     val queueState
         get() = downloader.queueState
 
+    val cacheChanges
+        get() = cache.changes
+
     // For use by DownloadService only
     fun downloaderStart() = downloader.start()
     fun downloaderStop(reason: String? = null) = downloader.stop(reason)
