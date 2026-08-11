@@ -2,13 +2,19 @@ package koharia.epub.cache
 
 import android.app.Application
 import android.text.format.Formatter
+import koharia.komga.download.KomgaChapterMemo
 import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -22,6 +28,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Response
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.chapter.model.Chapter
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -59,11 +66,38 @@ class EpubCacheManager(
     private val activePartialFiles = ConcurrentHashMap.newKeySet<String>()
     private val clearGeneration = AtomicLong(0L)
     private var scheduledTrimJob: Job? = null
+    private val _changes = Channel<Unit>(Channel.UNLIMITED)
+    val changes = _changes.receiveAsFlow()
+        .onStart { emit(Unit) }
+        .shareIn(cleanupScope, SharingStarted.Lazily, replay = 1)
 
     fun completeBookFile(sourceId: Long, publicationKey: String): File? {
         val file = completeBookTarget(sourceId, publicationKey)
         return file.takeIf { it.isFile && it.length() > 0L }
             ?.also(::touch)
+    }
+
+    fun hasCompleteBook(sourceId: Long, publicationKey: String): Boolean {
+        val file = completeBookTarget(sourceId, publicationKey)
+        return file.isFile && file.length() > 0L
+    }
+
+    fun hasCompleteBook(sourceId: Long, chapter: Chapter): Boolean {
+        val fingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
+        val publicationKey = EpubCachePolicy.publicationKey(
+            fileHash = fingerprint?.fileHash,
+            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
+            sizeBytes = fingerprint?.sizeBytes ?: 0L,
+            fallback = "book:${chapter.id}:${chapter.url}",
+        )
+        return hasCompleteBook(sourceId, publicationKey)
+    }
+
+    fun hasAnyCompleteBook(sourceId: Long): Boolean {
+        return File(booksDir, sourceId.toString())
+            .listFiles()
+            .orEmpty()
+            .any { it.isFile && it.extension.equals("epub", ignoreCase = true) && it.length() > 0L }
     }
 
     fun acquire(file: File) {
@@ -76,7 +110,11 @@ class EpubCacheManager(
         touch(file)
         if (pendingDeleteFiles.remove(file.absolutePath)) {
             cleanupScope.launch {
-                ioMutex.withLock { file.delete() }
+                ioMutex.withLock {
+                    if (file.delete() && file.extension.equals("epub", ignoreCase = true)) {
+                        notifyChanges()
+                    }
+                }
             }
         }
         scheduleTrim()
@@ -151,6 +189,7 @@ class EpubCacheManager(
                             if (acquireLease) acquire(target)
                             trimToSizeLocked()
                         }
+                        notifyChanges()
                         target
                     }
                 } catch (error: CancellationException) {
@@ -232,10 +271,12 @@ class EpubCacheManager(
             clearGeneration.incrementAndGet()
             leasedFiles.forEach(pendingDeleteFiles::add)
             leasedPublicationDirs.forEach(pendingDeleteDirs::add)
-            cacheFiles()
+            val deleted = cacheFiles()
                 .filterNot(::isProtected)
                 .count { it.delete() }
                 .also { deleteEmptyDirectories() }
+            if (deleted > 0) notifyChanges()
+            deleted
         }
     }
 
@@ -248,10 +289,12 @@ class EpubCacheManager(
                 .forEach(pendingDeleteFiles::add)
             leasedPublicationDirs.filter { path -> File(path).startsWith(sourceResourceDir) }
                 .forEach(pendingDeleteDirs::add)
-            (sourceBookDir.walkTopDown() + sourceResourceDir.walkTopDown())
+            val deleted = (sourceBookDir.walkTopDown() + sourceResourceDir.walkTopDown())
                 .filter { it.isFile && !isProtected(it) }
                 .count { it.delete() }
                 .also { deleteEmptyDirectories() }
+            if (deleted > 0) notifyChanges()
+            deleted
         }
     }
 
@@ -285,15 +328,22 @@ class EpubCacheManager(
             .map { file -> CacheCandidate(listOf(file), file.lastModified()) }
             .sortedBy(CacheCandidate::lastModified)
             .toList()
+        var completeBooksChanged = false
         for (candidate in resources + books) {
             if (size <= limit) break
             val deletedSize = candidate.files.sumOf { file ->
                 val length = file.length()
-                if (file.delete()) length else 0L
+                if (file.delete()) {
+                    if (file.extension.equals("epub", ignoreCase = true)) completeBooksChanged = true
+                    length
+                } else {
+                    0L
+                }
             }
             size -= deletedSize
         }
         deleteEmptyDirectories()
+        if (completeBooksChanged) notifyChanges()
     }
 
     @Synchronized
@@ -380,6 +430,10 @@ class EpubCacheManager(
 
     private fun touch(file: File) {
         if (file.exists()) file.setLastModified(System.currentTimeMillis())
+    }
+
+    private fun notifyChanges() {
+        _changes.trySend(Unit)
     }
 
     private fun String.sha256(): String = MessageDigest.getInstance("SHA-256")

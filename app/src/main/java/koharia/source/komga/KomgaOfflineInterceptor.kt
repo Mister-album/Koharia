@@ -12,16 +12,23 @@ import tachiyomi.i18n.MR
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
+class KomgaOfflineInterceptor(
+    private val context: Context,
+    private val cachedOnlyProvider: () -> Boolean,
+) : Interceptor {
     private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext)
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
-        val isOnline = context.isOnline()
-        val request = if (isOnline) {
+        val cachedOnly = cachedOnlyProvider()
+        val canUseNetwork = shouldUseKomgaNetwork(cachedOnly, context.isOnline())
+        val request = if (canUseNetwork) {
             originalRequest
         } else {
-            logcat(LogPriority.INFO) { "No network, forcing Komga cache read: ${originalRequest.url}" }
+            logcat(LogPriority.INFO) {
+                val reason = if (cachedOnly) "cached-only mode" else "no network"
+                "Forcing Komga cache read ($reason): ${originalRequest.url}"
+            }
             originalRequest.newBuilder()
                 .cacheControl(
                     CacheControl.Builder()
@@ -40,19 +47,19 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
         while (retryCount < maxRetries) {
             try {
                 response = chain.proceed(request)
-                if (!isOnline && response.code == 504) {
+                if (!canUseNetwork && response.code == 504) {
                     val fallbackResponse = metadataCacheStore.load(originalRequest)
                     if (fallbackResponse != null) {
                         response.close()
                         response = fallbackResponse
                     }
                 }
-                if (!isOnline && response.code == 504) {
+                if (!canUseNetwork && response.code == 504) {
                     response.close()
                     response = null
                     throw IOException(context.stringResource(MR.strings.exception_offline))
                 }
-                if (response.isSuccessful || !isOnline) {
+                if (response.isSuccessful || !canUseNetwork) {
                     break
                 }
                 if (response.code >= 500) {
@@ -69,7 +76,7 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
                 break
             } catch (e: IOException) {
                 exception = e
-                if (!isOnline) {
+                if (!canUseNetwork) {
                     break
                 }
                 retryCount++
@@ -102,7 +109,7 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
         }
 
         if (response == null) {
-            if (!isOnline) {
+            if (!canUseNetwork) {
                 throw IOException(context.stringResource(MR.strings.exception_offline))
             }
             throw exception ?: IOException("Request failed after $maxRetries retries")
@@ -111,3 +118,5 @@ class KomgaOfflineInterceptor(private val context: Context) : Interceptor {
         return response
     }
 }
+
+internal fun shouldUseKomgaNetwork(cachedOnly: Boolean, isOnline: Boolean): Boolean = !cachedOnly && isOnline

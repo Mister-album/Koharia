@@ -34,13 +34,13 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
-import eu.kanade.tachiyomi.util.chapter.filterDownloaded
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
 import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import koharia.domain.epub.interactor.GetEpubProgress
+import koharia.epub.cache.EpubCacheManager
 import koharia.epub.progress.EpubPageProgress
 import koharia.epub.progress.KomgaEpubProgressSyncService
 import koharia.komga.download.KomgaChapterMemo
@@ -110,6 +110,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
     private val komgaEpubProgressSyncService: KomgaEpubProgressSyncService = Injekt.get(),
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
+    private val epubCacheManager: EpubCacheManager = Injekt.get(),
     private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
 ) : ViewModel() {
 
@@ -248,7 +249,15 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             .run {
                 if (basePreferences.downloadedOnly.get()) {
-                    filterDownloaded(manga)
+                    filter { chapter ->
+                        downloadManager.isChapterDownloaded(
+                            chapter.name,
+                            chapter.scanlator,
+                            chapter.url,
+                            manga.title,
+                            manga.source,
+                        ) || epubCacheManager.hasCompleteBook(manga.source, chapter)
+                    }
                 } else {
                     this
                 }

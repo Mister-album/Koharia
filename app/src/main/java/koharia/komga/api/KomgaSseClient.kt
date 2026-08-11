@@ -28,6 +28,7 @@ class KomgaSseClient(
     private val komgaProgressSyncService: Lazy<KomgaProgressSyncService>,
     private val baseUrlProvider: () -> String,
     private val headersProvider: () -> Headers,
+    private val cachedOnlyProvider: () -> Boolean,
 ) : DefaultLifecycleObserver {
 
     private var appScope: CoroutineScope? = null
@@ -68,7 +69,8 @@ class KomgaSseClient(
     }
 
     private fun checkAndReconnect() {
-        if (isForeground && isWifi) {
+        val cachedOnly = cachedOnlyProvider()
+        if (isForeground && isWifi && !cachedOnly) {
             lastSkippedReason = null
             connect()
         } else {
@@ -76,6 +78,7 @@ class KomgaSseClient(
             val reason = when {
                 !isForeground -> "app not in foreground"
                 !isWifi -> "network is not validated Wi-Fi"
+                cachedOnly -> "cached-only mode enabled"
                 else -> "connection requirements not met"
             }
             if (lastSkippedReason != reason) {

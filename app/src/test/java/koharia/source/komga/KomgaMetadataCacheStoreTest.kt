@@ -46,6 +46,41 @@ class KomgaMetadataCacheStoreTest {
         assertFalse(store.isEligible(nonJson))
     }
 
+    @Test
+    fun `read list library membership comes from its cached books`() {
+        val store = KomgaMetadataCacheStore(context())
+        val readListUrl = "https://komga.test/api/v1/readlists/read-list-id"
+        val booksRequest = Request.Builder()
+            .url("$readListUrl/books?unpaged=true&media_status=READY&deleted=false")
+            .build()
+        val body = """
+            {
+              "content": [
+                { "id": "book-1", "libraryId": "library-a" },
+                { "id": "book-2", "libraryId": "library-b" },
+                { "id": "book-3", "libraryId": "library-a" }
+              ]
+            }
+        """.trimIndent()
+
+        store.save(booksRequest, response(booksRequest, body)).close()
+
+        assertEquals(setOf("library-a", "library-b"), store.findLibraryIds(readListUrl))
+    }
+
+    @Test
+    fun `malformed read list books cache has no library membership`() {
+        val store = KomgaMetadataCacheStore(context())
+        val readListUrl = "https://komga.test/api/v1/readlists/read-list-id"
+        val booksRequest = Request.Builder()
+            .url("$readListUrl/books?unpaged=true&media_status=READY&deleted=false")
+            .build()
+
+        store.save(booksRequest, response(booksRequest, """{ "content": {} }""")).close()
+
+        assertEquals(emptySet<String>(), store.findLibraryIds(readListUrl))
+    }
+
     private fun context(): Context = mockk {
         every { getExternalFilesDir(any()) } returns File(tempDir, "external")
         every { cacheDir } returns File(tempDir, "legacy")

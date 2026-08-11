@@ -59,6 +59,12 @@ class MangaRepositoryImpl(
             .subscribeToOneOrNull()
     }
 
+    override fun getMangaBySourceIdAsFlow(sourceId: Long): Flow<List<Manga>> {
+        return database.mangasQueries
+            .getMangaBySourceId(sourceId, MangaMapper::mapManga)
+            .subscribeToList()
+    }
+
     override suspend fun getFavorites(): List<Manga> {
         return database.mangasQueries
             .getFavorites(MangaMapper::mapManga)

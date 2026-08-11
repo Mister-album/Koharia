@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import koharia.source.komga.AuthorGroup
 import koharia.source.komga.CollectionSelect
 import koharia.source.komga.LibraryFilter
+import koharia.source.komga.OneshotFilter
 import koharia.source.komga.ReadingStateGroup
 import koharia.source.komga.SeriesSort
 import koharia.source.komga.TYPE_ALL_INDEX
@@ -49,6 +50,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 fun KomgaFilterDialog(
     onDismissRequest: () -> Unit,
     filters: FilterList,
+    cachedOnly: Boolean,
     persistentFilteringEnabled: Boolean,
     onReset: () -> Unit,
     onFilter: () -> Unit,
@@ -60,7 +62,7 @@ fun KomgaFilterDialog(
         filterRevision += 1
         onUpdate(filters)
     }
-    val visibleFilters = remember(filters, filterRevision) { filters.visibleFilters() }
+    val visibleFilters = remember(filters, filterRevision, cachedOnly) { filters.visibleFilters(cachedOnly) }
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         LazyColumn {
@@ -248,15 +250,29 @@ private fun komgaFilterLabel(label: String): String {
     }
 }
 
-private fun FilterList.visibleFilters(): List<Filter<*>> {
+private fun FilterList.visibleFilters(cachedOnly: Boolean): List<Filter<*>> {
     val type = selectedContentType()
     val hasCollection = (filterIsInstance<CollectionSelect>().firstOrNull()?.state ?: 0) != 0
-    return filter { filter ->
+    val availableFilters = if (cachedOnly && getOrNull(0) is Filter.Header && getOrNull(1) is Filter.Separator) {
+        drop(2)
+    } else {
+        this
+    }
+    return availableFilters.filter { filter ->
+        if (cachedOnly && filter is CollectionSelect) return@filter false
         when (type) {
             TYPE_READ_LISTS_INDEX -> filter.isReadListFilter()
             TYPE_BOOKS_INDEX -> filter.isBookFilter()
             TYPE_ALL_INDEX -> filter.isAllFilter()
             else -> filter !is SeriesSort || !hasCollection
+        }
+    }.map { filter ->
+        if (cachedOnly && type != TYPE_SERIES_INDEX && filter is ReadingStateGroup) {
+            ReadingStateGroup().apply {
+                state = filter.state.filterNot { it is OneshotFilter }
+            }
+        } else {
+            filter
         }
     }
 }

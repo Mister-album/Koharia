@@ -93,6 +93,10 @@ class KomgaSource(
 
     private val repository: KomgaRepository
         get() = KomgaRepository(baseUrl, apiClient)
+    private val metadataCacheStore by lazy { KomgaMetadataCacheStore(application.applicationContext) }
+    private val scopedBasePreferences by lazy {
+        Injekt.get<KomgaScopedPreferenceStoreFactory>().basePreferences(id)
+    }
     private val forceBrowseRequestsUntil = AtomicLong(0L)
 
     fun currentHeaders(): Headers = headersBuilder().build()
@@ -121,7 +125,7 @@ class KomgaSource(
         }
 
     override val client = super.client.newBuilder()
-        .addInterceptor(KomgaOfflineInterceptor(application))
+        .addInterceptor(KomgaOfflineInterceptor(application) { scopedBasePreferences.downloadedOnly.get() })
         .addNetworkInterceptor(KomgaCacheControlInterceptor(application))
         .addInterceptor { chain ->
             val original = chain.request()
@@ -677,6 +681,10 @@ class KomgaSource(
     }
 
     fun configuredShelfLibraryIds(): Set<String> = shelfLibraryIds.toSet()
+
+    fun findCachedLibraryId(contentUrl: String): String? = metadataCacheStore.findLibraryId(contentUrl)
+
+    fun findCachedLibraryIds(contentUrl: String): Set<String> = metadataCacheStore.findLibraryIds(contentUrl)
 
     fun registerServerSettingsChangeListener(
         onChanged: (shelfLibrariesChanged: Boolean) -> Unit,
