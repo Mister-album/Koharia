@@ -50,8 +50,12 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.connection.ConnectionBrowseAdapter
 import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
+import koharia.connection.ConnectionMetadataAdapter
+import koharia.connection.ui.ConnectionLibraryShelfDialog
+import koharia.connection.ui.SeriesMetadataEditScreen
 import koharia.epub.EpubReaderLauncher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -61,6 +65,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
 
@@ -116,6 +121,8 @@ class MangaScreen(
             (successState.source as? ConnectionMangaBehaviorAdapter)?.mangaBehavior
                 ?: ConnectionMangaBehavior.Default
         }
+        val allowsChapterDownloads = mangaBehavior.allowsChapterDownloads &&
+            !successState.source.isLocalOrStub()
 
         MangaScreen(
             state = successState,
@@ -128,7 +135,7 @@ class MangaScreen(
             showChapterFileSize = showChapterFileSize,
             navigateUp = navigator::pop,
             onChapterClicked = { openChapter(context, scope, epubReaderLauncher, it) },
-            onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
+            onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { allowsChapterDownloads },
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -145,9 +152,18 @@ class MangaScreen(
             onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
             onCoverClicked = screenModel::showCoverDialog,
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
-            onDownloadActionClicked = screenModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
-            onEditCategoryClicked = screenModel::showChangeCategoryDialog.takeIf {
-                successState.manga.favorite && mangaBehavior.allowsLocalLibraryManagement
+            onDownloadActionClicked = screenModel::runDownloadAction.takeIf { allowsChapterDownloads },
+            onEditSeriesDetailsClicked = {
+                navigator.push(SeriesMetadataEditScreen(successState.manga))
+            }.takeIf { successState.source is ConnectionMetadataAdapter },
+            onEditCategoryClicked = when {
+                successState.source is ConnectionLibraryShelfAdapter -> {
+                    screenModel::showChangeConnectionLibraryShelfDialog
+                }
+                mangaBehavior.isLibraryEntry(successState.manga) && mangaBehavior.allowsCategoryManagement -> {
+                    screenModel::showChangeCategoryDialog
+                }
+                else -> null
             },
             onMigrateClicked = null,
             onEditNotesClicked = { navigator.push(MangaNotesScreen(manga = successState.manga)) },
@@ -166,8 +182,17 @@ class MangaScreen(
         val onDismissRequest = { screenModel.dismissDialog() }
         when (val dialog = successState.dialog) {
             null -> {}
+            is MangaScreenModel.Dialog.ChangeConnectionLibraryShelf -> {
+                ConnectionLibraryShelfDialog(
+                    title = stringResource(MR.strings.local_library_move_to_bookshelf),
+                    shelves = dialog.shelves,
+                    currentShelfId = dialog.currentShelfId,
+                    onDismissRequest = onDismissRequest,
+                    onConfirm = { screenModel.moveMangaToConnectionLibraryShelf(dialog.manga, it) },
+                )
+            }
             is MangaScreenModel.Dialog.ChangeCategory -> {
-                if (mangaBehavior.allowsLocalLibraryManagement) {
+                if (mangaBehavior.allowsCategoryManagement) {
                     ChangeCategoryDialog(
                         initialSelection = dialog.initialSelection,
                         onDismissRequest = onDismissRequest,
@@ -248,11 +273,13 @@ class MangaScreen(
                         manga = manga!!,
                         snackbarHostState = sm.snackbarHostState,
                         isCustomCover = remember(manga) { manga!!.hasCustomCover() },
+                        canUseFirstItemAsCover = remember(manga) { sm.canUseFirstItemAsCover(manga!!) },
                         onShareClick = { sm.shareCover(context) },
                         onSaveClick = { sm.saveCover(context) },
                         onEditClick = {
                             when (it) {
                                 EditCoverAction.EDIT -> getContent.launch("image/*")
+                                EditCoverAction.FIRST_ITEM -> sm.useFirstItemAsCover(context)
                                 EditCoverAction.DELETE -> sm.deleteCustomCover(context)
                             }
                         },

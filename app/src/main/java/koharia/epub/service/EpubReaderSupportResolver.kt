@@ -3,7 +3,9 @@ package koharia.epub.service
 import android.app.Application
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.util.system.isOnline
+import koharia.connection.ConnectionLocalFileAdapter
 import koharia.connection.ConnectionPublicationAdapter
+import koharia.connection.ConnectionPublicationMetadata
 import koharia.connection.ConnectionSource
 import koharia.epub.cache.EpubCacheManager
 import koharia.epub.cache.EpubCachePolicy
@@ -45,8 +47,7 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             unsupportedReason = EpubReaderSupportResolution.UnsupportedReason.CHAPTER_NOT_FOUND,
         )
         val source = sourceManager.get(manga.source) as? ConnectionSource
-        val publicationAdapter = source as? ConnectionPublicationAdapter
-        if (source == null || publicationAdapter == null) {
+        if (source == null) {
             return@withIOContext EpubReaderSupportResolution(
                 mangaId = manga.id,
                 chapterId = chapter.id,
@@ -57,20 +58,54 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             )
         }
 
-        val downloadedFile = downloadProvider.findChapterDir(
-            chapterName = chapter.name,
-            chapterScanlator = chapter.scanlator,
-            chapterUrl = chapter.url,
-            mangaTitle = manga.title,
-            source = source,
-        )
-            ?.takeIf { it.extension.equals("epub", ignoreCase = true) }
+        val localPublicationFile = (source as? ConnectionLocalFileAdapter)
+            ?.localChapterFile(chapter.url)
+            ?.takeIf { file -> !file.isDirectory && file.extension.equals("epub", ignoreCase = true) }
+        val publicationAdapter = source as? ConnectionPublicationAdapter
+        if (localPublicationFile == null && publicationAdapter == null) {
+            return@withIOContext EpubReaderSupportResolution(
+                mangaId = manga.id,
+                chapterId = chapter.id,
+                mangaTitle = manga.title,
+                chapterTitle = chapter.name,
+                chapterRead = chapter.read,
+                unsupportedReason = EpubReaderSupportResolution.UnsupportedReason.SOURCE_UNSUPPORTED,
+            )
+        }
+
+        val downloadedFile = if (localPublicationFile == null) {
+            downloadProvider.findChapterDir(
+                chapterName = chapter.name,
+                chapterScanlator = chapter.scanlator,
+                chapterUrl = chapter.url,
+                mangaTitle = manga.title,
+                source = source,
+            )
+                ?.takeIf { it.extension.equals("epub", ignoreCase = true) }
+        } else {
+            null
+        }
+        val localPublicationUri = localPublicationFile?.uri?.toString()
         val downloadedUri = downloadedFile?.uri?.toString()
 
-        val metadata = publicationAdapter.resolvePublication(
-            chapter = chapter,
-            allowRemoteLookup = application.isOnline(),
-        )
+        val metadata = if (localPublicationFile != null) {
+            ConnectionPublicationMetadata(
+                remoteResourceId = null,
+                publicationKey = localPublicationKey(
+                    uri = checkNotNull(localPublicationUri),
+                    modifiedAt = localPublicationFile.lastModified(),
+                    sizeBytes = localPublicationFile.length(),
+                ),
+                isPageCompatible = false,
+                fileName = localPublicationFile.name,
+                sizeBytes = localPublicationFile.length().takeIf { it > 0L },
+            )
+        } else {
+            checkNotNull(publicationAdapter).resolvePublication(
+                chapter = chapter,
+                allowRemoteLookup = application.isOnline(),
+            )
+        }
         val cachedBookFile = epubCacheManager.completeBookFile(source.id, metadata.publicationKey)
         val cachedBookUri = cachedBookFile?.toURI()?.toString()
         val selectedSource = EpubCachePolicy.selectOpenSource(
@@ -78,7 +113,7 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             cachedBookUri,
             metadata.remoteResourceId,
         )
-        val localUri = when (selectedSource) {
+        val localUri = localPublicationUri ?: when (selectedSource) {
             EpubCachePolicy.OpenSource.MANUAL_DOWNLOAD -> downloadedUri
             EpubCachePolicy.OpenSource.COMPLETE_CACHE -> cachedBookUri
             else -> null
@@ -113,18 +148,21 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             unsupportedReason = unsupportedReason,
             metadataError = metadata.metadataError,
             publicationKey = when {
+                localPublicationFile != null -> metadata.publicationKey
                 downloadedFile != null ->
                     "local:$downloadedUri:${downloadedFile.lastModified()}:${downloadedFile.length()}"
                 else -> metadata.publicationKey
             },
-            bookFileName = downloadedFile?.name
+            bookFileName = localPublicationFile?.name
+                ?: downloadedFile?.name
                 ?: cachedBookFile?.name
                 ?: metadata.fileName,
-            bookSizeBytes = downloadedFile?.length()?.takeIf { it > 0L }
+            bookSizeBytes = localPublicationFile?.length()?.takeIf { it > 0L }
+                ?: downloadedFile?.length()?.takeIf { it > 0L }
                 ?: cachedBookFile?.length()?.takeIf { it > 0L }
                 ?: metadata.sizeBytes,
             isManualDownload = downloadedFile != null,
-            isCompleteCache = downloadedFile == null && cachedBookFile != null,
+            isCompleteCache = localPublicationFile == null && downloadedFile == null && cachedBookFile != null,
         )
         logcat {
             "MangaStartup: reader route resolved chapterId=${chapter.id} " +
@@ -134,6 +172,12 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
         resolution
     }
 }
+
+internal fun localPublicationKey(
+    uri: String,
+    modifiedAt: Long,
+    sizeBytes: Long,
+): String = "local:$uri:$modifiedAt:$sizeBytes"
 
 data class EpubReaderSupportResolution(
     val mangaId: Long,

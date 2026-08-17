@@ -81,6 +81,7 @@ import koharia.connection.ConnectionPreferences
 import koharia.core.migration.Migrator
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
@@ -131,8 +132,12 @@ class MainActivity : BaseActivity() {
 
         Migrator.awaitAndRelease()
 
-        // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
-        if (!isTaskRoot) {
+        // Ignore only duplicate launcher starts. External VIEW/SEND intents must still be
+        // delivered when a reader activity is already above MainActivity in the task.
+        val isDuplicateLauncherStart = !isTaskRoot &&
+            intent.action == Intent.ACTION_MAIN &&
+            intent.hasCategory(Intent.CATEGORY_LAUNCHER)
+        if (isDuplicateLauncherStart) {
             finish()
             return
         }
@@ -193,7 +198,6 @@ class MainActivity : BaseActivity() {
                             }
                         }
                 }
-
                 val scaffoldInsets = WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal)
                 Scaffold(
                     topBar = {
@@ -421,7 +425,7 @@ class MainActivity : BaseActivity() {
             }
             Intent.ACTION_VIEW -> {
                 // Handling opening of backup files
-                if (intent.data.toString().endsWith(".tachibk")) {
+                if (intent.data.toString().endsWith(".kohariabackup", ignoreCase = true)) {
                     navigator.popUntilRoot()
                     navigator.push(RestoreBackupScreen(intent.data.toString()))
                 }

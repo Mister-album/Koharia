@@ -2,6 +2,7 @@ package koharia.komga.ui.library.components
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
@@ -17,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AppBar
@@ -25,7 +27,8 @@ import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
-import koharia.source.komga.KomgaServerProfile
+import koharia.connection.LibraryConnectionProfile
+import koharia.connection.ui.ConnectionProviderIcon
 import koharia.source.komga.TYPE_ALL_INDEX
 import koharia.source.komga.TYPE_BOOKS_INDEX
 import koharia.source.komga.TYPE_READ_LISTS_INDEX
@@ -41,9 +44,9 @@ fun KomgaLibraryToolbar(
     onSearchQueryChange: (String?) -> Unit,
     displayMode: LibraryDisplayMode,
     onDisplayModeChange: (LibraryDisplayMode) -> Unit,
-    serverProfiles: List<KomgaServerProfile>,
-    activeServerId: Long,
-    onServerSelect: (Long) -> Unit,
+    connectionProfiles: List<LibraryConnectionProfile>,
+    activeConnectionId: Long,
+    onConnectionSelect: (Long) -> Unit,
     showFilterAction: Boolean,
     onFilterClick: () -> Unit,
     navigateUp: (() -> Unit)?,
@@ -56,7 +59,7 @@ fun KomgaLibraryToolbar(
     var selectingDisplayMode by remember { mutableStateOf(false) }
     var selectingServer by remember { mutableStateOf(false) }
     var selectingSearchType by remember { mutableStateOf(false) }
-    val canSwitchServer = serverProfiles.size > 1
+    val canSwitchConnection = connectionProfiles.size > 1
 
     SearchToolbar(
         navigateUp = navigateUp,
@@ -115,10 +118,10 @@ fun KomgaLibraryToolbar(
                                 onClick = { selectingDisplayMode = true },
                             ),
                         )
-                        if (canSwitchServer) {
+                        if (canSwitchConnection) {
                             add(
                                 AppBar.Action(
-                                    title = stringResource(MR.strings.pref_komga_server),
+                                    title = stringResource(MR.strings.pref_connection_management),
                                     icon = Icons.Outlined.Storage,
                                     onClick = { selectingServer = true },
                                 ),
@@ -137,18 +140,24 @@ fun KomgaLibraryToolbar(
                     .build(),
             )
 
-            if (canSwitchServer) {
+            if (canSwitchConnection) {
                 DropdownMenu(
                     expanded = selectingServer,
                     onDismissRequest = { selectingServer = false },
                 ) {
-                    serverProfiles.forEach { profile ->
+                    connectionProfiles.forEach { profile ->
                         RadioMenuItem(
                             text = { Text(text = profile.name) },
-                            isChecked = activeServerId == profile.id,
+                            isChecked = activeConnectionId == profile.id,
+                            leadingIcon = {
+                                ConnectionProviderIcon(
+                                    providerId = profile.providerId,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                            },
                         ) {
                             selectingServer = false
-                            onServerSelect(profile.id)
+                            onConnectionSelect(profile.id)
                         }
                     }
                 }

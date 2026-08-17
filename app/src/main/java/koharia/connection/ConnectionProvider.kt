@@ -1,5 +1,6 @@
 package koharia.connection
 
+import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Composable
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.more.settings.Preference
@@ -20,12 +21,20 @@ interface ConnectionProvider {
     val id: String
     val displayName: String
 
+    @get:DrawableRes
+    val iconRes: Int
+        get() = 0
+
+    val configuresConnectionNameInSettings: Boolean
+        get() = false
+
     fun createSource(profile: LibraryConnectionProfile): ConnectionSource
 
     fun createSettingsScreen(
         profile: LibraryConnectionProfile,
         titleOverride: String? = null,
         isNew: Boolean = false,
+        completeOnboardingOnSave: Boolean = false,
     ): Screen? = null
 
     fun directoryNameFor(name: String): String = name.trim()

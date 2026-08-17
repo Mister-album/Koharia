@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.Composable
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.source.CatalogueSource
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
@@ -12,6 +14,7 @@ import io.mockk.verify
 import koharia.source.komga.KomgaConnectionMigration
 import koharia.source.komga.KomgaConnectionProvider
 import koharia.source.komga.KomgaSource
+import koharia.source.local.LocalFolderSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
@@ -38,6 +41,7 @@ import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 
@@ -270,6 +274,9 @@ class ConnectionArchitectureTest {
         assertFalse(source is ConnectionMangaProgressAdapter)
         assertFalse(source is ConnectionPageProgressAdapter)
         assertFalse(source is ConnectionBrowseAdapter)
+        assertFalse(source is ConnectionLibraryRefreshAdapter)
+        assertFalse(source is ConnectionLibraryShelfAdapter)
+        assertFalse(source is ConnectionMediaImportAdapter)
         assertFalse(source is ConnectionPageAdapter)
     }
 
@@ -362,19 +369,69 @@ class ConnectionArchitectureTest {
         val defaultBehavior = ConnectionMangaBehavior.Default
         assertFalse(defaultBehavior.usesCacheTerminology)
         assertFalse(defaultBehavior.supportsChapterCoverGrid)
+        assertTrue(defaultBehavior.allowsChapterDownloads)
+        assertFalse(defaultBehavior.providerManagedLibrary)
         assertTrue(defaultBehavior.allowsLocalLibraryManagement)
+        assertTrue(defaultBehavior.allowsCategoryManagement)
         assertTrue(defaultBehavior.allowsFetchIntervalManagement)
         assertTrue(defaultBehavior.showSourceName)
         assertNull(defaultBehavior.detailsRefreshIntervalMillis)
+
+        val providerManagedBehavior = ConnectionMangaBehavior(
+            providerManagedLibrary = true,
+            allowsLocalLibraryManagement = false,
+            allowsCategoryManagement = true,
+        )
+        assertTrue(providerManagedBehavior.isLibraryEntry(Manga.create()))
+        assertFalse(providerManagedBehavior.allowsLocalLibraryManagement)
+        assertTrue(providerManagedBehavior.allowsCategoryManagement)
 
         val behavior = KomgaSource.MANGA_BEHAVIOR
 
         assertTrue(behavior.usesCacheTerminology)
         assertTrue(behavior.supportsChapterCoverGrid)
+        assertTrue(behavior.allowsChapterDownloads)
+        assertFalse(behavior.providerManagedLibrary)
         assertFalse(behavior.allowsLocalLibraryManagement)
+        assertFalse(behavior.allowsCategoryManagement)
         assertFalse(behavior.allowsFetchIntervalManagement)
         assertFalse(behavior.showSourceName)
         assertEquals(5 * 60 * 1_000L, behavior.detailsRefreshIntervalMillis)
+
+        val localBehavior = LocalFolderSource.MANGA_BEHAVIOR
+        assertFalse(localBehavior.allowsChapterDownloads)
+        assertTrue(localBehavior.providerManagedLibrary)
+    }
+
+    @Test
+    fun `provider managed entries apply the source membership filter`() = runTest {
+        val indexed = Manga.create().copy(id = 1L, source = 42L, url = "indexed")
+        val stale = Manga.create().copy(id = 2L, source = 42L, url = "stale")
+        val source = mockk<CatalogueSource>(
+            moreInterfaces = arrayOf(
+                ConnectionMangaBehaviorAdapter::class,
+                ConnectionLibraryMembershipAdapter::class,
+            ),
+        ) {
+            every { id } returns 42L
+        }
+        every { (source as ConnectionMangaBehaviorAdapter).mangaBehavior } returns ConnectionMangaBehavior(
+            providerManagedLibrary = true,
+        )
+        coEvery {
+            (source as ConnectionLibraryMembershipAdapter).filterLibraryEntries(listOf(indexed, stale))
+        } returns listOf(indexed)
+        val sourceManager = mockk<SourceManager> {
+            every { getCatalogueSources() } returns listOf(source)
+            every { get(42L) } returns source
+        }
+        val mangaRepository = mockk<MangaRepository> {
+            coEvery { getMangaBySourceId(42L) } returns listOf(indexed, stale)
+        }
+
+        val entries = mangaRepository.getProviderManagedLibraryEntries(sourceManager)
+
+        assertEquals(listOf(indexed), entries)
     }
 
     @Test

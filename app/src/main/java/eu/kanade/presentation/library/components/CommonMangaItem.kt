@@ -71,7 +71,7 @@ private const val GRID_SELECTED_COVER_ALPHA = 0.76f
  */
 @Composable
 fun MangaCompactGridItem(
-    coverData: MangaCoverModel,
+    coverData: MangaCoverModel?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     isSelected: Boolean = false,
@@ -178,7 +178,7 @@ private fun BoxScope.CoverTextOverlay(
  */
 @Composable
 fun MangaComfortableGridItem(
-    coverData: MangaCoverModel,
+    coverData: MangaCoverModel?,
     title: String,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -344,7 +344,7 @@ private fun Modifier.selectedOutline(
  */
 @Composable
 fun MangaListItem(
-    coverData: MangaCoverModel,
+    coverData: MangaCoverModel?,
     title: String,
     onClick: () -> Unit,
     onLongClick: () -> Unit,

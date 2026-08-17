@@ -16,11 +16,13 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher.Companion.USE_CUSTOM_COVER_KEY
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.online.HttpSource
+import koharia.connection.ConnectionChapterThumbnailAdapter
 import logcat.LogPriority
 import okhttp3.CacheControl
 import okhttp3.Call
 import okhttp3.Request
 import okhttp3.Response
+import okio.Buffer
 import okio.FileSystem
 import okio.Path.Companion.toOkioPath
 import okio.Source
@@ -53,6 +55,7 @@ class MangaCoverFetcher(
     private val customCoverFileLazy: Lazy<File>,
     private val diskCacheKeyLazy: Lazy<String>,
     private val sourceLazy: Lazy<HttpSource?>,
+    private val chapterThumbnailSourceLazy: Lazy<ConnectionChapterThumbnailAdapter?>,
     private val callFactoryLazy: Lazy<Call.Factory>,
     private val imageLoader: ImageLoader,
 ) : Fetcher {
@@ -76,8 +79,23 @@ class MangaCoverFetcher(
             Type.File -> fileLoader(File(url.substringAfter("file://")))
             Type.URI -> fileUriLoader(url)
             Type.URL -> httpLoader()
+            Type.ConnectionChapter -> connectionChapterLoader(url)
             null -> error("Invalid image")
         }
+    }
+
+    private suspend fun connectionChapterLoader(chapterUrl: String): FetchResult {
+        val bytes = chapterThumbnailSourceLazy.value
+            ?.loadChapterThumbnail(chapterUrl)
+            ?: error("No chapter thumbnail specified")
+        return SourceFetchResult(
+            source = ImageSource(
+                source = Buffer().write(bytes),
+                fileSystem = FileSystem.SYSTEM,
+            ),
+            mimeType = "image/*",
+            dataSource = DataSource.DISK,
+        )
     }
 
     private fun fileLoader(file: File): FetchResult {
@@ -287,6 +305,9 @@ class MangaCoverFetcher(
             cover.startsWith("http", true) || cover.startsWith("Custom-", true) -> Type.URL
             cover.startsWith("/") || cover.startsWith("file://") -> Type.File
             cover.startsWith("content") -> Type.URI
+            cover.startsWith("koharia-local-v", true) && chapterThumbnailSourceLazy.value != null -> {
+                Type.ConnectionChapter
+            }
             else -> null
         }
     }
@@ -295,6 +316,7 @@ class MangaCoverFetcher(
         File,
         URI,
         URL,
+        ConnectionChapter,
     }
 
     class MangaFactory(
@@ -313,6 +335,9 @@ class MangaCoverFetcher(
                 customCoverFileLazy = lazy { coverCache.getCustomCoverFile(data.id) },
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
                 sourceLazy = lazy { sourceManager.get(data.source) as? HttpSource },
+                chapterThumbnailSourceLazy = lazy {
+                    sourceManager.get(data.source) as? ConnectionChapterThumbnailAdapter
+                },
                 callFactoryLazy = callFactoryLazy,
                 imageLoader = imageLoader,
             )
@@ -335,6 +360,9 @@ class MangaCoverFetcher(
                 customCoverFileLazy = lazy { coverCache.getCustomCoverFile(data.mangaId) },
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
                 sourceLazy = lazy { sourceManager.get(data.sourceId) as? HttpSource },
+                chapterThumbnailSourceLazy = lazy {
+                    sourceManager.get(data.sourceId) as? ConnectionChapterThumbnailAdapter
+                },
                 callFactoryLazy = callFactoryLazy,
                 imageLoader = imageLoader,
             )

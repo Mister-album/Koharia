@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
@@ -91,6 +92,7 @@ internal fun EpubReaderTopBar(
     onClick: () -> Unit,
     onSearch: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onImportTemporaryMedia: (() -> Unit)?,
 ) {
     val backgroundColor = MaterialTheme.colorScheme
         .surfaceColorAtElevation(3.dp)
@@ -110,6 +112,14 @@ internal fun EpubReaderTopBar(
                 .clickable(onClick = onClick),
             backgroundColor = Color.Transparent,
             actions = {
+                onImportTemporaryMedia?.let { onImport ->
+                    IconButton(onClick = onImport) {
+                        Icon(
+                            imageVector = Icons.Outlined.LibraryAdd,
+                            contentDescription = stringResource(MR.strings.add_to_library),
+                        )
+                    }
+                }
                 if (isSearchable) {
                     IconButton(onClick = onSearch) {
                         Icon(

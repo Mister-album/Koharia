@@ -43,6 +43,7 @@ import koharia.source.komga.KomgaConnectionMigration
 import koharia.source.komga.KomgaConnectionProvider
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
+import koharia.source.local.LocalFolderConnectionProvider
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -201,7 +202,9 @@ class AppModule(val app: Application) : InjektModule {
             )
         }
         addSingletonFactory { ConnectionProfileManager(get(), get(), get()) }
-        addSingletonFactory { ConnectionRegistry(listOf(KomgaConnectionProvider())) }
+        addSingletonFactory {
+            ConnectionRegistry(listOf(KomgaConnectionProvider(), LocalFolderConnectionProvider(app)))
+        }
         addSingletonFactory { ConnectionContentScopeController(get(), get()) }
         addSingletonFactory {
             get<KomgaConnectionMigration>().migrate()

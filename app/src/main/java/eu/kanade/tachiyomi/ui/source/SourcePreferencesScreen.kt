@@ -53,6 +53,7 @@ class SourcePreferencesScreen(
     val sourceId: Long,
     private val titleOverride: String? = null,
     private val actions: @Composable RowScope.() -> Unit = {},
+    private val bottomBar: @Composable () -> Unit = {},
     private val navigateUpOverride: (() -> Unit)? = null,
 ) : Screen() {
 
@@ -77,6 +78,7 @@ class SourcePreferencesScreen(
                     actions = actions,
                 )
             },
+            bottomBar = bottomBar,
         ) { contentPadding ->
             FragmentContainer(
                 fragmentManager = (context as FragmentActivity).supportFragmentManager,

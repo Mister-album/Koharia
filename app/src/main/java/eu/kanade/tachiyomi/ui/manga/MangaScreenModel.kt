@@ -36,11 +36,14 @@ import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.isLocalOrStub
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.connection.ConnectionEpubProgressAdapter
+import koharia.connection.ConnectionLibraryShelf
+import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
@@ -63,6 +66,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -308,15 +312,15 @@ class MangaScreenModel(
                     }
             }
 
-            if (!manga.favorite) {
+            if (!source.mangaBehavior().isLibraryEntry(manga)) {
                 setMangaDefaultChapterFlags.await(manga)
             }
 
-            val shouldRefreshConnection = (source as? ConnectionMangaBehaviorAdapter)
-                ?.shouldRefreshMangaDetails(manga)
-                ?: false
-            val needRefreshInfo = !manga.initialized || shouldRefreshConnection
-            val needRefreshChapter = chapters.isEmpty() || shouldRefreshConnection
+            val connectionBehavior = source as? ConnectionMangaBehaviorAdapter
+            val shouldRefreshInfo = connectionBehavior?.shouldRefreshMangaDetails(manga) ?: false
+            val shouldRefreshChapters = connectionBehavior?.shouldRefreshChapters(manga) ?: false
+            val needRefreshInfo = !manga.initialized || shouldRefreshInfo
+            val needRefreshChapter = chapters.isEmpty() || shouldRefreshChapters
 
             // Show what we have earlier
             mutableState.update {
@@ -589,7 +593,8 @@ class MangaScreenModel(
 
     fun showChangeCategoryDialog() {
         val manga = successState?.manga ?: return
-        if (successState?.source?.mangaBehavior()?.allowsLocalLibraryManagement == false) return
+        val behavior = successState?.source?.mangaBehavior() ?: return
+        if (!behavior.allowsCategoryManagement || !behavior.isLibraryEntry(manga)) return
         screenModelScope.launch {
             val categories = getCategories()
             val selection = getMangaCategoryIds(manga)
@@ -601,6 +606,32 @@ class MangaScreenModel(
                     ),
                 )
             }
+        }
+    }
+
+    fun showChangeConnectionLibraryShelfDialog() {
+        val state = successState ?: return
+        val adapter = state.source as? ConnectionLibraryShelfAdapter ?: return
+        screenModelScope.launchIO {
+            val currentShelfId = adapter.currentLibraryShelfId(state.manga.url) ?: return@launchIO
+            val shelves = adapter.compatibleLibraryShelves(state.manga.url)
+            updateSuccessState {
+                it.copy(
+                    dialog = Dialog.ChangeConnectionLibraryShelf(
+                        manga = state.manga,
+                        shelves = shelves,
+                        currentShelfId = currentShelfId,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun moveMangaToConnectionLibraryShelf(manga: Manga, shelfId: String) {
+        val adapter = successState?.source as? ConnectionLibraryShelfAdapter ?: return
+        screenModelScope.launchIO {
+            adapter.moveMangaToLibraryShelf(manga.url, shelfId)
+            updateSuccessState { it.copy(dialog = null) }
         }
     }
 
@@ -664,7 +695,7 @@ class MangaScreenModel(
 
     fun moveMangaToCategoriesAndAddToLibrary(manga: Manga, categories: List<Long>) {
         moveMangaToCategory(categories)
-        if (manga.favorite) return
+        if (successState?.source?.mangaBehavior()?.isLibraryEntry(manga) == true) return
 
         screenModelScope.launchIO {
             updateManga.awaitUpdateFavorite(manga.id, true)
@@ -837,6 +868,7 @@ class MangaScreenModel(
                 bookmarkChapters(listOf(chapter), !chapter.bookmark)
             }
             LibraryPreferences.ChapterSwipeAction.Download -> {
+                if (!allowsChapterDownloads()) return
                 val downloadAction: ChapterDownloadAction = when (chapterItem.downloadState) {
                     Download.State.ERROR,
                     Download.State.NOT_DOWNLOADED,
@@ -904,6 +936,7 @@ class MangaScreenModel(
         items: List<ChapterList.Item>,
         action: ChapterDownloadAction,
     ) {
+        if (!allowsChapterDownloads()) return
         when (action) {
             ChapterDownloadAction.START -> {
                 startDownload(items.map { it.chapter }, false)
@@ -926,6 +959,7 @@ class MangaScreenModel(
     }
 
     fun runDownloadAction(action: DownloadAction) {
+        if (!allowsChapterDownloads()) return
         val chaptersToDownload = when (action) {
             DownloadAction.NEXT_1_CHAPTER -> getUnreadChaptersSorted().take(1)
             DownloadAction.NEXT_5_CHAPTERS -> getUnreadChaptersSorted().take(5)
@@ -1066,6 +1100,7 @@ class MangaScreenModel(
     }
 
     private fun downloadNewChapters(chapters: List<Chapter>) {
+        if (!allowsChapterDownloads()) return
         screenModelScope.launchNonCancellable {
             val manga = successState?.manga ?: return@launchNonCancellable
             val chaptersToDownload = filterChaptersForDownload.await(manga, chapters)
@@ -1074,6 +1109,11 @@ class MangaScreenModel(
                 downloadChapters(chaptersToDownload)
             }
         }
+    }
+
+    private fun allowsChapterDownloads(): Boolean {
+        val source = successState?.source ?: return false
+        return !source.isLocalOrStub() && source.mangaBehavior().allowsChapterDownloads
     }
 
     /**
@@ -1323,6 +1363,12 @@ class MangaScreenModel(
         data class ChangeCategory(
             val manga: Manga,
             val initialSelection: ImmutableList<CheckboxState<Category>>,
+        ) : Dialog
+
+        data class ChangeConnectionLibraryShelf(
+            val manga: Manga,
+            val shelves: List<ConnectionLibraryShelf>,
+            val currentShelfId: String,
         ) : Dialog
         data class DeleteChapters(val chapters: List<Chapter>) : Dialog
         data class DuplicateManga(val manga: Manga, val duplicates: List<MangaWithChapterCount>) : Dialog

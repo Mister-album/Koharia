@@ -11,12 +11,15 @@ import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
 import eu.kanade.tachiyomi.ui.reader.SaveImageNotifier
+import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionPublicationAdapter
+import koharia.connection.ConnectionPublicationMetadata
 import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.connection.ConnectionSource
 import koharia.connection.RemoteEpubProgression
+import koharia.connection.isConnectionLibraryEntry
 import koharia.domain.epub.interactor.AddEpubBookmark
 import koharia.domain.epub.interactor.DeleteEpubBookmark
 import koharia.domain.epub.interactor.GetEpubBookmarks
@@ -283,7 +286,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 val source = sourceManager.get(manga.source) as? ConnectionSource
                     ?: error(application.stringResource(MR.strings.source_unsupported))
                 val publicationAdapter = source as? ConnectionPublicationAdapter
-                    ?: error(application.stringResource(MR.strings.source_unsupported))
 
                 savedState["source_id"] = source.id
                 currentSourceId = source.id
@@ -333,10 +335,20 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     ?.uri
                     ?.toString()
 
-                val publicationMetadata = publicationAdapter.resolvePublication(
-                    chapter = chapter,
-                    allowRemoteLookup = !hasLauncherResolution,
-                )
+                val publicationMetadata = when {
+                    publicationAdapter != null -> publicationAdapter.resolvePublication(
+                        chapter = chapter,
+                        allowRemoteLookup = !hasLauncherResolution,
+                    )
+                    hasLauncherResolution && resolvedLocalUri != null -> ConnectionPublicationMetadata(
+                        remoteResourceId = resolvedRemoteBookUrl,
+                        publicationKey = resolvedPublicationKey ?: "local:$resolvedLocalUri",
+                        isPageCompatible = savedState.get<Boolean>("epub_resolution_divina") == true,
+                        fileName = savedState.get<String>("epub_resolution_file_name"),
+                        sizeBytes = savedState.get<Long>("epub_resolution_file_size")?.takeIf { it > 0L },
+                    )
+                    else -> error(application.stringResource(MR.strings.source_unsupported))
+                }
                 val cachedBookFile = epubCacheManager.completeBookFile(source.id, publicationMetadata.publicationKey)
                 val cachedBookUri = cachedBookFile?.toURI()?.toString()
                 val reusableResolvedLocalUri = resolvedLocalUri
@@ -789,6 +801,41 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     },
                 )
             }.onFailure { error -> reportImageActionError(error) }
+        }
+    }
+
+    internal fun setSelectedImageAsCover() {
+        withSelectedImage { content ->
+            mutableImageState.update { it.copy(isLoading = true) }
+            val manga = getManga.await(mangaId)
+            if (manga == null || !manga.isConnectionLibraryEntry(sourceManager)) {
+                finishImageAction()
+                mutableImageEvents.emit(
+                    EpubImageEvent.Error(
+                        application.stringResource(MR.strings.notification_first_add_to_library),
+                    ),
+                )
+                return@withSelectedImage
+            }
+            val result = runCatching {
+                withIOContext {
+                    content.bytes.toByteArray().inputStream().use {
+                        manga.editCover(it, sourceManager = sourceManager)
+                    }
+                }
+            }
+            result.onSuccess {
+                finishImageAction()
+                mutableImageEvents.emit(EpubImageEvent.CoverUpdated)
+            }.onFailure { error ->
+                logcat(LogPriority.ERROR, error) { "Failed to update EPUB series cover" }
+                mutableImageState.update { it.copy(isLoading = false) }
+                mutableImageEvents.emit(
+                    EpubImageEvent.Error(
+                        application.stringResource(MR.strings.notification_cover_update_failed),
+                    ),
+                )
+            }
         }
     }
 

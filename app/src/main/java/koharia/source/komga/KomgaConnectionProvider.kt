@@ -1,6 +1,7 @@
 package koharia.source.komga
 
 import androidx.compose.runtime.Composable
+import eu.kanade.tachiyomi.R
 import koharia.connection.ConnectionConfigMode
 import koharia.connection.ConnectionConfigModeInterceptor
 import koharia.connection.ConnectionConfigModeWarning
@@ -20,6 +21,8 @@ class KomgaConnectionProvider :
     ConnectionConfigModeInterceptor {
     override val id: String = ID
     override val displayName: String = KomgaSource.SOURCE_NAME
+    override val iconRes: Int = R.drawable.brand_komga
+    override val configuresConnectionNameInSettings: Boolean = true
 
     override fun createSource(profile: LibraryConnectionProfile): ConnectionSource {
         require(profile.providerId == id) { "Unsupported provider ${profile.providerId}" }
@@ -34,10 +37,12 @@ class KomgaConnectionProvider :
         profile: LibraryConnectionProfile,
         titleOverride: String?,
         isNew: Boolean,
+        completeOnboardingOnSave: Boolean,
     ) = KomgaServerSettingsScreen(
         sourceId = profile.id,
         titleOverride = titleOverride,
         isNew = isNew,
+        completeOnboardingOnSave = completeOnboardingOnSave,
     )
 
     override fun directoryNameFor(name: String): String {

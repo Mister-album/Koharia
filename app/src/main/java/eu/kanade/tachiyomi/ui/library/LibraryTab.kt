@@ -81,7 +81,7 @@ sealed class ConnectionLibraryTab(
         }
 
     override suspend fun onReselect(navigator: Navigator) {
-        browseScreen()?.refresh()
+        browseScreen()?.takeIf { it.refreshOnReselect }?.refresh()
     }
 
     @Composable
@@ -115,7 +115,7 @@ sealed class ConnectionLibraryTab(
         LaunchedEffect(isSelected) {
             if (isSelected) {
                 if (hasEntered) {
-                    browseScreen()?.refresh()
+                    browseScreen()?.takeIf { it.refreshOnReselect }?.refresh()
                 } else {
                     hasEntered = true
                 }

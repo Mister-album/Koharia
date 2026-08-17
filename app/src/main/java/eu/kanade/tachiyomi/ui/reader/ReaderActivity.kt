@@ -88,6 +88,7 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.importing.IncomingMediaNavigation
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -529,6 +530,9 @@ class ReaderActivity : BaseActivity() {
             onOpenInWebView = ::openChapterInWebView.takeIf { isHttpSource },
             onOpenInBrowser = ::openChapterInBrowser.takeIf { isHttpSource },
             onShare = ::shareChapter.takeIf { isHttpSource },
+            onImportTemporaryMedia = ::importTemporaryMedia.takeIf {
+                IncomingMediaNavigation.temporaryMediaUri(intent) != null
+            },
 
             chapterNavigatorType = if (isPagerType || !verticalNavigatorForLongStrip) {
                 if (state.viewer is R2LPagerViewer) {
@@ -634,6 +638,12 @@ class ReaderActivity : BaseActivity() {
                 },
             )
         }
+    }
+
+    private fun importTemporaryMedia() {
+        val uriValue = IncomingMediaNavigation.temporaryMediaUri(intent) ?: return
+        startActivity(IncomingMediaNavigation.importIntent(this, uriValue))
+        finish()
     }
 
     private fun openChapterInWebView() {

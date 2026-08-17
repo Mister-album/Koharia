@@ -43,6 +43,7 @@ import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.connection.ConnectionRawDownloadAdapter
 import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.isConnectionLibraryEntry
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.progress.EpubPageProgress
 import kotlinx.coroutines.CancellationException
@@ -1288,8 +1289,8 @@ class ReaderViewModel @JvmOverloads constructor(
 
         viewModelScope.launchNonCancellable {
             val result = try {
-                manga.editCover(stream())
-                if (manga.favorite) {
+                manga.editCover(stream(), sourceManager = sourceManager)
+                if (manga.isConnectionLibraryEntry(sourceManager)) {
                     SetAsCoverResult.Success
                 } else {
                     SetAsCoverResult.AddToLibraryFirst

@@ -19,7 +19,9 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,6 +66,7 @@ import koharia.connection.ConnectionConfigManager
 import koharia.connection.ConnectionConfigMode
 import koharia.connection.ConnectionConfigModeInterceptor
 import koharia.connection.ConnectionConfigModeWarning
+import koharia.connection.ConnectionLibraryRefreshAdapter
 import koharia.connection.ConnectionManagementAdapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionProfileManager
@@ -74,6 +77,7 @@ import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -83,9 +87,12 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import tachiyomi.core.common.i18n.stringResource as contextStringResource
 
 class LibraryConnectionProfilesScreen(
     private val openAddDialog: Boolean = false,
+    private val initialProviderId: String? = null,
+    private val completeOnboardingAfterAdd: Boolean = false,
 ) : Screen() {
 
     @Composable
@@ -95,6 +102,7 @@ class LibraryConnectionProfilesScreen(
         val connectionPreferences = remember { Injekt.get<ConnectionPreferences>() }
         val connectionProfileManager = remember { Injekt.get<ConnectionProfileManager>() }
         val connectionRegistry = remember { Injekt.get<ConnectionRegistry>() }
+        val sourceManager = remember { Injekt.get<SourceManager>() }
         val localConfigManager = remember { Injekt.get<ConnectionConfigManager>() }
         val availableProviders = remember(connectionRegistry) { connectionRegistry.availableProviders() }
         val managementAdapters = remember(availableProviders) {
@@ -112,31 +120,18 @@ class LibraryConnectionProfilesScreen(
         val scope = rememberCoroutineScope()
 
         var selectedProviderId by rememberSaveable {
-            mutableStateOf(availableProviders.singleOrNull()?.id)
+            mutableStateOf(initialProviderId ?: availableProviders.singleOrNull()?.id)
         }
-        var showProviderDialog by rememberSaveable {
-            mutableStateOf(openAddDialog && availableProviders.size > 1)
-        }
-        var showAddDialog by rememberSaveable {
-            mutableStateOf(openAddDialog && availableProviders.size == 1)
-        }
+        var showProviderDialog by rememberSaveable { mutableStateOf(false) }
+        var showAddDialog by rememberSaveable { mutableStateOf(false) }
+        var initialAddHandled by rememberSaveable { mutableStateOf(false) }
         var showModeHelpDialog by rememberSaveable { mutableStateOf(false) }
         var pendingModeChange by remember { mutableStateOf<PendingModeChange?>(null) }
         var pendingConnectionName by rememberSaveable { mutableStateOf<String?>(null) }
         var profileToDelete by remember { mutableStateOf<LibraryConnectionProfile?>(null) }
+        var refreshingConnectionIds by remember { mutableStateOf(emptySet<Long>()) }
         val addConnectionTitle = stringResource(MR.strings.connection_settings_add_title)
         val editConnectionTitle = stringResource(MR.strings.connection_settings_edit_title)
-
-        fun startAddConnection() {
-            when (availableProviders.size) {
-                0 -> Unit
-                1 -> {
-                    selectedProviderId = availableProviders.single().id
-                    showAddDialog = true
-                }
-                else -> showProviderDialog = true
-            }
-        }
 
         fun createConnection(name: String) {
             val providerId = selectedProviderId ?: return
@@ -147,6 +142,7 @@ class LibraryConnectionProfilesScreen(
                     profile = newProfile,
                     titleOverride = addConnectionTitle,
                     isNew = true,
+                    completeOnboardingOnSave = completeOnboardingAfterAdd,
                 )
                 ?.let(navigator::push)
         }
@@ -166,6 +162,38 @@ class LibraryConnectionProfilesScreen(
                 connectionNameAfterChange?.let(::createConnection)
             } else {
                 pendingModeChange = PendingModeChange(mode, warnings, connectionNameAfterChange)
+            }
+        }
+
+        fun beginProviderSetup(providerId: String) {
+            val provider = connectionRegistry.provider(providerId) ?: return
+            selectedProviderId = providerId
+            if (provider.configuresConnectionNameInSettings) {
+                if (profiles.size == 1) {
+                    pendingConnectionName = provider.displayName
+                } else {
+                    createConnection(provider.displayName)
+                }
+            } else {
+                showAddDialog = true
+            }
+        }
+
+        fun startAddConnection() {
+            when (availableProviders.size) {
+                0 -> Unit
+                1 -> beginProviderSetup(availableProviders.single().id)
+                else -> showProviderDialog = true
+            }
+        }
+
+        LaunchedEffect(openAddDialog, initialProviderId) {
+            if (!openAddDialog || initialAddHandled) return@LaunchedEffect
+            initialAddHandled = true
+            when {
+                initialProviderId != null -> beginProviderSetup(initialProviderId)
+                availableProviders.size == 1 -> beginProviderSetup(availableProviders.single().id)
+                availableProviders.size > 1 -> showProviderDialog = true
             }
         }
 
@@ -248,6 +276,7 @@ class LibraryConnectionProfilesScreen(
                         key = LibraryConnectionProfile::id,
                     ) { profile ->
                         val provider = connectionRegistry.provider(profile.providerId)
+                        val refreshAdapter = sourceManager.get(profile.id) as? ConnectionLibraryRefreshAdapter
                         ConnectionRow(
                             profile = profile,
                             providerName = provider?.displayName ?: profile.providerId,
@@ -259,6 +288,30 @@ class LibraryConnectionProfilesScreen(
                                     profile = profile,
                                     titleOverride = editConnectionTitle,
                                 )?.let(navigator::push)
+                            },
+                            canRefresh = refreshAdapter != null,
+                            isRefreshing = profile.id in refreshingConnectionIds,
+                            onRefresh = {
+                                if (refreshAdapter != null && profile.id !in refreshingConnectionIds) {
+                                    refreshingConnectionIds += profile.id
+                                    scope.launch {
+                                        val result = refreshAdapter.refreshLibrary()
+                                        refreshingConnectionIds -= profile.id
+                                        result.fold(
+                                            onSuccess = { refreshResult ->
+                                                context.toast(
+                                                    context.contextStringResource(
+                                                        MR.strings.local_library_refresh_complete,
+                                                        refreshResult.itemCount,
+                                                    ),
+                                                )
+                                            },
+                                            onFailure = {
+                                                context.toast(MR.strings.local_library_refresh_failed)
+                                            },
+                                        )
+                                    }
+                                }
                             },
                             onDelete = { profileToDelete = profile },
                         )
@@ -291,9 +344,8 @@ class LibraryConnectionProfilesScreen(
                 providers = availableProviders,
                 onDismissRequest = { showProviderDialog = false },
                 onSelect = { providerId ->
-                    selectedProviderId = providerId
                     showProviderDialog = false
-                    showAddDialog = true
+                    beginProviderSetup(providerId)
                 },
             )
         }
@@ -372,7 +424,17 @@ private fun ProviderSelectionDialog(
                         onClick = { onSelect(provider.id) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(text = provider.displayName)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ConnectionProviderIcon(
+                                providerId = provider.id,
+                                modifier = Modifier.size(28.dp),
+                            )
+                            Text(text = provider.displayName)
+                        }
                     }
                 }
             }
@@ -467,6 +529,9 @@ private fun ConnectionRow(
     isAvailable: Boolean,
     isActive: Boolean,
     onSelect: () -> Unit,
+    canRefresh: Boolean,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -570,6 +635,10 @@ private fun ConnectionRow(
                     }
                 },
             )
+            ConnectionProviderIcon(
+                providerId = profile.providerId,
+                modifier = Modifier.size(32.dp),
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = profile.name,
@@ -585,6 +654,30 @@ private fun ConnectionRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            if (canRefresh) {
+                IconButton(
+                    enabled = isAvailable && !isRefreshing,
+                    onClick = {
+                        if (isDeleteRevealed) {
+                            settleRow(revealed = false)
+                        } else {
+                            onRefresh()
+                        }
+                    },
+                ) {
+                    if (isRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Outlined.Refresh,
+                            contentDescription = stringResource(MR.strings.action_webview_refresh),
+                        )
+                    }
+                }
             }
             IconButton(
                 enabled = isAvailable,

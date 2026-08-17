@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.util.lang.toLocalDate
 import koharia.connection.ConnectionHistorySyncAdapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.NO_ACTIVE_CONNECTION
+import koharia.connection.isConnectionLibraryEntry
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
@@ -191,7 +192,7 @@ class HistoryScreenModel(
 
     fun moveMangaToCategoriesAndAddToLibrary(manga: Manga, categories: List<Long>) {
         moveMangaToCategory(manga.id, categories)
-        if (manga.favorite) return
+        if (manga.isConnectionLibraryEntry(sourceManager)) return
 
         screenModelScope.launchIO {
             updateManga.awaitUpdateFavorite(manga.id, true)

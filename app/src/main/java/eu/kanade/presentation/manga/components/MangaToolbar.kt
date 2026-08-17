@@ -43,7 +43,9 @@ fun MangaToolbar(
     onChapterCoverDisplayModeChange: (Long) -> Unit,
     onClickShare: (() -> Unit)?,
     onClickDownload: ((DownloadAction) -> Unit)?,
+    onClickEditSeriesDetails: (() -> Unit)?,
     onClickEditCategory: (() -> Unit)?,
+    editCategoryAsLibraryShelf: Boolean,
     onClickRefresh: () -> Unit,
     onClickMigrate: (() -> Unit)?,
     onClickEditNotes: () -> Unit,
@@ -147,10 +149,24 @@ fun MangaToolbar(
                             onClick = onClickRefresh,
                         ),
                     )
+                    if (onClickEditSeriesDetails != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_edit_series_details),
+                                onClick = onClickEditSeriesDetails,
+                            ),
+                        )
+                    }
                     if (onClickEditCategory != null) {
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(MR.strings.action_edit_categories),
+                                title = stringResource(
+                                    if (editCategoryAsLibraryShelf) {
+                                        MR.strings.local_library_move_to_bookshelf
+                                    } else {
+                                        MR.strings.action_edit_categories
+                                    },
+                                ),
                                 onClick = onClickEditCategory,
                             ),
                         )

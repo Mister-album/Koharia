@@ -65,6 +65,12 @@ class MangaRepositoryImpl(
             .subscribeToList()
     }
 
+    override suspend fun getMangaBySourceId(sourceId: Long): List<Manga> {
+        return database.mangasQueries
+            .getMangaBySourceId(sourceId, MangaMapper::mapManga)
+            .awaitAsList()
+    }
+
     override suspend fun getFavorites(): List<Manga> {
         return database.mangasQueries
             .getFavorites(MangaMapper::mapManga)
@@ -173,6 +179,14 @@ class MangaRepositoryImpl(
                     .awaitAsOne()
             }
         }
+    }
+
+    override suspend fun deleteMangaBySourceId(sourceId: Long) {
+        database.mangasQueries.deleteMangaBySourceId(sourceId)
+    }
+
+    override suspend fun deleteMangaById(mangaId: Long) {
+        database.mangasQueries.deleteMangaById(mangaId)
     }
 
     private suspend fun partialUpdate(vararg mangaUpdates: MangaUpdate) {

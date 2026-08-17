@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import koharia.connection.ConnectionLocalFileAdapter
 import koharia.connection.ConnectionPagePublication
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.epub.cache.EpubCacheManager
@@ -148,6 +149,11 @@ class ChapterLoader(
                 source,
                 downloadManager,
                 downloadProvider,
+            )
+            source is ConnectionLocalFileAdapter -> LocalPageLoader(
+                chapter = chapter,
+                source = source,
+                fileAdapter = source,
             )
             completeEpubCache != null -> CompleteEpubCachePageLoader(
                 file = completeEpubCache.file,

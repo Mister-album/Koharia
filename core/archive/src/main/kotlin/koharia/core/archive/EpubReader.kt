@@ -2,6 +2,7 @@ package koharia.core.archive
 
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import org.jsoup.parser.Parser
 import java.io.Closeable
 import java.io.File
@@ -33,6 +34,41 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         return getImagesFromPages(pages, ref)
     }
 
+    /** Returns the declared EPUB cover, or the first image encountered in reading order. */
+    fun getCoverOrFirstImage(): String? {
+        val packageHref = getPackageHref()
+        val document = getPackageDocument(packageHref)
+        val manifest = getManifestFromDocument(document)
+        val basePath = getParentDirectory(packageHref)
+
+        val coverId = document.selectFirst("*|meta[name=cover]")?.attr("content")
+        val declaredCover = manifest.entries.firstOrNull { (id, item) ->
+            id == coverId || item.properties.split(' ').any { it.equals("cover-image", ignoreCase = true) }
+        }?.value
+        declaredCover?.takeIf { it.mediaType.startsWith("image/", ignoreCase = true) }?.let { item ->
+            return resolveZipPath(basePath, decodePathHref(item.href))
+        }
+
+        getPagesFromDocument(document).forEach { page ->
+            val entryPath = resolveZipPath(basePath, decodePathHref(page.href))
+            if (page.mediaType.startsWith("image/", ignoreCase = true)) return entryPath
+
+            val pageDocument = getInputStream(entryPath)?.use { Jsoup.parse(it, null, "") } ?: return@forEach
+            val svgImage: Element? = pageDocument.selectFirst("svg > image")
+            val imageHref = pageDocument.selectFirst("img[src]")?.attr("src")
+                ?: svgImage?.let { image ->
+                    image.attr("xlink:href").ifBlank { image.attr("href") }.ifBlank { null }
+                }
+            if (imageHref != null) {
+                return resolveZipPath(getParentDirectory(entryPath), decodePathHref(imageHref))
+            }
+        }
+
+        return manifest.values
+            .firstOrNull { it.mediaType.startsWith("image/", ignoreCase = true) }
+            ?.let { resolveZipPath(basePath, decodePathHref(it.href)) }
+    }
+
     /**
      * Returns the path to the package document.
      */
@@ -56,16 +92,21 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
     }
 
     private fun getPagesFromDocument(document: Document): List<ManifestItem> {
-        val manifest = document.select("*|manifest > *|item")
+        val manifest = getManifestFromDocument(document)
+
+        return document.select("*|spine > *|itemref")
+            .mapNotNull { itemRef -> manifest[itemRef.attr("idref")] }
+    }
+
+    private fun getManifestFromDocument(document: Document): Map<String, ManifestItem> {
+        return document.select("*|manifest > *|item")
             .associate { item ->
                 item.attr("id") to ManifestItem(
                     href = item.attr("href"),
                     mediaType = item.attr("media-type"),
+                    properties = item.attr("properties"),
                 )
             }
-
-        return document.select("*|spine > *|itemref")
-            .mapNotNull { itemRef -> manifest[itemRef.attr("idref")] }
     }
 
     private fun getImagesFromPages(pages: List<ManifestItem>, packageHref: String): List<String> {
@@ -151,5 +192,6 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
     private data class ManifestItem(
         val href: String,
         val mediaType: String,
+        val properties: String = "",
     )
 }

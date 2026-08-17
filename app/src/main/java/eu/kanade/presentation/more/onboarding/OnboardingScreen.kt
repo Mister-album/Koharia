@@ -28,18 +28,20 @@ import tachiyomi.presentation.core.screens.InfoScreen
 fun OnboardingScreen(
     onComplete: () -> Unit,
     onAddServer: () -> Unit,
+    onAddLocalFolder: () -> Unit,
     onRestoreBackup: () -> Unit,
 ) {
     val slideDistance = rememberSlideDistance()
 
     var currentStep by rememberSaveable { mutableIntStateOf(0) }
-    val steps = remember(onAddServer, onRestoreBackup) {
+    val steps = remember(onAddServer, onAddLocalFolder, onRestoreBackup) {
         listOf(
             ThemeStep(),
             StorageStep(),
             PermissionStep(),
             GuidesStep(
                 onAddServer = onAddServer,
+                onAddLocalFolder = onAddLocalFolder,
                 onRestoreBackup = onRestoreBackup,
             ),
         )

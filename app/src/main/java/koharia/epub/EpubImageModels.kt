@@ -50,6 +50,8 @@ internal sealed interface EpubImageEvent {
 
     data class Saved(val uri: Uri) : EpubImageEvent
 
+    data object CoverUpdated : EpubImageEvent
+
     data class Error(val message: String?) : EpubImageEvent
 }
 

@@ -22,6 +22,8 @@ interface MangaRepository {
 
     fun getMangaBySourceIdAsFlow(sourceId: Long): Flow<List<Manga>>
 
+    suspend fun getMangaBySourceId(sourceId: Long): List<Manga>
+
     suspend fun getFavorites(): List<Manga>
 
     suspend fun getReadMangaNotInLibrary(): List<Manga>
@@ -43,4 +45,8 @@ interface MangaRepository {
     suspend fun updateAll(mangaUpdates: List<MangaUpdate>): Boolean
 
     suspend fun insertNetworkManga(manga: List<Manga>): List<Manga>
+
+    suspend fun deleteMangaBySourceId(sourceId: Long)
+
+    suspend fun deleteMangaById(mangaId: Long)
 }

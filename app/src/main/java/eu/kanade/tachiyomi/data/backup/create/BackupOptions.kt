@@ -12,7 +12,7 @@ data class BackupOptions(
     val history: Boolean = true,
     val readEntries: Boolean = true,
     val appSettings: Boolean = true,
-    val komgaSettings: Boolean = true,
+    val connectionSettings: Boolean = true,
     val privateSettings: Boolean = false,
 ) {
 
@@ -24,11 +24,11 @@ data class BackupOptions(
         history,
         readEntries,
         appSettings,
-        komgaSettings,
+        connectionSettings,
         privateSettings,
     )
 
-    fun canCreate() = libraryEntries || categories || appSettings || komgaSettings
+    fun canCreate() = libraryEntries || categories || appSettings || connectionSettings
 
     companion object {
         val libraryOptions = persistentListOf(
@@ -75,15 +75,15 @@ data class BackupOptions(
                 setter = { options, enabled -> options.copy(appSettings = enabled) },
             ),
             Entry(
-                label = MR.strings.pref_komga_server,
-                getter = BackupOptions::komgaSettings,
-                setter = { options, enabled -> options.copy(komgaSettings = enabled) },
+                label = MR.strings.pref_connection_settings,
+                getter = BackupOptions::connectionSettings,
+                setter = { options, enabled -> options.copy(connectionSettings = enabled) },
             ),
             Entry(
                 label = MR.strings.private_settings,
                 getter = BackupOptions::privateSettings,
                 setter = { options, enabled -> options.copy(privateSettings = enabled) },
-                enabled = { it.appSettings || it.komgaSettings },
+                enabled = { it.appSettings || it.connectionSettings },
             ),
         )
 
@@ -95,7 +95,7 @@ data class BackupOptions(
             history = array[4],
             readEntries = array[5],
             appSettings = array[6],
-            komgaSettings = array.getOrElse(8) { array.getOrElse(7) { true } },
+            connectionSettings = array.getOrElse(8) { array.getOrElse(7) { true } },
             privateSettings = array.getOrElse(9) { false },
         )
     }

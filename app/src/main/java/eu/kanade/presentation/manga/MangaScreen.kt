@@ -87,6 +87,7 @@ import eu.kanade.tachiyomi.ui.manga.MangaScreenModel
 import eu.kanade.tachiyomi.ui.reader.pageProgressPercent
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import koharia.connection.ConnectionChapterMetadata
+import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import tachiyomi.domain.chapter.model.Chapter
@@ -136,6 +137,7 @@ fun MangaScreen(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onEditSeriesDetailsClicked: (() -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
     onEditNotesClicked: () -> Unit,
@@ -188,6 +190,7 @@ fun MangaScreen(
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
             onDownloadActionClicked = onDownloadActionClicked,
+            onEditSeriesDetailsClicked = onEditSeriesDetailsClicked,
             onEditCategoryClicked = onEditCategoryClicked,
             onMigrateClicked = onMigrateClicked,
             onEditNotesClicked = onEditNotesClicked,
@@ -226,6 +229,7 @@ fun MangaScreen(
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
             onDownloadActionClicked = onDownloadActionClicked,
+            onEditSeriesDetailsClicked = onEditSeriesDetailsClicked,
             onEditCategoryClicked = onEditCategoryClicked,
             onMigrateClicked = onMigrateClicked,
             onEditNotesClicked = onEditNotesClicked,
@@ -274,6 +278,7 @@ private fun MangaScreenSmallImpl(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onEditSeriesDetailsClicked: (() -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
     onEditNotesClicked: () -> Unit,
@@ -352,7 +357,9 @@ private fun MangaScreenSmallImpl(
                 onChapterCoverDisplayModeChange = onChapterCoverDisplayModeChange,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
+                onClickEditSeriesDetails = onEditSeriesDetailsClicked,
                 onClickEditCategory = onEditCategoryClicked,
+                editCategoryAsLibraryShelf = state.source is ConnectionLibraryShelfAdapter,
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
                 onClickEditNotes = onEditNotesClicked,
@@ -546,6 +553,7 @@ fun MangaScreenLargeImpl(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onEditSeriesDetailsClicked: (() -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
     onEditNotesClicked: () -> Unit,
@@ -605,7 +613,9 @@ fun MangaScreenLargeImpl(
                 onChapterCoverDisplayModeChange = onChapterCoverDisplayModeChange,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
+                onClickEditSeriesDetails = onEditSeriesDetailsClicked,
                 onClickEditCategory = onEditCategoryClicked,
+                editCategoryAsLibraryShelf = state.source is ConnectionLibraryShelfAdapter,
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
                 onClickEditNotes = onEditNotesClicked,
@@ -1140,13 +1150,15 @@ private fun LazyGridScope.sharedChapterGridItems(
                 MissingChapterCountListItem(count = item.count)
             }
             is ChapterList.Item -> {
-                val coverData = MangaCoverModel(
-                    mangaId = item.chapter.id,
-                    sourceId = manga.source,
-                    isMangaFavorite = false,
-                    url = chapterThumbnailUrl(item.chapter.url),
-                    lastModified = item.chapter.dateUpload,
-                )
+                val coverData = chapterThumbnailUrl(item.chapter.url)?.let { thumbnailUrl ->
+                    MangaCoverModel(
+                        mangaId = item.chapter.id,
+                        sourceId = manga.source,
+                        isMangaFavorite = false,
+                        url = thumbnailUrl,
+                        lastModified = item.chapter.dateUpload,
+                    )
+                }
                 val onLongClick = {
                     onChapterSelected(item, !item.selected, true)
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
