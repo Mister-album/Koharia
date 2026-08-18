@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import androidx.compose.runtime.Composable
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.online.HttpSource
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
@@ -20,6 +22,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.take
@@ -42,6 +45,7 @@ import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 
@@ -420,9 +424,20 @@ class ConnectionArchitectureTest {
             providerManagedLibrary = true,
         )
         coEvery { source.filterLibraryEntries(listOf(indexed, stale)) } returns listOf(indexed)
-        val sourceManager = mockk<SourceManager> {
-            every { getCatalogueSources() } returns listOf(source)
-            every { get(42L) } returns source
+        val sourceManager = object : SourceManager {
+            override val isInitialized: StateFlow<Boolean> = MutableStateFlow(true)
+            override val catalogueSources: Flow<List<CatalogueSource>> = flowOf(listOf(source))
+
+            override fun get(sourceKey: Long): Source? = source.takeIf { sourceKey == 42L }
+
+            override fun getOrStub(sourceKey: Long): Source = get(sourceKey)
+                ?: error("Unknown source: $sourceKey")
+
+            override fun getOnlineSources(): List<HttpSource> = emptyList()
+
+            override fun getCatalogueSources(): List<CatalogueSource> = listOf(source)
+
+            override fun getStubSources(): List<StubSource> = emptyList()
         }
         val mangaRepository = mockk<MangaRepository> {
             coEvery { getMangaBySourceId(42L) } returns listOf(indexed, stale)

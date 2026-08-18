@@ -5,6 +5,8 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.connection.ConnectionPageList
+import koharia.connection.ConnectionPageMetadata
 import koharia.komga.api.KomgaApiClient
 import koharia.komga.api.dto.AuthorDto
 import koharia.komga.api.dto.BookDto
@@ -269,27 +271,49 @@ class KomgaRepository(
     fun pageListRequest(chapter: SChapter, cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default) =
         apiClient.pageListRequest(chapter.url, cachePolicy)
 
-    fun pageListParse(response: okhttp3.Response): List<Page> =
+    fun pageListParse(response: okhttp3.Response): ConnectionPageList =
         response.use {
-            apiClient.parse<List<PageDto>>(it).map { page ->
-                val url = "${response.request.url}/${page.number}" +
-                    if (page.mediaType !in SUPPORTED_IMAGE_TYPES) "?convert=png" else ""
-                Page(page.number, imageUrl = url)
-            }
+            val pageDtos = apiClient.parse<List<PageDto>>(it)
+            ConnectionPageList(
+                pages = pageDtos.map { page ->
+                    val url = "${response.request.url}/${page.number}" +
+                        if (page.mediaType !in SUPPORTED_IMAGE_TYPES) "?convert=png" else ""
+                    Page(page.number, imageUrl = url)
+                },
+                metadata = pageDtos.associate { page ->
+                    page.number to ConnectionPageMetadata(
+                        width = page.width,
+                        height = page.height,
+                        sizeBytes = page.sizeBytes,
+                        mediaType = page.mediaType,
+                    )
+                },
+            )
         }
 
     suspend fun fetchFilterOptions(forceRefresh: Boolean = false): KomgaFilterOptions = withIOContext {
         val cachePolicy = if (forceRefresh) KomgaCachePolicy.NetworkFirst else KomgaCachePolicy.Default
-        val libraryOrders = apiClient.getLibraryOrders(cachePolicy)
-        KomgaFilterOptions(
-            libraries = apiClient.getLibraries(cachePolicy)
-                .sortedBy { libraryOrders[it.id] ?: Int.MAX_VALUE },
-            collections = apiClient.getCollections(cachePolicy),
-            genres = apiClient.getGenres(cachePolicy),
-            tags = apiClient.getTags(cachePolicy),
-            publishers = apiClient.getPublishers(cachePolicy),
-            authors = apiClient.getAuthors(cachePolicy),
-        )
+        coroutineScope {
+            // These endpoints are independent. Keep the library-order request separate because
+            // it only affects local sorting after the library list has been fetched.
+            val libraryOrders = async { apiClient.getLibraryOrders(cachePolicy) }
+            val libraries = async { apiClient.getLibraries(cachePolicy) }
+            val collections = async { apiClient.getCollections(cachePolicy) }
+            val genres = async { apiClient.getGenres(cachePolicy) }
+            val tags = async { apiClient.getTags(cachePolicy) }
+            val publishers = async { apiClient.getPublishers(cachePolicy) }
+            val authors = async { apiClient.getAuthors(cachePolicy) }
+
+            val orders = libraryOrders.await()
+            KomgaFilterOptions(
+                libraries = libraries.await().sortedBy { orders[it.id] ?: Int.MAX_VALUE },
+                collections = collections.await(),
+                genres = genres.await(),
+                tags = tags.await(),
+                publishers = publishers.await(),
+                authors = authors.await(),
+            )
+        }
     }
 
     private fun BookDto.toChapter(

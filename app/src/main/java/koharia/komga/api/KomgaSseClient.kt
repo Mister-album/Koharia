@@ -26,6 +26,7 @@ import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import org.json.JSONObject
 import tachiyomi.core.common.util.system.logcat
+import java.util.concurrent.TimeUnit
 
 class KomgaSseClient(
     private val context: Context,
@@ -49,6 +50,14 @@ class KomgaSseClient(
     private var progressSyncJob: Job? = null
     private var connectionGeneration = 0L
     private var activeTarget: KomgaSseConnectionTarget? = null
+    private val eventSourceClient by lazy {
+        // Keep the shared connection pool/interceptors, but do not apply the ordinary request
+        // timeouts to a server-sent event stream that is expected to stay open indefinitely.
+        networkHelper.client.newBuilder()
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+    }
 
     fun start(scope: CoroutineScope) {
         if (isStarted) return
@@ -142,7 +151,7 @@ class KomgaSseClient(
 
         logcat(LogPriority.INFO) { "Komga SSE connecting to $baseUrl/api/v1/sse/v1/events" }
 
-        val factory = EventSources.createFactory(networkHelper.client)
+        val factory = EventSources.createFactory(eventSourceClient)
         eventSource = factory.newEventSource(
             request,
             object : EventSourceListener() {

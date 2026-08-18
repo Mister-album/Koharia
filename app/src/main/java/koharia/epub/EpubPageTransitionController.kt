@@ -64,6 +64,7 @@ internal class EpubPageTransitionController(
     private var animator: ValueAnimator? = null
     private var timeoutJob: Job? = null
     private val pendingTurns = ArrayDeque<PendingTurn>(MAX_PENDING_TURNS)
+    private var skipPendingAnimations = false
     private val coverShadow = PageCoverShadowDrawable()
     private var coverShadowAttached = false
 
@@ -80,6 +81,10 @@ internal class EpubPageTransitionController(
         if (active != null) {
             if (pendingTurns.size < MAX_PENDING_TURNS) {
                 pendingTurns.addLast(PendingTurn(forward, origin.normalized()))
+                // A second input while a transition is running is a strong signal that the
+                // reader is fast-scrolling. Keep the first visual turn, then catch up queued
+                // turns without starting another serial animation for each tap.
+                skipPendingAnimations = true
             }
             return true
         }
@@ -158,6 +163,7 @@ internal class EpubPageTransitionController(
     fun cancel() {
         generation++
         pendingTurns.clear()
+        skipPendingAnimations = false
         timeoutJob?.cancel()
         timeoutJob = null
         animator?.cancel()
@@ -306,6 +312,18 @@ internal class EpubPageTransitionController(
     }
 
     private fun drainPending() {
+        if (pendingTurns.isEmpty()) return
+        if (skipPendingAnimations) {
+            val pending = pendingTurns.toList()
+            pendingTurns.clear()
+            skipPendingAnimations = false
+            val postedGeneration = generation
+            root.post {
+                if (generation != postedGeneration || !fragment.isAdded || fragment.view == null) return@post
+                pending.forEach { turn -> navigate(turn.forward, false) }
+            }
+            return
+        }
         val pending = pendingTurns.removeFirstOrNull() ?: return
         val postedGeneration = generation
         root.post {
@@ -390,7 +408,7 @@ internal class EpubPageTransitionController(
     }
 
     companion object {
-        private const val MAX_PENDING_TURNS = 3
+        private const val MAX_PENDING_TURNS = 24
         private const val PAGE_READY_TIMEOUT_MS = 1_200L
         private const val NAVIGATION_SETTLE_TIMEOUT_MS = 3_800L
         private const val ARGB_BYTES = 4L

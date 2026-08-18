@@ -15,19 +15,19 @@ class PageLoadGateTest {
         assertTrue(gate.isActive(7))
         assertFalse(gate.isActive(8))
         assertEquals(emptyList<Int>(), gate.onPageDisplayed(8, 20))
-        assertEquals(listOf(8, 9, 10, 11), gate.onPageDisplayed(7, 20))
+        assertEquals(listOf(8), gate.onPageDisplayed(7, 20))
     }
 
     @Test
     fun `selection advances prefetch window after first page is displayed`() {
         val gate = PageLoadGate(preloadSize = 4)
         assertEquals(emptyList<Int>(), gate.activate(2, 20).prefetchIndexes)
-        assertEquals(listOf(3, 4, 5, 6), gate.onPageDisplayed(2, 20))
+        assertEquals(listOf(3), gate.onPageDisplayed(2, 20))
 
         val selection = gate.activate(5, 20)
 
         assertTrue(selection.changed)
-        assertEquals(listOf(6, 7, 8, 9), selection.prefetchIndexes)
+        assertEquals(listOf(6), selection.prefetchIndexes)
     }
 
     @Test
@@ -49,8 +49,8 @@ class PageLoadGateTest {
 
         val selection = gate.activate(9, 20)
 
-        assertEquals(listOf(8, 7, 6, 5), selection.prefetchIndexes)
-        assertEquals(listOf(8, 7, 6, 5), gate.onPageDisplayed(9, 20))
+        assertEquals(listOf(8), selection.prefetchIndexes)
+        assertEquals(listOf(8), gate.onPageDisplayed(9, 20))
     }
 
     @Test
@@ -74,7 +74,7 @@ class PageLoadGateTest {
         assertTrue(gate.isActive(6))
         assertTrue(gate.isActive(7))
         assertEquals(emptyList<Int>(), gate.onPagesDisplayed(setOf(6), 20))
-        assertEquals(listOf(8, 9, 10, 11), gate.onPagesDisplayed(setOf(6, 7), 20))
+        assertEquals(listOf(8, 9), gate.onPagesDisplayed(setOf(6, 7), 20))
     }
 
     @Test
@@ -85,7 +85,7 @@ class PageLoadGateTest {
 
         val activation = gate.activate(setOf(8, 9), logicalPageIndex = 9, pageCount = 20)
 
-        assertEquals(listOf(7, 6, 5, 4), activation.prefetchIndexes)
+        assertEquals(listOf(7, 6), activation.prefetchIndexes)
     }
 
     @Test
@@ -96,6 +96,6 @@ class PageLoadGateTest {
         gate.activate(setOf(8, 9), logicalPageIndex = 9, pageCount = 20)
 
         assertEquals(emptyList<Int>(), gate.onPagesDisplayed(setOf(2, 3), 20))
-        assertEquals(listOf(10, 11, 12, 13), gate.onPagesDisplayed(setOf(8, 9), 20))
+        assertEquals(listOf(10, 11), gate.onPagesDisplayed(setOf(8, 9), 20))
     }
 }

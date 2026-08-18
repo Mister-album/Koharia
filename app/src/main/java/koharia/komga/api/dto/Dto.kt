@@ -188,6 +188,9 @@ data class PageDto(
     val number: Int,
     val fileName: String = "",
     val mediaType: String = "",
+    val width: Int? = null,
+    val height: Int? = null,
+    val sizeBytes: Long? = null,
 )
 
 @Serializable

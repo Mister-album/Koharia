@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.saveTo
 import koharia.connection.ConnectionChapterMetadata
+import koharia.connection.ConnectionPageList
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import okhttp3.Response
@@ -110,7 +111,7 @@ class ChapterCache(
      * @param chapter the chapter.
      * @return the list of pages.
      */
-    fun getPageListFromCache(chapter: Chapter): List<Page>? {
+    fun getPageListFromCache(chapter: Chapter): ConnectionPageList? {
         // Get the key for the chapter.
         val key = DiskUtil.hashKeyForDisk(getKey(chapter))
 
@@ -121,7 +122,11 @@ class ChapterCache(
         } ?: return null
 
         return try {
-            snapshot.use { json.decodeFromString(it.getString(0)) }
+            snapshot.use { cachedValue ->
+                val raw = cachedValue.getString(0)
+                runCatching { json.decodeFromString<ConnectionPageList>(raw) }
+                    .getOrElse { ConnectionPageList(json.decodeFromString<List<Page>>(raw)) }
+            }
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) { "Failed to read cached page list; discarding it" }
             runCatching { diskCache.remove(key) }
@@ -133,11 +138,11 @@ class ChapterCache(
      * Add page list to disk cache.
      *
      * @param chapter the chapter.
-     * @param pages list of pages.
+     * @param pageList pages and optional provider metadata.
      */
-    fun putPageListToCache(chapter: Chapter, pages: List<Page>) {
+    fun putPageListToCache(chapter: Chapter, pageList: ConnectionPageList) {
         // Convert list of pages to json string.
-        val cachedValue = json.encodeToString(pages)
+        val cachedValue = json.encodeToString(pageList)
 
         // Initialize the editor (edits the values for an entry).
         var editor: DiskLruCache.Editor? = null
@@ -153,7 +158,6 @@ class ChapterCache(
                 it.flush()
             }
 
-            diskCache.flush()
             editor.commit()
             editor.abortUnlessCommitted()
         } catch (e: Exception) {
@@ -218,7 +222,6 @@ class ChapterCache(
             // Get OutputStream and write image with Okio.
             response.body.source().saveTo(editor.newOutputStream(0))
 
-            diskCache.flush()
             editor.commit()
         } finally {
             response.body.close()

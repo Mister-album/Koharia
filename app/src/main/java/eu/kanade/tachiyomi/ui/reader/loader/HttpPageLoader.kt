@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import koharia.connection.ConnectionPageAdapter
+import koharia.connection.ConnectionPageList
+import koharia.connection.ConnectionPageMetadata
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -47,10 +49,11 @@ internal class HttpPageLoader(
     /** A priority queue whose concurrency is selected by the connection provider. */
     private val queue = PriorityBlockingQueue<PriorityPage>()
 
-    private val pageLoadGate = PageLoadGate(preloadSize = 4)
+    private val pageLoadGate = PageLoadGate(preloadSize = 2)
     private val schedulerLock = Any()
     private val scheduledPages = Collections.newSetFromMap(IdentityHashMap<ReaderPage, Boolean>())
     private val activeLoads = mutableSetOf<ActivePageLoad>()
+    private var cachedPageList: ConnectionPageList? = null
 
     private val domainChapter
         get() = checkNotNull(chapter.chapter.toDomainChapter())
@@ -130,11 +133,12 @@ internal class HttpPageLoader(
      * otherwise fallbacks to network.
      */
     override suspend fun getPages(): List<ReaderPage> {
-        return loadPageList(forceNetwork = false).toReaderPages()
+        return loadPageList(forceNetwork = false).also { cachedPageList = it }.toReaderPages()
     }
 
     override suspend fun refreshPages(): List<ReaderPage> {
         return loadPageList(forceNetwork = true)
+            .also { cachedPageList = it }
             .toReaderPages()
             .onEach { it.chapter = chapter }
     }
@@ -143,14 +147,14 @@ internal class HttpPageLoader(
         chapterCache.removePageListFromCache(domainChapter)
     }
 
-    private suspend fun loadPageList(forceNetwork: Boolean): List<Page> {
+    private suspend fun loadPageList(forceNetwork: Boolean): ConnectionPageList {
         val chapterSnapshot = domainChapter
         if (!forceNetwork) {
             chapterCache.getPageListFromCache(chapterSnapshot)?.let { cachedPages ->
                 logcat {
                     "MangaStartup: page list source=chapter-cache " +
                         "chapterId=${chapter.chapter.id} chapterName=${chapter.chapter.name} " +
-                        "chapterUrl=${chapter.chapter.url} pages=${cachedPages.size}"
+                        "chapterUrl=${chapter.chapter.url} pages=${cachedPages.pages.size}"
                 }
                 return cachedPages.withPublicationVersion(chapterSnapshot.memo)
             }
@@ -163,7 +167,7 @@ internal class HttpPageLoader(
         }
         val sourcePages = try {
             connectionPageAdapter?.getConnectionPageList(chapter.chapter, forceNetwork)
-                ?: source.getPageList(chapter.chapter)
+                ?: ConnectionPageList(source.getPageList(chapter.chapter))
         } catch (error: Exception) {
             if (error is CancellationException || forceNetwork || connectionPageAdapter == null) throw error
             logcat {
@@ -173,7 +177,7 @@ internal class HttpPageLoader(
         }.withPublicationVersion(chapterSnapshot.memo)
         logcat {
             "MangaStartup: page list request complete forceNetwork=$forceNetwork " +
-                "chapterId=${chapter.chapter.id} pages=${sourcePages.size}"
+                "chapterId=${chapter.chapter.id} pages=${sourcePages.pages.size}"
         }
         pageListCacheWriteScope.launch {
             chapterCache.putPageListToCache(chapterSnapshot, sourcePages)
@@ -181,13 +185,19 @@ internal class HttpPageLoader(
         return sourcePages
     }
 
-    private fun List<Page>.withPublicationVersion(memo: kotlinx.serialization.json.JsonObject): List<Page> {
-        return connectionPageAdapter?.decoratePageImageUrls(this, memo) ?: this
+    private fun ConnectionPageList.withPublicationVersion(
+        memo: kotlinx.serialization.json.JsonObject,
+    ): ConnectionPageList {
+        return copy(
+            pages = connectionPageAdapter?.decoratePageImageUrls(pages, memo) ?: pages,
+        )
     }
 
-    private fun List<Page>.toReaderPages(): List<ReaderPage> {
-        return mapIndexed { index, page ->
-            ReaderPage(index, page.url, page.imageUrl)
+    private fun ConnectionPageList.toReaderPages(): List<ReaderPage> {
+        return pages.mapIndexed { index, page ->
+            ReaderPage(index, page.url, page.imageUrl).also { readerPage ->
+                metadata[page.index]?.toSpreadInfo()?.let { readerPage.spreadInfo = it }
+            }
         }
     }
 
@@ -210,7 +220,7 @@ internal class HttpPageLoader(
         preemptLoadsOutside(activeSet, reason = "active-pages-changed")
         synchronized(schedulerLock) {
             removeQueuedPagesLocked { queued ->
-                queued.priority == PriorityPage.ADJACENT ||
+                (queued.priority == PriorityPage.ADJACENT && queued.page !in activeSet) ||
                     (queued.priority == PriorityPage.DEFAULT && queued.page !in activeSet)
             }
             activePages.forEach { enqueuePageLocked(it, PriorityPage.DEFAULT) }
@@ -240,7 +250,8 @@ internal class HttpPageLoader(
         if (activeIndexes.any { !pageLoadGate.isActive(it) }) return
         val prefetchIndexes = pageLoadGate.onPagesDisplayed(activeIndexes, chapterPages.size)
         synchronized(schedulerLock) {
-            removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT }
+            val prefetchPages = prefetchIndexes.mapTo(linkedSetOf()) { chapterPages[it] }
+            removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT && it.page !in prefetchPages }
             enqueuePrefetchWindowLocked(chapterPages, prefetchIndexes)
         }
         if (prefetchIndexes.isNotEmpty()) {
@@ -249,9 +260,16 @@ internal class HttpPageLoader(
     }
 
     private fun preemptLoadsOutside(activePages: Set<ReaderPage>, reason: String) {
+        val firstActiveIndex = activePages.minOfOrNull { it.index } ?: return
+        val lastActiveIndex = activePages.maxOfOrNull { it.index } ?: return
+        val maxDistance = activePages.size * 2
         val staleLoads = synchronized(schedulerLock) {
             activeLoads.filter {
-                it.priority != PriorityPage.RETRY && it.page !in activePages && it.job.isActive
+                it.priority != PriorityPage.RETRY && it.page !in activePages && it.job.isActive &&
+                    (
+                        it.page.index < firstActiveIndex - maxDistance ||
+                            it.page.index > lastActiveIndex + maxDistance
+                        )
             }
         }
         staleLoads.forEach { load ->
@@ -264,9 +282,12 @@ internal class HttpPageLoader(
     }
 
     private fun preemptPrefetchFor(page: ReaderPage, reason: String) {
+        val activePages = chapter.pages
+            ?.filterTo(linkedSetOf()) { pageLoadGate.isActive(it.index) }
+            .orEmpty()
         val prefetchLoads = synchronized(schedulerLock) {
             activeLoads.filter {
-                it.priority == PriorityPage.ADJACENT && it.page !== page && it.job.isActive
+                it.priority == PriorityPage.ADJACENT && it.page !in activePages && it.job.isActive
             }
         }
         prefetchLoads.forEach { load ->
@@ -340,7 +361,10 @@ internal class HttpPageLoader(
         val queuedPage = if (page.status == Page.State.Queue && pageLoadGate.isActive(page.index)) {
             preemptPrefetchFor(page, reason = "active-page-load")
             synchronized(schedulerLock) {
-                removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT }
+                val activePages = chapter.pages
+                    ?.filterTo(linkedSetOf()) { pageLoadGate.isActive(it.index) }
+                    .orEmpty()
+                removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT && it.page !in activePages }
                 enqueuePageLocked(page, PriorityPage.DEFAULT)
             }
         } else {
@@ -381,7 +405,9 @@ internal class HttpPageLoader(
         // Cache current page list progress for online chapters to allow a faster reopen
         chapter.pages?.let { pages ->
             val chapterSnapshot = domainChapter
-            val pagesToSave = pages.map { Page(it.index, it.url, it.imageUrl) }
+            val pagesToSave = cachedPageList ?: ConnectionPageList(
+                pages = pages.map { Page(it.index, it.url, it.imageUrl) },
+            )
             pageListCacheWriteScope.launch {
                 try {
                     chapterCache.putPageListToCache(chapterSnapshot, pagesToSave)
@@ -446,6 +472,23 @@ private data class ActivePageLoad(
     val priority: Int,
     val job: Job,
 )
+
+private fun ConnectionPageMetadata.toSpreadInfo(): ReaderPage.SpreadInfo? {
+    val pageWidth = width?.takeIf { it > 0 } ?: return null
+    val pageHeight = height?.takeIf { it > 0 } ?: return null
+    val staticImage = mediaType.equals("image/jpeg", ignoreCase = true) ||
+        mediaType.equals("image/png", ignoreCase = true)
+    if (!staticImage) return ReaderPage.SpreadInfo(ReaderPage.SpreadKind.UNKNOWN, pageWidth, pageHeight)
+    return ReaderPage.SpreadInfo(
+        kind = if (pageWidth > pageHeight) {
+            ReaderPage.SpreadKind.WIDE
+        } else {
+            ReaderPage.SpreadKind.PAIRABLE
+        },
+        width = pageWidth,
+        height = pageHeight,
+    )
+}
 
 /**
  * Data class used to keep ordering of pages in order to maintain priority.

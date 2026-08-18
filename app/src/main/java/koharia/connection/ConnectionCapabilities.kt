@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -30,10 +31,24 @@ interface ConnectionBrowseAdapter {
 interface ConnectionPageAdapter {
     val pageLoadConcurrency: Int
 
-    suspend fun getConnectionPageList(chapter: SChapter, forceNetwork: Boolean): List<Page>
+    suspend fun getConnectionPageList(chapter: SChapter, forceNetwork: Boolean): ConnectionPageList
 
     fun decoratePageImageUrls(pages: List<Page>, chapterMemo: JsonObject): List<Page> = pages
 }
+
+@Serializable
+data class ConnectionPageMetadata(
+    val width: Int? = null,
+    val height: Int? = null,
+    val sizeBytes: Long? = null,
+    val mediaType: String? = null,
+)
+
+@Serializable
+data class ConnectionPageList(
+    val pages: List<Page>,
+    val metadata: Map<Int, ConnectionPageMetadata> = emptyMap(),
+)
 
 /** Provides a source-owned local file for the reader without routing it through downloads. */
 interface ConnectionLocalFileAdapter {
