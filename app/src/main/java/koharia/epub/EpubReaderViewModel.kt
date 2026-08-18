@@ -39,6 +39,8 @@ import koharia.epub.model.EpubOpenRequest
 import koharia.epub.model.EpubSearchResult
 import koharia.epub.model.EpubTocEntry
 import koharia.epub.model.RemotePublicationRef
+import koharia.epub.progress.EpubRemoteProgressDecision
+import koharia.epub.progress.EpubRemoteProgressPolicy
 import koharia.epub.service.EpubPublicationResolver
 import koharia.epub.session.EpubReaderSession
 import koharia.epub.session.EpubReaderSessionRepository
@@ -202,6 +204,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var positionsRefreshStarted = false
     private var lastPrefetchedHref: String? = null
     private var remoteProgressChecked = false
+    private var remoteProgressWriteAllowed = false
+    private var remoteProgressWriteBaseline: Locator? = null
+    private var localProgressUpdatedAtSessionOpen: Long? = null
     private var initiallyAcceptedRemoteLocator: Locator? = null
     private var initiallyAcceptedRemoteModifiedAt: Date? = null
     private var layoutChangeRevision = 0L
@@ -260,7 +265,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
         initiallyAcceptedRemoteModifiedAt = null
         layoutChangeRevision += 1
         this.preserveLocalProgressAfterLayoutChange = preserveLocalProgressAfterLayoutChange
-        remoteProgressChecked = preserveLocalProgressAfterLayoutChange
+        if (!preserveLocalProgressAfterLayoutChange) {
+            remoteProgressChecked = false
+            remoteProgressWriteAllowed = false
+            remoteProgressWriteBaseline = null
+            localProgressUpdatedAtSessionOpen = null
+        }
         this.mangaId = mangaId
         this.chapterId = chapterId
         mutableState.update {
@@ -451,6 +461,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         }
                         .getOrNull()
                 }
+                localProgressUpdatedAtSessionOpen = localProgress?.updatedAt?.time
                 val remoteProgress = remoteCache?.let { cache ->
                     val locator = cache.locatorJson
                         ?.let { json -> runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull() }
@@ -594,11 +605,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         )
                         currentProgress = syncedProgress
                         upsertEpubProgress.await(syncedProgress)
-                    } else if (remoteBookUrl != null && localProgress != null && persistedLocator != null &&
-                        epubReaderPreferences.syncRemoteProgression.get() &&
-                        (remoteProgress == null || localProgress.updatedAt.time > remoteProgress.modifiedAt.time)
-                    ) {
-                        syncPersistedProgress(localProgress, persistedLocator)
                     }
                 }
             }
@@ -1125,8 +1131,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
         if (remoteProgressChecked || isIncognito() || !epubReaderPreferences.syncRemoteProgression.get()) return
         val chapter = currentChapter ?: return
         val progressAdapter = currentEpubProgressAdapter ?: return
-        val checkLayoutRevision = layoutChangeRevision
         val localLocatorAtCheck = latestLocator
+        val checkStartedAt = System.currentTimeMillis()
         remoteProgressChecked = true
         viewModelScope.launch {
             val remote = runCatching {
@@ -1136,10 +1142,32 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     "Failed to refresh EPUB remote progress for chapterId=$chapterId"
                 }
             }.getOrNull() ?: return@launch
+            if (!EpubRemoteProgressPolicy.isFreshResult(checkStartedAt, remote.checkedAt.time)) {
+                logcat(LogPriority.WARN) {
+                    "Keeping EPUB remote writes blocked after stale refresh result chapterId=$chapterId " +
+                        "checkedAt=${remote.checkedAt.time} startedAt=$checkStartedAt"
+                }
+                return@launch
+            }
             val locator = remote.locatorJson
                 ?.let { json -> runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull() }
-                ?: return@launch
-            val modifiedAt = remote.modifiedAt ?: return@launch
+            val modifiedAt = remote.modifiedAt
+            if (locator == null || modifiedAt == null) {
+                remoteProgressWriteAllowed = true
+                val currentLocator = latestLocator
+                val localChangedDuringCheck = localLocatorAtCheck != null &&
+                    !localLocatorAtCheck.isSamePaginationLocation(currentLocator)
+                if (localChangedDuringCheck && currentLocator != null && currentProgress != null) {
+                    remoteProgressWriteBaseline = null
+                    syncPersistedProgress(checkNotNull(currentProgress), currentLocator)
+                } else {
+                    remoteProgressWriteBaseline = currentLocator
+                    logcat(LogPriority.DEBUG) {
+                        "Confirmed no remote EPUB progress; waiting for local navigation before upload chapterId=$chapterId"
+                    }
+                }
+                return@launch
+            }
             val acceptedRemoteLocator = initiallyAcceptedRemoteLocator
             if (acceptedRemoteLocator != null && locator.isSamePaginationLocation(acceptedRemoteLocator)) {
                 val acceptedRemoteModifiedAt = initiallyAcceptedRemoteModifiedAt
@@ -1165,42 +1193,68 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     "Ignoring already accepted initial EPUB remote progress chapterId=$chapterId " +
                         "remote=${locator.debugProgress()} current=${latestLocator.debugProgress()}"
                 }
-                return@launch
-            }
-            val localUpdatedAt = currentProgress?.updatedAt?.time
-            if (localUpdatedAt != null && modifiedAt.time <= localUpdatedAt) {
-                logcat(LogPriority.DEBUG) {
-                    "Ignoring stale EPUB remote progress chapterId=$chapterId " +
-                        "remoteModified=${modifiedAt.time} localUpdated=$localUpdatedAt"
+                remoteProgressWriteAllowed = true
+                val currentLocator = latestLocator
+                val localChangedDuringCheck = localLocatorAtCheck != null &&
+                    !localLocatorAtCheck.isSamePaginationLocation(currentLocator)
+                if (localChangedDuringCheck && currentLocator != null && currentProgress != null) {
+                    remoteProgressWriteBaseline = null
+                    syncPersistedProgress(checkNotNull(currentProgress), currentLocator)
+                } else {
+                    remoteProgressWriteBaseline = currentLocator
                 }
                 return@launch
             }
-            if (localLocatorAtCheck != null &&
-                !localLocatorAtCheck.isSamePaginationLocation(latestLocator)
-            ) {
-                logcat(LogPriority.DEBUG) {
-                    "Ignoring EPUB remote progress after local navigation chapterId=$chapterId"
-                }
-                return@launch
-            }
-            if (preserveLocalProgressAfterLayoutChange || checkLayoutRevision != layoutChangeRevision) {
-                logcat(LogPriority.DEBUG) {
-                    "Ignoring EPUB remote progress conflict after local layout change " +
-                        "chapterId=$chapterId remoteModified=${modifiedAt.time}"
-                }
-                return@launch
-            }
-            if (locator.isSamePaginationLocation(latestLocator)) return@launch
-            mutableState.update {
-                it.copy(
-                    serverTimeOffsetMinutes = remote.serverDate?.serverTimeOffsetMinutes(),
-                    remoteProgressConflict = EpubRemoteProgressConflict(
-                        locatorJson = locator.toJSON().toString(),
-                        progressionPercent = locator.progressionPercent(),
-                        sectionTitle = locator.title,
-                        modifiedAtMillis = modifiedAt.time,
-                    ),
+            val currentLocator = latestLocator
+            val localChangedDuringCheck = localLocatorAtCheck != null &&
+                !localLocatorAtCheck.isSamePaginationLocation(currentLocator)
+            when (
+                EpubRemoteProgressPolicy.decide(
+                    localUpdatedAtMillis = localProgressUpdatedAtSessionOpen,
+                    remoteModifiedAtMillis = modifiedAt.time,
+                    sameLocation = locator.isSamePaginationLocation(currentLocator),
+                    localChangedDuringCheck = localChangedDuringCheck,
                 )
+            ) {
+                EpubRemoteProgressDecision.SAME_LOCATION -> {
+                    val acceptedLocator = currentLocator ?: locator
+                    val syncedProgress = buildProgress(
+                        locator = acceptedLocator,
+                        updatedAt = modifiedAt,
+                        lastSyncedAt = modifiedAt,
+                    )
+                    currentProgress = syncedProgress
+                    upsertEpubProgress.await(syncedProgress)
+                    remoteProgressWriteBaseline = acceptedLocator
+                    remoteProgressWriteAllowed = true
+                }
+                EpubRemoteProgressDecision.KEEP_LOCAL -> {
+                    remoteProgressWriteBaseline = null
+                    remoteProgressWriteAllowed = true
+                    val localLocator = currentLocator ?: return@launch
+                    val localProgress = currentProgress ?: return@launch
+                    val progressToSync = if (localChangedDuringCheck) {
+                        localProgress
+                    } else {
+                        localProgressUpdatedAtSessionOpen
+                            ?.let { localProgress.copy(updatedAt = Date(it)) }
+                            ?: localProgress
+                    }
+                    syncPersistedProgress(progressToSync, localLocator)
+                }
+                EpubRemoteProgressDecision.KEEP_REMOTE -> {
+                    mutableState.update {
+                        it.copy(
+                            serverTimeOffsetMinutes = remote.serverDate?.serverTimeOffsetMinutes(),
+                            remoteProgressConflict = EpubRemoteProgressConflict(
+                                locatorJson = locator.toJSON().toString(),
+                                progressionPercent = locator.progressionPercent(),
+                                sectionTitle = locator.title,
+                                modifiedAtMillis = modifiedAt.time,
+                            ),
+                        )
+                    }
+                }
             }
         }
     }
@@ -1208,7 +1262,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
     fun onLayoutPreferencesChanged() {
         layoutChangeRevision += 1
         preserveLocalProgressAfterLayoutChange = true
-        remoteProgressChecked = true
         mutableState.update { state ->
             state.copy(remoteProgressConflict = null)
         }
@@ -1219,12 +1272,32 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun acceptRemoteProgress(): Locator? {
         val conflict = mutableState.value.remoteProgressConflict ?: return null
+        val locator = runCatching { Locator.fromJSON(JSONObject(conflict.locatorJson)) }.getOrNull() ?: return null
         mutableState.update { it.copy(remoteProgressConflict = null) }
-        return runCatching { Locator.fromJSON(JSONObject(conflict.locatorJson)) }.getOrNull()
+        val modifiedAt = Date(conflict.modifiedAtMillis)
+        val syncedProgress = buildProgress(
+            locator = locator,
+            updatedAt = modifiedAt,
+            lastSyncedAt = modifiedAt,
+        )
+        currentProgress = syncedProgress
+        remoteProgressWriteBaseline = locator
+        remoteProgressWriteAllowed = true
+        viewModelScope.launch {
+            upsertEpubProgress.await(syncedProgress)
+        }
+        return locator
     }
 
     fun dismissRemoteProgressConflict() {
         mutableState.update { it.copy(remoteProgressConflict = null) }
+        remoteProgressWriteBaseline = null
+        remoteProgressWriteAllowed = true
+        val localProgress = currentProgress ?: return
+        val localLocator = latestLocator ?: return
+        viewModelScope.launch {
+            syncPersistedProgress(localProgress, localLocator)
+        }
     }
 
     fun invalidatePaginationDisplay() {
@@ -1952,6 +2025,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         localProgress: EpubProgress,
         locator: Locator,
     ) {
+        if (!remoteProgressWriteAllowed) return
         val progressAdapter = currentEpubProgressAdapter ?: return
         val bookUrl = localProgress.bookUrl ?: currentBookUrl ?: return
         val positions = authoritativePublicationPositions() ?: return
@@ -1978,11 +2052,17 @@ class EpubReaderViewModel @JvmOverloads constructor(
     ) = progressPersistenceMutex.withLock {
         val chapterId = chapterId.takeIf { it > 0 } ?: return@withLock
         mangaId.takeIf { it > 0 } ?: return@withLock
-        val now = Date()
+        val previousProgress = currentProgress
+        val previousLocator = previousProgress?.toLocatorOrNull()
+        val progressUpdatedAt = if (previousLocator != null && locator.isSamePaginationLocation(previousLocator)) {
+            previousProgress.updatedAt
+        } else {
+            Date()
+        }
         val progress = buildProgress(
             locator = locator,
-            updatedAt = now,
-            lastSyncedAt = currentProgress?.lastSyncedAt,
+            updatedAt = progressUpdatedAt,
+            lastSyncedAt = previousProgress?.lastSyncedAt,
         )
         upsertEpubProgress.await(progress)
         currentProgress = progress
@@ -1995,7 +2075,10 @@ class EpubReaderViewModel @JvmOverloads constructor(
         markChapterCompletedIfNeeded(locator)
 
         val bookUrl = progress.bookUrl
-        if (bookUrl != null && epubReaderPreferences.syncRemoteProgression.get()) {
+        if (bookUrl != null && epubReaderPreferences.syncRemoteProgression.get() && remoteProgressWriteAllowed) {
+            val writeBaseline = remoteProgressWriteBaseline
+            if (writeBaseline != null && locator.isSamePaginationLocation(writeBaseline)) return@withLock
+            remoteProgressWriteBaseline = null
             val progressAdapter = currentEpubProgressAdapter ?: return@withLock
             val positions = positionsOverride ?: authoritativePublicationPositions() ?: return@withLock
             runCatching {
@@ -2003,9 +2086,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     resourceId = bookUrl,
                     locator = locator,
                     positions = positions,
-                    modifiedAt = now,
+                    modifiedAt = progressUpdatedAt,
                 )
-                val syncedProgress = progress.copy(lastSyncedAt = now)
+                val syncedProgress = progress.copy(lastSyncedAt = progressUpdatedAt)
                 upsertEpubProgress.await(syncedProgress)
                 currentProgress = syncedProgress
             }.onFailure { error ->

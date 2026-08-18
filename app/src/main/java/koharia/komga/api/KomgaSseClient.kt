@@ -8,8 +8,10 @@ import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.networkStateFlow
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -43,9 +45,10 @@ class KomgaSseClient(
     private var isStarted = false
     private var lastSkippedReason: String? = null
     private val progressSyncLock = Any()
-    private val pendingBookIds = linkedSetOf<String>()
-    private var pendingFullSync = false
+    private val progressSyncQueue = KomgaSseProgressSyncQueue()
     private var progressSyncJob: Job? = null
+    private var connectionGeneration = 0L
+    private var activeTarget: KomgaSseConnectionTarget? = null
 
     fun start(scope: CoroutineScope) {
         if (isStarted) return
@@ -103,7 +106,12 @@ class KomgaSseClient(
         if (isConnecting || eventSource != null) return
         isConnecting = true
 
-        val baseUrl = baseUrlProvider()
+        val sourceId = sourceIdProvider()
+        if (sourceId == null) {
+            isConnecting = false
+            return
+        }
+        val baseUrl = baseUrlProvider().trimEnd('/')
         if (baseUrl.isBlank()) {
             isConnecting = false
             return
@@ -120,6 +128,17 @@ class KomgaSseClient(
             .url(httpUrl)
             .headers(headersProvider())
             .build()
+        if (sourceIdProvider() != sourceId) {
+            isConnecting = false
+            return
+        }
+        val target = synchronized(progressSyncLock) {
+            KomgaSseConnectionTarget(
+                sourceId = sourceId,
+                baseUrl = baseUrl,
+                generation = ++connectionGeneration,
+            ).also { activeTarget = it }
+        }
 
         logcat(LogPriority.INFO) { "Komga SSE connecting to $baseUrl/api/v1/sse/v1/events" }
 
@@ -128,25 +147,25 @@ class KomgaSseClient(
             request,
             object : EventSourceListener() {
                 override fun onOpen(eventSource: EventSource, response: Response) {
+                    if (!isCurrentConnection(target)) return
                     logcat(LogPriority.INFO) { "Komga SSE connected" }
                     isConnecting = false
                 }
 
                 override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
+                    if (!isCurrentConnection(target)) return
                     logcat(LogPriority.DEBUG) { "Komga SSE event: type=$type, data=$data" }
-                    handleEvent(type, data)
+                    handleEvent(target, type, data)
                 }
 
                 override fun onClosed(eventSource: EventSource) {
+                    if (!finishConnection(target, eventSource)) return
                     logcat(LogPriority.INFO) { "Komga SSE closed" }
-                    this@KomgaSseClient.eventSource = null
-                    isConnecting = false
                 }
 
                 override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
+                    if (!finishConnection(target, eventSource)) return
                     logcat(LogPriority.ERROR, t) { "Komga SSE failure: ${response?.code}" }
-                    this@KomgaSseClient.eventSource = null
-                    isConnecting = false
                 }
             },
         )
@@ -154,9 +173,17 @@ class KomgaSseClient(
 
     private fun disconnect(reason: String? = null) {
         val hadActiveConnection = eventSource != null || isConnecting
-        eventSource?.cancel()
+        val sourceToCancel = eventSource
         eventSource = null
         isConnecting = false
+        val syncJob = synchronized(progressSyncLock) {
+            connectionGeneration++
+            activeTarget = null
+            progressSyncQueue.clear()
+            progressSyncJob.also { progressSyncJob = null }
+        }
+        syncJob?.cancel()
+        sourceToCancel?.cancel()
         if (hadActiveConnection) {
             logcat(LogPriority.INFO) {
                 buildString {
@@ -170,7 +197,23 @@ class KomgaSseClient(
         }
     }
 
-    private fun handleEvent(type: String?, data: String) {
+    private fun isCurrentConnection(target: KomgaSseConnectionTarget): Boolean =
+        synchronized(progressSyncLock) { activeTarget == target }
+
+    private fun finishConnection(target: KomgaSseConnectionTarget, source: EventSource): Boolean {
+        val syncJob = synchronized(progressSyncLock) {
+            if (activeTarget != target || eventSource !== source) return false
+            activeTarget = null
+            eventSource = null
+            isConnecting = false
+            progressSyncQueue.clear()
+            progressSyncJob.also { progressSyncJob = null }
+        }
+        syncJob?.cancel()
+        return true
+    }
+
+    private fun handleEvent(target: KomgaSseConnectionTarget, type: String?, data: String) {
         if (type == null) return
         when (type) {
             "ReadProgressChanged", "ReadProgressDeleted" -> {
@@ -180,65 +223,59 @@ class KomgaSseClient(
                 logcat(LogPriority.DEBUG) {
                     "Komga SSE: received $type bookId=${bookId ?: "unknown"}, scheduling progress sync"
                 }
-                scheduleProgressSync(bookId)
+                scheduleProgressSync(target, bookId)
             }
         }
     }
 
-    private fun scheduleProgressSync(bookId: String?) {
+    private fun scheduleProgressSync(target: KomgaSseConnectionTarget, bookId: String?) {
         val scope = appScope ?: return
         synchronized(progressSyncLock) {
-            if (bookId == null) {
-                pendingFullSync = true
-            } else {
-                pendingBookIds += bookId
-            }
+            if (activeTarget != target) return
+            progressSyncQueue.add(PendingKomgaProgressSync(target, bookId))
             if (progressSyncJob?.isActive == true) return
-            progressSyncJob = scope.launch(Dispatchers.IO) {
+            val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                 drainProgressSyncQueue()
             }
+            progressSyncJob = job
+            job.start()
         }
     }
 
     private suspend fun drainProgressSyncQueue() {
+        val currentJob = currentCoroutineContext()[Job]
         while (true) {
             delay(PROGRESS_SYNC_DEBOUNCE_MS)
-            val (bookIds, fullSync) = synchronized(progressSyncLock) {
-                val ids = pendingBookIds.toList()
-                pendingBookIds.clear()
-                val shouldFullSync = pendingFullSync
-                pendingFullSync = false
-                ids to shouldFullSync
-            }
+            val pending = synchronized(progressSyncLock) { progressSyncQueue.drain() }
 
-            if (fullSync) {
-                runCatching {
-                    komgaProgressSyncService.value.syncHistoryFromServer(includeCompleted = true)
-                }.onFailure { error ->
-                    logcat(LogPriority.WARN, error) { "Komga SSE full progress sync failed" }
-                }
-            }
-
-            val sourceId = sourceIdProvider()
-            if (sourceId != null) {
-                val baseUrl = baseUrlProvider().trimEnd('/')
-                bookIds.forEach { bookId ->
-                    runCatching {
-                        komgaProgressSyncService.value.syncBookProgress(
-                            sourceId = sourceId,
-                            chapterUrl = "$baseUrl/api/v1/books/$bookId",
+            pending.forEach { request ->
+                if (!isCurrentConnection(request.target)) return@forEach
+                try {
+                    if (request.bookId == null) {
+                        komgaProgressSyncService.value.syncHistoryFromServer(
+                            sourceId = request.target.sourceId,
+                            includeCompleted = true,
                         )
-                    }.onFailure { error ->
-                        logcat(LogPriority.WARN, error) {
-                            "Komga SSE book progress sync failed bookId=$bookId"
-                        }
+                        komgaProgressSyncService.value.syncEpubProgressFromServer(request.target.sourceId)
+                    } else {
+                        komgaProgressSyncService.value.syncBookProgress(
+                            sourceId = request.target.sourceId,
+                            chapterUrl = "${request.target.baseUrl}/api/v1/books/${request.bookId}",
+                        )
+                    }
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    logcat(LogPriority.WARN, error) {
+                        "Komga SSE progress sync failed sourceId=${request.target.sourceId} " +
+                            "bookId=${request.bookId ?: "unknown"}"
                     }
                 }
             }
 
             synchronized(progressSyncLock) {
-                if (pendingBookIds.isEmpty() && !pendingFullSync) {
-                    progressSyncJob = null
+                if (progressSyncQueue.isEmpty()) {
+                    if (progressSyncJob === currentJob) progressSyncJob = null
                     return
                 }
             }
@@ -248,4 +285,29 @@ class KomgaSseClient(
     private companion object {
         const val PROGRESS_SYNC_DEBOUNCE_MS = 300L
     }
+}
+
+internal data class KomgaSseConnectionTarget(
+    val sourceId: Long,
+    val baseUrl: String,
+    val generation: Long,
+)
+
+internal data class PendingKomgaProgressSync(
+    val target: KomgaSseConnectionTarget,
+    val bookId: String?,
+)
+
+internal class KomgaSseProgressSyncQueue {
+    private val pending = linkedSetOf<PendingKomgaProgressSync>()
+
+    fun add(request: PendingKomgaProgressSync) {
+        pending += request
+    }
+
+    fun drain(): List<PendingKomgaProgressSync> = pending.toList().also { pending.clear() }
+
+    fun clear() = pending.clear()
+
+    fun isEmpty(): Boolean = pending.isEmpty()
 }

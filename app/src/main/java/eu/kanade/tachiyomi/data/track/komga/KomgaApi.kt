@@ -129,9 +129,13 @@ class KomgaApi(
             }
         }
 
-    suspend fun getBookProgress(bookUrl: String): BookProgressSnapshot? =
+    suspend fun getBookProgress(bookUrl: String, sourceId: Long? = null): BookProgressSnapshot? =
         withIOContext {
-            val source = resolveSourceForUrl(bookUrl) ?: return@withIOContext null
+            val source = if (sourceId == null) {
+                resolveSourceForUrl(bookUrl)
+            } else {
+                resolveSource(sourceId)?.takeIf { bookUrl.belongsTo(it) }
+            } ?: return@withIOContext null
             with(json) {
                 val request = GET(bookUrl, source.currentHeaders())
                     .newBuilder()
@@ -263,6 +267,10 @@ class KomgaApi(
             .firstOrNull { it.baseUrl.trimEnd('/') == targetBaseUrl }
             ?: resolveSource(null)
                 ?.takeIf { url.startsWith(it.baseUrl.trimEnd('/')) }
+    }
+
+    private fun String.belongsTo(source: KomgaSource): Boolean {
+        return substringBefore("/api/").trimEnd('/') == source.baseUrl.trimEnd('/')
     }
 
     private fun SeriesDto.toTrack(): TrackSearch = TrackSearch.create(trackId).also {

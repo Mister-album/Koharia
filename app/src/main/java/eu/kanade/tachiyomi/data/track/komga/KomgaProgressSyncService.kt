@@ -4,9 +4,15 @@ import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import koharia.connection.ConnectionEpubProgressAdapter
+import koharia.domain.epub.interactor.GetEpubProgress
+import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
+import koharia.domain.epub.interactor.UpsertEpubRemoteProgressCache
+import koharia.domain.epub.model.EpubProgress
+import koharia.domain.epub.model.EpubRemoteProgressCache
 import koharia.komga.download.KomgaChapterMemo
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -33,6 +39,9 @@ class KomgaProgressSyncService(
     private val syncChaptersWithSource: SyncChaptersWithSource,
     private val sourceManager: SourceManager,
     private val komgaServerPreferences: KomgaServerPreferences,
+    private val getEpubProgress: GetEpubProgress,
+    private val getEpubRemoteProgressCache: GetEpubRemoteProgressCache,
+    private val upsertEpubRemoteProgressCache: UpsertEpubRemoteProgressCache,
 ) {
 
     private val syncMutex = Mutex()
@@ -41,7 +50,7 @@ class KomgaProgressSyncService(
         syncMutex.withLock {
             if (!manga.isKomgaSeries()) return@withLock
 
-            runCatching {
+            runCatchingCancellable {
                 val remoteBooks = trackerManager.komga.api.getSeriesBookProgress(manga.url)
                 applyRemoteProgress(
                     syncName = "series sync",
@@ -61,11 +70,7 @@ class KomgaProgressSyncService(
         chapterUrl: String,
     ): KomgaApi.BookProgressSnapshot? {
         if (sourceManager.get(sourceId) !is KomgaSource || !chapterUrl.contains("/api/v1/books/")) return null
-        return runCatching {
-            trackerManager.komga.api.getBookProgress(chapterUrl)
-        }.onFailure { error ->
-            logcat(LogPriority.WARN, error) { "Failed to pull Komga page progress for $chapterUrl" }
-        }.getOrNull()
+        return trackerManager.komga.api.getBookProgress(chapterUrl, sourceId)
     }
 
     /**
@@ -80,15 +85,16 @@ class KomgaProgressSyncService(
         syncMutex.withLock {
             if (sourceManager.get(sourceId) !is KomgaSource || !chapterUrl.contains("/api/v1/books/")) return@withLock
 
-            runCatching {
-                val remote = trackerManager.komga.api.getBookProgress(chapterUrl) ?: return@runCatching
-                val seriesUrl = remote.seriesUrl ?: return@runCatching
+            runCatchingCancellable {
+                val remote = trackerManager.komga.api.getBookProgress(chapterUrl, sourceId)
+                    ?: return@runCatchingCancellable
+                val seriesUrl = remote.seriesUrl ?: return@runCatchingCancellable
                 val manga = mangaRepository.getMangaByUrlAndSourceId(seriesUrl, sourceId)
                     ?: run {
                         logcat(LogPriority.INFO) {
                             "Komga book sync: local series is not indexed sourceId=$sourceId seriesUrl=$seriesUrl"
                         }
-                        return@runCatching
+                        return@runCatchingCancellable
                     }
                 applyRemoteProgress(
                     syncName = "book sync",
@@ -104,7 +110,7 @@ class KomgaProgressSyncService(
                     localMangaBySeriesUrl = mapOf(seriesUrl to manga),
                 )
 
-                if (remote.isEpub) {
+                if (remote.isEpub && remote.readProgress != null) {
                     syncBookEpubProgress(sourceId, manga, remote.url)
                 }
             }.onFailure { error ->
@@ -119,13 +125,45 @@ class KomgaProgressSyncService(
     suspend fun syncEpubProgressFromServer(sourceId: Long) {
         syncMutex.withLock {
             val source = sourceManager.get(sourceId) as? ConnectionEpubProgressAdapter ?: return@withLock
+            val remoteInProgressBookUrls = runCatchingCancellable {
+                trackerManager.komga.api.getInProgressBookProgress(sourceId)
+                    .asSequence()
+                    .filter { it.isEpub }
+                    .map { it.url.normalizedBookUrl() }
+                    .toSet()
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) {
+                    "Failed to load active Komga EPUB progress sourceId=$sourceId"
+                }
+            }.getOrDefault(emptySet())
+
             mangaRepository.getMangaBySourceId(sourceId).forEach { manga ->
                 val chapters = getChaptersByMangaId.await(manga.id)
                 if (chapters.isEmpty()) return@forEach
-                runCatching {
+                val localProgress = getEpubProgress.awaitByMangaId(manga.id)
+                val remoteProgress = getEpubRemoteProgressCache.awaitByMangaId(manga.id)
+                val remoteProgressByChapter = remoteProgress.associateBy(EpubRemoteProgressCache::chapterId)
+                val localProgressChapterIds = localProgress
+                    .filter { progress ->
+                        val remote = remoteProgressByChapter[progress.chapterId]
+                        remote == null || remote.hasProgress() || remote.checkedAt.before(progress.updatedAt)
+                    }
+                    .mapTo(mutableSetOf()) { it.chapterId }
+                val remoteProgressChapterIds = remoteProgress
+                    .filter(EpubRemoteProgressCache::hasProgress)
+                    .mapTo(mutableSetOf(), EpubRemoteProgressCache::chapterId)
+                val relevantChapters = selectRelevantKomgaEpubChapters(
+                    chapters = chapters,
+                    remoteInProgressBookUrls = remoteInProgressBookUrls,
+                    localProgressChapterIds = localProgressChapterIds,
+                    remoteProgressChapterIds = remoteProgressChapterIds,
+                )
+                if (relevantChapters.isEmpty()) return@forEach
+
+                runCatchingCancellable {
                     source.syncMangaEpubProgress(
                         mangaId = manga.id,
-                        chapters = chapters,
+                        chapters = relevantChapters,
                         force = true,
                     )
                 }.onFailure { error ->
@@ -146,13 +184,13 @@ class KomgaProgressSyncService(
     suspend fun syncHistoryFromServer(sourceId: Long, includeCompleted: Boolean = false) {
         syncMutex.withLock {
             if (sourceManager.get(sourceId) !is KomgaSource) return@withLock
-            runCatching {
+            runCatchingCancellable {
                 val remoteBooks = trackerManager.komga.api.getInProgressBookProgress(
                     sourceId = sourceId,
                     includeCompleted = includeCompleted,
                 )
                 if (remoteBooks.isEmpty()) {
-                    return@runCatching
+                    return@runCatchingCancellable
                 }
                 val remoteSeriesUrls = remoteBooks
                     .mapNotNull { it.seriesUrl }
@@ -184,7 +222,7 @@ class KomgaProgressSyncService(
         if (sourceManager.get(sourceId) !is KomgaSource || !chapterUrl.contains("/api/v1/books/")) return
         if (totalPages <= 0) return
 
-        runCatching {
+        runCatchingCancellable {
             val page = (pageIndex + 1).coerceIn(1, totalPages)
             val completed = page >= totalPages
             trackerManager.komga.api.updateBookProgress(
@@ -209,6 +247,9 @@ class KomgaProgressSyncService(
         val localChaptersByMangaId = mutableMapOf<Long, Map<String, Chapter>>()
         val historyUpdates = mutableListOf<HistoryUpdate>()
         val chapterUpdates = mutableListOf<ChapterUpdate>()
+        val epubCacheClears = mutableListOf<EpubRemoteProgressCache>()
+        val localEpubProgressByMangaId = mutableMapOf<Long, Map<Long, EpubProgress>>()
+        val remoteEpubProgressByMangaId = mutableMapOf<Long, Map<Long, EpubRemoteProgressCache>>()
         val missingSeriesSamples = mutableListOf<String>()
         val missingChapterSamples = mutableListOf<String>()
         var matchedSeriesCount = 0
@@ -252,18 +293,43 @@ class KomgaProgressSyncService(
                 }
 
             remote.toChapterUpdate(localChapter)?.let(chapterUpdates::add)
+            if (remote.isEpub && remote.readProgress == null) {
+                val localEpubProgress = localEpubProgressByMangaId[localManga.id]
+                    ?: getEpubProgress.awaitByMangaId(localManga.id)
+                        .associateBy(EpubProgress::chapterId)
+                        .also { localEpubProgressByMangaId[localManga.id] = it }
+                val remoteEpubProgress = remoteEpubProgressByMangaId[localManga.id]
+                    ?: getEpubRemoteProgressCache.awaitByMangaId(localManga.id)
+                        .associateBy(EpubRemoteProgressCache::chapterId)
+                        .also { remoteEpubProgressByMangaId[localManga.id] = it }
+                if (hasEpubProgressToClear(localEpubProgress[localChapter.id], remoteEpubProgress[localChapter.id])) {
+                    epubCacheClears += EpubRemoteProgressCache(
+                        chapterId = localChapter.id,
+                        mangaId = localManga.id,
+                        bookUrl = remote.url.normalizedBookUrl(),
+                        locatorJson = null,
+                        progression = null,
+                        positionIndex = null,
+                        modifiedAt = null,
+                        checkedAt = Date(),
+                        serverDate = null,
+                    )
+                }
+            }
         }
 
         if (chapterUpdates.isNotEmpty()) {
             updateChapter.awaitAll(chapterUpdates)
         }
         historyUpdates.forEach { upsertHistory.await(it) }
+        epubCacheClears.forEach { upsertEpubRemoteProgressCache.await(it) }
         if (missingSeriesCount > 0 || missingChapterCount > 0 || chapterUpdates.isNotEmpty() ||
             historyUpdates.isNotEmpty() ||
+            epubCacheClears.isNotEmpty() ||
             refreshedChapterSets > 0
         ) {
             logcat(LogPriority.INFO) {
-                "Komga $syncName result: remoteBooks=${remoteBooks.size}, matchedSeries=$matchedSeriesCount, matchedChapters=$matchedChapterCount, missingSeries=$missingSeriesCount, missingChapters=$missingChapterCount, refreshedChapterSets=$refreshedChapterSets, chapterUpdates=${chapterUpdates.size}, historyUpdates=${historyUpdates.size}"
+                "Komga $syncName result: remoteBooks=${remoteBooks.size}, matchedSeries=$matchedSeriesCount, matchedChapters=$matchedChapterCount, missingSeries=$missingSeriesCount, missingChapters=$missingChapterCount, refreshedChapterSets=$refreshedChapterSets, chapterUpdates=${chapterUpdates.size}, historyUpdates=${historyUpdates.size}, epubCacheClears=${epubCacheClears.size}"
             }
         }
         if (missingSeriesSamples.isNotEmpty()) {
@@ -298,7 +364,7 @@ class KomgaProgressSyncService(
 
         if (chapters.isEmpty()) {
             val source = sourceManager.getOrStub(manga.source)
-            runCatching {
+            runCatchingCancellable {
                 val sourceChapters = source.getChapterList(manga.toSManga())
                 syncChaptersWithSource.await(sourceChapters, manga, source, manualFetch = false)
                 chapters = getChaptersByMangaId.await(manga.id)
@@ -323,7 +389,7 @@ class KomgaProgressSyncService(
     ) {
         val source = sourceManager.get(sourceId) as? ConnectionEpubProgressAdapter ?: return
         val chapter = getChaptersByMangaId.await(manga.id).firstOrNull { it.url == chapterUrl } ?: return
-        runCatching {
+        runCatchingCancellable {
             source.refreshEpubProgress(manga.id, chapter)
         }.onFailure { error ->
             logcat(LogPriority.WARN, error) {
@@ -336,6 +402,45 @@ class KomgaProgressSyncService(
         val chapters: Map<String, Chapter>,
         val refreshed: Boolean,
     )
+}
+
+internal fun selectRelevantKomgaEpubChapters(
+    chapters: List<Chapter>,
+    remoteInProgressBookUrls: Set<String>,
+    localProgressChapterIds: Set<Long>,
+    remoteProgressChapterIds: Set<Long>,
+): List<Chapter> {
+    return chapters.filter { chapter ->
+        val bookUrl = chapter.url.normalizedBookUrl()
+        val hasRelevantProgress = bookUrl in remoteInProgressBookUrls ||
+            chapter.id in localProgressChapterIds ||
+            chapter.id in remoteProgressChapterIds
+        val isKnownEpub = KomgaChapterMemo.isEpub(chapter.memo) == true || hasRelevantProgress
+        isKnownEpub && hasRelevantProgress && (!chapter.read || bookUrl in remoteInProgressBookUrls)
+    }
+}
+
+private fun EpubRemoteProgressCache.hasProgress(): Boolean =
+    locatorJson != null || progression != null || positionIndex != null
+
+internal fun hasEpubProgressToClear(
+    local: EpubProgress?,
+    remote: EpubRemoteProgressCache?,
+): Boolean {
+    return remote?.hasProgress() == true ||
+        (local != null && (remote == null || remote.checkedAt.before(local.updatedAt)))
+}
+
+private fun String.normalizedBookUrl(): String = substringBefore('#').removeSuffix("/")
+
+private inline fun <T> runCatchingCancellable(block: () -> T): Result<T> {
+    return try {
+        Result.success(block())
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        Result.failure(error)
+    }
 }
 
 internal fun KomgaApi.SeriesBookProgress.toChapterUpdate(localChapter: Chapter): ChapterUpdate? {

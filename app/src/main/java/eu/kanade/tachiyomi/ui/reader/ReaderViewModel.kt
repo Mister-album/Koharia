@@ -74,6 +74,7 @@ import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.service.getChapterSort
 import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.history.interactor.GetHistory
 import tachiyomi.domain.history.interactor.GetNextChapters
 import tachiyomi.domain.history.interactor.UpsertHistory
 import tachiyomi.domain.history.model.HistoryUpdate
@@ -84,6 +85,7 @@ import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.Date
 
 /**
@@ -103,6 +105,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val getManga: GetManga = Injekt.get(),
     private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
     private val getNextChapters: GetNextChapters = Injekt.get(),
+    private val getHistory: GetHistory = Injekt.get(),
     private val upsertHistory: UpsertHistory = Injekt.get(),
     private val updateChapter: UpdateChapter = Injekt.get(),
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
@@ -172,6 +175,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private var chapterToDownload: Download? = null
     private val currentChapterAutoCacheRequests = mutableSetOf<Long>()
     private val remoteProgressChecksStarted = mutableSetOf<Long>()
+    private val remoteProgressWritesAllowed = mutableSetOf<Long>()
     private val remoteProgressVersionsHandled = mutableSetOf<String>()
     private val remoteProgressOpeningPages = mutableMapOf<Long, Int>()
 
@@ -596,15 +600,28 @@ class ReaderViewModel @JvmOverloads constructor(
         val chapter = readerChapter.chapter
         val chapterId = chapter.id ?: return
         logcat { "MangaStartup: remote progress check start chapterId=$chapterId" }
-        val remote = progressAdapter.pullPageProgress(
-            chapterUrl = chapter.url,
-            chapterMemo = chapter.memo,
-        )
+        val remote = try {
+            progressAdapter.pullPageProgress(
+                chapterUrl = chapter.url,
+                chapterMemo = chapter.memo,
+            )
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            logcat(LogPriority.WARN, error) {
+                "MangaStartup: remote progress check failed; keeping writes blocked chapterId=$chapterId"
+            }
+            return
+        }
         logcat {
             "MangaStartup: remote progress check complete chapterId=$chapterId " +
                 "found=${remote != null}"
         }
-        if (remote == null) return
+        if (remote == null) {
+            logcat(LogPriority.WARN) {
+                "MangaStartup: remote progress unavailable; keeping writes blocked chapterId=$chapterId"
+            }
+            return
+        }
 
         val oldMemo = chapter.memo
         val oldPublicationVersion = remote.previousPublicationVersion
@@ -685,7 +702,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 EpubPageProgress.pageIndex(
                     progression = legacyEpubProgress?.locator?.locations?.totalProgression,
                     totalPages = pages.size,
-                ) ?: return
+                ) ?: 0
             }
         if (remotePageIndex !in pages.indices) return
         val localPageIndex = readerChapter.requestedPage.coerceIn(0, pages.lastIndex)
@@ -693,20 +710,38 @@ class ReaderViewModel @JvmOverloads constructor(
             remoteProgressOpeningPages[chapterId]
         }?.coerceIn(0, pages.lastIndex) ?: localPageIndex
         val migratesLegacyEpubProgress = legacyEpubProgress != null
-        if (!RemoteProgressConflictPolicy.hasConflict(openingLocalPageIndex, localPageIndex, remotePageIndex)) {
-            if (migratesLegacyEpubProgress) {
-                progressAdapter.pushPageProgress(
-                    chapterUrl = chapter.url,
-                    pageIndex = localPageIndex,
-                    totalPages = pages.size,
-                )
+        val localUpdatedAtMillis = getHistory.await(manga.id)
+            .firstOrNull { it.chapterId == chapterId }
+            ?.readAt
+            ?.time
+        val remoteUpdatedAtMillis = remote.readDate?.toRemoteProgressTimestamp()
+            ?: legacyEpubProgress?.modifiedAt?.time
+        when (
+            RemoteProgressConflictPolicy.decide(
+                localUpdatedAtMillis = localUpdatedAtMillis,
+                remoteUpdatedAtMillis = remoteUpdatedAtMillis,
+                sameLocation = remotePageIndex == localPageIndex,
+                localChangedDuringCheck = localPageIndex != openingLocalPageIndex,
+            )
+        ) {
+            RemoteProgressDecision.SAME_LOCATION -> {
+                allowRemoteProgressWrites(chapterId)
+                if (migratesLegacyEpubProgress) {
+                    pushPageProgressIfAllowed(readerChapter, localPageIndex, pages.size)
+                }
+                return
             }
-            return
+            RemoteProgressDecision.KEEP_LOCAL -> {
+                allowRemoteProgressWrites(chapterId)
+                pushPageProgressIfAllowed(readerChapter, localPageIndex, pages.size)
+                return
+            }
+            RemoteProgressDecision.KEEP_REMOTE -> Unit
         }
 
         val remoteVersion = listOf(
             chapterId,
-            remote.readDate ?: legacyEpubProgress?.modifiedAt?.time?.toString().orEmpty(),
+            remoteUpdatedAtMillis?.toString().orEmpty(),
             remotePageIndex,
             remote.totalPages.takeIf { it > 0 } ?: pages.size,
             remote.completed,
@@ -776,6 +811,36 @@ class ReaderViewModel @JvmOverloads constructor(
         return sourceManager.get(sourceId) as? ConnectionPageProgressAdapter
     }
 
+    private fun allowRemoteProgressWrites(chapterId: Long) {
+        synchronized(remoteProgressWritesAllowed) {
+            remoteProgressWritesAllowed.add(chapterId)
+        }
+    }
+
+    private fun canWriteRemoteProgress(chapterId: Long): Boolean =
+        synchronized(remoteProgressWritesAllowed) {
+            chapterId in remoteProgressWritesAllowed
+        }
+
+    private suspend fun pushPageProgressIfAllowed(
+        readerChapter: ReaderChapter,
+        pageIndex: Int,
+        totalPages: Int,
+    ) {
+        val chapterId = readerChapter.chapter.id ?: return
+        if (!canWriteRemoteProgress(chapterId)) {
+            logcat(LogPriority.DEBUG) {
+                "Skipping remote page progress write before successful comparison chapterId=$chapterId"
+            }
+            return
+        }
+        connectionPageProgressAdapter()?.pushPageProgress(
+            chapterUrl = readerChapter.chapter.url,
+            pageIndex = pageIndex,
+            totalPages = totalPages,
+        )
+    }
+
     fun keepLocalProgress() {
         val conflict = state.value.remoteProgressConflict ?: return
         mutableState.update { it.copy(remoteProgressConflict = null) }
@@ -785,12 +850,9 @@ class ReaderViewModel @JvmOverloads constructor(
         synchronized(remoteProgressOpeningPages) {
             remoteProgressOpeningPages[conflict.chapterId] = localPageIndex
         }
+        allowRemoteProgressWrites(conflict.chapterId)
         viewModelScope.launchIO {
-            connectionPageProgressAdapter()?.pushPageProgress(
-                chapterUrl = currentChapter.chapter.url,
-                pageIndex = localPageIndex,
-                totalPages = pages.size,
-            )
+            pushPageProgressIfAllowed(currentChapter, localPageIndex, pages.size)
         }
     }
 
@@ -807,6 +869,7 @@ class ReaderViewModel @JvmOverloads constructor(
         synchronized(remoteProgressOpeningPages) {
             remoteProgressOpeningPages[conflict.chapterId] = targetPage.index
         }
+        allowRemoteProgressWrites(conflict.chapterId)
         state.value.viewer?.restorePage(targetPage)
         if (!incognitoMode) {
             viewModelScope.launchNonCancellable {
@@ -818,11 +881,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     ),
                 )
                 if (conflict.migratesLegacyEpubProgress) {
-                    connectionPageProgressAdapter()?.pushPageProgress(
-                        chapterUrl = currentChapter.chapter.url,
-                        pageIndex = targetPage.index,
-                        totalPages = pages.size,
-                    )
+                    pushPageProgressIfAllowed(currentChapter, targetPage.index, pages.size)
                 }
             }
         }
@@ -956,8 +1015,8 @@ class ReaderViewModel @JvmOverloads constructor(
         updateTrackChapterRead(readerChapter)
         deleteChapterIfNeeded(readerChapter)
 
-        connectionPageProgressAdapter()?.pushPageProgress(
-            chapterUrl = readerChapter.chapter.url,
+        pushPageProgressIfAllowed(
+            readerChapter = readerChapter,
             pageIndex = readerChapter.pages?.lastIndex ?: 0,
             totalPages = readerChapter.pages?.size ?: 0,
         )
@@ -997,8 +1056,8 @@ class ReaderViewModel @JvmOverloads constructor(
             val sessionReadDuration = chapterReadStartTime?.let { endTime.time - it } ?: 0
 
             if (sessionReadDuration > 0) {
-                connectionPageProgressAdapter()?.pushPageProgress(
-                    chapterUrl = readerChapter.chapter.url,
+                pushPageProgressIfAllowed(
+                    readerChapter = readerChapter,
                     pageIndex = readerChapter.chapter.last_page_read,
                     totalPages = readerChapter.pages?.size ?: 0,
                 )
@@ -1396,3 +1455,8 @@ class ReaderViewModel @JvmOverloads constructor(
         data class CopyImage(val uri: Uri) : Event
     }
 }
+
+private fun String.toRemoteProgressTimestamp(): Long? =
+    runCatching { Instant.parse(this).toEpochMilli() }
+        .recoverCatching { OffsetDateTime.parse(this).toInstant().toEpochMilli() }
+        .getOrNull()

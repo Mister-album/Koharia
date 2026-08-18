@@ -150,7 +150,21 @@ class DomainModule : InjektModule {
         addFactory { GetTracks(get()) }
         addFactory { InsertTrack(get()) }
         addFactory { SyncChapterProgressWithTrack(get(), get(), get()) }
-        addFactory { KomgaProgressSyncService(get(), get(), get(), get(), get(), get(), get(), get()) }
+        addFactory {
+            KomgaProgressSyncService(
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+            )
+        }
 
         addSingletonFactory<ChapterRepository> { ChapterRepositoryImpl(get()) }
         addFactory { GetChapter(get()) }
