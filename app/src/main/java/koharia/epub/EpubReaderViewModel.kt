@@ -1,6 +1,8 @@
 package koharia.epub
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -51,6 +53,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -141,6 +144,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     private companion object {
         val sessionReleaseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        const val COMPLETE_CACHE_IDLE_DELAY_MS = 3_000L
+        const val PAGINATION_CACHE_WRITE_DEBOUNCE_MS = 250L
     }
 
     private val mutableState = MutableStateFlow(EpubReaderUiState())
@@ -201,6 +206,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var leasedCacheFile: File? = null
     private var leasedPublicationKey: String? = null
     private var completeCacheStarted = false
+    private var completeCacheJob: Job? = null
+    private var paginationPersistJob: Job? = null
     private var positionsRefreshStarted = false
     private var lastPrefetchedHref: String? = null
     private var remoteProgressChecked = false
@@ -257,6 +264,10 @@ class EpubReaderViewModel @JvmOverloads constructor(
         chapterId: Long,
         preserveLocalProgressAfterLayoutChange: Boolean = false,
     ): Result<Unit> {
+        completeCacheJob?.cancel()
+        completeCacheJob = null
+        paginationPersistJob?.cancel()
+        paginationPersistJob = null
         releaseCacheLeases()
         completeCacheStarted = false
         positionsRefreshStarted = false
@@ -1021,10 +1032,23 @@ class EpubReaderViewModel @JvmOverloads constructor(
         val publicationKey = currentPublicationKey ?: return
         val requestedChapterId = chapterId
         completeCacheStarted = true
-        viewModelScope.launch {
+        completeCacheJob = viewModelScope.launch {
             var leasedFile: File? = null
             var pendingSession: EpubReaderSession? = null
             try {
+                // Let the first viewport settle before starting a full-book transfer. This keeps
+                // the cache warm-up off the critical path when a reader immediately turns pages.
+                delay(COMPLETE_CACHE_IDLE_DELAY_MS)
+                if (chapterId != requestedChapterId || currentPublicationKey != publicationKey) return@launch
+                if (!isOnUnmeteredNetwork()) {
+                    logcat(LogPriority.DEBUG) {
+                        "Skipping EPUB complete cache on a metered or unavailable network " +
+                            "chapterId=$requestedChapterId"
+                    }
+                    // Allow a later display/network change to retry the warm-up.
+                    completeCacheStarted = false
+                    return@launch
+                }
                 val cachedFile = epubCacheManager.cacheCompleteBook(
                     source = source,
                     bookUrl = bookUrl,
@@ -1261,6 +1285,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     fun onLayoutPreferencesChanged() {
         layoutChangeRevision += 1
+        paginationPersistJob?.cancel()
+        paginationPersistJob = null
         preserveLocalProgressAfterLayoutChange = true
         mutableState.update { state ->
             state.copy(remoteProgressConflict = null)
@@ -1463,7 +1489,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         val orderedCounts = pageCounts.orderedFor(readingOrder)
         bookVisualPageCounts = orderedCounts
         if (!isComplete || orderedCounts.size != readingOrder.size) {
-            viewModelScope.launch { persistPaginationCache(isComplete = false) }
+            schedulePaginationCachePersist(isComplete = false)
             return
         }
 
@@ -1493,9 +1519,15 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
 
         if (latestLocator != null) {
-            viewModelScope.launch {
-                persistPaginationCache(isComplete = true)
-            }
+            schedulePaginationCachePersist(isComplete = true)
+        }
+    }
+
+    private fun schedulePaginationCachePersist(isComplete: Boolean) {
+        paginationPersistJob?.cancel()
+        paginationPersistJob = viewModelScope.launch {
+            if (!isComplete) delay(PAGINATION_CACHE_WRITE_DEBOUNCE_MS)
+            persistPaginationCache(isComplete)
         }
     }
 
@@ -1573,6 +1605,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     private fun resetVisualPagination() {
+        paginationPersistJob?.cancel()
+        paginationPersistJob = null
         visualPageNumber = null
         lastVisualHref = null
         lastVisualPageIndex = null
@@ -1882,6 +1916,10 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     fun releaseSession() {
+        completeCacheJob?.cancel()
+        completeCacheJob = null
+        paginationPersistJob?.cancel()
+        paginationPersistJob = null
         closeImagePreview()
         dismissFootnote()
         locatorPersistenceJob.cancel()
@@ -1906,6 +1944,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     override fun onCleared() {
+        completeCacheJob?.cancel()
+        paginationPersistJob?.cancel()
         imageLoadJob?.cancel()
         footnoteLoadJob?.cancel()
         imageRequestTracker.invalidate()
@@ -1923,6 +1963,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 ?.let { sourceId -> epubCacheManager.releasePublication(sourceId, publicationKey) }
         }
         leasedPublicationKey = null
+    }
+
+    private fun isOnUnmeteredNetwork(): Boolean {
+        val connectivityManager = application.getSystemService(ConnectivityManager::class.java)
+            ?: return false
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
     }
 
     private suspend fun refreshBookmarks() {

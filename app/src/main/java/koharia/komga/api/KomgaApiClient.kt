@@ -102,6 +102,7 @@ class KomgaApiClient(
             .addPathSegments(typePath)
             .addQueryParameter("search", query)
             .addQueryParameter("page", (page - 1).toString())
+            .addQueryParameter("size", SEARCH_PAGE_SIZE.toString())
             .addQueryParameter("deleted", "false")
 
         val libraries = if (selectedLibraries.isEmpty()) defaultLibraries else selectedLibraries
@@ -176,6 +177,7 @@ class KomgaApiClient(
         )
         val url = "$baseUrl/api/v1/${type.pathSegment}/list".toHttpUrl().newBuilder()
             .addQueryParameter("page", (page - 1).toString())
+            .addQueryParameter("size", SEARCH_PAGE_SIZE.toString())
         val sortCriteria = when (sortIndex) {
             0 -> "relevance".takeIf { query.isNotBlank() }
             1 -> type.alphabeticalSortField()
@@ -385,12 +387,8 @@ class KomgaApiClient(
         )
     }
 
-    private inline fun <reified T> okhttp3.Call.executeAndParse(): T {
-        val response = execute()
-        if (!response.isSuccessful) {
-            response.close()
-            error("HTTP ${response.code}")
-        }
+    private suspend inline fun <reified T> okhttp3.Call.executeAndParse(): T {
+        val response = awaitSuccess()
         response.use { return parse(it) }
     }
 
@@ -418,6 +416,7 @@ class KomgaApiClient(
     }
 
     companion object {
+        private const val SEARCH_PAGE_SIZE = 25
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
     }
 }

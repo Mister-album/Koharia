@@ -30,6 +30,7 @@ import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
 import koharia.connection.ConnectionPageAdapter
+import koharia.connection.ConnectionPageList
 import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPagePublication
 import koharia.connection.ConnectionPublicationAdapter
@@ -266,7 +267,7 @@ class KomgaSource(
     override fun pageListRequest(chapter: eu.kanade.tachiyomi.source.model.SChapter): Request =
         repository.pageListRequest(chapter, KomgaCachePolicy.Default)
 
-    override fun pageListParse(response: Response) = repository.pageListParse(response)
+    override fun pageListParse(response: Response): List<Page> = repository.pageListParse(response).pages
 
     suspend fun getPageList(
         chapter: eu.kanade.tachiyomi.source.model.SChapter,
@@ -275,6 +276,7 @@ class KomgaSource(
         return client.newCall(repository.pageListRequest(chapter, cachePolicy))
             .awaitSuccess()
             .let(repository::pageListParse)
+            .pages
     }
 
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
@@ -315,11 +317,15 @@ class KomgaSource(
     override suspend fun getConnectionPageList(
         chapter: eu.kanade.tachiyomi.source.model.SChapter,
         forceNetwork: Boolean,
-    ): List<Page> {
-        return getPageList(
-            chapter = chapter,
-            cachePolicy = if (forceNetwork) KomgaCachePolicy.NetworkFirst else KomgaCachePolicy.Default,
+    ): ConnectionPageList {
+        return client.newCall(
+            repository.pageListRequest(
+                chapter,
+                if (forceNetwork) KomgaCachePolicy.NetworkFirst else KomgaCachePolicy.Default,
+            ),
         )
+            .awaitSuccess()
+            .let(repository::pageListParse)
     }
 
     override fun decoratePageImageUrls(

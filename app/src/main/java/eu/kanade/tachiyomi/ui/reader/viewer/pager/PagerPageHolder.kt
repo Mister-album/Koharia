@@ -2,11 +2,6 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.res.Configuration
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.view.LayoutInflater
@@ -255,22 +250,7 @@ class PagerPageHolder(
 
         val firstBytes = pageBytes.getValue(page)
         val secondBytes = pageBytes.getValue(second)
-        val composite = try {
-            withIOContext { createComposite(firstBytes, secondBytes) }
-        } catch (error: OutOfMemoryError) {
-            logcat(LogPriority.WARN, error) { "Double-page composition ran out of memory; using tiled views" }
-            null
-        } catch (error: Throwable) {
-            if (error is CancellationException) throw error
-            logcat(LogPriority.WARN, error) { "Double-page composition failed; using tiled views" }
-            null
-        }
-
-        if (composite != null) {
-            renderComposite(composite)
-        } else {
-            renderTiledPair(firstBytes, secondBytes)
-        }
+        renderTiledPair(firstBytes, secondBytes)
     }
 
     private fun classify(source: BufferedSource): ReaderPage.SpreadInfo {
@@ -307,16 +287,6 @@ class PagerPageHolder(
             clearPairViews()
             setImage(source, isAnimated, imageConfig(landscapeZoom = viewer.config.landscapeZoom))
             if (!isAnimated) pageBackground = background
-            removeErrorLayout()
-        }
-    }
-
-    private suspend fun renderComposite(source: BufferedSource) {
-        val background = automaticBackground(source)
-        withUIContext {
-            clearPairViews()
-            pageBackground = background
-            setImage(source, false, imageConfig(landscapeZoom = false))
             removeErrorLayout()
         }
     }
@@ -381,91 +351,10 @@ class PagerPageHolder(
         null
     }
 
-    private fun createComposite(firstSource: Buffer, secondSource: Buffer): BufferedSource? {
-        val firstDecoder = ImageDecoder.newInstance(firstSource.peek().inputStream()) ?: return null
-        try {
-            val secondDecoder = ImageDecoder.newInstance(secondSource.peek().inputStream()) ?: return null
-            try {
-                val firstWidth = firstDecoder.width
-                val firstHeight = firstDecoder.height
-                val secondWidth = secondDecoder.width
-                val secondHeight = secondDecoder.height
-                if (minOf(firstWidth, firstHeight, secondWidth, secondHeight) <= 0) return null
-
-                val runtime = Runtime.getRuntime()
-                val available = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
-                val firstInfo = DoublePageCompositionPolicy.Image(firstWidth, firstHeight, firstSource.size)
-                val secondInfo = DoublePageCompositionPolicy.Image(secondWidth, secondHeight, secondSource.size)
-                val layout = DoublePageCompositionPolicy.compositionLayout(firstInfo, secondInfo) ?: return null
-                if (!DoublePageCompositionPolicy.shouldCompose(firstInfo, secondInfo, available, runtime.maxMemory())) {
-                    return null
-                }
-
-                var firstBitmap: Bitmap? = null
-                var secondBitmap: Bitmap? = null
-                var composite: Bitmap? = null
-                try {
-                    firstBitmap = firstDecoder.decode() ?: return null
-                    secondBitmap = secondDecoder.decode() ?: return null
-                    composite = Bitmap.createBitmap(layout.outputWidth, layout.height, Bitmap.Config.ARGB_8888)
-                    val hasAlpha = firstBitmap.hasAlpha() || secondBitmap.hasAlpha()
-                    composite.setHasAlpha(hasAlpha)
-                    val canvas = Canvas(composite)
-                    canvas.drawColor(readerCanvasColor())
-                    val firstOnLeft = firstPageOnLeft()
-                    val leftBitmap = if (firstOnLeft) firstBitmap else secondBitmap
-                    val rightBitmap = if (firstOnLeft) secondBitmap else firstBitmap
-                    val leftWidth = if (firstOnLeft) layout.firstWidth else layout.secondWidth
-                    val rightWidth = if (firstOnLeft) layout.secondWidth else layout.firstWidth
-                    physicalSplitFraction = leftWidth.toFloat() / layout.outputWidth
-                    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-                    canvas.drawBitmap(
-                        leftBitmap,
-                        null,
-                        Rect(0, 0, leftWidth, layout.height),
-                        paint,
-                    )
-                    canvas.drawBitmap(
-                        rightBitmap,
-                        null,
-                        Rect(leftWidth, 0, leftWidth + rightWidth, layout.height),
-                        paint,
-                    )
-                    return Buffer().also { buffer ->
-                        val format = if (hasAlpha) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
-                        check(composite.compress(format, 100, buffer.outputStream()))
-                    }
-                } finally {
-                    firstBitmap?.recycle()
-                    secondBitmap?.recycle()
-                    composite?.recycle()
-                }
-            } finally {
-                secondDecoder.recycle()
-            }
-        } finally {
-            firstDecoder.recycle()
-        }
-    }
-
     private fun firstPageOnLeft(): Boolean = DoublePagePlacement.firstPageOnLeft(
         isRightToLeft = viewer is R2LPagerViewer,
         inverted = viewer.config.invertDoublePages,
     )
-
-    private fun readerCanvasColor(): Int = when (viewer.config.theme) {
-        0 -> Color.WHITE
-        2 -> Color.rgb(0x20, 0x21, 0x25)
-        3 -> if (
-            context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-            Configuration.UI_MODE_NIGHT_YES
-        ) {
-            Color.rgb(0x20, 0x21, 0x25)
-        } else {
-            Color.WHITE
-        }
-        else -> Color.BLACK
-    }
 
     private fun imageConfig(landscapeZoom: Boolean) = Config(
         zoomDuration = viewer.config.doubleTapAnimDuration,

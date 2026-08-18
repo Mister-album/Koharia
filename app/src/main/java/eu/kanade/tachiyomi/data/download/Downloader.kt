@@ -312,7 +312,10 @@ class Downloader(
                 queueState,
                 queueStatusVersion,
                 downloadPreferences.parallelSourceLimit.changes(),
-            ) { queue, _, parallelCount -> queue to parallelCount }.transformLatest { (queue, parallelCount) ->
+                DownloadNetworkQoS.readerActive,
+            ) { queue, _, parallelCount, readerActive ->
+                queue to if (readerActive) 1 else parallelCount
+            }.transformLatest { (queue, parallelCount) ->
                 while (true) {
                     val activeDownloads = queue.asSequence()
                         // Ignore completed downloads, leave them in the queue
@@ -342,6 +345,9 @@ class Downloader(
                     val downloadJobsToStop = downloadJobs.filter { it.key !in activeDownloads }
                     downloadJobsToStop.forEach { (download, job) ->
                         job.cancel()
+                        if (download.status == Download.State.DOWNLOADING) {
+                            download.status = Download.State.QUEUE
+                        }
                         downloadJobs.remove(download)
                     }
 
@@ -484,7 +490,12 @@ class Downloader(
             download.status = Download.State.DOWNLOADING
 
             // Start downloading images, consider we can have downloaded images already
-            pageList.asFlow().flatMapMerge(concurrency = downloadPreferences.parallelPageLimit.get()) { page ->
+            val pageConcurrency = if (DownloadNetworkQoS.readerActive.value) {
+                1
+            } else {
+                downloadPreferences.parallelPageLimit.get()
+            }
+            pageList.asFlow().flatMapMerge(concurrency = pageConcurrency) { page ->
                 flow {
                     // Fetch image URL if necessary
                     if (page.imageUrl.isNullOrEmpty()) {

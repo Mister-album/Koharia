@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
 internal class PageLoadGate(
-    private val preloadSize: Int,
+    private val preloadSize: Int = 2,
 ) {
     private var activePageIndexes: Set<Int> = emptySet()
     private var logicalPageIndex: Int? = null
@@ -52,15 +52,17 @@ internal class PageLoadGate(
 
     private fun prefetchIndexes(pageCount: Int): List<Int> {
         if (pageCount <= 0) return emptyList()
+        val logicalSpreadSize = activePageIndexes.size.coerceAtLeast(1)
+        val targetSize = logicalSpreadSize.coerceAtMost(preloadSize.coerceAtLeast(1))
         return when (prefetchDirection) {
             Direction.FORWARD -> {
                 val first = (activePageIndexes.maxOrNull() ?: return emptyList()) + 1
-                val lastExclusive = (first + preloadSize).coerceAtMost(pageCount)
+                val lastExclusive = (first + targetSize).coerceAtMost(pageCount)
                 if (first < lastExclusive) (first until lastExclusive).toList() else emptyList()
             }
             Direction.BACKWARD -> {
                 val first = (activePageIndexes.minOrNull() ?: return emptyList()) - 1
-                val lastInclusive = (first - preloadSize + 1).coerceAtLeast(0)
+                val lastInclusive = (first - targetSize + 1).coerceAtLeast(0)
                 if (first >= lastInclusive) (first downTo lastInclusive).toList() else emptyList()
             }
         }

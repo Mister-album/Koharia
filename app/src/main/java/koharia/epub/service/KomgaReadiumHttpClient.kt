@@ -10,7 +10,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import logcat.LogPriority
-import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.Try
 import org.readium.r2.shared.util.http.DefaultHttpClient
 import org.readium.r2.shared.util.http.HttpClient
@@ -26,8 +25,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.ByteArrayInputStream
 import java.io.IOException
-import java.net.URI
-import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 class KomgaReadiumHttpClient(
@@ -37,6 +35,7 @@ class KomgaReadiumHttpClient(
 ) {
 
     private val requestLogCount = AtomicInteger(0)
+    private val clients = ConcurrentHashMap<Long, DefaultHttpClient>()
 
     suspend fun cachedResource(
         sourceId: Long,
@@ -51,29 +50,10 @@ class KomgaReadiumHttpClient(
         persistCache: Boolean = true,
     ): HttpClient {
         val cachedOnlyPreference = scopedPreferenceStoreFactory.basePreferences(sourceId).downloadedOnly
-        val client = DefaultHttpClient()
-        client.callback = object : DefaultHttpClient.Callback {
-            override suspend fun onStartRequest(request: HttpRequest) = Try.success(
-                request.copy {
-                    val source = sourceManager.get(sourceId) as? KomgaSource
-                    val baseUrl = source?.baseUrl?.trimEnd('/').orEmpty()
-                    val shouldInjectHeaders = request.url.toString().startsWith(baseUrl)
-                    source?.currentReadiumHeaders()
-                        .takeIf { shouldInjectHeaders }
-                        ?.let { headers ->
-                            headers.names().forEach { name ->
-                                setHeader(name, headers.values(name))
-                            }
-                        }
-
-                    if (requestLogCount.getAndIncrement() < 20) {
-                        logcat(LogPriority.DEBUG) {
-                            "EPUB http request url=${request.url} injectHeaders=$shouldInjectHeaders baseUrl=$baseUrl"
-                        }
-                    }
-                },
-            )
-        }
+        // Keep one Readium transport per server so opening the pagination scanner or an adjacent
+        // EPUB reuses the same connection pool and TLS session. Cache policy remains per reader
+        // in the wrapper below.
+        val client = clients.getOrPut(sourceId) { createClient(sourceId) }
         val cachedClient = EpubResourceCacheHttpClient(
             delegate = client,
             cacheManager = epubCacheManager,
@@ -89,6 +69,34 @@ class KomgaReadiumHttpClient(
                 )
         }
     }
+
+    private fun createClient(sourceId: Long): DefaultHttpClient {
+        return DefaultHttpClient().apply {
+            callback = object : DefaultHttpClient.Callback {
+                override suspend fun onStartRequest(request: HttpRequest) = Try.success(
+                    request.copy {
+                        val source = sourceManager.get(sourceId) as? KomgaSource
+                        val baseUrl = source?.baseUrl?.trimEnd('/').orEmpty()
+                        val shouldInjectHeaders = baseUrl.isNotEmpty() &&
+                            request.url.toString().startsWith(baseUrl)
+                        source?.currentReadiumHeaders()
+                            .takeIf { shouldInjectHeaders }
+                            ?.let { headers ->
+                                headers.names().forEach { name ->
+                                    setHeader(name, headers.values(name))
+                                }
+                            }
+
+                        if (requestLogCount.getAndIncrement() < 20) {
+                            logcat(LogPriority.DEBUG) {
+                                "EPUB http request url=${request.url} injectHeaders=$shouldInjectHeaders baseUrl=$baseUrl"
+                            }
+                        }
+                    },
+                )
+            }
+        }
+    }
 }
 
 internal fun shouldUseKomgaReadiumNetwork(cachedOnly: Boolean): Boolean = !cachedOnly
@@ -102,7 +110,11 @@ private class EpubResourceCacheHttpClient(
     private val cachedOnlyProvider: () -> Boolean,
 ) : HttpClient {
 
-    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Disk writes are intentionally bounded. Readium may request several resources at once, and
+    // launching an unbounded IO job per response used to contend with the visible WebView.
+    private val prefetchScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO.limitedParallelism(PREFETCH_CONCURRENCY),
+    )
 
     override suspend fun stream(request: HttpRequest): org.readium.r2.shared.util.http.HttpTry<HttpStreamResponse> {
         if (isCacheable(request)) {
@@ -145,12 +157,6 @@ private class EpubResourceCacheHttpClient(
                             mediaType = response.response.mediaType?.toString(),
                             bytes = bytes,
                         )
-                        if (response.response.mediaType?.isHtml == true || isHtmlUrl(request.url.toString())) {
-                            prefetchDependencies(
-                                baseUrl = response.response.url.toString(),
-                                content = bytes.toString(Charsets.UTF_8),
-                            )
-                        }
                     }
                 }
             }
@@ -165,64 +171,6 @@ private class EpubResourceCacheHttpClient(
         return url.contains("/manifest/epub") ||
             url.endsWith("/positions") ||
             url.contains("/resource/")
-    }
-
-    private suspend fun prefetchDependencies(
-        baseUrl: String,
-        content: String,
-    ) {
-        val visited = Collections.synchronizedSet(mutableSetOf<String>())
-        htmlDependency.findAll(content)
-            .map { match -> match.groupValues[2] }
-            .filter(::isFetchableReference)
-            .take(MAX_PREFETCH_DEPENDENCIES)
-            .forEach { reference ->
-                prefetchDependency(baseUrl, reference, visited, parseCssDependencies = true)
-            }
-    }
-
-    private suspend fun prefetchDependency(
-        baseUrl: String,
-        reference: String,
-        visited: MutableSet<String>,
-        parseCssDependencies: Boolean,
-    ) {
-        val resolved = runCatching { URI(baseUrl).resolve(reference).toString() }.getOrNull() ?: return
-        if (!visited.add(resolved)) return
-        val absoluteUrl = AbsoluteUrl(resolved) ?: return
-        cacheManager.getResource(sourceId, publicationKey, resolved)?.let { return }
-        prefetchSafely(resolved) {
-            delegate.stream(HttpRequest(absoluteUrl)).map { response ->
-                if (response.response.statusCode != HttpStatus(200) ||
-                    response.response.contentLength?.let { it > EpubCacheManager.MAX_RESOURCE_BYTES } == true
-                ) {
-                    response.body.close()
-                    return@map
-                }
-                val bytes = response.body.use { it.readBytes() }
-                cacheManager.putResource(
-                    sourceId = sourceId,
-                    publicationKey = publicationKey,
-                    url = resolved,
-                    mediaType = response.response.mediaType?.toString(),
-                    bytes = bytes,
-                )
-                if (parseCssDependencies &&
-                    (
-                        response.response.mediaType?.toString()?.startsWith("text/css") == true ||
-                            resolved.substringBefore('?').endsWith(".css", ignoreCase = true)
-                        )
-                ) {
-                    cssDependency.findAll(bytes.toString(Charsets.UTF_8))
-                        .map { match -> match.groupValues[2] }
-                        .filter(::isFetchableReference)
-                        .take(MAX_PREFETCH_DEPENDENCIES)
-                        .forEach { cssReference ->
-                            prefetchDependency(resolved, cssReference, visited, parseCssDependencies = false)
-                        }
-                }
-            }
-        }
     }
 
     private suspend fun prefetchSafely(
@@ -240,30 +188,8 @@ private class EpubResourceCacheHttpClient(
         }
     }
 
-    private fun isFetchableReference(reference: String): Boolean {
-        val value = reference.trim()
-        return value.isNotBlank() &&
-            !value.startsWith("#") &&
-            !value.startsWith("data:", ignoreCase = true) &&
-            !value.startsWith("javascript:", ignoreCase = true)
-    }
-
-    private fun isHtmlUrl(url: String): Boolean {
-        val path = url.substringBefore('?')
-        return htmlExtensions.any { path.endsWith(it, ignoreCase = true) }
-    }
-
     private companion object {
-        const val MAX_PREFETCH_DEPENDENCIES = 64
-        val htmlExtensions = listOf(".xhtml", ".html", ".htm")
-        val htmlDependency = Regex(
-            """(?:src|href)\s*=\s*([\"'])(.*?)\1""",
-            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
-        )
-        val cssDependency = Regex(
-            """url\(\s*([\"']?)(.*?)\1\s*\)""",
-            RegexOption.IGNORE_CASE,
-        )
+        const val PREFETCH_CONCURRENCY = 2
     }
 }
 

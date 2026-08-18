@@ -45,6 +45,7 @@ class KomgaApiSearchTest {
         assertEquals("POST", request.method)
         assertEquals("/api/v1/books/list", request.url.encodedPath)
         assertEquals("1", request.url.queryParameter("page"))
+        assertEquals("25", request.url.queryParameter("size"))
         assertEquals("metadata.title,desc", request.url.queryParameter("sort"))
 
         val body = Buffer().also { request.body!!.writeTo(it) }.readUtf8()

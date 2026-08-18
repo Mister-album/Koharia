@@ -39,83 +39,26 @@ class KomgaOfflineInterceptor(
                 .build()
         }
 
-        var response: Response? = null
-        var exception: IOException? = null
-        var retryCount = 0
-        val maxRetries = 3
-
-        while (retryCount < maxRetries) {
-            try {
-                response = chain.proceed(request)
-                if (!canUseNetwork && response.code == 504) {
-                    val fallbackResponse = metadataCacheStore.load(originalRequest)
-                    if (fallbackResponse != null) {
+        return try {
+            val response = chain.proceed(request)
+            if (!canUseNetwork && response.code == 504) {
+                metadataCacheStore.load(originalRequest)?.also { response.close() }
+                    ?: run {
                         response.close()
-                        response = fallbackResponse
+                        throw IOException(context.stringResource(MR.strings.exception_offline))
                     }
-                }
-                if (!canUseNetwork && response.code == 504) {
-                    response.close()
-                    response = null
-                    throw IOException(context.stringResource(MR.strings.exception_offline))
-                }
-                if (response.isSuccessful || !canUseNetwork) {
-                    break
-                }
-                if (response.code >= 500) {
-                    response.close()
-                    retryCount++
-                    response = if (retryCount >= maxRetries) {
-                        metadataCacheStore.load(originalRequest)
-                    } else {
-                        null
-                    }
-                    if (response != null) break
-                    continue
-                }
-                break
-            } catch (e: IOException) {
-                exception = e
-                if (!canUseNetwork) {
-                    break
-                }
-                retryCount++
-                if (retryCount >= maxRetries) {
-                    logcat(LogPriority.INFO) { "Komga network request failed, trying local cache: ${request.url}" }
-                    response = metadataCacheStore.load(originalRequest)
-                    if (response != null) break
-
-                    val fallbackRequest = request.newBuilder()
-                        .cacheControl(
-                            CacheControl.Builder()
-                                .onlyIfCached()
-                                .maxStale(Int.MAX_VALUE, TimeUnit.SECONDS)
-                                .build(),
-                        )
-                        .build()
-                    try {
-                        response = chain.proceed(fallbackRequest)
-                    } catch (_: IOException) {
-                        // Keep the original exception below.
-                    }
-                    break
-                }
-                try {
-                    Thread.sleep(1000L * retryCount)
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
+            } else if (canUseNetwork && response.code >= 500) {
+                metadataCacheStore.load(originalRequest)?.also { response.close() } ?: response
+            } else {
+                response
             }
-        }
+        } catch (error: IOException) {
+            if (chain.call().isCanceled() || Thread.currentThread().isInterrupted) throw error
+            if (!canUseNetwork) throw IOException(context.stringResource(MR.strings.exception_offline), error)
 
-        if (response == null) {
-            if (!canUseNetwork) {
-                throw IOException(context.stringResource(MR.strings.exception_offline))
-            }
-            throw exception ?: IOException("Request failed after $maxRetries retries")
+            logcat(LogPriority.INFO) { "Komga network request failed, trying local cache: ${request.url}" }
+            metadataCacheStore.load(originalRequest) ?: throw error
         }
-
-        return response
     }
 }
 

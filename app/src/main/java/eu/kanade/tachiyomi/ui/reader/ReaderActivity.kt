@@ -63,6 +63,7 @@ import eu.kanade.presentation.reader.components.ChapterNavigatorType
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
+import eu.kanade.tachiyomi.data.download.DownloadNetworkQoS
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
@@ -261,6 +262,16 @@ class ReaderActivity : BaseActivity() {
                 }
             }
             .launchIn(lifecycleScope)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        DownloadNetworkQoS.acquireReader()
+    }
+
+    override fun onStop() {
+        DownloadNetworkQoS.releaseReader()
+        super.onStop()
     }
 
     private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
