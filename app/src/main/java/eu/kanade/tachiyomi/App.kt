@@ -105,8 +105,10 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         }
 
         Injekt.importModule(PreferenceModule(this))
-        Injekt.importModule(AppModule(this))
+        val appModule = AppModule(this)
+        Injekt.importModule(appModule)
         Injekt.importModule(DomainModule())
+        appModule.initializeInBackground()
 
         setupNotificationChannels()
 
@@ -292,7 +294,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
     override fun getPackageName(): String {
         try {
             // Override the value passed as X-Requested-With in WebView requests
-            val stackTrace = Looper.getMainLooper().thread.stackTrace
+            val currentThread = Thread.currentThread()
+            val mainThread = Looper.getMainLooper().thread
+            val stackTrace = if (currentThread === mainThread) {
+                currentThread.stackTrace
+            } else {
+                mainThread.stackTrace + currentThread.stackTrace
+            }
             val isChromiumCall = stackTrace.any { trace ->
                 trace.className.lowercase() in setOf("org.chromium.base.buildinfo", "org.chromium.base.apkinfo") &&
                     trace.methodName.lowercase() in setOf("getall", "getpackagename", "<init>")
