@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.di
 
 import android.app.Application
+import android.webkit.CookieManager
 import androidx.core.content.ContextCompat
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import app.cash.sqldelight.db.QueryResult
@@ -44,6 +45,10 @@ import koharia.source.komga.KomgaConnectionProvider
 import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.local.LocalFolderConnectionProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -69,6 +74,7 @@ import tachiyomi.data.UpdateStrategyColumnAdapter
 import tachiyomi.data.migration.LegacyDatabaseSchemaBridge
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
+import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.InjektModule
 import uy.kohesive.injekt.api.InjektRegistrar
 import uy.kohesive.injekt.api.addSingleton
@@ -81,6 +87,7 @@ private val lock = Any()
 class AppModule(val app: Application) : InjektModule {
 
     private var sqlDriverRef: WeakReference<SqlDriver>? = null
+    private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun InjektRegistrar.registerInjectables() {
         addSingleton(app)
@@ -267,21 +274,33 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { EpubReaderSupportResolver() }
         addSingletonFactory { KomgaEpubProgressSyncService(get(), get(), get()) }
         addSingletonFactory { KomgaEpubRemoteProgressCoordinator(get(), get(), get(), get()) }
+    }
 
-        // Asynchronously init expensive components for a faster cold start
+    /** Starts process-scoped singleton prewarming after all DI modules have been registered. */
+    fun initializeInBackground() {
         ContextCompat.getMainExecutor(app).execute {
-            get<NetworkHelper>()
+            // WebView provider initialization must happen on the main thread. NetworkHelper's
+            // AndroidCookieJar will reuse this initialized CookieManager from the I/O scope.
+            CookieManager.getInstance()
 
-            get<ConnectionPreferences>()
-            get<KomgaServerPreferences>()
-            get<KomgaLocalConfigManager>()
+            startupScope.launch {
+                Injekt.get<NetworkHelper>()
 
-            get<SourceManager>()
-            get<KomgaActiveServerSseManager>()
+                Injekt.get<ConnectionPreferences>()
+                Injekt.get<KomgaServerPreferences>()
+                Injekt.get<KomgaLocalConfigManager>()
 
-            get<Database>()
+                Injekt.get<SourceManager>()
+                // KomgaActiveServerSseManager registers a ProcessLifecycle observer and must be
+                // constructed on the main thread. Keep the surrounding I/O-heavy initialization off it.
+                ContextCompat.getMainExecutor(app).execute {
+                    Injekt.get<KomgaActiveServerSseManager>()
+                }
 
-            get<DownloadManager>()
+                Injekt.get<Database>()
+
+                Injekt.get<DownloadManager>()
+            }
         }
     }
 }

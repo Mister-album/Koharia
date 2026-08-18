@@ -176,6 +176,9 @@ class MainActivity : BaseActivity() {
                     if (isLaunch) {
                         // Set start screen
                         handleIntentAction(intent, navigator)
+                        // The launcher intent has no tab action, but the initial screen is ready
+                        // after intent handling regardless of whether a specific action was found.
+                        ready = true
 
                         // Reset Incognito Mode on relaunch
                         preferences.incognitoMode.set(false)
@@ -438,7 +441,6 @@ class MainActivity : BaseActivity() {
             lifecycleScope.launch { HomeScreen.openTab(tabToOpen) }
         }
 
-        ready = true
         return true
     }
 
