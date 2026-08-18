@@ -80,6 +80,7 @@ fun MangaCompactGridItem(
     coverAlpha: Float = 1f,
     coverBadgeStart: @Composable (RowScope.() -> Unit)? = null,
     coverBadgeEnd: @Composable (RowScope.() -> Unit)? = null,
+    coverBadgeEndModifier: Modifier = Modifier,
     coverOverlay: (@Composable BoxScope.() -> Unit)? = null,
 ) {
     GridItemSelectable(
@@ -98,6 +99,7 @@ fun MangaCompactGridItem(
             },
             badgesStart = coverBadgeStart,
             badgesEnd = coverBadgeEnd,
+            badgesEndModifier = coverBadgeEndModifier,
             overlay = coverOverlay,
             content = {
                 if (title != null) {
@@ -187,6 +189,7 @@ fun MangaComfortableGridItem(
     coverAlpha: Float = 1f,
     coverBadgeStart: (@Composable RowScope.() -> Unit)? = null,
     coverBadgeEnd: (@Composable RowScope.() -> Unit)? = null,
+    coverBadgeEndModifier: Modifier = Modifier,
     coverOverlay: (@Composable BoxScope.() -> Unit)? = null,
     onClickContinueReading: (() -> Unit)? = null,
 ) {
@@ -207,6 +210,7 @@ fun MangaComfortableGridItem(
                 },
                 badgesStart = coverBadgeStart,
                 badgesEnd = coverBadgeEnd,
+                badgesEndModifier = coverBadgeEndModifier,
                 overlay = coverOverlay,
                 content = {
                     if (onClickContinueReading != null) {
@@ -241,6 +245,7 @@ private fun MangaGridCover(
     cover: @Composable BoxScope.() -> Unit = {},
     badgesStart: (@Composable RowScope.() -> Unit)? = null,
     badgesEnd: (@Composable RowScope.() -> Unit)? = null,
+    badgesEndModifier: Modifier = Modifier,
     content: @Composable (BoxScope.() -> Unit)? = null,
     overlay: @Composable (BoxScope.() -> Unit)? = null,
 ) {
@@ -264,7 +269,8 @@ private fun MangaGridCover(
             BadgeGroup(
                 modifier = Modifier
                     .padding(4.dp)
-                    .align(Alignment.TopEnd),
+                    .align(Alignment.TopEnd)
+                    .then(badgesEndModifier),
                 content = badgesEnd,
             )
         }
@@ -349,6 +355,7 @@ fun MangaListItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     badge: @Composable (RowScope.() -> Unit),
+    readProgressText: String? = null,
     isSelected: Boolean = false,
     coverAlpha: Float = 1f,
     onClickContinueReading: (() -> Unit)? = null,
@@ -379,6 +386,16 @@ fun MangaListItem(
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodyMedium,
         )
+        if (readProgressText != null) {
+            Text(
+                text = readProgressText,
+                modifier = Modifier.padding(end = 8.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         BadgeGroup(content = badge)
         if (onClickContinueReading != null) {
             ContinueReadingButton(

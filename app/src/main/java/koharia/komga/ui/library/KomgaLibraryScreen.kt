@@ -53,6 +53,7 @@ import eu.kanade.presentation.more.settings.screen.KomgaLibraryClassificationScr
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
@@ -128,6 +129,7 @@ data class KomgaLibraryScreen(
         val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
         val basePreferences = remember(sourceId) { scopedPreferenceStoreFactory.basePreferences(sourceId) }
         val libraryPreferences: LibraryPreferences = Injekt.get()
+        val showLibraryReadProgress by libraryPreferences.showLibraryReadProgress.collectAsState()
         val connectionPreferences: ConnectionPreferences = Injekt.get()
         val downloadManager: DownloadManager = Injekt.get()
         val getRemoteManga: GetRemoteManga = Injekt.get()
@@ -137,6 +139,7 @@ data class KomgaLibraryScreen(
         val epubCacheManager: EpubCacheManager = Injekt.get()
         val getIncognitoState: GetIncognitoState = Injekt.get()
         val libraryClassificationManager: KomgaLibraryClassificationManager = Injekt.get()
+        val trackerManager: TrackerManager = Injekt.get()
 
         val screenModel = rememberScreenModel(tag = "$sourceId:$libraryScope:$listingQuery") {
             KomgaLibraryScreenModel(
@@ -155,9 +158,11 @@ data class KomgaLibraryScreen(
                 getIncognitoState = getIncognitoState,
                 libraryScope = libraryScope,
                 libraryClassificationManager = libraryClassificationManager,
+                trackerManager = trackerManager,
             )
         }
         val state by screenModel.state.collectAsState()
+        val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
         val columns by libraryPreferences.portraitColumns.collectAsState()
         val connectionProfiles by remember(connectionPreferences) {
             connectionPreferences.profilesChanges()
@@ -321,6 +326,11 @@ data class KomgaLibraryScreen(
                         snackbarHostState = snackbarHostState,
                         contentPadding = paddingValues,
                         showLibraryBadges = false,
+                        readProgress = if (showLibraryReadProgress) {
+                            { manga -> readProgressByUrl[manga.url.trimEnd('/')] }
+                        } else {
+                            null
+                        },
                         onWebViewClick = onWebViewClick,
                         onHelpClick = onHelpClick,
                         onMangaClick = {

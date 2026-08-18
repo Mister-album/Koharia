@@ -108,6 +108,11 @@ class LibraryPreferences(
 
     val unreadBadge: Preference<Boolean> = preferenceStore.getBoolean("display_unread_badge", true)
 
+    val showLibraryReadProgress: Preference<Boolean> = preferenceStore.getBoolean(
+        "display_library_read_progress",
+        true,
+    )
+
     val localBadge: Preference<Boolean> = preferenceStore.getBoolean("display_local_badge", true)
 
     val languageBadge: Preference<Boolean> = preferenceStore.getBoolean("display_language_badge", false)

@@ -353,6 +353,7 @@ class LibraryScreenModel(
             libraryPreferences.downloadBadge.changes(),
             libraryPreferences.unreadBadge.changes(),
             libraryPreferences.languageBadge.changes(),
+            libraryPreferences.showLibraryReadProgress.changes(),
             libraryPreferences.autoUpdateMangaRestrictions.changes(),
 
             preferences.downloadedOnly.changes(),
@@ -367,14 +368,15 @@ class LibraryScreenModel(
                 downloadBadge = it[0] as Boolean,
                 unreadBadge = it[1] as Boolean,
                 languageBadge = it[2] as Boolean,
-                skipOutsideReleasePeriod = LibraryPreferences.MANGA_OUTSIDE_RELEASE_PERIOD in (it[3] as Set<*>),
-                globalFilterDownloaded = it[4] as Boolean,
-                filterDownloaded = it[5] as TriState,
-                filterUnread = it[6] as TriState,
-                filterStarted = it[7] as TriState,
-                filterBookmarked = it[8] as TriState,
-                filterCompleted = it[9] as TriState,
-                filterIntervalCustom = it[10] as TriState,
+                showLibraryReadProgress = it[3] as Boolean,
+                skipOutsideReleasePeriod = LibraryPreferences.MANGA_OUTSIDE_RELEASE_PERIOD in (it[4] as Set<*>),
+                globalFilterDownloaded = it[5] as Boolean,
+                filterDownloaded = it[6] as TriState,
+                filterUnread = it[7] as TriState,
+                filterStarted = it[8] as TriState,
+                filterBookmarked = it[9] as TriState,
+                filterCompleted = it[10] as TriState,
+                filterIntervalCustom = it[11] as TriState,
             )
         }
     }
@@ -397,6 +399,16 @@ class LibraryScreenModel(
                         manga.unreadCount
                     } else {
                         0
+                    },
+                    readCount = if (preferences.showLibraryReadProgress) {
+                        manga.readCount
+                    } else {
+                        -1
+                    },
+                    totalChapterCount = if (preferences.showLibraryReadProgress) {
+                        manga.totalChapters
+                    } else {
+                        -1
                     },
                     isLocal = false,
                     sourceLanguage = if (preferences.languageBadge) {
@@ -728,6 +740,7 @@ class LibraryScreenModel(
         val downloadBadge: Boolean,
         val unreadBadge: Boolean,
         val languageBadge: Boolean,
+        val showLibraryReadProgress: Boolean,
         val skipOutsideReleasePeriod: Boolean,
 
         val globalFilterDownloaded: Boolean,

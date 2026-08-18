@@ -275,6 +275,10 @@ private fun ColumnScope.DisplayPage(
         pref = screenModel.libraryPreferences.unreadBadge,
     )
     CheckboxItem(
+        label = stringResource(MR.strings.action_display_read_progress),
+        pref = screenModel.libraryPreferences.showLibraryReadProgress,
+    )
+    CheckboxItem(
         label = stringResource(MR.strings.action_display_language_badge),
         pref = screenModel.libraryPreferences.languageBadge,
     )
