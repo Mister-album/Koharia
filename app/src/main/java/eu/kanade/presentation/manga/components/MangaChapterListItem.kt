@@ -56,7 +56,7 @@ fun MangaChapterListItem(
     bookmark: Boolean,
     selected: Boolean,
     downloadIndicatorEnabled: Boolean,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     downloadStateProvider: () -> Download.State,
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
@@ -67,22 +67,32 @@ fun MangaChapterListItem(
     onChapterSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val start = getSwipeAction(
-        action = chapterSwipeStartAction,
-        read = read,
-        bookmark = bookmark,
-        downloadState = downloadStateProvider(),
-        background = MaterialTheme.colorScheme.primaryContainer,
-        onSwipe = { onChapterSwipe(chapterSwipeStartAction) },
-    )
-    val end = getSwipeAction(
-        action = chapterSwipeEndAction,
-        read = read,
-        bookmark = bookmark,
-        downloadState = downloadStateProvider(),
-        background = MaterialTheme.colorScheme.primaryContainer,
-        onSwipe = { onChapterSwipe(chapterSwipeEndAction) },
-    )
+    val startAction = chapterSwipeStartAction.takeUnless {
+        it == LibraryPreferences.ChapterSwipeAction.Download && onDownloadClick == null
+    }
+    val endAction = chapterSwipeEndAction.takeUnless {
+        it == LibraryPreferences.ChapterSwipeAction.Download && onDownloadClick == null
+    }
+    val start = startAction?.let { action ->
+        getSwipeAction(
+            action = action,
+            read = read,
+            bookmark = bookmark,
+            downloadState = downloadStateProvider(),
+            background = MaterialTheme.colorScheme.primaryContainer,
+            onSwipe = { onChapterSwipe(action) },
+        )
+    }
+    val end = endAction?.let { action ->
+        getSwipeAction(
+            action = action,
+            read = read,
+            bookmark = bookmark,
+            downloadState = downloadStateProvider(),
+            background = MaterialTheme.colorScheme.primaryContainer,
+            onSwipe = { onChapterSwipe(action) },
+        )
+    }
 
     SwipeableActionsBox(
         modifier = Modifier.clipToBounds(),
@@ -177,14 +187,16 @@ fun MangaChapterListItem(
                 }
             }
 
-            ChapterDownloadIndicator(
-                enabled = downloadIndicatorEnabled,
-                modifier = Modifier.padding(start = 4.dp),
-                isKomgaCacheMode = isKomgaCacheMode,
-                downloadStateProvider = downloadStateProvider,
-                downloadProgressProvider = downloadProgressProvider,
-                onClick = { onDownloadClick?.invoke(it) },
-            )
+            if (onDownloadClick != null) {
+                ChapterDownloadIndicator(
+                    enabled = downloadIndicatorEnabled,
+                    modifier = Modifier.padding(start = 4.dp),
+                    isConnectionCacheMode = isConnectionCacheMode,
+                    downloadStateProvider = downloadStateProvider,
+                    downloadProgressProvider = downloadProgressProvider,
+                    onClick = onDownloadClick,
+                )
+            }
         }
     }
 }

@@ -8,15 +8,18 @@ import eu.kanade.core.util.insertSeparators
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.presentation.history.HistoryUiModel
-import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.util.lang.toLocalDate
-import koharia.source.komga.KomgaServerPreferences
+import koharia.connection.ConnectionHistorySyncAdapter
+import koharia.connection.ConnectionPreferences
+import koharia.connection.NO_ACTIVE_CONNECTION
+import koharia.connection.isConnectionLibraryEntry
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -57,13 +60,12 @@ class HistoryScreenModel(
     private val getManga: GetManga = Injekt.get(),
     private val getNextChapters: GetNextChapters = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
-    private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
     private val removeHistory: RemoveHistory = Injekt.get(),
     private val setMangaCategories: SetMangaCategories = Injekt.get(),
     private val updateManga: UpdateManga = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
     private val sourceManager: SourceManager = Injekt.get(),
-    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
+    private val connectionPreferences: ConnectionPreferences = Injekt.get(),
 ) : StateScreenModel<HistoryScreenModel.State>(State()) {
 
     private val _events: Channel<Event> = Channel(Channel.UNLIMITED)
@@ -71,16 +73,18 @@ class HistoryScreenModel(
 
     init {
         screenModelScope.launchIO {
-            syncKomgaHistory()
+            connectionPreferences.activeConnectionId.changes()
+                .distinctUntilChanged()
+                .collectLatest(::syncConnectionHistory)
         }
 
         screenModelScope.launch {
             combine(
                 state.map { it.searchQuery }.distinctUntilChanged(),
-                komgaServerPreferences.activeServerId.changes().distinctUntilChanged(),
+                connectionPreferences.activeConnectionId.changes().distinctUntilChanged(),
             ) { query, sourceId -> query to sourceId }
                 .flatMapLatest { (query, sourceId) ->
-                    val history = if (sourceId == KomgaServerPreferences.NO_ACTIVE_SERVER) {
+                    val history = if (sourceId == NO_ACTIVE_CONNECTION) {
                         flowOf(emptyList())
                     } else {
                         getHistory.subscribe(query ?: "", sourceId)
@@ -98,10 +102,12 @@ class HistoryScreenModel(
         }
     }
 
-    private suspend fun syncKomgaHistory() {
-        runCatching { komgaProgressSyncService.syncHistoryFromServer() }
+    private suspend fun syncConnectionHistory(sourceId: Long) {
+        if (sourceId == NO_ACTIVE_CONNECTION) return
+        val progressAdapter = sourceManager.get(sourceId) as? ConnectionHistorySyncAdapter ?: return
+        runCatching { progressAdapter.syncConnectionHistory() }
             .onFailure { error ->
-                logcat(LogPriority.WARN, error) { "Failed to sync Komga history from server" }
+                logcat(LogPriority.WARN, error) { "Failed to sync connection history from provider" }
             }
     }
 
@@ -147,8 +153,8 @@ class HistoryScreenModel(
 
     fun removeAllHistory() {
         screenModelScope.launchIO {
-            val sourceId = komgaServerPreferences.activeServerId.get()
-                .takeUnless { it == KomgaServerPreferences.NO_ACTIVE_SERVER }
+            val sourceId = connectionPreferences.activeConnectionId.get()
+                .takeUnless { it == NO_ACTIVE_CONNECTION }
                 ?: return@launchIO
             val result = removeHistory.awaitAll(sourceId)
             if (!result) return@launchIO
@@ -186,7 +192,7 @@ class HistoryScreenModel(
 
     fun moveMangaToCategoriesAndAddToLibrary(manga: Manga, categories: List<Long>) {
         moveMangaToCategory(manga.id, categories)
-        if (manga.favorite) return
+        if (manga.isConnectionLibraryEntry(sourceManager)) return
 
         screenModelScope.launchIO {
             updateManga.awaitUpdateFavorite(manga.id, true)

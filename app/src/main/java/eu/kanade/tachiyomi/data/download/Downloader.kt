@@ -11,8 +11,9 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
+import koharia.connection.ConnectionDownloadStorageAdapter
+import koharia.connection.ConnectionRawDownloadAdapter
 import koharia.core.archive.ZipWriter
-import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,7 +73,6 @@ class Downloader(
     private val context: Context,
     private val provider: DownloadProvider,
     private val cache: DownloadCache,
-    private val komgaSharedDownloadIndexManager: KomgaSharedDownloadIndexManager = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val chapterCache: ChapterCache = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
@@ -533,9 +533,9 @@ class Downloader(
             } else {
                 mangaDir.findFile(chapterDirname)
             }
-            val komgaSource = download.source as? KomgaSource
-            if (komgaSource != null && indexedFile != null) {
-                komgaSharedDownloadIndexManager.indexDownloadedChapter(download.chapter, komgaSource, indexedFile)
+            val storageAdapter = download.source as? ConnectionDownloadStorageAdapter
+            if (storageAdapter != null && indexedFile != null) {
+                storageAdapter.indexDownloadedChapter(download.chapter, indexedFile)
             }
 
             DiskUtil.createNoMediaFile(tmpDir, context)
@@ -551,11 +551,11 @@ class Downloader(
     }
 
     private fun resolveDownloadMode(source: HttpSource, mode: Download.Mode?): Download.Mode {
-        return mode ?: if (source is KomgaSource) Download.Mode.RAW_FILE else Download.Mode.PAGE_CACHE
+        return mode ?: if (source is ConnectionRawDownloadAdapter) Download.Mode.RAW_FILE else Download.Mode.PAGE_CACHE
     }
 
     private suspend fun tryDownloadRawFile(download: Download, mangaDir: UniFile, chapterDirname: String): Boolean {
-        val source = download.source as? KomgaSource ?: return false
+        val source = download.source as? ConnectionRawDownloadAdapter ?: return false
 
         fun tmpFileFor(extension: String): Pair<String, UniFile> {
             val finalFileName = "$chapterDirname.$extension"
@@ -573,7 +573,7 @@ class Downloader(
             val existingBytes = tmpFile?.length()?.takeIf { it > 0L } ?: 0L
 
             val coroutineContext = currentCoroutineContext()
-            val responseCall = source.client.newCall(
+            val responseCall = source.rawDownloadClient.newCall(
                 source.rawFileRequest(
                     download.chapter.url,
                     existingBytes.takeIf {
@@ -681,11 +681,8 @@ class Downloader(
 
                     cache.addChapter(resolvedFinalFileName, mangaDir, download.manga)
                     mangaDir.findFile(resolvedFinalFileName)?.let { finalizedFile ->
-                        komgaSharedDownloadIndexManager.indexDownloadedChapter(
-                            download.chapter,
-                            source,
-                            finalizedFile,
-                        )
+                        (download.source as? ConnectionDownloadStorageAdapter)
+                            ?.indexDownloadedChapter(download.chapter, finalizedFile)
                     }
                     DiskUtil.createNoMediaFile(mangaDir, context)
                     download.status = Download.State.DOWNLOADED
@@ -758,9 +755,9 @@ class Downloader(
         if (download.rawTotalBytes > 0L) {
             return download.rawTotalBytes
         }
-        val source = download.source as? KomgaSource ?: return 0L
+        val source = download.source as? ConnectionRawDownloadAdapter ?: return 0L
         return runCatching {
-            source.client.newCall(source.rawFileRequest(download.chapter.url, existingBytes))
+            source.rawDownloadClient.newCall(source.rawFileRequest(download.chapter.url, existingBytes))
                 .execute()
                 .use { response ->
                     if (!response.isSuccessful) return 0L

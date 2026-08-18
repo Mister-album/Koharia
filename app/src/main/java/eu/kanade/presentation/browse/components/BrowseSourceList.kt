@@ -22,6 +22,7 @@ fun BrowseSourceList(
     mangaList: LazyPagingItems<StateFlow<Manga>>,
     contentPadding: PaddingValues,
     showLibraryBadges: Boolean,
+    showPagingLoadingIndicator: Boolean = true,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
 ) {
@@ -30,7 +31,7 @@ fun BrowseSourceList(
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
     ) {
         item {
-            if (mangaList.loadState.prepend is LoadState.Loading) {
+            if (showPagingLoadingIndicator && mangaList.loadState.prepend is LoadState.Loading) {
                 BrowseSourceLoadingItem()
             }
         }
@@ -46,7 +47,10 @@ fun BrowseSourceList(
         }
 
         item {
-            if (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading) {
+            if (
+                showPagingLoadingIndicator &&
+                (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading)
+            ) {
                 BrowseSourceLoadingItem()
             }
         }

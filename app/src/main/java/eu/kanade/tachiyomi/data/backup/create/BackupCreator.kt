@@ -15,10 +15,11 @@ import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
+import eu.kanade.tachiyomi.data.backup.models.KohariaBackupEnvelope
+import koharia.connection.getProviderManagedLibraryEntries
 import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
 import okio.buffer
-import okio.gzip
 import okio.sink
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
@@ -26,14 +27,17 @@ import tachiyomi.domain.backup.service.BackupPreferences
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.Date
 import java.util.Locale
+import java.util.zip.GZIPOutputStream
 
 class BackupCreator(
     private val context: Context,
@@ -43,6 +47,7 @@ class BackupCreator(
     private val getFavorites: GetFavorites = Injekt.get(),
     private val backupPreferences: BackupPreferences = Injekt.get(),
     private val mangaRepository: MangaRepository = Injekt.get(),
+    private val sourceManager: SourceManager = Injekt.get(),
 
     private val categoriesBackupCreator: CategoriesBackupCreator = CategoriesBackupCreator(),
     private val mangaBackupCreator: MangaBackupCreator = MangaBackupCreator(),
@@ -75,7 +80,10 @@ class BackupCreator(
             }
 
             val nonFavoriteManga = if (options.readEntries) mangaRepository.getReadMangaNotInLibrary() else emptyList()
-            val backupManga = backupMangas(getFavorites.await() + nonFavoriteManga, options)
+            val providerManagedManga = mangaRepository.getProviderManagedLibraryEntries(sourceManager)
+            val mangaToBackUp = (getFavorites.await() + nonFavoriteManga + providerManagedManga)
+                .distinctBy(Manga::id)
+            val backupManga = backupMangas(mangaToBackUp, options)
 
             val backup = Backup(
                 backupManga = backupManga,
@@ -90,14 +98,22 @@ class BackupCreator(
                 throw IllegalStateException(context.stringResource(MR.strings.empty_backup_error))
             }
 
+            val compressedPayload = ByteArrayOutputStream().also { output ->
+                GZIPOutputStream(output).use { gzip -> gzip.write(byteArray) }
+            }.toByteArray()
+            val envelope = KohariaBackupEnvelope(
+                magic = KohariaBackupEnvelope.MAGIC,
+                formatVersion = KohariaBackupEnvelope.FORMAT_VERSION,
+                schemaVersion = KohariaBackupEnvelope.SCHEMA_VERSION,
+                createdAt = System.currentTimeMillis(),
+                applicationId = BuildConfig.APPLICATION_ID,
+                payloadSha256 = compressedPayload.sha256(),
+                compressedPayload = compressedPayload,
+            )
+            val envelopeBytes = parser.encodeToByteArray(KohariaBackupEnvelope.serializer(), envelope)
             file.openOutputStream()
-                .also {
-                    // Force overwrite old file
-                    (it as? FileOutputStream)?.channel?.truncate(0)
-                }
-                .sink().gzip().buffer().use {
-                    it.write(byteArray)
-                }
+                .also { (it as? FileOutputStream)?.channel?.truncate(0) }
+                .sink().buffer().use { it.write(envelopeBytes) }
             val fileUri = file.uri
 
             // Make sure it's a valid backup file
@@ -138,18 +154,25 @@ class BackupCreator(
     }
 
     private fun backupSourcePreferences(options: BackupOptions): List<BackupSourcePreferences> {
-        if (!options.komgaSettings) return emptyList()
+        if (!options.connectionSettings) return emptyList()
 
         return preferenceBackupCreator.createSource(includePrivatePreferences = options.privateSettings)
     }
 
     companion object {
         private const val MAX_AUTO_BACKUPS: Int = 4
-        private val FILENAME_REGEX = """${BuildConfig.APPLICATION_ID}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}.tachibk""".toRegex()
+        private val FILENAME_REGEX =
+            """${BuildConfig.APPLICATION_ID}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}.kohariabackup""".toRegex()
 
         fun getFilename(): String {
             val date = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.ENGLISH).format(Date())
-            return "${BuildConfig.APPLICATION_ID}_$date.tachibk"
+            return "${BuildConfig.APPLICATION_ID}_$date.kohariabackup"
         }
     }
+}
+
+private fun ByteArray.sha256(): String {
+    return java.security.MessageDigest.getInstance("SHA-256")
+        .digest(this)
+        .joinToString("") { "%02x".format(it) }
 }

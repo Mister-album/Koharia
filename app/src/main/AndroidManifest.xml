@@ -64,6 +64,7 @@
                 <data android:scheme="content" />
                 <data android:host="*" />
                 <data android:mimeType="*/*" />
+                <data android:mimeType="application/vnd.koharia.backup" />
                 <!--
                 Work around Android's ugly primitive PatternMatcher
                 implementation that can't cope with finding a . early in
@@ -71,19 +72,126 @@
 
                 See https://stackoverflow.com/a/31028507
                 -->
-                <data android:pathPattern=".*\\.tachibk" />
-                <data android:pathPattern=".*\\..*\\.tachibk" />
-                <data android:pathPattern=".*\\..*\\..*\\.tachibk" />
-                <data android:pathPattern=".*\\..*\\..*\\..*\\.tachibk" />
-                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.tachibk" />
-                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\..*\\.tachibk" />
-                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\..*\\..*\\.tachibk" />
+                <data android:pathPattern=".*\\.kohariabackup" />
+                <data android:pathPattern=".*\\..*\\.kohariabackup" />
+                <data android:pathPattern=".*\\..*\\..*\\.kohariabackup" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.kohariabackup" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.kohariabackup" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\..*\\.kohariabackup" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\..*\\..*\\.kohariabackup" />
             </intent-filter>
 
             <!--suppress AndroidDomInspection -->
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
+        </activity>
+
+        <activity
+            android:name="koharia.importing.ExternalMediaOpenActivity"
+            android:exported="true"
+            android:label="@string/external_media_system_open"
+            android:theme="@style/Theme.Tachiyomi">
+            <!-- Open one supported local comic or book without importing it. -->
+            <intent-filter android:label="@string/external_media_system_open">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/rar" />
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/vnd.comicbook-rar" />
+                <data android:mimeType="application/x-cbr" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <!-- Offer direct reading for a single file shared by another app. -->
+            <intent-filter android:label="@string/external_media_system_open">
+                <action android:name="android.intent.action.SEND" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/rar" />
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/vnd.comicbook-rar" />
+                <data android:mimeType="application/x-cbr" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="koharia.importing.ExternalMediaImportActivity"
+            android:exported="true"
+            android:label="@string/external_media_system_import"
+            android:theme="@style/Theme.Tachiyomi">
+            <!-- Open supported local comic and book files. -->
+            <intent-filter android:label="@string/external_media_system_import">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/rar" />
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/vnd.comicbook-rar" />
+                <data android:mimeType="application/x-cbr" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <!-- Receive one or more supported files from share sheets. -->
+            <intent-filter android:label="@string/external_media_system_import">
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/rar" />
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/vnd.comicbook-rar" />
+                <data android:mimeType="application/x-cbr" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
         </activity>
 
         <activity

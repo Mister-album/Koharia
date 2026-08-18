@@ -40,6 +40,7 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.connection.ConnectionMangaBehaviorAdapter
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
@@ -51,6 +52,7 @@ import tachiyomi.data.Database
 import tachiyomi.domain.source.interactor.GetSourcesWithNonLibraryManga
 import tachiyomi.domain.source.model.Source
 import tachiyomi.domain.source.model.SourceWithCount
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LazyColumnWithAction
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -224,13 +226,20 @@ class ClearDatabaseScreen : Screen() {
 private class ClearDatabaseScreenModel : StateScreenModel<ClearDatabaseScreenModel.State>(State.Loading) {
     private val getSourcesWithNonLibraryManga: GetSourcesWithNonLibraryManga = Injekt.get()
     private val database: Database = Injekt.get()
+    private val sourceManager: SourceManager = Injekt.get()
 
     init {
         screenModelScope.launchIO {
             getSourcesWithNonLibraryManga.subscribe()
                 .collectLatest { list ->
                     mutableState.update { old ->
-                        val items = list.sortedBy { it.name }
+                        val items = list
+                            .filterNot { item ->
+                                (sourceManager.get(item.id) as? ConnectionMangaBehaviorAdapter)
+                                    ?.mangaBehavior
+                                    ?.providerManagedLibrary == true
+                            }
+                            .sortedBy { it.name }
                         when (old) {
                             State.Loading -> State.Ready(items)
                             is State.Ready -> old.copy(items = items)

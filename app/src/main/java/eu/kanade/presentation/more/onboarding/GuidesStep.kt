@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -25,6 +26,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 
 internal class GuidesStep(
     private val onAddServer: () -> Unit,
+    private val onAddLocalFolder: () -> Unit,
     private val onRestoreBackup: () -> Unit,
 ) : OnboardingStep {
 
@@ -50,6 +52,23 @@ internal class GuidesStep(
                     modifier = Modifier.padding(end = 8.dp),
                 )
                 Text(stringResource(MR.strings.action_add_server))
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 8.dp),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onAddLocalFolder,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.FolderOpen,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Text(stringResource(MR.strings.action_use_local_folder))
             }
             Button(
                 modifier = Modifier.fillMaxWidth(),
@@ -80,6 +99,7 @@ private fun GuidesStepPreview() {
     TachiyomiPreviewTheme {
         GuidesStep(
             onAddServer = {},
+            onAddLocalFolder = {},
             onRestoreBackup = {},
         ).Content()
     }

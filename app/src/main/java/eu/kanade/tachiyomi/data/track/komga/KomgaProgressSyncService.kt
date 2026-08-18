@@ -60,11 +60,15 @@ class KomgaProgressSyncService(
     }
 
     suspend fun syncHistoryFromServer() {
-        runCatching {
-            val activeServerId = komgaServerPreferences.activeServerId.get()
-            if (activeServerId == KomgaServerPreferences.NO_ACTIVE_SERVER) return
+        val activeServerId = komgaServerPreferences.activeServerId.get()
+        if (activeServerId == KomgaServerPreferences.NO_ACTIVE_SERVER) return
+        syncHistoryFromServer(activeServerId)
+    }
 
-            val remoteBooks = trackerManager.komga.api.getInProgressBookProgress(activeServerId)
+    suspend fun syncHistoryFromServer(sourceId: Long) {
+        if (sourceManager.get(sourceId) !is KomgaSource) return
+        runCatching {
+            val remoteBooks = trackerManager.komga.api.getInProgressBookProgress(sourceId)
             if (remoteBooks.isEmpty()) {
                 return
             }
@@ -74,7 +78,7 @@ class KomgaProgressSyncService(
 
             val localMangaBySeriesUrl = remoteSeriesUrls
                 .mapNotNull { seriesUrl ->
-                    mangaRepository.getMangaByUrlAndSourceId(seriesUrl, activeServerId)?.let { seriesUrl to it }
+                    mangaRepository.getMangaByUrlAndSourceId(seriesUrl, sourceId)?.let { seriesUrl to it }
                 }
                 .toMap()
 

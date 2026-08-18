@@ -19,14 +19,37 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.connection.ConnectionAccountAdapter
+import koharia.connection.ConnectionBrowseAdapter
+import koharia.connection.ConnectionDownloadStorageAdapter
+import koharia.connection.ConnectionEpubProgressAdapter
+import koharia.connection.ConnectionHealthAdapter
+import koharia.connection.ConnectionHistorySyncAdapter
+import koharia.connection.ConnectionMangaBehavior
+import koharia.connection.ConnectionMangaBehaviorAdapter
+import koharia.connection.ConnectionMangaProgressAdapter
+import koharia.connection.ConnectionPageAdapter
+import koharia.connection.ConnectionPageProgressAdapter
+import koharia.connection.ConnectionPagePublication
+import koharia.connection.ConnectionPublicationAdapter
+import koharia.connection.ConnectionRawDownloadAdapter
+import koharia.connection.ConnectionSource
+import koharia.connection.ConnectionViewerSettingsAdapter
+import koharia.connection.LibraryConnectionProfile
+import koharia.connection.LibraryContentScope
 import koharia.komga.api.KomgaApiClient
 import koharia.komga.api.KomgaSearchCapabilities
 import koharia.komga.api.dto.BookDto
 import koharia.komga.api.dto.LibraryDto
+import koharia.komga.api.dto.isDivinaCompatibleEpub
+import koharia.komga.api.dto.isEpub
+import koharia.komga.api.dto.offlineFilterMetadata
 import koharia.komga.domain.repository.KomgaRepository
 import koharia.komga.download.KomgaChapterMemo
+import koharia.komga.ui.library.KomgaLibraryScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -51,10 +74,29 @@ import java.util.concurrent.atomic.AtomicLong
 class KomgaSource(
     override val id: Long = ID,
     private val customName: String = SOURCE_NAME,
+    override val connectionProfile: LibraryConnectionProfile = LibraryConnectionProfile(
+        id = id,
+        providerId = KomgaConnectionProvider.ID,
+        name = customName,
+    ),
 ) :
     HttpSource(),
     ConfigurableSource,
-    UnmeteredSource {
+    UnmeteredSource,
+    ConnectionSource,
+    ConnectionBrowseAdapter,
+    ConnectionPageAdapter,
+    ConnectionAccountAdapter,
+    ConnectionMangaBehaviorAdapter,
+    ConnectionHealthAdapter,
+    ConnectionRawDownloadAdapter,
+    ConnectionDownloadStorageAdapter,
+    ConnectionPublicationAdapter,
+    ConnectionViewerSettingsAdapter,
+    ConnectionMangaProgressAdapter,
+    ConnectionHistorySyncAdapter,
+    ConnectionPageProgressAdapter,
+    ConnectionEpubProgressAdapter {
 
     private val preferences: SharedPreferences by lazy { sourcePreferences() }
     private val json: Json by injectLazy()
@@ -64,6 +106,52 @@ class KomgaSource(
     override val lang: String = SOURCE_LANG
     override val supportsLatest: Boolean = true
     override val versionId: Int = SOURCE_VERSION
+    override val pageLoadConcurrency: Int = 2
+    override val mangaBehavior = MANGA_BEHAVIOR
+    override val allowsUnvalidatedNetwork: Boolean = true
+    override val rawDownloadClient: OkHttpClient
+        get() = client
+    override val usesSharedDownloadStorage: Boolean
+        get() = Injekt.get<KomgaServerPreferences>().downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
+
+    override fun availableContentScopes(): Set<LibraryContentScope> {
+        return if (Injekt.get<KomgaLibraryClassificationManager>().enabled.get()) {
+            setOf(LibraryContentScope.COMIC, LibraryContentScope.BOOK)
+        } else {
+            setOf(LibraryContentScope.ALL)
+        }
+    }
+
+    override fun contentScopesChanges(): kotlinx.coroutines.flow.Flow<Set<LibraryContentScope>> {
+        return Injekt.get<KomgaLibraryClassificationManager>().enabled.changes().map { enabled ->
+            if (enabled) {
+                setOf(LibraryContentScope.COMIC, LibraryContentScope.BOOK)
+            } else {
+                setOf(LibraryContentScope.ALL)
+            }
+        }
+    }
+
+    override fun shouldRefreshMangaDetails(
+        manga: tachiyomi.domain.manga.model.Manga,
+        nowMillis: Long,
+    ): Boolean {
+        return manga.memo.offlineFilterMetadata() == null ||
+            super<ConnectionMangaBehaviorAdapter>.shouldRefreshMangaDetails(manga, nowMillis)
+    }
+
+    override fun createBrowseScreen(
+        scope: LibraryContentScope,
+        listingQuery: String?,
+        showNavigationUp: Boolean,
+    ) = KomgaLibraryScreen(
+        sourceId = id,
+        listingQuery = listingQuery,
+        showNavigationUp = showNavigationUp,
+        libraryScope = scope,
+    )
+
+    override fun chapterThumbnailUrl(chapterUrl: String): String = "$chapterUrl/thumbnail"
 
     override val baseUrl: String
         get() = preferences.getString(PREF_ADDRESS, "")!!.trim().trimEnd('/')
@@ -193,12 +281,57 @@ class KomgaSource(
             headersBuilder().add("Accept", "image/*,*/*;q=0.8").build(),
         )
 
-    fun rawFileRequest(chapterUrl: String, rangeStart: Long? = null): Request = apiClient.bookFileRequest(
-        chapterUrl,
+    override fun rawFileRequest(resourceUrl: String, rangeStart: Long?): Request = apiClient.bookFileRequest(
+        resourceUrl,
         rangeStart,
     )
 
     fun hasValidBaseUrl(): Boolean = baseUrl.startsWith("http://") || baseUrl.startsWith("https://")
+
+    override fun hasValidConnection(): Boolean = hasValidBaseUrl()
+
+    override suspend fun getAccount(): koharia.connection.ConnectionAccount? {
+        return getMe()?.let { user ->
+            koharia.connection.ConnectionAccount(
+                displayName = user.email,
+                roles = user.roles,
+            )
+        }
+    }
+
+    override suspend fun isConnectionReachable(): Boolean {
+        if (!hasValidBaseUrl()) return false
+        return runCatching {
+            client.newCall(GET("$baseUrl/api/v1/libraries?size=1", currentHeaders()))
+                .execute()
+                .use(Response::isSuccessful)
+        }.getOrDefault(false)
+    }
+
+    override suspend fun getConnectionPageList(
+        chapter: eu.kanade.tachiyomi.source.model.SChapter,
+        forceNetwork: Boolean,
+    ): List<Page> {
+        return getPageList(
+            chapter = chapter,
+            cachePolicy = if (forceNetwork) KomgaCachePolicy.NetworkFirst else KomgaCachePolicy.Default,
+        )
+    }
+
+    override fun decoratePageImageUrls(
+        pages: List<Page>,
+        chapterMemo: kotlinx.serialization.json.JsonObject,
+    ): List<Page> {
+        val pageImageCacheToken = KomgaChapterMemo.pageImageCacheToken(chapterMemo)
+        return pages.map { page ->
+            val imageUrl = page.imageUrl ?: return@map page
+            Page(
+                index = page.index,
+                url = page.url,
+                imageUrl = KomgaChapterMemo.versionedPageImageUrl(imageUrl, pageImageCacheToken),
+            )
+        }
+    }
 
     suspend fun getMe(): koharia.komga.api.dto.UserDto? {
         if (!hasValidBaseUrl()) return null
@@ -234,6 +367,360 @@ class KomgaSource(
         } catch (e: Exception) {
             // Ignore for now
         }
+    }
+
+    override suspend fun updateViewerFlags(resourceUrl: String, viewerFlags: Long) {
+        val mangaId = resourceUrl.substringAfterLast('/')
+        if (mangaId.isNotBlank()) updateMangaViewerFlags(mangaId, viewerFlags)
+    }
+
+    override suspend fun getViewerFlags(resourceUrl: String): Long? {
+        val mangaId = resourceUrl.substringAfterLast('/')
+        return mangaId.takeIf(String::isNotBlank)?.let { getMangaViewerFlags(it) }
+    }
+
+    override suspend fun syncMangaProgress(manga: tachiyomi.domain.manga.model.Manga) {
+        Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>().syncFromServer(manga)
+    }
+
+    override suspend fun syncConnectionHistory() {
+        Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>().syncHistoryFromServer(id)
+    }
+
+    override suspend fun pullPageProgress(
+        chapterUrl: String,
+        chapterMemo: kotlinx.serialization.json.JsonObject,
+    ): koharia.connection.ConnectionPageProgressSnapshot? {
+        val remote = Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>()
+            .pullBookProgress(id, chapterUrl)
+            ?: return null
+        val previousPublicationVersion = KomgaChapterMemo.publicationVersion(chapterMemo)
+        val updatedMemo = KomgaChapterMemo.mergePublicationMetadata(
+            existing = chapterMemo,
+            bookUrl = remote.url,
+            fileHash = remote.fileHash,
+            fileLastModified = remote.fileLastModified,
+            sizeBytes = remote.sizeBytes,
+            fileName = remote.fileName,
+            isEpub = remote.isEpub,
+            epubDivinaCompatible = remote.isDivinaCompatibleEpub.takeIf { remote.isEpub },
+            pagesCount = remote.totalPages,
+        )
+        return koharia.connection.ConnectionPageProgressSnapshot(
+            resourceId = remote.url,
+            pageIndex = remote.pageIndex,
+            totalPages = remote.totalPages,
+            completed = remote.completed,
+            readDate = remote.readDate,
+            isEpub = remote.isEpub,
+            canOpenAsPages = remote.isEpub && KomgaChapterMemo.canOpenEpubAsPages(updatedMemo),
+            updatedChapterMemo = updatedMemo,
+            previousPublicationVersion = previousPublicationVersion,
+            publicationVersion = KomgaChapterMemo.publicationVersion(updatedMemo),
+        )
+    }
+
+    override suspend fun pushPageProgress(
+        chapterUrl: String,
+        pageIndex: Int,
+        totalPages: Int,
+    ) {
+        Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>().pushPageProgress(
+            sourceId = id,
+            chapterUrl = chapterUrl,
+            pageIndex = pageIndex,
+            totalPages = totalPages,
+        )
+    }
+
+    override fun findSharedChapterFile(chapterUrl: String, mangaTitle: String): com.hippo.unifile.UniFile? {
+        return Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>()
+            .findSharedChapterDir(chapterUrl, mangaTitle, this)
+    }
+
+    override fun findCompletePagePublication(
+        chapter: eu.kanade.tachiyomi.data.database.models.Chapter,
+    ): ConnectionPagePublication? {
+        if (!KomgaChapterMemo.canOpenEpubAsPages(chapter.memo)) return null
+        val pageCount = KomgaChapterMemo.pagesCount(chapter.memo) ?: return null
+        val fingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
+        val publicationKey = koharia.epub.cache.EpubCachePolicy.publicationKey(
+            fileHash = fingerprint?.fileHash,
+            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
+            sizeBytes = fingerprint?.sizeBytes ?: 0L,
+            fallback = "book:${chapter.id}:${chapter.url}",
+        )
+        val file = Injekt.get<koharia.epub.cache.EpubCacheManager>().completeBookFile(id, publicationKey)
+            ?: return null
+        return ConnectionPagePublication(file, pageCount)
+    }
+
+    override fun hasCompleteCachedPublication(chapter: tachiyomi.domain.chapter.model.Chapter): Boolean {
+        if (KomgaChapterMemo.isEpub(chapter.memo) != true) return false
+        val fingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
+        val publicationKey = koharia.epub.cache.EpubCachePolicy.publicationKey(
+            fileHash = fingerprint?.fileHash,
+            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
+            sizeBytes = fingerprint?.sizeBytes ?: 0L,
+            fallback = "book:${chapter.id}:${chapter.url}",
+        )
+        return Injekt.get<koharia.epub.cache.EpubCacheManager>().hasCompleteBook(id, publicationKey)
+    }
+
+    override suspend fun openRemotePublication(
+        request: koharia.epub.model.EpubOpenRequest,
+        initialLocator: org.readium.r2.shared.publication.Locator?,
+    ): koharia.epub.session.EpubReaderSession {
+        return Injekt.get<koharia.epub.service.KomgaEpubPublicationService>().open(request, initialLocator)
+    }
+
+    override fun canOpenAsPages(chapterMemo: kotlinx.serialization.json.JsonObject): Boolean =
+        KomgaChapterMemo.canOpenEpubAsPages(chapterMemo)
+
+    override fun pageCountFromMemo(chapterMemo: kotlinx.serialization.json.JsonObject): Int? =
+        KomgaChapterMemo.pagesCount(chapterMemo)
+
+    override fun hasMigratedPageProgress(chapterMemo: kotlinx.serialization.json.JsonObject): Boolean =
+        KomgaChapterMemo.isEpubPageProgressMigrated(chapterMemo)
+
+    override fun markPageProgressMigrated(
+        chapterMemo: kotlinx.serialization.json.JsonObject,
+    ): kotlinx.serialization.json.JsonObject =
+        KomgaChapterMemo.markEpubPageProgressMigrated(chapterMemo)
+
+    override suspend fun resolvePublication(
+        chapter: tachiyomi.domain.chapter.model.Chapter,
+        allowRemoteLookup: Boolean,
+    ): koharia.connection.ConnectionPublicationMetadata {
+        val memoFingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
+        val memoIsEpub = KomgaChapterMemo.isEpub(chapter.memo)
+        val memoIsDivinaCompatible = KomgaChapterMemo.isEpubDivinaCompatible(chapter.memo)
+        val memoPagesCount = KomgaChapterMemo.pagesCount(chapter.memo) ?: 0
+        val memoBookUrl = memoFingerprint?.bookUrl ?: chapter.url.substringBefore('#').removeSuffix("/")
+        val fallbackPublicationKey = koharia.epub.cache.EpubCachePolicy.publicationKey(
+            fileHash = memoFingerprint?.fileHash,
+            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
+            sizeBytes = memoFingerprint?.sizeBytes ?: 0L,
+            fallback = "book:${chapter.id}:${chapter.url}",
+        )
+        val shouldLookup = allowRemoteLookup && !KomgaChapterMemo.hasCompleteEpubClassification(chapter.memo)
+        val remoteLookup = if (shouldLookup) runCatching { getBookDetails(chapter.url) } else Result.success(null)
+        val remoteBook = remoteLookup.getOrNull()
+        if (remoteBook != null) {
+            val updatedMemo = KomgaChapterMemo.mergeInto(
+                existing = chapter.memo,
+                baseUrl = baseUrl.trimEnd('/'),
+                book = remoteBook,
+            )
+            if (updatedMemo != chapter.memo) {
+                Injekt.get<tachiyomi.domain.chapter.interactor.UpdateChapter>().await(
+                    tachiyomi.domain.chapter.model.ChapterUpdate(id = chapter.id, memo = updatedMemo),
+                )
+            }
+        }
+        val publicationKey = remoteBook?.let { book ->
+            koharia.epub.cache.EpubCachePolicy.publicationKey(
+                fileHash = book.fileHash,
+                fileLastModified = book.fileLastModified,
+                sizeBytes = book.sizeBytes,
+                fallback = fallbackPublicationKey,
+            )
+        } ?: fallbackPublicationKey
+        val remoteResourceId = when {
+            remoteBook?.isEpub == true -> chapter.url.substringBefore('#').removeSuffix("/")
+            memoIsEpub == true -> memoBookUrl
+            else -> null
+        }
+        val isPageCompatible = remoteBook?.media?.let { media ->
+            media.isDivinaCompatibleEpub && media.pagesCount > 0
+        } ?: (memoIsEpub == true && memoIsDivinaCompatible == true && memoPagesCount > 0)
+
+        return koharia.connection.ConnectionPublicationMetadata(
+            remoteResourceId = remoteResourceId,
+            publicationKey = publicationKey,
+            isPageCompatible = isPageCompatible,
+            fileName = remoteBook?.name ?: KomgaChapterMemo.fileName(chapter.memo),
+            sizeBytes = remoteBook?.sizeBytes?.takeIf { it > 0L }
+                ?: memoFingerprint?.sizeBytes?.takeIf { it > 0L },
+            metadataError = remoteLookup.exceptionOrNull(),
+        )
+    }
+
+    override suspend fun getCachedEpubProgress(
+        chapterId: Long,
+    ): koharia.domain.epub.model.EpubRemoteProgressCache? {
+        return Injekt.get<koharia.epub.progress.KomgaEpubRemoteProgressCoordinator>().get(chapterId)
+    }
+
+    override suspend fun refreshEpubProgress(
+        mangaId: Long,
+        chapter: tachiyomi.domain.chapter.model.Chapter,
+    ): koharia.domain.epub.model.EpubRemoteProgressCache? {
+        return Injekt.get<koharia.epub.progress.KomgaEpubRemoteProgressCoordinator>()
+            .refreshChapter(mangaId, chapter, id)
+    }
+
+    override suspend fun syncMangaEpubProgress(
+        mangaId: Long,
+        chapters: List<tachiyomi.domain.chapter.model.Chapter>,
+        force: Boolean,
+    ): List<koharia.domain.epub.model.EpubRemoteProgressCache> {
+        return Injekt.get<koharia.epub.progress.KomgaEpubRemoteProgressCoordinator>().syncManga(
+            mangaId = mangaId,
+            sourceId = id,
+            chapters = chapters,
+            force = force,
+        )
+    }
+
+    override suspend fun pullEpubProgress(
+        resourceId: String,
+    ): koharia.connection.RemoteEpubProgression? {
+        val progression = Injekt.get<koharia.epub.progress.KomgaEpubProgressSyncService>()
+            .pullProgression(id, resourceId)
+            .progression
+            ?: return null
+        return koharia.connection.RemoteEpubProgression(
+            locator = progression.locator,
+            modifiedAt = progression.modifiedAt,
+        )
+    }
+
+    override suspend fun pushEpubProgress(
+        resourceId: String,
+        locator: org.readium.r2.shared.publication.Locator,
+        positions: List<org.readium.r2.shared.publication.Locator>,
+        modifiedAt: java.util.Date,
+    ) {
+        Injekt.get<koharia.epub.progress.KomgaEpubProgressSyncService>().pushProgression(
+            sourceId = id,
+            bookUrl = resourceId,
+            locator = locator,
+            positions = positions,
+            modifiedAt = modifiedAt,
+        )
+    }
+
+    override suspend fun indexDownloadedChapter(
+        chapter: tachiyomi.domain.chapter.model.Chapter,
+        localFile: com.hippo.unifile.UniFile,
+    ) {
+        Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>()
+            .indexDownloadedChapter(chapter, this, localFile)
+    }
+
+    override suspend fun deleteIndexedFile(file: com.hippo.unifile.UniFile) {
+        Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>().deleteIndexedPath(file)
+    }
+
+    override suspend fun deleteIndexedPathPrefix(relativePath: String) {
+        Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>()
+            .deleteIndexedPathPrefix(relativePath)
+    }
+
+    override suspend fun deleteIndexedManga(mangaId: Long) {
+        Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>()
+            .deleteMangaIndexedDownloads(mangaId, id)
+    }
+
+    override suspend fun updateIndexedFilePath(
+        oldRelativePath: String,
+        newFile: com.hippo.unifile.UniFile,
+    ) {
+        Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>()
+            .updateIndexedPath(oldRelativePath, newFile)
+    }
+
+    override suspend fun updateIndexedPathPrefix(
+        oldRelativePath: String,
+        newRelativePath: String,
+    ) {
+        Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>()
+            .updateIndexedPathPrefix(oldRelativePath, newRelativePath)
+    }
+
+    override fun indexedRelativePath(file: com.hippo.unifile.UniFile): String? {
+        return Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>().relativePathOf(file)
+    }
+
+    override fun downloadDirectoryName(): String {
+        val provider = Injekt.get<eu.kanade.tachiyomi.data.download.DownloadProvider>()
+        return if (usesSharedDownloadStorage) {
+            provider.getKomgaSharedDirName()
+        } else {
+            provider.getKomgaServerDirName(name)
+        }
+    }
+
+    override fun downloadDirectoryNames(): List<String> {
+        val provider = Injekt.get<eu.kanade.tachiyomi.data.download.DownloadProvider>()
+        val preferences = Injekt.get<KomgaServerPreferences>()
+        return buildList {
+            add(downloadDirectoryName())
+            if (usesSharedDownloadStorage) {
+                addAll(legacySharedDownloadDirectoryNames(provider, preferences))
+            } else {
+                addAll(legacyDownloadDirectoryNamesForName(name))
+                preferences.getDirectoryAliases(id).forEach { alias ->
+                    add(provider.getKomgaServerDirName(alias))
+                    addAll(legacyDownloadDirectoryNamesForName(alias))
+                }
+                add(provider.getKomgaSharedDirName())
+            }
+        }.distinct()
+    }
+
+    override fun ownedDownloadDirectoryNames(): Set<String> {
+        if (usesSharedDownloadStorage) return setOf(downloadDirectoryName())
+        val provider = Injekt.get<eu.kanade.tachiyomi.data.download.DownloadProvider>()
+        val preferences = Injekt.get<KomgaServerPreferences>()
+        return buildSet {
+            add(downloadDirectoryName())
+            addAll(legacyDownloadDirectoryNamesForName(name))
+            preferences.getDirectoryAliases(id).forEach { alias ->
+                add(provider.getKomgaServerDirName(alias))
+                addAll(legacyDownloadDirectoryNamesForName(alias))
+            }
+        }
+    }
+
+    override fun legacyDownloadDirectoryNames(): List<String> {
+        return if (usesSharedDownloadStorage) {
+            legacySharedDownloadDirectoryNames(
+                Injekt.get<eu.kanade.tachiyomi.data.download.DownloadProvider>(),
+                Injekt.get<KomgaServerPreferences>(),
+            )
+        } else {
+            legacyDownloadDirectoryNamesForName(name)
+        }
+    }
+
+    private fun legacySharedDownloadDirectoryNames(
+        provider: eu.kanade.tachiyomi.data.download.DownloadProvider,
+        preferences: KomgaServerPreferences,
+    ): List<String> {
+        return buildList {
+            add(eu.kanade.tachiyomi.util.storage.DiskUtil.buildValidFilename(SOURCE_NAME))
+            addAll(legacyDownloadDirectoryNamesForName(SOURCE_NAME))
+            preferences.getProfiles().forEach { profile ->
+                add(provider.getKomgaServerDirName(profile.name))
+                addAll(legacyDownloadDirectoryNamesForName(profile.name))
+            }
+            add(provider.getKomgaServerDirName(name))
+            addAll(legacyDownloadDirectoryNamesForName(name))
+            preferences.getDirectoryAliases(id).forEach { alias ->
+                add(provider.getKomgaServerDirName(alias))
+                addAll(legacyDownloadDirectoryNamesForName(alias))
+            }
+        }.distinct()
+    }
+
+    private fun legacyDownloadDirectoryNamesForName(sourceName: String): List<String> {
+        val legacyName = "$sourceName (${SOURCE_LANG.uppercase()})"
+        return listOf(
+            eu.kanade.tachiyomi.util.storage.DiskUtil.buildValidFilename(legacyName),
+            eu.kanade.tachiyomi.util.storage.DiskUtil.buildValidFilename(legacyName, disallowNonAscii = true),
+        ).distinct()
     }
 
     suspend fun getMangaViewerFlags(mangaId: String): Long? {
@@ -847,6 +1334,15 @@ class KomgaSource(
 
     companion object {
         const val SOURCE_NAME = "Komga"
+        private const val KOMGA_DETAILS_REFRESH_INTERVAL_MS = 5 * 60 * 1_000L
+        internal val MANGA_BEHAVIOR = ConnectionMangaBehavior(
+            usesCacheTerminology = true,
+            supportsChapterCoverGrid = true,
+            allowsLocalLibraryManagement = false,
+            allowsFetchIntervalManagement = false,
+            showSourceName = false,
+            detailsRefreshIntervalMillis = KOMGA_DETAILS_REFRESH_INTERVAL_MS,
+        )
         const val SOURCE_LANG = "all"
         internal const val PREF_SERVER_PROFILE_NAME = "Koharia server profile name"
         const val SOURCE_VERSION = 1

@@ -1,5 +1,6 @@
 package eu.kanade.presentation.manga.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.material3.MaterialTheme
@@ -28,24 +29,35 @@ enum class MangaCover(val ratio: Float) {
         shape: Shape = MaterialTheme.shapes.extraSmall,
         onClick: (() -> Unit)? = null,
     ) {
+        val coverModifier = modifier
+            .aspectRatio(ratio)
+            .clip(shape)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        role = Role.Button,
+                        onClick = onClick,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+        val errorPainter = rememberResourceBitmapPainter(id = R.drawable.cover_error)
+        if (data == null) {
+            Image(
+                painter = errorPainter,
+                contentDescription = contentDescription,
+                modifier = coverModifier,
+                contentScale = ContentScale.Crop,
+            )
+            return
+        }
         AsyncImage(
             model = data,
             placeholder = ColorPainter(CoverPlaceholderColor),
-            error = rememberResourceBitmapPainter(id = R.drawable.cover_error),
+            error = errorPainter,
             contentDescription = contentDescription,
-            modifier = modifier
-                .aspectRatio(ratio)
-                .clip(shape)
-                .then(
-                    if (onClick != null) {
-                        Modifier.clickable(
-                            role = Role.Button,
-                            onClick = onClick,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
+            modifier = coverModifier,
             contentScale = ContentScale.Crop,
         )
     }

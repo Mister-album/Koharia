@@ -6,9 +6,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import koharia.komga.download.KomgaChapterMemo
-import koharia.source.komga.KomgaCachePolicy
-import koharia.source.komga.KomgaSource
+import koharia.connection.ConnectionPageAdapter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -20,7 +18,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.serialization.json.JsonObject
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
@@ -45,8 +42,9 @@ internal class HttpPageLoader(
 ) : PageLoader() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val connectionPageAdapter = source as? ConnectionPageAdapter
 
-    /** A priority queue with up to two network workers for Komga and one for other sources. */
+    /** A priority queue whose concurrency is selected by the connection provider. */
     private val queue = PriorityBlockingQueue<PriorityPage>()
 
     private val pageLoadGate = PageLoadGate(preloadSize = 4)
@@ -58,7 +56,7 @@ internal class HttpPageLoader(
         get() = checkNotNull(chapter.chapter.toDomainChapter())
 
     init {
-        val workerCount = if (source is KomgaSource) 2 else 1
+        val workerCount = connectionPageAdapter?.pageLoadConcurrency ?: 1
         repeat(workerCount) {
             scope.launchIO {
                 while (true) {
@@ -164,17 +162,14 @@ internal class HttpPageLoader(
                 "chapterUrl=${chapter.chapter.url}"
         }
         val sourcePages = try {
-            if (forceNetwork && source is KomgaSource) {
-                source.getPageList(chapter.chapter, KomgaCachePolicy.NetworkFirst)
-            } else {
-                source.getPageList(chapter.chapter)
-            }
+            connectionPageAdapter?.getConnectionPageList(chapter.chapter, forceNetwork)
+                ?: source.getPageList(chapter.chapter)
         } catch (error: Exception) {
-            if (error is CancellationException || forceNetwork || source !is KomgaSource) throw error
+            if (error is CancellationException || forceNetwork || connectionPageAdapter == null) throw error
             logcat {
                 "MangaStartup: cached page list response failed; retrying network chapterId=${chapter.chapter.id}"
             }
-            source.getPageList(chapter.chapter, KomgaCachePolicy.NetworkFirst)
+            connectionPageAdapter.getConnectionPageList(chapter.chapter, forceNetwork = true)
         }.withPublicationVersion(chapterSnapshot.memo)
         logcat {
             "MangaStartup: page list request complete forceNetwork=$forceNetwork " +
@@ -186,17 +181,8 @@ internal class HttpPageLoader(
         return sourcePages
     }
 
-    private fun List<Page>.withPublicationVersion(memo: JsonObject): List<Page> {
-        if (source !is KomgaSource) return this
-        val pageImageCacheToken = KomgaChapterMemo.pageImageCacheToken(memo)
-        return map { page ->
-            val imageUrl = page.imageUrl ?: return@map page
-            Page(
-                index = page.index,
-                url = page.url,
-                imageUrl = KomgaChapterMemo.versionedPageImageUrl(imageUrl, pageImageCacheToken),
-            )
-        }
+    private fun List<Page>.withPublicationVersion(memo: kotlinx.serialization.json.JsonObject): List<Page> {
+        return connectionPageAdapter?.decoratePageImageUrls(this, memo) ?: this
     }
 
     private fun List<Page>.toReaderPages(): List<ReaderPage> {

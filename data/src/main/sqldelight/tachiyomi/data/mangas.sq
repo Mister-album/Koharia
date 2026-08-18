@@ -83,6 +83,14 @@ FROM mangas
 WHERE source = :sourceId
 ORDER BY title COLLATE NOCASE;
 
+deleteMangaBySourceId:
+DELETE FROM mangas
+WHERE source = :sourceId;
+
+deleteMangaById:
+DELETE FROM mangas
+WHERE _id = :mangaId;
+
 getFavorites:
 SELECT *
 FROM mangas
@@ -249,7 +257,7 @@ insertNetworkManga {
         genre = CASE WHEN :updateDetails THEN :genre ELSE genre END,
         status = CASE WHEN :updateDetails THEN :status ELSE status END,
         update_strategy = CASE WHEN :updateDetails THEN :updateStrategy ELSE update_strategy END,
-        initialized = :updateDetails,
+        initialized = CASE WHEN :updateDetails THEN 1 ELSE initialized END,
         memo = :memo
     WHERE source = :source
     AND url = :url

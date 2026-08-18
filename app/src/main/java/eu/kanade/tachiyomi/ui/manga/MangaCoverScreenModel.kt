@@ -17,6 +17,8 @@ import eu.kanade.tachiyomi.data.saver.Location
 import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import eu.kanade.tachiyomi.util.system.toShareIntent
+import koharia.connection.ConnectionSeriesCoverAdapter
+import koharia.connection.isConnectionLibraryEntry
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -27,6 +29,7 @@ import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -37,6 +40,7 @@ class MangaCoverScreenModel(
     private val imageSaver: ImageSaver = Injekt.get(),
     private val coverCache: CoverCache = Injekt.get(),
     private val updateManga: UpdateManga = Injekt.get(),
+    private val sourceManager: SourceManager = Injekt.get(),
 
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<Manga?>(null) {
@@ -120,13 +124,48 @@ class MangaCoverScreenModel(
     fun editCover(context: Context, data: Uri) {
         val manga = state.value ?: return
         screenModelScope.launchIO {
+            if (!manga.isConnectionLibraryEntry(sourceManager)) {
+                notifyLibraryEntryRequired(context)
+                return@launchIO
+            }
             context.contentResolver.openInputStream(data)?.use {
                 try {
-                    manga.editCover(it, updateManga, coverCache)
+                    manga.editCover(it, updateManga, coverCache, sourceManager)
                     notifyCoverUpdated(context)
                 } catch (e: Exception) {
                     notifyFailedCoverUpdate(context, e)
                 }
+            }
+        }
+    }
+
+    fun canUseFirstItemAsCover(manga: Manga): Boolean {
+        return sourceManager.get(manga.source) is ConnectionSeriesCoverAdapter
+    }
+
+    fun useFirstItemAsCover(context: Context) {
+        val manga = state.value ?: return
+        screenModelScope.launchIO {
+            if (!manga.isConnectionLibraryEntry(sourceManager)) {
+                notifyLibraryEntryRequired(context)
+                return@launchIO
+            }
+            val adapter = sourceManager.get(manga.source) as? ConnectionSeriesCoverAdapter ?: return@launchIO
+            try {
+                val cover = adapter.loadSuggestedSeriesCover(manga.url)
+                if (cover == null) {
+                    withUIContext {
+                        snackbarHostState.showSnackbar(
+                            context.stringResource(MR.strings.series_cover_image_not_found),
+                            withDismissAction = true,
+                        )
+                    }
+                    return@launchIO
+                }
+                cover.inputStream().use { manga.editCover(it, updateManga, coverCache, sourceManager) }
+                notifyCoverUpdated(context)
+            } catch (e: Exception) {
+                notifyFailedCoverUpdate(context, e)
             }
         }
     }
@@ -148,6 +187,15 @@ class MangaCoverScreenModel(
         screenModelScope.launch {
             snackbarHostState.showSnackbar(
                 context.stringResource(MR.strings.cover_updated),
+                withDismissAction = true,
+            )
+        }
+    }
+
+    private suspend fun notifyLibraryEntryRequired(context: Context) {
+        withUIContext {
+            snackbarHostState.showSnackbar(
+                context.stringResource(MR.strings.notification_first_add_to_library),
                 withDismissAction = true,
             )
         }

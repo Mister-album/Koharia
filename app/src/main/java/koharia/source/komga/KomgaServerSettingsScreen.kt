@@ -1,10 +1,15 @@
 package koharia.source.komga
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -17,9 +22,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.preference.DeferredSharedPreferencesDataStore
 import eu.kanade.tachiyomi.source.sourcePreferences
@@ -37,6 +45,7 @@ class KomgaServerSettingsScreen(
     private val sourceId: Long,
     private val titleOverride: String? = null,
     private val isNew: Boolean = false,
+    private val completeOnboardingOnSave: Boolean = false,
 ) : Screen() {
 
     @Composable
@@ -46,6 +55,7 @@ class KomgaServerSettingsScreen(
         var isSaving by rememberSaveable { mutableStateOf(false) }
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
+        val basePreferences = remember { Injekt.get<BasePreferences>() }
         val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
         val serverProfileManager = remember { Injekt.get<KomgaServerProfileManager>() }
         val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
@@ -87,6 +97,42 @@ class KomgaServerSettingsScreen(
             }
         }
 
+        fun saveAndClose() {
+            if (isSaving) return
+            isSaving = true
+            scope.launch {
+                try {
+                    val currentName = serverPreferences.getProfiles()
+                        .find { it.id == sourceId }
+                        ?.name
+                        .orEmpty()
+                    val requestedName = deferredDataStore
+                        ?.getString(KomgaSource.PREF_SERVER_PROFILE_NAME, currentName)
+                        ?.trim()
+                        ?: currentName
+                    val result = serverProfileManager.renameServer(sourceId, requestedName)
+                    if (result.isFailure) {
+                        context.toast(MR.strings.komga_server_rename_failed)
+                        return@launch
+                    }
+
+                    deferredDataStore?.putString(
+                        KomgaSource.PREF_SERVER_PROFILE_NAME,
+                        requestedName,
+                    )
+                    deferredDataStore?.applyChanges()
+                    if (completeOnboardingOnSave) {
+                        basePreferences.shownOnboardingFlow.set(true)
+                        navigator.popUntilRoot()
+                    } else {
+                        navigator.pop()
+                    }
+                } finally {
+                    isSaving = false
+                }
+            }
+        }
+
         BackHandler {
             onCancel()
         }
@@ -102,42 +148,25 @@ class KomgaServerSettingsScreen(
                         contentDescription = stringResource(MR.strings.komga_server_settings_help_title),
                     )
                 }
-                IconButton(
+            },
+            bottomBar = {
+                Button(
                     enabled = !isSaving,
-                    onClick = {
-                        if (isSaving) return@IconButton
-                        isSaving = true
-                        scope.launch {
-                            try {
-                                val currentName = serverPreferences.getProfiles()
-                                    .find { it.id == sourceId }
-                                    ?.name
-                                    .orEmpty()
-                                val requestedName = deferredDataStore
-                                    ?.getString(KomgaSource.PREF_SERVER_PROFILE_NAME, currentName)
-                                    ?.trim()
-                                    ?: currentName
-                                val result = serverProfileManager.renameServer(sourceId, requestedName)
-                                if (result.isFailure) {
-                                    context.toast(MR.strings.komga_server_rename_failed)
-                                    return@launch
-                                }
-
-                                deferredDataStore?.putString(
-                                    KomgaSource.PREF_SERVER_PROFILE_NAME,
-                                    requestedName,
-                                )
-                                deferredDataStore?.applyChanges()
-                                navigator.pop()
-                            } finally {
-                                isSaving = false
-                            }
-                        }
-                    },
+                    onClick = ::saveAndClose,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Save,
-                        contentDescription = stringResource(MR.strings.action_save),
+                    if (isSaving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                    Text(
+                        text = stringResource(MR.strings.action_save),
+                        modifier = Modifier.padding(start = if (isSaving) 8.dp else 0.dp),
                     )
                 }
             },

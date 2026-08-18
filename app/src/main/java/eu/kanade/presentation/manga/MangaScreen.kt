@@ -80,13 +80,16 @@ import eu.kanade.presentation.manga.components.MangaToolbar
 import eu.kanade.presentation.manga.components.MissingChapterCountListItem
 import eu.kanade.presentation.util.formatChapterNumber
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
-import eu.kanade.tachiyomi.source.isKomgaSource
 import eu.kanade.tachiyomi.ui.manga.ChapterList
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel
 import eu.kanade.tachiyomi.ui.reader.pageProgressPercent
 import eu.kanade.tachiyomi.util.system.copyToClipboard
-import koharia.komga.download.KomgaChapterMemo
+import koharia.connection.ConnectionChapterMetadata
+import koharia.connection.ConnectionLibraryShelfAdapter
+import koharia.connection.ConnectionMangaBehavior
+import koharia.connection.ConnectionMangaBehaviorAdapter
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.missingChaptersCount
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -134,6 +137,7 @@ fun MangaScreen(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onEditSeriesDetailsClicked: (() -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
     onEditNotesClicked: () -> Unit,
@@ -153,7 +157,7 @@ fun MangaScreen(
     onInvertSelection: () -> Unit,
 ) {
     val context = LocalContext.current
-    val isKomgaCacheMode = state.source.isKomgaSource()
+    val isConnectionCacheMode = state.source.mangaBehavior().usesCacheTerminology
     val onCopyTagToClipboard: (tag: String) -> Unit = {
         if (it.isNotEmpty()) {
             context.copyToClipboard(it, it)
@@ -169,7 +173,7 @@ fun MangaScreen(
             chapterCoverGridColumns = chapterCoverGridColumns,
             showChapterReadProgress = showChapterReadProgress,
             showChapterFileSize = showChapterFileSize,
-            isKomgaCacheMode = isKomgaCacheMode,
+            isConnectionCacheMode = isConnectionCacheMode,
             navigateUp = navigateUp,
             onChapterClicked = onChapterClicked,
             onDownloadChapter = onDownloadChapter,
@@ -186,6 +190,7 @@ fun MangaScreen(
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
             onDownloadActionClicked = onDownloadActionClicked,
+            onEditSeriesDetailsClicked = onEditSeriesDetailsClicked,
             onEditCategoryClicked = onEditCategoryClicked,
             onMigrateClicked = onMigrateClicked,
             onEditNotesClicked = onEditNotesClicked,
@@ -207,7 +212,7 @@ fun MangaScreen(
             chapterCoverGridColumns = chapterCoverGridColumns,
             showChapterReadProgress = showChapterReadProgress,
             showChapterFileSize = showChapterFileSize,
-            isKomgaCacheMode = isKomgaCacheMode,
+            isConnectionCacheMode = isConnectionCacheMode,
             navigateUp = navigateUp,
             onChapterClicked = onChapterClicked,
             onDownloadChapter = onDownloadChapter,
@@ -224,6 +229,7 @@ fun MangaScreen(
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
             onDownloadActionClicked = onDownloadActionClicked,
+            onEditSeriesDetailsClicked = onEditSeriesDetailsClicked,
             onEditCategoryClicked = onEditCategoryClicked,
             onMigrateClicked = onMigrateClicked,
             onEditNotesClicked = onEditNotesClicked,
@@ -248,7 +254,7 @@ private fun MangaScreenSmallImpl(
     chapterCoverGridColumns: Int,
     showChapterReadProgress: Boolean,
     showChapterFileSize: Boolean,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
@@ -272,6 +278,7 @@ private fun MangaScreenSmallImpl(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onEditSeriesDetailsClicked: (() -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
     onEditNotesClicked: () -> Unit,
@@ -292,7 +299,7 @@ private fun MangaScreenSmallImpl(
 ) {
     val chapterListState = rememberLazyListState()
     val chapterGridState = rememberLazyGridState()
-    val useChapterCoverGrid = state.source.isKomgaSource() &&
+    val useChapterCoverGrid = state.source.mangaBehavior().supportsChapterCoverGrid &&
         state.manga.chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
 
     val (chapters, listItem, isAnySelected) = remember(state) {
@@ -341,14 +348,18 @@ private fun MangaScreenSmallImpl(
             MangaToolbar(
                 title = state.manga.title,
                 hasFilters = state.filterActive,
-                isKomgaCacheMode = isKomgaCacheMode,
-                chapterCoverDisplayMode = state.manga.chapterCoverDisplayMode.takeIf { isKomgaCacheMode },
+                isConnectionCacheMode = isConnectionCacheMode,
+                chapterCoverDisplayMode = state.manga.chapterCoverDisplayMode.takeIf {
+                    state.source.mangaBehavior().supportsChapterCoverGrid
+                },
                 navigateUp = navigateUp,
                 onClickFilter = onFilterClicked,
                 onChapterCoverDisplayModeChange = onChapterCoverDisplayModeChange,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
+                onClickEditSeriesDetails = onEditSeriesDetailsClicked,
                 onClickEditCategory = onEditCategoryClicked,
+                editCategoryAsLibraryShelf = state.source is ConnectionLibraryShelfAdapter,
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
                 onClickEditNotes = onEditNotesClicked,
@@ -366,7 +377,7 @@ private fun MangaScreenSmallImpl(
             }
             SharedMangaBottomActionMenu(
                 selected = selectedChapters,
-                isKomgaCacheMode = isKomgaCacheMode,
+                isConnectionCacheMode = isConnectionCacheMode,
                 onMultiBookmarkClicked = onMultiBookmarkClicked,
                 onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                 onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
@@ -447,7 +458,7 @@ private fun MangaScreenSmallImpl(
                     )
                     sharedChapterGridItems(
                         manga = state.manga,
-                        isKomgaSource = state.source.isKomgaSource(),
+                        chapterThumbnailUrl = state.source::connectionChapterThumbnailUrl,
                         chapters = listItem,
                         showChapterReadProgress = showChapterReadProgress,
                         showChapterFileSize = showChapterFileSize,
@@ -493,7 +504,7 @@ private fun MangaScreenSmallImpl(
                             chapters = listItem,
                             showChapterReadProgress = showChapterReadProgress,
                             showChapterFileSize = showChapterFileSize,
-                            isKomgaCacheMode = isKomgaCacheMode,
+                            isConnectionCacheMode = isConnectionCacheMode,
                             isAnyChapterSelected = chapters.fastAny { it.selected },
                             chapterSwipeStartAction = chapterSwipeStartAction,
                             chapterSwipeEndAction = chapterSwipeEndAction,
@@ -518,7 +529,7 @@ fun MangaScreenLargeImpl(
     chapterCoverGridColumns: Int,
     showChapterReadProgress: Boolean,
     showChapterFileSize: Boolean,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     navigateUp: () -> Unit,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
@@ -542,6 +553,7 @@ fun MangaScreenLargeImpl(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onEditSeriesDetailsClicked: (() -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
     onEditNotesClicked: () -> Unit,
@@ -562,7 +574,7 @@ fun MangaScreenLargeImpl(
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val density = LocalDensity.current
-    val useChapterCoverGrid = state.source.isKomgaSource() &&
+    val useChapterCoverGrid = state.source.mangaBehavior().supportsChapterCoverGrid &&
         state.manga.chapterCoverDisplayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
 
     val (chapters, listItem, isAnySelected) = remember(state) {
@@ -592,14 +604,18 @@ fun MangaScreenLargeImpl(
                 modifier = Modifier.onSizeChanged { topBarHeight = it.height },
                 title = state.manga.title,
                 hasFilters = state.filterActive,
-                isKomgaCacheMode = isKomgaCacheMode,
-                chapterCoverDisplayMode = state.manga.chapterCoverDisplayMode.takeIf { isKomgaCacheMode },
+                isConnectionCacheMode = isConnectionCacheMode,
+                chapterCoverDisplayMode = state.manga.chapterCoverDisplayMode.takeIf {
+                    state.source.mangaBehavior().supportsChapterCoverGrid
+                },
                 navigateUp = navigateUp,
                 onClickFilter = onFilterButtonClicked,
                 onChapterCoverDisplayModeChange = onChapterCoverDisplayModeChange,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
+                onClickEditSeriesDetails = onEditSeriesDetailsClicked,
                 onClickEditCategory = onEditCategoryClicked,
+                editCategoryAsLibraryShelf = state.source is ConnectionLibraryShelfAdapter,
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
                 onClickEditNotes = onEditNotesClicked,
@@ -621,7 +637,7 @@ fun MangaScreenLargeImpl(
                 }
                 SharedMangaBottomActionMenu(
                     selected = selectedChapters,
-                    isKomgaCacheMode = isKomgaCacheMode,
+                    isConnectionCacheMode = isConnectionCacheMode,
                     onMultiBookmarkClicked = onMultiBookmarkClicked,
                     onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                     onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
@@ -689,7 +705,11 @@ fun MangaScreenLargeImpl(
                             appBarPadding = contentPadding.calculateTopPadding(),
                             manga = state.manga,
                             sourceName = remember {
-                                if (state.source.isKomgaSource()) "" else state.source.getNameForMangaInfo()
+                                if (state.source.mangaBehavior().showSourceName) {
+                                    state.source.getNameForMangaInfo()
+                                } else {
+                                    ""
+                                }
                             },
                             isStubSource = remember { state.source is StubSource },
                             onCoverClick = onCoverClicked,
@@ -736,7 +756,7 @@ fun MangaScreenLargeImpl(
                             )
                             sharedChapterGridItems(
                                 manga = state.manga,
-                                isKomgaSource = state.source.isKomgaSource(),
+                                chapterThumbnailUrl = state.source::connectionChapterThumbnailUrl,
                                 chapters = listItem,
                                 showChapterReadProgress = showChapterReadProgress,
                                 showChapterFileSize = showChapterFileSize,
@@ -770,7 +790,7 @@ fun MangaScreenLargeImpl(
                                     chapters = listItem,
                                     showChapterReadProgress = showChapterReadProgress,
                                     showChapterFileSize = showChapterFileSize,
-                                    isKomgaCacheMode = isKomgaCacheMode,
+                                    isConnectionCacheMode = isConnectionCacheMode,
                                     isAnyChapterSelected = chapters.fastAny { it.selected },
                                     chapterSwipeStartAction = chapterSwipeStartAction,
                                     chapterSwipeEndAction = chapterSwipeEndAction,
@@ -791,7 +811,7 @@ fun MangaScreenLargeImpl(
 @Composable
 private fun SharedMangaBottomActionMenu(
     selected: List<ChapterList.Item>,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     onMultiBookmarkClicked: (List<Chapter>, bookmarked: Boolean) -> Unit,
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
@@ -828,7 +848,7 @@ private fun SharedMangaBottomActionMenu(
         }.takeIf {
             selected.fastAny { it.downloadState == Download.State.DOWNLOADED }
         },
-        isKomgaCacheMode = isKomgaCacheMode,
+        isConnectionCacheMode = isConnectionCacheMode,
     )
 }
 
@@ -837,7 +857,7 @@ private fun LazyListScope.sharedChapterItems(
     chapters: List<ChapterList>,
     showChapterReadProgress: Boolean,
     showChapterFileSize: Boolean,
-    isKomgaCacheMode: Boolean,
+    isConnectionCacheMode: Boolean,
     isAnyChapterSelected: Boolean,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
@@ -873,7 +893,7 @@ private fun LazyListScope.sharedChapterItems(
                     bookmark = item.chapter.bookmark,
                     selected = item.selected,
                     downloadIndicatorEnabled = !isAnyChapterSelected,
-                    isKomgaCacheMode = isKomgaCacheMode,
+                    isConnectionCacheMode = isConnectionCacheMode,
                     downloadStateProvider = { item.downloadState },
                     downloadProgressProvider = { item.downloadProgress },
                     chapterSwipeStartAction = chapterSwipeStartAction,
@@ -929,7 +949,7 @@ private fun LazyListScope.sharedMangaDetailHeaderListItems(
             appBarPadding = topPadding,
             manga = state.manga,
             sourceName = remember {
-                if (state.source.isKomgaSource()) "" else state.source.getNameForMangaInfo()
+                if (state.source.mangaBehavior().showSourceName) state.source.getNameForMangaInfo() else ""
             },
             isStubSource = remember { state.source is StubSource },
             onCoverClick = onCoverClicked,
@@ -998,7 +1018,7 @@ private fun LazyGridScope.sharedMangaDetailHeaderGridItems(
             appBarPadding = topPadding,
             manga = state.manga,
             sourceName = remember {
-                if (state.source.isKomgaSource()) "" else state.source.getNameForMangaInfo()
+                if (state.source.mangaBehavior().showSourceName) state.source.getNameForMangaInfo() else ""
             },
             isStubSource = remember { state.source is StubSource },
             onCoverClick = onCoverClicked,
@@ -1099,7 +1119,7 @@ private fun LazyGridScope.chapterHeaderGridItem(
 
 private fun LazyGridScope.sharedChapterGridItems(
     manga: Manga,
-    isKomgaSource: Boolean,
+    chapterThumbnailUrl: (String) -> String?,
     chapters: List<ChapterList>,
     showChapterReadProgress: Boolean,
     showChapterFileSize: Boolean,
@@ -1130,15 +1150,15 @@ private fun LazyGridScope.sharedChapterGridItems(
                 MissingChapterCountListItem(count = item.count)
             }
             is ChapterList.Item -> {
-                val coverData = MangaCoverModel(
-                    mangaId = item.chapter.id,
-                    sourceId = manga.source,
-                    isMangaFavorite = false,
-                    url = item.chapter.url
-                        .takeIf { isKomgaSource }
-                        ?.let { "$it/thumbnail" },
-                    lastModified = item.chapter.dateUpload,
-                )
+                val coverData = chapterThumbnailUrl(item.chapter.url)?.let { thumbnailUrl ->
+                    MangaCoverModel(
+                        mangaId = item.chapter.id,
+                        sourceId = manga.source,
+                        isMangaFavorite = false,
+                        url = thumbnailUrl,
+                        lastModified = item.chapter.dateUpload,
+                    )
+                }
                 val onLongClick = {
                     onChapterSelected(item, !item.selected, true)
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -1198,6 +1218,14 @@ private fun LazyGridScope.sharedChapterGridItems(
             }
         }
     }
+}
+
+private fun Source.mangaBehavior(): ConnectionMangaBehavior {
+    return (this as? ConnectionMangaBehaviorAdapter)?.mangaBehavior ?: ConnectionMangaBehavior.Default
+}
+
+private fun Source.connectionChapterThumbnailUrl(chapterUrl: String): String? {
+    return (this as? ConnectionMangaBehaviorAdapter)?.chapterThumbnailUrl(chapterUrl)
 }
 
 @Composable
@@ -1294,7 +1322,7 @@ private fun chapterGridProgress(item: ChapterList.Item): String? {
     val progressPercent = item.epubProgressPercent
         ?.takeIf { it > 0 }
         ?: run {
-            val totalPages = KomgaChapterMemo.pagesCount(item.chapter.memo) ?: return null
+            val totalPages = ConnectionChapterMetadata.pagesCount(item.chapter.memo) ?: return null
             item.chapter.lastPageRead
                 .takeIf { it > 0L }
                 ?.let { pageIndex -> pageProgressPercent(pageIndex.toInt(), totalPages) }
@@ -1334,7 +1362,7 @@ private fun chapterTitleWithFileSize(
 
 @Composable
 private fun chapterFileSize(item: ChapterList.Item): String? {
-    val sizeBytes = KomgaChapterMemo.sizeBytes(item.chapter.memo) ?: return null
+    val sizeBytes = ConnectionChapterMetadata.sizeBytes(item.chapter.memo) ?: return null
     val context = LocalContext.current
     return remember(sizeBytes, context) {
         Formatter.formatFileSize(context, sizeBytes)
@@ -1342,7 +1370,7 @@ private fun chapterFileSize(item: ChapterList.Item): String? {
 }
 
 private fun String.withoutEmbeddedFileSize(memo: kotlinx.serialization.json.JsonObject): String {
-    return KomgaChapterMemo.removeTrailingEmbeddedFileSize(this, memo)
+    return ConnectionChapterMetadata.removeTrailingEmbeddedFileSize(this, memo)
 }
 
 private fun onChapterItemClick(

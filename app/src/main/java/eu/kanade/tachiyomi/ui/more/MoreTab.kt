@@ -26,10 +26,12 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
+import koharia.connection.ConnectionAccount
+import koharia.connection.ConnectionAccountAdapter
+import koharia.connection.ConnectionConfigManager
+import koharia.connection.ConnectionPreferences
+import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.feature.support.SupportUsScreen
-import koharia.source.komga.KomgaLocalConfigManager
-import koharia.source.komga.KomgaServerPreferences
-import koharia.source.komga.KomgaServerProfilesScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -85,7 +87,7 @@ data object MoreTab : Tab {
             onClickStats = { navigator.push(StatsScreen()) },
             onClickDataAndStorage = { navigator.push(SettingsScreen(SettingsScreen.Destination.DataAndStorage)) },
             onClickSettings = { navigator.push(SettingsScreen()) },
-            onClickServerManagement = { navigator.push(KomgaServerProfilesScreen()) },
+            onClickServerManagement = { navigator.push(LibraryConnectionProfilesScreen()) },
             onClickSupport = { navigator.push(SupportUsScreen()) },
             onClickAbout = { navigator.push(SettingsScreen(SettingsScreen.Destination.About)) },
         )
@@ -103,10 +105,10 @@ private class MoreScreenModel(
     val downloadQueueState: StateFlow<DownloadQueueState> = _downloadQueueState.asStateFlow()
 
     private val sourceManager: tachiyomi.domain.source.service.SourceManager = Injekt.get()
-    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get()
-    private val localConfigManager: KomgaLocalConfigManager = Injekt.get()
-    private val _user = MutableStateFlow<koharia.komga.api.dto.UserDto?>(null)
-    val user: StateFlow<koharia.komga.api.dto.UserDto?> = _user.asStateFlow()
+    private val connectionPreferences: ConnectionPreferences = Injekt.get()
+    private val localConfigManager: ConnectionConfigManager = Injekt.get()
+    private val _user = MutableStateFlow<ConnectionAccount?>(null)
+    val user: StateFlow<ConnectionAccount?> = _user.asStateFlow()
     var scopedSettingsEnabled by mutableStateOf(localConfigManager.canEditScopedPreferences())
 
     init {
@@ -133,7 +135,7 @@ private class MoreScreenModel(
         }
 
         screenModelScope.launchIO {
-            komgaServerPreferences.activeServerId.changes().collectLatest {
+            connectionPreferences.activeConnectionId.changes().collectLatest {
                 refreshUser()
             }
         }
@@ -143,9 +145,9 @@ private class MoreScreenModel(
 
     fun refreshUser() {
         screenModelScope.launchIO {
-            val activeServerId = komgaServerPreferences.activeServerId.get()
-            val komgaSource = sourceManager.get(activeServerId) as? koharia.source.komga.KomgaSource
-            _user.value = komgaSource?.getMe()
+            val activeConnectionId = connectionPreferences.activeConnectionId.get()
+            val accountAdapter = sourceManager.get(activeConnectionId) as? ConnectionAccountAdapter
+            _user.value = accountAdapter?.getAccount()
         }
     }
 }

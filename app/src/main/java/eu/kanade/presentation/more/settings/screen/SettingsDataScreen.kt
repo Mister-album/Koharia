@@ -60,6 +60,7 @@ import eu.kanade.tachiyomi.data.export.LibraryExporter
 import eu.kanade.tachiyomi.data.export.LibraryExporter.ExportOptions
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.connection.getProviderManagedLibraryEntries
 import koharia.epub.cache.EpubCacheManager
 import koharia.epub.cache.EpubCachePreferences
 import kotlinx.collections.immutable.persistentListOf
@@ -78,6 +79,8 @@ import tachiyomi.domain.backup.service.BackupPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StoragePreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.TextButton
@@ -352,6 +355,8 @@ object SettingsDataScreen : SearchableSettings {
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
         val localCacheCleaner = remember { Injekt.get<LocalCacheCleaner>() }
         val getFavorites = remember { Injekt.get<GetFavorites>() }
+        val mangaRepository = remember { Injekt.get<MangaRepository>() }
+        val sourceManager = remember { Injekt.get<SourceManager>() }
 
         val chapterCache = remember { Injekt.get<ChapterCache>() }
         var cacheReadableSizeSema by remember { mutableIntStateOf(0) }
@@ -373,7 +378,11 @@ object SettingsDataScreen : SearchableSettings {
                             val deletedFiles = withIOContext {
                                 var count = 0
                                 if (CleanupTarget.RemovedMangaCache in selections) {
-                                    count += localCacheCleaner.clearDeletedMangaCache(getFavorites.await())
+                                    val activeManga = (
+                                        getFavorites.await() +
+                                            mangaRepository.getProviderManagedLibraryEntries(sourceManager)
+                                        ).distinctBy(Manga::id)
+                                    count += localCacheCleaner.clearDeletedMangaCache(activeManga)
                                 }
                                 if (CleanupTarget.CoverCache in selections) {
                                     count += localCacheCleaner.clearCoverCache()

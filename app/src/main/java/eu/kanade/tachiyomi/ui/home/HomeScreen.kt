@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -36,11 +37,12 @@ import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
 import eu.kanade.tachiyomi.ui.library.BooksTab
 import eu.kanade.tachiyomi.ui.library.ComicsTab
-import eu.kanade.tachiyomi.ui.library.KomgaLibraryTab
+import eu.kanade.tachiyomi.ui.library.ConnectionLibraryTab
 import eu.kanade.tachiyomi.ui.library.LibraryTab
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.more.MoreTab
-import koharia.source.komga.KomgaLibraryClassificationManager
+import koharia.connection.ConnectionContentScopeController
+import koharia.connection.LibraryContentScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -50,7 +52,6 @@ import soup.compose.material.motion.animation.materialFadeThroughOut
 import tachiyomi.presentation.core.components.material.NavigationBar
 import tachiyomi.presentation.core.components.material.NavigationRail
 import tachiyomi.presentation.core.components.material.Scaffold
-import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -70,9 +71,13 @@ object HomeScreen : Screen() {
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
-        val classificationManager = remember { Injekt.get<KomgaLibraryClassificationManager>() }
-        val classificationEnabled by classificationManager.enabled.collectAsState()
-        val defaultLibraryTab: KomgaLibraryTab = if (classificationEnabled) ComicsTab else LibraryTab
+        val contentScopeController = remember { Injekt.get<ConnectionContentScopeController>() }
+        val contentScopes by remember(contentScopeController) {
+            contentScopeController.activeScopesChanges()
+        }.collectAsState(contentScopeController.activeScopes())
+        val classificationEnabled = LibraryContentScope.COMIC in contentScopes &&
+            LibraryContentScope.BOOK in contentScopes
+        val defaultLibraryTab: ConnectionLibraryTab = if (classificationEnabled) ComicsTab else LibraryTab
         val tabs = if (classificationEnabled) {
             listOf(ComicsTab, BooksTab, HistoryTab, MoreTab)
         } else {

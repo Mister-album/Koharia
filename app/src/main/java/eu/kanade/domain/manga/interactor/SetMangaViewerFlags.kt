@@ -2,7 +2,7 @@ package eu.kanade.domain.manga.interactor
 
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
-import koharia.source.komga.KomgaSource
+import koharia.connection.ConnectionViewerSettingsAdapter
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
@@ -22,7 +22,7 @@ class SetMangaViewerFlags(
                 viewerFlags = newFlags,
             ),
         )
-        syncToKomga(manga.source, manga.url, newFlags)
+        syncToConnection(manga.source, manga.url, newFlags)
     }
 
     suspend fun awaitSetOrientation(id: Long, flag: Long) {
@@ -34,17 +34,14 @@ class SetMangaViewerFlags(
                 viewerFlags = newFlags,
             ),
         )
-        syncToKomga(manga.source, manga.url, newFlags)
+        syncToConnection(manga.source, manga.url, newFlags)
     }
 
-    private suspend fun syncToKomga(sourceId: Long, mangaUrl: String, flags: Long) {
+    private suspend fun syncToConnection(sourceId: Long, mangaUrl: String, flags: Long) {
         try {
             val sourceManager: SourceManager = Injekt.get()
-            val komgaSource = sourceManager.get(sourceId) as? KomgaSource ?: return
-            val seriesId = mangaUrl.substringAfterLast("/")
-            if (seriesId.isNotBlank()) {
-                komgaSource.updateMangaViewerFlags(seriesId, flags)
-            }
+            val progressAdapter = sourceManager.get(sourceId) as? ConnectionViewerSettingsAdapter ?: return
+            progressAdapter.updateViewerFlags(mangaUrl, flags)
         } catch (e: Exception) {
             // ignore
         }

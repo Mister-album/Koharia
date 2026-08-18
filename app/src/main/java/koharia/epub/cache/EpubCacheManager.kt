@@ -2,8 +2,8 @@ package koharia.epub.cache
 
 import android.app.Application
 import android.text.format.Formatter
-import koharia.komga.download.KomgaChapterMemo
-import koharia.source.komga.KomgaSource
+import eu.kanade.tachiyomi.source.Source
+import koharia.connection.ConnectionRawDownloadAdapter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +28,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Response
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.chapter.model.Chapter
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -82,17 +81,6 @@ class EpubCacheManager(
         return file.isFile && file.length() > 0L
     }
 
-    fun hasCompleteBook(sourceId: Long, chapter: Chapter): Boolean {
-        val fingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
-        val publicationKey = EpubCachePolicy.publicationKey(
-            fileHash = fingerprint?.fileHash,
-            fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
-            sizeBytes = fingerprint?.sizeBytes ?: 0L,
-            fallback = "book:${chapter.id}:${chapter.url}",
-        )
-        return hasCompleteBook(sourceId, publicationKey)
-    }
-
     fun hasAnyCompleteBook(sourceId: Long): Boolean {
         return File(booksDir, sourceId.toString())
             .listFiles()
@@ -139,11 +127,12 @@ class EpubCacheManager(
     }
 
     suspend fun cacheCompleteBook(
-        source: KomgaSource,
+        source: Source,
         bookUrl: String,
         publicationKey: String,
         acquireLease: Boolean = false,
     ): File? = withContext(Dispatchers.IO) {
+        val rawDownloadAdapter = source as? ConnectionRawDownloadAdapter ?: return@withContext null
         val transferKey = "${source.id}|$publicationKey"
         val transferMutex = transferMutexes.getOrPut(transferKey) { Mutex() }
         transferMutex.withLock {
@@ -158,8 +147,8 @@ class EpubCacheManager(
             activePartialFiles += temporary.absolutePath
             try {
                 val existingBytes = temporary.length().takeIf { it > 0L } ?: 0L
-                val call = completeBookTransferClient(source).newCall(
-                    source.rawFileRequest(bookUrl, existingBytes.takeIf { it > 0L }),
+                val call = completeBookTransferClient(source.id, rawDownloadAdapter.rawDownloadClient).newCall(
+                    rawDownloadAdapter.rawFileRequest(bookUrl, existingBytes.takeIf { it > 0L }),
                 )
                 try {
                     call.executeCancellable { response ->
@@ -358,9 +347,9 @@ class EpubCacheManager(
     private fun completeBookTarget(sourceId: Long, publicationKey: String): File =
         File(File(booksDir, sourceId.toString()), "${publicationKey.sha256()}.epub")
 
-    private fun completeBookTransferClient(source: KomgaSource): OkHttpClient =
-        transferClients.getOrPut(source.id) {
-            source.client.newBuilder()
+    private fun completeBookTransferClient(sourceId: Long, sourceClient: OkHttpClient): OkHttpClient =
+        transferClients.getOrPut(sourceId) {
+            sourceClient.newBuilder()
                 .dispatcher(
                     Dispatcher().apply {
                         maxRequests = 1

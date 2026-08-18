@@ -2,6 +2,7 @@ package koharia.epub.service
 
 import koharia.epub.model.EpubOpenRequest
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -30,6 +31,28 @@ class EpubReaderSupportResolutionTest {
 
         assertFalse(resolution.shouldOpenAsPages)
         assertTrue(resolution.isNativeSupported)
+    }
+
+    @Test
+    fun `local epub stays in native epub reader`() {
+        val resolution = EpubReaderSupportResolution(
+            mangaId = 1,
+            chapterId = 2,
+            localUri = "content://library/book.epub",
+            isDivinaCompatible = false,
+            preferredOpenSource = EpubOpenRequest.OpenSource.LOCAL,
+        )
+
+        assertFalse(resolution.shouldOpenAsPages)
+        assertTrue(resolution.isNativeSupported)
+    }
+
+    @Test
+    fun `local publication key changes with the file version`() {
+        val original = localPublicationKey("content://library/book.epub", modifiedAt = 10L, sizeBytes = 20L)
+        val modified = localPublicationKey("content://library/book.epub", modifiedAt = 11L, sizeBytes = 21L)
+
+        assertNotEquals(original, modified)
     }
 
     @Test

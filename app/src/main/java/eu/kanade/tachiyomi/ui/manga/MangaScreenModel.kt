@@ -34,23 +34,28 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
-import eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.tachiyomi.source.isKomgaSource
+import eu.kanade.tachiyomi.source.isLocalOrStub
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.connection.ConnectionEpubProgressAdapter
+import koharia.connection.ConnectionLibraryShelf
+import koharia.connection.ConnectionLibraryShelfAdapter
+import koharia.connection.ConnectionMangaBehavior
+import koharia.connection.ConnectionMangaBehaviorAdapter
+import koharia.connection.ConnectionMangaProgressAdapter
+import koharia.connection.ConnectionPublicationAdapter
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.ConnectionViewerSettingsAdapter
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
 import koharia.domain.epub.model.EpubProgress
 import koharia.domain.epub.model.EpubRemoteProgressCache
 import koharia.epub.cache.EpubCacheManager
-import koharia.epub.progress.KomgaEpubRemoteProgressCoordinator
-import koharia.komga.api.dto.offlineFilterMetadata
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
@@ -61,6 +66,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -101,7 +107,6 @@ import uy.kohesive.injekt.api.get
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-private const val KOMGA_DETAILS_REFRESH_INTERVAL_MS = 5 * 60 * 1_000L
 private const val EPUB_REMOTE_PROGRESS_DELAY_MS = 1_000L
 
 private fun mergeEpubProgressions(
@@ -157,12 +162,10 @@ class MangaScreenModel(
     private val setMangaCategories: SetMangaCategories = Injekt.get(),
     private val mangaRepository: MangaRepository = Injekt.get(),
     private val filterChaptersForDownload: FilterChaptersForDownload = Injekt.get(),
-    private val komgaProgressSyncService: KomgaProgressSyncService = Injekt.get(),
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
     private val getEpubRemoteProgressCache: GetEpubRemoteProgressCache = Injekt.get(),
-    private val epubRemoteProgressCoordinator: KomgaEpubRemoteProgressCoordinator = Injekt.get(),
     private val epubCacheManager: EpubCacheManager = Injekt.get(),
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
+    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -309,19 +312,15 @@ class MangaScreenModel(
                     }
             }
 
-            if (!manga.favorite) {
+            if (!source.mangaBehavior().isLibraryEntry(manga)) {
                 setMangaDefaultChapterFlags.await(manga)
             }
 
-            val shouldRefreshKomga = source.isKomgaSource() &&
-                (
-                    manga.memo.offlineFilterMetadata() == null ||
-                        !manga.initialized ||
-                        manga.lastUpdate <= 0L ||
-                        System.currentTimeMillis() - manga.lastUpdate >= KOMGA_DETAILS_REFRESH_INTERVAL_MS
-                    )
-            val needRefreshInfo = !manga.initialized || shouldRefreshKomga
-            val needRefreshChapter = chapters.isEmpty() || shouldRefreshKomga
+            val connectionBehavior = source as? ConnectionMangaBehaviorAdapter
+            val shouldRefreshInfo = connectionBehavior?.shouldRefreshMangaDetails(manga) ?: false
+            val shouldRefreshChapters = connectionBehavior?.shouldRefreshChapters(manga) ?: false
+            val needRefreshInfo = !manga.initialized || shouldRefreshInfo
+            val needRefreshChapter = chapters.isEmpty() || shouldRefreshChapters
 
             // Show what we have earlier
             mutableState.update {
@@ -375,7 +374,7 @@ class MangaScreenModel(
             successState?.let { current ->
                 syncEpubProgressInBackground(source, current.chapters.map { it.chapter })
             }
-            syncKomgaProgressInBackground(source)
+            syncConnectionProgressInBackground(source)
         }
     }
 
@@ -404,7 +403,7 @@ class MangaScreenModel(
             )
             fetchFromSourceTasks.awaitAll()
             updateSuccessState { it.copy(isRefreshingData = false) }
-            successState?.let { syncKomgaProgressInBackground(it.source) }
+            successState?.let { syncConnectionProgressInBackground(it.source) }
             successState?.let { state ->
                 syncEpubProgressInBackground(
                     source = state.source,
@@ -420,13 +419,12 @@ class MangaScreenModel(
         chapters: List<Chapter>,
         force: Boolean = false,
     ) {
-        if (!source.isKomgaSource()) return
+        val progressAdapter = source as? ConnectionEpubProgressAdapter ?: return
         screenModelScope.launchIO {
             if (!force) delay(EPUB_REMOTE_PROGRESS_DELAY_MS)
             val remote = runCatching {
-                epubRemoteProgressCoordinator.syncManga(
+                progressAdapter.syncMangaEpubProgress(
                     mangaId = currentMangaId,
-                    sourceId = source.id,
                     chapters = chapters,
                     force = force,
                 )
@@ -460,17 +458,17 @@ class MangaScreenModel(
         }
     }
 
-    private fun syncKomgaProgressInBackground(source: Source) {
-        if (!source.isKomgaSource()) return
+    private fun syncConnectionProgressInBackground(source: Source) {
+        val progressAdapter = source as? ConnectionMangaProgressAdapter ?: return
 
         screenModelScope.launchIO {
             runCatching {
                 val latestManga = getMangaAndChapters.awaitManga(currentMangaId)
                 addTracks.bindEnhancedTrackers(latestManga, source)
-                komgaProgressSyncService.syncFromServer(latestManga)
+                progressAdapter.syncMangaProgress(latestManga)
             }.onFailure { error ->
                 logcat(LogPriority.WARN, error) {
-                    "Failed to sync Komga progress in background for mangaId=$currentMangaId"
+                    "Failed to sync connection progress in background for mangaId=$currentMangaId"
                 }
             }
         }
@@ -488,19 +486,17 @@ class MangaScreenModel(
                 val networkManga = state.source.getMangaDetails(state.manga.toSManga())
                 updateManga.awaitUpdateFromSource(state.manga, networkManga, manualFetch)
 
-                if (state.source is koharia.source.komga.KomgaSource) {
-                    val seriesId = state.manga.url.substringAfterLast("/")
-                    if (seriesId.isNotBlank()) {
-                        val flags = state.source.getMangaViewerFlags(seriesId)
-                        val currentManga = mangaRepository.getMangaById(state.manga.id)
-                        if (flags != null && flags != currentManga.viewerFlags) {
-                            mangaRepository.update(
-                                tachiyomi.domain.manga.model.MangaUpdate(
-                                    id = currentManga.id,
-                                    viewerFlags = flags,
-                                ),
-                            )
-                        }
+                val progressAdapter = state.source as? ConnectionViewerSettingsAdapter
+                if (progressAdapter != null) {
+                    val flags = progressAdapter.getViewerFlags(state.manga.url)
+                    val currentManga = mangaRepository.getMangaById(state.manga.id)
+                    if (flags != null && flags != currentManga.viewerFlags) {
+                        mangaRepository.update(
+                            tachiyomi.domain.manga.model.MangaUpdate(
+                                id = currentManga.id,
+                                viewerFlags = flags,
+                            ),
+                        )
                     }
                 }
             }
@@ -541,7 +537,7 @@ class MangaScreenModel(
         checkDuplicate: Boolean = true,
     ) {
         val state = successState ?: return
-        if (state.source.isKomgaSource()) return
+        if (!state.source.mangaBehavior().allowsLocalLibraryManagement) return
         screenModelScope.launchIO {
             val manga = state.manga
 
@@ -597,7 +593,8 @@ class MangaScreenModel(
 
     fun showChangeCategoryDialog() {
         val manga = successState?.manga ?: return
-        if (successState?.source?.isKomgaSource() == true) return
+        val behavior = successState?.source?.mangaBehavior() ?: return
+        if (!behavior.allowsCategoryManagement || !behavior.isLibraryEntry(manga)) return
         screenModelScope.launch {
             val categories = getCategories()
             val selection = getMangaCategoryIds(manga)
@@ -612,9 +609,35 @@ class MangaScreenModel(
         }
     }
 
+    fun showChangeConnectionLibraryShelfDialog() {
+        val state = successState ?: return
+        val adapter = state.source as? ConnectionLibraryShelfAdapter ?: return
+        screenModelScope.launchIO {
+            val currentShelfId = adapter.currentLibraryShelfId(state.manga.url) ?: return@launchIO
+            val shelves = adapter.compatibleLibraryShelves(state.manga.url)
+            updateSuccessState {
+                it.copy(
+                    dialog = Dialog.ChangeConnectionLibraryShelf(
+                        manga = state.manga,
+                        shelves = shelves,
+                        currentShelfId = currentShelfId,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun moveMangaToConnectionLibraryShelf(manga: Manga, shelfId: String) {
+        val adapter = successState?.source as? ConnectionLibraryShelfAdapter ?: return
+        screenModelScope.launchIO {
+            adapter.moveMangaToLibraryShelf(manga.url, shelfId)
+            updateSuccessState { it.copy(dialog = null) }
+        }
+    }
+
     fun showSetFetchIntervalDialog() {
         val manga = successState?.manga ?: return
-        if (successState?.source?.isKomgaSource() == true) return
+        if (successState?.source?.mangaBehavior()?.allowsFetchIntervalManagement == false) return
         updateSuccessState {
             it.copy(dialog = Dialog.SetFetchInterval(manga))
         }
@@ -672,7 +695,7 @@ class MangaScreenModel(
 
     fun moveMangaToCategoriesAndAddToLibrary(manga: Manga, categories: List<Long>) {
         moveMangaToCategory(categories)
-        if (manga.favorite) return
+        if (successState?.source?.mangaBehavior()?.isLibraryEntry(manga) == true) return
 
         screenModelScope.launchIO {
             updateManga.awaitUpdateFavorite(manga.id, true)
@@ -751,6 +774,7 @@ class MangaScreenModel(
         epubProgresses: Map<Long, Double> = emptyMap(),
         allowSharedDownloadLookup: Boolean = true,
     ): List<ChapterList.Item> {
+        val publicationAdapter = Injekt.get<SourceManager>().get(manga.source) as? ConnectionPublicationAdapter
         return map { chapter ->
             val activeDownload = downloadManager.getQueuedDownloadOrNull(chapter.id)
             val downloaded = downloadManager.isChapterDownloaded(
@@ -771,7 +795,7 @@ class MangaScreenModel(
                 chapter = chapter,
                 downloadState = downloadState,
                 downloadProgress = activeDownload?.progress ?: 0,
-                isCompleteEpubCached = epubCacheManager.hasCompleteBook(manga.source, chapter),
+                isCompleteEpubCached = publicationAdapter?.hasCompleteCachedPublication(chapter) == true,
                 epubProgressPercent = epubProgresses[chapter.id]
                     ?.let { progression ->
                         (progression.coerceIn(0.0, 1.0) * 100)
@@ -844,6 +868,7 @@ class MangaScreenModel(
                 bookmarkChapters(listOf(chapter), !chapter.bookmark)
             }
             LibraryPreferences.ChapterSwipeAction.Download -> {
+                if (!allowsChapterDownloads()) return
                 val downloadAction: ChapterDownloadAction = when (chapterItem.downloadState) {
                     Download.State.ERROR,
                     Download.State.NOT_DOWNLOADED,
@@ -911,6 +936,7 @@ class MangaScreenModel(
         items: List<ChapterList.Item>,
         action: ChapterDownloadAction,
     ) {
+        if (!allowsChapterDownloads()) return
         when (action) {
             ChapterDownloadAction.START -> {
                 startDownload(items.map { it.chapter }, false)
@@ -933,6 +959,7 @@ class MangaScreenModel(
     }
 
     fun runDownloadAction(action: DownloadAction) {
+        if (!allowsChapterDownloads()) return
         val chaptersToDownload = when (action) {
             DownloadAction.NEXT_1_CHAPTER -> getUnreadChaptersSorted().take(1)
             DownloadAction.NEXT_5_CHAPTERS -> getUnreadChaptersSorted().take(5)
@@ -1073,6 +1100,7 @@ class MangaScreenModel(
     }
 
     private fun downloadNewChapters(chapters: List<Chapter>) {
+        if (!allowsChapterDownloads()) return
         screenModelScope.launchNonCancellable {
             val manga = successState?.manga ?: return@launchNonCancellable
             val chaptersToDownload = filterChaptersForDownload.await(manga, chapters)
@@ -1081,6 +1109,11 @@ class MangaScreenModel(
                 downloadChapters(chaptersToDownload)
             }
         }
+    }
+
+    private fun allowsChapterDownloads(): Boolean {
+        val source = successState?.source ?: return false
+        return !source.isLocalOrStub() && source.mangaBehavior().allowsChapterDownloads
     }
 
     /**
@@ -1331,6 +1364,12 @@ class MangaScreenModel(
             val manga: Manga,
             val initialSelection: ImmutableList<CheckboxState<Category>>,
         ) : Dialog
+
+        data class ChangeConnectionLibraryShelf(
+            val manga: Manga,
+            val shelves: List<ConnectionLibraryShelf>,
+            val currentShelfId: String,
+        ) : Dialog
         data class DeleteChapters(val chapters: List<Chapter>) : Dialog
         data class DuplicateManga(val manga: Manga, val duplicates: List<MangaWithChapterCount>) : Dialog
         data class Migrate(val target: Manga, val current: Manga) : Dialog
@@ -1469,6 +1508,10 @@ class MangaScreenModel(
             }
         }
     }
+}
+
+private fun Source.mangaBehavior(): ConnectionMangaBehavior {
+    return (this as? ConnectionMangaBehaviorAdapter)?.mangaBehavior ?: ConnectionMangaBehavior.Default
 }
 
 @Immutable

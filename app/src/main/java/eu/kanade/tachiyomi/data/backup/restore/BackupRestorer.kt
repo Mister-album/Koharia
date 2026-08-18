@@ -76,7 +76,7 @@ class BackupRestorer(
         if (options.appSettings) {
             restoreAmount += 1
         }
-        if (options.komgaSettings) {
+        if (options.connectionSettings) {
             restoreAmount += 1
         }
 
@@ -87,7 +87,7 @@ class BackupRestorer(
             if (options.appSettings) {
                 restoreAppPreferences(backup.backupPreferences, backup.backupCategories.takeIf { options.categories })
             }
-            if (options.komgaSettings) {
+            if (options.connectionSettings) {
                 restoreSourcePreferences(backup.backupSourcePreferences)
             }
             if (options.libraryEntries) {

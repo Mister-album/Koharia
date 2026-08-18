@@ -10,11 +10,12 @@ import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
+import koharia.connection.ConnectionPreferences
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLocalConfigManager
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaServerProfileManager
 import koharia.source.komga.KomgaServerRemovalManager
@@ -40,7 +41,7 @@ class PreferenceModule(val app: Application) : InjektModule {
         addSingletonFactory {
             KomgaLocalConfigManager(
                 preferenceStore = get<PreferenceStore>(),
-                serverPreferences = get<KomgaServerPreferences>(),
+                connectionPreferences = get<ConnectionPreferences>(),
                 scopedPreferenceKeys = KomgaLocalConfigManager.buildScopedPreferenceKeys(
                     app = app,
                     verboseLoggingDefault = isDebugBuildType,
@@ -62,10 +63,10 @@ class PreferenceModule(val app: Application) : InjektModule {
             )
         }
         addSingletonFactory {
-            KomgaScopedPreferenceStoreFactory(
+            ConnectionScopedPreferenceStoreFactory(
                 app = app,
                 preferenceStore = get<PreferenceStore>(),
-                serverPreferences = get<KomgaServerPreferences>(),
+                connectionPreferences = get<ConnectionPreferences>(),
             )
         }
         addSingletonFactory {

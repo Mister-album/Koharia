@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import io.mockk.every
 import io.mockk.mockk
+import koharia.connection.ConnectionPreferences
 import koharia.komga.api.dto.LibraryDto
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -73,10 +74,11 @@ class KomgaLibraryClassificationManagerTest {
         val context = mockk<Context> {
             every { getSharedPreferences(any(), any()) } returns legacyPreferences
         }
-        val serverPreferences = KomgaServerPreferences(context, store, json)
+        val connectionPreferences = ConnectionPreferences(store, json)
+        val serverPreferences = KomgaServerPreferences(context, store, json, connectionPreferences)
         val localConfigManager = KomgaLocalConfigManager(
             preferenceStore = store,
-            serverPreferences = serverPreferences,
+            connectionPreferences = connectionPreferences,
             scopedPreferenceKeys = emptySet(),
         )
         val manager = KomgaLibraryClassificationManager(

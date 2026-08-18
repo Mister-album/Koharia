@@ -77,7 +77,7 @@ fun MangaBottomActionMenu(
     onMarkPreviousAsReadClicked: (() -> Unit)? = null,
     onDownloadClicked: (() -> Unit)? = null,
     onDeleteClicked: (() -> Unit)? = null,
-    isKomgaCacheMode: Boolean = false,
+    isConnectionCacheMode: Boolean = false,
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -159,7 +159,7 @@ fun MangaBottomActionMenu(
                 if (onDownloadClicked != null) {
                     Button(
                         title = stringResource(
-                            if (isKomgaCacheMode) MR.strings.komga_action_cache else MR.strings.action_download,
+                            if (isConnectionCacheMode) MR.strings.komga_action_cache else MR.strings.action_download,
                         ),
                         icon = Icons.Outlined.Download,
                         toConfirm = confirm[5],
@@ -240,7 +240,7 @@ fun LibraryBottomActionMenu(
     onDownloadClicked: ((DownloadAction) -> Unit)?,
     onDeleteClicked: () -> Unit,
     onMigrateClicked: () -> Unit,
-    isKomgaCacheMode: Boolean = false,
+    isConnectionCacheMode: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     AnimatedVisibility(
@@ -300,7 +300,7 @@ fun LibraryBottomActionMenu(
                     var downloadExpanded by remember { mutableStateOf(false) }
                     Button(
                         title = stringResource(
-                            if (isKomgaCacheMode) MR.strings.komga_action_cache else MR.strings.action_download,
+                            if (isConnectionCacheMode) MR.strings.komga_action_cache else MR.strings.action_download,
                         ),
                         icon = Icons.Outlined.Download,
                         toConfirm = confirm[3],
@@ -311,7 +311,7 @@ fun LibraryBottomActionMenu(
                             expanded = downloadExpanded,
                             onDismissRequest = { downloadExpanded = false },
                             onDownloadClicked = onDownloadClicked,
-                            isKomgaCacheMode = isKomgaCacheMode,
+                            isConnectionCacheMode = isConnectionCacheMode,
                             offset = BottomBarMenuDpOffset,
                         )
                     }

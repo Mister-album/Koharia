@@ -14,6 +14,10 @@ import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.connection.ConnectionBackupRestorePolicy
+import koharia.connection.ConnectionPreferences
+import koharia.source.komga.KomgaConnectionMigration
+import koharia.source.komga.KomgaSource
 import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.plusAssign
@@ -28,7 +32,15 @@ class PreferenceRestorer(
     private val context: Context,
     private val getCategories: GetCategories = Injekt.get(),
     private val preferenceStore: PreferenceStore = Injekt.get(),
+    private val komgaConnectionMigration: KomgaConnectionMigration = Injekt.get(),
+    private val connectionPreferences: ConnectionPreferences = Injekt.get(),
 ) {
+    private val connectionRestorePolicy = ConnectionBackupRestorePolicy(
+        genericKeyPrefix = CONNECTION_KEY_PREFIX,
+        legacyAppKeys = LEGACY_CONNECTION_KEYS,
+        legacySourceKeys = setOf(LEGACY_KOMGA_SOURCE_KEY),
+    )
+
     suspend fun restoreApp(
         preferences: List<BackupPreference>,
         backupCategories: List<BackupCategory>?,
@@ -38,6 +50,11 @@ class PreferenceRestorer(
             preferenceStore,
             backupCategories,
         )
+        if (connectionRestorePolicy.recordAppRestore(preferences.map(BackupPreference::key))) {
+            komgaConnectionMigration.migrate(forceLegacyInventory = true)
+        } else {
+            komgaConnectionMigration.migrate()
+        }
 
         LibraryUpdateJob.setupTask(context)
         BackupCreateJob.setupTask(context)
@@ -48,6 +65,13 @@ class PreferenceRestorer(
             if (!it.sourceKey.startsWith("source_")) return@forEach
             val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(it.sourceKey))
             restorePreferences(it.prefs, sourcePrefs)
+        }
+        if (connectionRestorePolicy.shouldForceLegacyInventoryAfterSourceRestore(
+                sourceKeys = preferences.map(BackupSourcePreferences::sourceKey),
+                hasConnectionProfiles = connectionPreferences.getProfiles().isNotEmpty(),
+            )
+        ) {
+            komgaConnectionMigration.migrate(forceLegacyInventory = true)
         }
     }
 
@@ -141,6 +165,15 @@ class PreferenceRestorer(
         return true
     }
 }
+
+private const val CONNECTION_KEY_PREFIX = "connection_"
+private val LEGACY_KOMGA_SOURCE_KEY = "source_${KomgaSource.ID}"
+private val LEGACY_CONNECTION_KEYS = setOf(
+    "komga_server_profiles",
+    "komga_active_server_id",
+    "komga_local_config_mode",
+    "komga_has_initialized_profiles",
+)
 
 private fun String.withoutScopePrefix(): String {
     return substringAfterLast("::", this)

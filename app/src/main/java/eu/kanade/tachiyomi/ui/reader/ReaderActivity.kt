@@ -87,7 +87,8 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.importing.IncomingMediaNavigation
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -123,7 +124,7 @@ class ReaderActivity : BaseActivity() {
         }
     }
 
-    private val scopedPreferenceStoreFactory = Injekt.get<KomgaScopedPreferenceStoreFactory>()
+    private val scopedPreferenceStoreFactory = Injekt.get<ConnectionScopedPreferenceStoreFactory>()
     val readerPreferences: ReaderPreferences by lazy { viewModel.readerPreferences }
     val basePreferences: BasePreferences by lazy {
         val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
@@ -529,6 +530,9 @@ class ReaderActivity : BaseActivity() {
             onOpenInWebView = ::openChapterInWebView.takeIf { isHttpSource },
             onOpenInBrowser = ::openChapterInBrowser.takeIf { isHttpSource },
             onShare = ::shareChapter.takeIf { isHttpSource },
+            onImportTemporaryMedia = ::importTemporaryMedia.takeIf {
+                IncomingMediaNavigation.temporaryMediaUri(intent) != null
+            },
 
             chapterNavigatorType = if (isPagerType || !verticalNavigatorForLongStrip) {
                 if (state.viewer is R2LPagerViewer) {
@@ -634,6 +638,12 @@ class ReaderActivity : BaseActivity() {
                 },
             )
         }
+    }
+
+    private fun importTemporaryMedia() {
+        val uriValue = IncomingMediaNavigation.temporaryMediaUri(intent) ?: return
+        startActivity(IncomingMediaNavigation.importIntent(this, uriValue))
+        finish()
     }
 
     private fun openChapterInWebView() {

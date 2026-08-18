@@ -88,6 +88,7 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
 import koharia.epub.service.EpubReaderSupportResolution
@@ -95,7 +96,7 @@ import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
 import koharia.epub.settings.EpubReaderPreferences
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
+import koharia.importing.IncomingMediaNavigation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -169,7 +170,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     private val viewModel by viewModels<EpubReaderViewModel>()
-    private val scopedPreferenceStoreFactory = Injekt.get<KomgaScopedPreferenceStoreFactory>()
+    private val scopedPreferenceStoreFactory = Injekt.get<ConnectionScopedPreferenceStoreFactory>()
     private val sessionRepository = Injekt.get<EpubReaderSessionRepository>()
     private val sourceId by lazy { intent.extras?.getLong("source", -1L) ?: -1L }
     private val basePreferences by lazy {
@@ -553,11 +554,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                         onOpenAsPages = {
                                             activePanel = EpubBottomPanel.NONE
                                             startActivity(
-                                                ReaderActivity.newIntent(
-                                                    this@EpubReaderActivity,
-                                                    state.mangaId,
-                                                    state.chapterId,
-                                                    sourceId,
+                                                IncomingMediaNavigation.inheritTemporaryMediaUri(
+                                                    from = intent,
+                                                    target = ReaderActivity.newIntent(
+                                                        this@EpubReaderActivity,
+                                                        state.mangaId,
+                                                        state.chapterId,
+                                                        sourceId,
+                                                    ),
                                                 ),
                                             )
                                             finish()
@@ -674,6 +678,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                         activePanel = EpubBottomPanel.NONE
                                         viewModel.toggleBookmarkAtCurrentLocator()
                                     },
+                                    onImportTemporaryMedia = ::importTemporaryMedia.takeIf {
+                                        IncomingMediaNavigation.temporaryMediaUri(intent) != null
+                                    },
                                 )
                             }
 
@@ -693,11 +700,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                         },
                                         onOpenAsPages = {
                                             startActivity(
-                                                ReaderActivity.newIntent(
-                                                    this@EpubReaderActivity,
-                                                    state.mangaId,
-                                                    state.chapterId,
-                                                    sourceId,
+                                                IncomingMediaNavigation.inheritTemporaryMediaUri(
+                                                    from = intent,
+                                                    target = ReaderActivity.newIntent(
+                                                        this@EpubReaderActivity,
+                                                        state.mangaId,
+                                                        state.chapterId,
+                                                        sourceId,
+                                                    ),
                                                 ),
                                             )
                                             finish()
@@ -807,6 +817,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 onSave = { viewModel.saveSelectedImage(readerPreferences.folderPerManga.get()) },
                 onShare = { viewModel.shareSelectedImage(copyToClipboard = false) },
                 onCopy = { viewModel.shareSelectedImage(copyToClipboard = true) },
+                onSetAsCover = viewModel::setSelectedImageAsCover,
             )
 
             EpubFootnotePopup(
@@ -1132,6 +1143,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 clipboard.setPrimaryClip(ClipData.newUri(contentResolver, "", event.uri))
             }
             is EpubImageEvent.Saved -> toast(MR.strings.picture_saved)
+            EpubImageEvent.CoverUpdated -> toast(MR.strings.cover_updated)
             is EpubImageEvent.Error -> toast(event.message)
         }
     }
@@ -1402,6 +1414,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 },
             )
         }
+    }
+
+    private fun importTemporaryMedia() {
+        val uriValue = IncomingMediaNavigation.temporaryMediaUri(intent) ?: return
+        startActivity(IncomingMediaNavigation.importIntent(this, uriValue))
+        finish()
     }
 
     private fun resolveNavigationAction(

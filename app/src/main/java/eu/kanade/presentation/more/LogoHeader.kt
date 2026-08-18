@@ -20,7 +20,7 @@ import eu.kanade.tachiyomi.R
 
 @Composable
 fun LogoHeader(
-    user: koharia.komga.api.dto.UserDto? = null,
+    user: koharia.connection.ConnectionAccount? = null,
     iconPadding: PaddingValues = PaddingValues(),
 ) {
     Column(
@@ -39,7 +39,7 @@ fun LogoHeader(
         if (user != null) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = user.email,
+                text = user.displayName,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )

@@ -12,7 +12,9 @@ import eu.kanade.presentation.more.settings.screen.SearchableSettings
 import eu.kanade.presentation.more.settings.screen.SettingsDataScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
-import koharia.source.komga.KomgaServerProfilesScreen
+import koharia.connection.ui.LibraryConnectionProfilesScreen
+import koharia.source.komga.KomgaConnectionProvider
+import koharia.source.local.LocalFolderConnectionProvider
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
@@ -41,7 +43,22 @@ class OnboardingScreen : Screen() {
         OnboardingScreen(
             onComplete = finishOnboarding,
             onAddServer = {
-                navigator.push(KomgaServerProfilesScreen(openAddDialog = true))
+                navigator.push(
+                    LibraryConnectionProfilesScreen(
+                        openAddDialog = true,
+                        initialProviderId = KomgaConnectionProvider.ID,
+                        completeOnboardingAfterAdd = true,
+                    ),
+                )
+            },
+            onAddLocalFolder = {
+                navigator.push(
+                    LibraryConnectionProfilesScreen(
+                        openAddDialog = true,
+                        initialProviderId = LocalFolderConnectionProvider.ID,
+                        completeOnboardingAfterAdd = true,
+                    ),
+                )
             },
             onRestoreBackup = {
                 finishOnboarding()

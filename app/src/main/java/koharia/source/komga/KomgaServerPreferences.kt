@@ -1,6 +1,10 @@
 package koharia.source.komga
 
 import android.content.Context
+import koharia.connection.ConnectionConfigMode
+import koharia.connection.ConnectionPreferences
+import koharia.connection.LibraryConnectionProfile
+import koharia.connection.NO_ACTIVE_CONNECTION
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -11,7 +15,6 @@ import kotlinx.serialization.json.Json
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
-import kotlin.random.Random
 
 @Serializable
 data class KomgaServerProfile(
@@ -25,10 +28,7 @@ private data class KomgaServerDirectoryAlias(
     val serverName: String,
 )
 
-enum class LocalConfigMode {
-    Shared,
-    Separate,
-}
+typealias LocalConfigMode = ConnectionConfigMode
 
 enum class DownloadDirectoryMode {
     PerServer,
@@ -36,39 +36,19 @@ enum class DownloadDirectoryMode {
 }
 
 class KomgaServerPreferences(
-    private val context: Context,
+    @Suppress("UNUSED_PARAMETER") context: Context,
     preferenceStore: PreferenceStore,
     private val json: Json,
+    private val connectionPreferences: ConnectionPreferences = ConnectionPreferences(preferenceStore, json),
 ) {
 
-    private val serializedProfiles: Preference<Set<String>> = preferenceStore.getStringSet(
-        PREF_PROFILES,
-        emptySet(),
-    )
+    val activeServerId: Preference<Long> = connectionPreferences.activeConnectionId
 
-    val activeServerId: Preference<Long> = preferenceStore.getLong(
-        PREF_ACTIVE_SERVER_ID,
-        NO_ACTIVE_SERVER,
-    )
-
-    val localConfigMode: Preference<LocalConfigMode> = preferenceStore.getEnum(
-        PREF_LOCAL_CONFIG_MODE,
-        LocalConfigMode.Shared,
-    )
+    val localConfigMode: Preference<LocalConfigMode> = connectionPreferences.configMode
 
     val downloadDirectoryMode: Preference<DownloadDirectoryMode> = preferenceStore.getEnum(
         PREF_DOWNLOAD_DIRECTORY_MODE,
         DownloadDirectoryMode.PerServer,
-    )
-
-    private val hasInitializedProfiles: Preference<Boolean> = preferenceStore.getBoolean(
-        PREF_HAS_INITIALIZED_PROFILES,
-        false,
-    )
-
-    private val knownServerIds: Preference<Set<String>> = preferenceStore.getStringSet(
-        PREF_KNOWN_SERVER_IDS,
-        emptySet(),
     )
 
     private val downloadDirectoryLayoutVersion: Preference<Int> = preferenceStore.getInt(
@@ -82,76 +62,41 @@ class KomgaServerPreferences(
     )
 
     fun profilesChanges(): Flow<List<KomgaServerProfile>> {
-        return serializedProfiles.changes()
-            .map(::decodeProfiles)
-            .map(::normalizeProfiles)
+        return connectionPreferences.profilesChanges()
+            .map { profiles -> profiles.filter { it.providerId == KomgaConnectionProvider.ID } }
+            .map { profiles -> profiles.map { KomgaServerProfile(it.id, it.name) } }
             .distinctUntilChanged()
     }
 
     fun getProfiles(): List<KomgaServerProfile> {
-        return normalizeProfiles(decodeProfiles(serializedProfiles.get()))
+        return connectionPreferences.getProfiles()
+            .filter { it.providerId == KomgaConnectionProvider.ID }
+            .map { KomgaServerProfile(it.id, it.name) }
     }
 
     fun setProfiles(profiles: Collection<KomgaServerProfile>) {
-        val normalizedProfiles = normalizeProfiles(profiles.toList())
-        rememberServerIds(normalizedProfiles)
-        serializedProfiles.set(normalizedProfiles.mapTo(linkedSetOf(), json::encodeToString))
-        // An explicit profile update (including deleting the last profile) is no longer
-        // an initialization attempt. This prevents legacy recovery from recreating a
-        // profile the user deliberately removed.
-        hasInitializedProfiles.set(true)
-        ensureActiveServerExists(normalizedProfiles)
+        val otherProviders = connectionPreferences.getProfiles()
+            .filterNot { it.providerId == KomgaConnectionProvider.ID }
+        val komgaProfiles = profiles.map { profile ->
+            LibraryConnectionProfile(
+                id = profile.id,
+                providerId = KomgaConnectionProvider.ID,
+                name = profile.name,
+            )
+        }
+        connectionPreferences.setProfiles(otherProviders + komgaProfiles)
     }
 
     fun ensureProfilesInitialized() {
-        val persistedProfiles = decodeProfiles(serializedProfiles.get())
-        val isFirstInitialization = !hasInitializedProfiles.get()
-        val profiles = buildList {
-            addAll(persistedProfiles)
-
-            // 0.1.x stored the only Komga server in source_<KomgaSource.ID>.
-            // Keep that stable ID as the first profile when an interrupted or
-            // partial upgrade left the new profile list incomplete. The
-            // source preference file is intentionally left untouched: the
-            // existing address and credentials are already keyed by this ID.
-            if (isFirstInitialization && hasLegacySourcePreferences() && none { it.id == KomgaSource.ID }) {
-                add(defaultProfile())
-            }
-        }
-
-        if (isFirstInitialization || profiles != persistedProfiles) {
-            serializedProfiles.set(profiles.mapTo(linkedSetOf(), json::encodeToString))
-            hasInitializedProfiles.set(true)
-        }
-        rememberServerIds(profiles)
-        ensureActiveServerExists(profiles)
+        connectionPreferences.ensureProfilesInitialized()
     }
 
     fun isKnownServerId(serverId: Long): Boolean {
-        return serverId == KomgaSource.ID || serverId.toString() in knownServerIds.get()
+        return serverId == KomgaSource.ID || connectionPreferences.isKnownConnectionId(serverId)
     }
 
-    @Synchronized
     fun allocateServerId(): Long {
-        // Historical IDs remain reserved because preserved manga, downloads, and source stubs
-        // can still reference them after a profile is deleted. Reusing one would also make a
-        // newly added server inherit any ID-keyed state left for those preserved records.
-        val reservedIds = knownServerIds.get()
-            .mapNotNullTo(mutableSetOf(), String::toLongOrNull)
-            .apply {
-                add(KomgaSource.ID)
-                getProfiles().mapTo(this, KomgaServerProfile::id)
-            }
-        val nextSequentialId = reservedIds.maxOrNull()
-            ?.takeIf { it < Long.MAX_VALUE }
-            ?.plus(1)
-        val allocatedId = nextSequentialId ?: generateSequence {
-            Random.nextLong(1, Long.MAX_VALUE)
-        }.first { it !in reservedIds }
-
-        reservedIds += allocatedId
-        knownServerIds.set(reservedIds.mapTo(linkedSetOf()) { it.toString() })
-        return allocatedId
+        return connectionPreferences.allocateConnectionId()
     }
 
     fun needsDownloadDirectoryLayoutMigration(): Boolean {
@@ -177,72 +122,18 @@ class KomgaServerPreferences(
         serializedDirectoryAliases.set(updated.mapTo(linkedSetOf(), json::encodeToString))
     }
 
-    @Synchronized
-    private fun rememberServerIds(profiles: Collection<KomgaServerProfile>) {
-        val updated = knownServerIds.get().toMutableSet().apply {
-            add(KomgaSource.ID.toString())
-            profiles.mapTo(this) { it.id.toString() }
-        }
-        knownServerIds.set(updated)
-    }
-
-    private fun hasLegacySourcePreferences(): Boolean {
-        val preferences = context.getSharedPreferences(
-            "source_${KomgaSource.ID}",
-            Context.MODE_PRIVATE,
-        )
-        return preferences.contains(PREF_LEGACY_ADDRESS)
-    }
-
-    private fun ensureActiveServerExists(profiles: List<KomgaServerProfile>) {
-        when {
-            profiles.isEmpty() -> activeServerId.set(NO_ACTIVE_SERVER)
-            profiles.none { it.id == activeServerId.get() } -> activeServerId.set(profiles.first().id)
-        }
-    }
-
-    private fun normalizeProfiles(profiles: List<KomgaServerProfile>): List<KomgaServerProfile> {
-        return profiles
-            .distinctBy(KomgaServerProfile::id)
-            .sortedWith(
-                compareByDescending<KomgaServerProfile> { it.id == KomgaSource.ID }
-                    .thenBy(KomgaServerProfile::id),
-            )
-    }
-
-    private fun decodeProfiles(values: Set<String>): List<KomgaServerProfile> {
-        return values
-            .mapNotNull { value ->
-                runCatching { json.decodeFromString<KomgaServerProfile>(value) }.getOrNull()
-            }
-            .distinctBy(KomgaServerProfile::id)
-    }
-
     private fun decodeDirectoryAliases(values: Set<String>): List<KomgaServerDirectoryAlias> {
         return values.mapNotNull { value ->
             runCatching { json.decodeFromString<KomgaServerDirectoryAlias>(value) }.getOrNull()
         }
     }
 
-    private fun defaultProfile(): KomgaServerProfile {
-        return KomgaServerProfile(
-            id = KomgaSource.ID,
-            name = KomgaSource.SOURCE_NAME,
-        )
-    }
-
     companion object {
-        private const val PREF_PROFILES = "komga_server_profiles"
-        private const val PREF_ACTIVE_SERVER_ID = "komga_active_server_id"
-        private const val PREF_LOCAL_CONFIG_MODE = "komga_local_config_mode"
         private const val PREF_DOWNLOAD_DIRECTORY_MODE = "komga_download_directory_mode"
-        private const val PREF_HAS_INITIALIZED_PROFILES = "komga_has_initialized_profiles"
-        private const val PREF_KNOWN_SERVER_IDS = "komga_known_server_ids"
         private const val PREF_DOWNLOAD_DIRECTORY_LAYOUT_VERSION = "komga_download_directory_layout_version"
         private const val PREF_DIRECTORY_ALIASES = "komga_server_directory_aliases"
-        private const val PREF_LEGACY_ADDRESS = "Address"
         private const val DOWNLOAD_DIRECTORY_LAYOUT_VERSION = 1
 
-        const val NO_ACTIVE_SERVER = -1L
+        const val NO_ACTIVE_SERVER = NO_ACTIVE_CONNECTION
     }
 }

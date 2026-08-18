@@ -76,11 +76,12 @@ import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.isNavigationBarNeedsScrim
 import eu.kanade.tachiyomi.util.system.updaterEnabled
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionPreferences
 import koharia.core.migration.Migrator
-import koharia.komga.ui.library.KomgaLibraryScreen
-import koharia.source.komga.KomgaServerPreferences
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
@@ -110,7 +111,7 @@ class MainActivity : BaseActivity() {
     private val chapterCache: ChapterCache by injectLazy()
 
     private val getIncognitoState: GetIncognitoState by injectLazy()
-    private val komgaServerPreferences: KomgaServerPreferences by injectLazy()
+    private val connectionPreferences: ConnectionPreferences by injectLazy()
 
     // To be checked by splash screen. If true then splash screen will be removed.
     var ready = false
@@ -131,8 +132,12 @@ class MainActivity : BaseActivity() {
 
         Migrator.awaitAndRelease()
 
-        // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
-        if (!isTaskRoot) {
+        // Ignore only duplicate launcher starts. External VIEW/SEND intents must still be
+        // delivered when a reader activity is already above MainActivity in the task.
+        val isDuplicateLauncherStart = !isTaskRoot &&
+            intent.action == Intent.ACTION_MAIN &&
+            intent.hasCategory(Intent.CATEGORY_LAUNCHER)
+        if (isDuplicateLauncherStart) {
             finish()
             return
         }
@@ -177,23 +182,22 @@ class MainActivity : BaseActivity() {
                     }
                 }
                 LaunchedEffect(navigator.lastItem) {
-                    (navigator.lastItem as? KomgaLibraryScreen)?.sourceId
+                    (navigator.lastItem as? ConnectionBrowseScreen)?.sourceId
                         .let(getIncognitoState::subscribe)
                         .collectLatest { incognito = it }
                 }
                 LaunchedEffect(navigator) {
-                    komgaServerPreferences.activeServerId.changes()
+                    connectionPreferences.activeConnectionId.changes()
                         .drop(1)
                         .collectLatest {
                             // Only discard screens whose content is keyed by the previous
                             // server. Server-management screens can change the active server
                             // while adding/editing a profile and must remain on the stack.
                             when (navigator.lastItem) {
-                                is MangaScreen, is KomgaLibraryScreen -> navigator.popUntilRoot()
+                                is MangaScreen, is ConnectionBrowseScreen -> navigator.popUntilRoot()
                             }
                         }
                 }
-
                 val scaffoldInsets = WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal)
                 Scaffold(
                     topBar = {
@@ -237,7 +241,7 @@ class MainActivity : BaseActivity() {
                         .filter { !it }
                         .onEach {
                             val currentScreen = navigator.lastItem
-                            if (currentScreen is KomgaLibraryScreen ||
+                            if (currentScreen is ConnectionBrowseScreen ||
                                 (currentScreen is MangaScreen && currentScreen.fromSource)
                             ) {
                                 navigator.popUntilRoot()
@@ -403,7 +407,7 @@ class MainActivity : BaseActivity() {
                 // If the intent match the "standard" Android search intent
                 // or the Google-specific search intent (triggered by saying or typing "search *query* on *Tachiyomi*" in Google Search/Google Assistant)
 
-                // Get the search query provided in extras, and if not null, perform a Komga library search with it.
+                // Get the search query provided in extras and forward it to the active library connection.
                 val query = intent.getStringExtra(SearchManager.QUERY) ?: intent.getStringExtra(Intent.EXTRA_TEXT)
                 if (!query.isNullOrEmpty()) {
                     navigator.popUntilRoot()
@@ -421,7 +425,7 @@ class MainActivity : BaseActivity() {
             }
             Intent.ACTION_VIEW -> {
                 // Handling opening of backup files
-                if (intent.data.toString().endsWith(".tachibk")) {
+                if (intent.data.toString().endsWith(".kohariabackup", ignoreCase = true)) {
                     navigator.popUntilRoot()
                     navigator.push(RestoreBackupScreen(intent.data.toString()))
                 }

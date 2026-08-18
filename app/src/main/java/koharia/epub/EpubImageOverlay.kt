@@ -18,8 +18,10 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Photo
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -60,6 +62,7 @@ internal fun EpubImageOverlay(
     onSave: () -> Unit,
     onShare: () -> Unit,
     onCopy: () -> Unit,
+    onSetAsCover: () -> Unit,
 ) {
     if (state.previewVisible) {
         BackHandler(enabled = !state.actionsVisible, onBack = onClosePreview)
@@ -79,6 +82,7 @@ internal fun EpubImageOverlay(
             onSave = onSave,
             onShare = onShare,
             onCopy = onCopy,
+            onSetAsCover = onSetAsCover,
         )
     }
 }
@@ -215,7 +219,10 @@ private fun EpubImageActionsSheet(
     onSave: () -> Unit,
     onShare: () -> Unit,
     onCopy: () -> Unit,
+    onSetAsCover: () -> Unit,
 ) {
+    var showSetCoverDialog by remember { mutableStateOf(false) }
+
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         if (isLoading) {
             Box(
@@ -231,40 +238,80 @@ private fun EpubImageActionsSheet(
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
             )
-            Row(
+            Column(
                 modifier = Modifier.padding(vertical = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
             ) {
-                ActionButton(
-                    modifier = Modifier.weight(1f),
-                    title = stringResource(MR.strings.epub_reader_image_preview),
-                    icon = Icons.Outlined.Fullscreen,
-                    colors = actionColors,
-                    onClick = onPreview,
-                )
-                ActionButton(
-                    modifier = Modifier.weight(1f),
-                    title = stringResource(MR.strings.action_save),
-                    icon = Icons.Outlined.Save,
-                    colors = actionColors,
-                    onClick = onSave,
-                )
-                ActionButton(
-                    modifier = Modifier.weight(1f),
-                    title = stringResource(MR.strings.action_share),
-                    icon = Icons.Outlined.Share,
-                    colors = actionColors,
-                    onClick = onShare,
-                )
-                ActionButton(
-                    modifier = Modifier.weight(1f),
-                    title = stringResource(MR.strings.action_copy),
-                    icon = Icons.Outlined.ContentCopy,
-                    colors = actionColors,
-                    onClick = onCopy,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                ) {
+                    ActionButton(
+                        modifier = Modifier.weight(1f),
+                        title = stringResource(MR.strings.set_as_series_cover),
+                        icon = Icons.Outlined.Photo,
+                        colors = actionColors,
+                        onClick = { showSetCoverDialog = true },
+                    )
+                    ActionButton(
+                        modifier = Modifier.weight(1f),
+                        title = stringResource(MR.strings.epub_reader_image_preview),
+                        icon = Icons.Outlined.Fullscreen,
+                        colors = actionColors,
+                        onClick = onPreview,
+                    )
+                    ActionButton(
+                        modifier = Modifier.weight(1f),
+                        title = stringResource(MR.strings.action_save),
+                        icon = Icons.Outlined.Save,
+                        colors = actionColors,
+                        onClick = onSave,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                ) {
+                    ActionButton(
+                        modifier = Modifier.weight(1f),
+                        title = stringResource(MR.strings.action_share),
+                        icon = Icons.Outlined.Share,
+                        colors = actionColors,
+                        onClick = onShare,
+                    )
+                    ActionButton(
+                        modifier = Modifier.weight(1f),
+                        title = stringResource(MR.strings.action_copy),
+                        icon = Icons.Outlined.ContentCopy,
+                        colors = actionColors,
+                        onClick = onCopy,
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                }
             }
         }
+    }
+
+    if (showSetCoverDialog) {
+        AlertDialog(
+            text = { Text(stringResource(MR.strings.confirm_set_image_as_series_cover)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSetCoverDialog = false
+                        onSetAsCover()
+                    },
+                ) {
+                    Text(stringResource(MR.strings.action_ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSetCoverDialog = false }) {
+                    Text(stringResource(MR.strings.action_cancel))
+                }
+            },
+            onDismissRequest = { showSetCoverDialog = false },
+        )
     }
 }
 

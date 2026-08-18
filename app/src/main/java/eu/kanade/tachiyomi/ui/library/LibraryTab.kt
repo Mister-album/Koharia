@@ -20,11 +20,14 @@ import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
-import koharia.komga.ui.library.KomgaLibraryScreen
-import koharia.komga.ui.library.components.KomgaServerSetupPrompt
-import koharia.source.komga.KomgaLibraryScope
-import koharia.source.komga.KomgaServerPreferences
-import koharia.source.komga.KomgaServerProfilesScreen
+import koharia.connection.ConnectionBrowseAdapter
+import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionPreferences
+import koharia.connection.LibraryContentScope
+import koharia.connection.NO_ACTIVE_CONNECTION
+import koharia.connection.ui.LibraryConnectionProfilesScreen
+import koharia.connection.ui.LibraryConnectionSetupPrompt
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -33,8 +36,8 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.jvm.Transient
 
-sealed class KomgaLibraryTab(
-    private val libraryScope: KomgaLibraryScope,
+sealed class ConnectionLibraryTab(
+    private val libraryScope: LibraryContentScope,
     private val tabIndex: UShort,
 ) : Tab {
 
@@ -42,12 +45,14 @@ sealed class KomgaLibraryTab(
     // browse screen owns coroutine channels and must therefore stay runtime-only.
     @Transient
     @Volatile
-    private var runtimeBrowseScreen: KomgaLibraryScreen? = null
+    private var runtimeBrowseScreen: ConnectionBrowseScreen? = null
 
-    private fun browseScreen(): KomgaLibraryScreen {
+    private fun browseScreen(): ConnectionBrowseScreen? {
         runtimeBrowseScreen?.let { return it }
+        val activeConnectionId = Injekt.get<ConnectionPreferences>().activeConnectionId.get()
+        if (activeConnectionId == NO_ACTIVE_CONNECTION) return null
         return synchronized(this) {
-            runtimeBrowseScreen ?: newScreen(KomgaServerPreferences.NO_ACTIVE_SERVER).also {
+            runtimeBrowseScreen ?: newScreen(activeConnectionId)?.also {
                 runtimeBrowseScreen = it
             }
         }
@@ -58,11 +63,11 @@ sealed class KomgaLibraryTab(
         get() {
             val isSelected = LocalTabNavigator.current.current.key == key
             val title = when (libraryScope) {
-                KomgaLibraryScope.ALL -> stringResource(MR.strings.label_library)
-                KomgaLibraryScope.COMIC -> stringResource(MR.strings.label_comics)
-                KomgaLibraryScope.BOOK -> stringResource(MR.strings.label_books)
+                LibraryContentScope.ALL -> stringResource(MR.strings.label_library)
+                LibraryContentScope.COMIC -> stringResource(MR.strings.label_comics)
+                LibraryContentScope.BOOK -> stringResource(MR.strings.label_books)
             }
-            val icon = if (libraryScope == KomgaLibraryScope.BOOK) {
+            val icon = if (libraryScope == LibraryContentScope.BOOK) {
                 painterResource(R.drawable.ic_book_24dp)
             } else {
                 val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_library_enter)
@@ -76,24 +81,30 @@ sealed class KomgaLibraryTab(
         }
 
     override suspend fun onReselect(navigator: Navigator) {
-        browseScreen().refresh()
+        browseScreen()?.takeIf { it.refreshOnReselect }?.refresh()
     }
 
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
-        val komgaServerPreferences = remember { Injekt.get<KomgaServerPreferences>() }
-        val activeServerId by komgaServerPreferences.activeServerId.collectAsState()
-        if (activeServerId == KomgaServerPreferences.NO_ACTIVE_SERVER) {
+        val connectionPreferences = remember { Injekt.get<ConnectionPreferences>() }
+        val activeServerId by connectionPreferences.activeConnectionId.collectAsState()
+        if (activeServerId == NO_ACTIVE_CONNECTION) {
             Scaffold { contentPadding ->
-                KomgaServerSetupPrompt(
-                    onConfigureServer = { navigator.push(KomgaServerProfilesScreen(openAddDialog = true)) },
+                LibraryConnectionSetupPrompt(
+                    onConfigureConnection = { navigator.push(LibraryConnectionProfilesScreen(openAddDialog = true)) },
                     modifier = Modifier.padding(contentPadding),
                 )
             }
             return
         }
         val activeScreen = remember(activeServerId) { newScreen(activeServerId) }
+        if (activeScreen == null) {
+            tachiyomi.presentation.core.screens.EmptyScreen(
+                stringRes = MR.strings.connection_unavailable,
+            )
+            return
+        }
         val isSelected = LocalTabNavigator.current.current.key == key
         var hasEntered by remember { mutableStateOf(false) }
 
@@ -104,7 +115,7 @@ sealed class KomgaLibraryTab(
         LaunchedEffect(isSelected) {
             if (isSelected) {
                 if (hasEntered) {
-                    browseScreen().refresh()
+                    browseScreen()?.takeIf { it.refreshOnReselect }?.refresh()
                 } else {
                     hasEntered = true
                 }
@@ -114,20 +125,22 @@ sealed class KomgaLibraryTab(
         activeScreen.Content()
     }
 
-    suspend fun search(query: String) = browseScreen().search(query)
+    suspend fun search(query: String) = browseScreen()?.search(query)
 
-    suspend fun searchGenre(name: String) = browseScreen().searchGenre(name)
+    suspend fun searchGenre(name: String) = browseScreen()?.searchGenre(name)
 
-    private fun newScreen(sourceId: Long) = KomgaLibraryScreen(
-        sourceId = sourceId,
-        listingQuery = null,
-        showNavigationUp = false,
-        libraryScope = libraryScope,
-    )
+    private fun newScreen(sourceId: Long): ConnectionBrowseScreen? {
+        val source = Injekt.get<SourceManager>().get(sourceId) ?: return null
+        return (source as? ConnectionBrowseAdapter)?.createBrowseScreen(
+            scope = libraryScope,
+            listingQuery = null,
+            showNavigationUp = false,
+        )
+    }
 }
 
-data object LibraryTab : KomgaLibraryTab(KomgaLibraryScope.ALL, 0u)
+data object LibraryTab : ConnectionLibraryTab(LibraryContentScope.ALL, 0u)
 
-data object ComicsTab : KomgaLibraryTab(KomgaLibraryScope.COMIC, 0u)
+data object ComicsTab : ConnectionLibraryTab(LibraryContentScope.COMIC, 0u)
 
-data object BooksTab : KomgaLibraryTab(KomgaLibraryScope.BOOK, 1u)
+data object BooksTab : ConnectionLibraryTab(LibraryContentScope.BOOK, 1u)

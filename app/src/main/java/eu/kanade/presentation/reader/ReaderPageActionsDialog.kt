@@ -46,7 +46,7 @@ fun ReaderPageActionsDialog(
         ) {
             ActionButton(
                 modifier = Modifier.weight(1f),
-                title = stringResource(MR.strings.set_as_cover),
+                title = stringResource(MR.strings.set_as_series_cover),
                 icon = Icons.Outlined.Photo,
                 colors = actionColors,
                 onClick = { showSetCoverDialog = true },
@@ -102,7 +102,7 @@ private fun SetCoverDialog(
 ) {
     AlertDialog(
         text = {
-            Text(stringResource(MR.strings.confirm_set_image_as_cover))
+            Text(stringResource(MR.strings.confirm_set_image_as_series_cover))
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {

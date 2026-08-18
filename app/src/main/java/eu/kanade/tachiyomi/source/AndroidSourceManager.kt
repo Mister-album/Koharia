@@ -3,8 +3,10 @@ package eu.kanade.tachiyomi.source
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.online.HttpSource
-import koharia.source.komga.KomgaServerPreferences
-import koharia.source.komga.KomgaSource
+import koharia.connection.ConnectionPreferences
+import koharia.connection.ConnectionRegistry
+import koharia.connection.ConnectionSource
+import koharia.connection.LibraryConnectionProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,6 +18,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
 import tachiyomi.domain.source.service.SourceManager
@@ -26,7 +30,8 @@ class AndroidSourceManager(
     @Suppress("UNUSED_PARAMETER")
     context: Context,
     private val sourceRepository: StubSourceRepository,
-    private val komgaServerPreferences: KomgaServerPreferences,
+    private val connectionPreferences: ConnectionPreferences,
+    private val connectionRegistry: ConnectionRegistry,
 ) : SourceManager {
 
     private val _isInitialized = MutableStateFlow(false)
@@ -45,11 +50,11 @@ class AndroidSourceManager(
     }
 
     init {
-        refreshSources(komgaServerPreferences.getProfiles())
+        refreshSources(connectionPreferences.getProfiles())
         _isInitialized.value = true
 
         scope.launch {
-            komgaServerPreferences.profilesChanges()
+            connectionPreferences.profilesChanges()
                 .collectLatest(::refreshSources)
         }
 
@@ -103,13 +108,29 @@ class AndroidSourceManager(
         return StubSource(id = id, lang = "", name = "")
     }
 
-    private fun refreshSources(profiles: List<koharia.source.komga.KomgaServerProfile>) {
-        val sources = profiles.map { profile ->
-            KomgaSource(
-                id = profile.id,
-                customName = profile.name,
-            )
+    private fun refreshSources(profiles: List<LibraryConnectionProfile>) {
+        val previousSources = sourcesMapFlow.value
+        val sources = profiles.mapNotNull { profile ->
+            val existing = previousSources[profile.id] as? ConnectionSource
+            if (existing?.connectionProfile == profile) {
+                existing
+            } else {
+                runCatching { connectionRegistry.createSource(profile) }
+                    .onFailure { error ->
+                        logcat(LogPriority.ERROR, error) {
+                            "Failed to create connection source provider=${profile.providerId} id=${profile.id}"
+                        }
+                    }
+                    .getOrNull()
+            }
         }
+
+        val retainedSources = sources.toSet()
+        previousSources.values
+            .filterNot(retainedSources::contains)
+            .filterIsInstance<AutoCloseable>()
+            .forEach { source -> runCatching(source::close) }
+
         sourcesMapFlow.value = ConcurrentHashMap(sources.associateBy(Source::id))
         sources.forEach { source ->
             registerStubSource(StubSource.from(source))

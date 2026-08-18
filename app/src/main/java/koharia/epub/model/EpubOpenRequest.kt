@@ -1,11 +1,16 @@
 package koharia.epub.model
 
+data class RemotePublicationRef(
+    val providerId: String,
+    val resourceId: String,
+)
+
 data class EpubOpenRequest(
     val mangaId: Long,
     val chapterId: Long,
     val sourceId: Long,
     val title: String,
-    val bookUrl: String?,
+    val remotePublication: RemotePublicationRef?,
     val localUri: String?,
     val openSource: OpenSource,
     val publisherStylesOverride: Boolean? = null,

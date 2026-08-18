@@ -49,11 +49,12 @@ import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notify
+import koharia.connection.ConnectionConfigManager
+import koharia.connection.ConnectionContentScopeController
+import koharia.connection.ConnectionPreferences
+import koharia.connection.LibraryContentScope
 import koharia.core.migration.Migrator
 import koharia.core.migration.migrations.migrations
-import koharia.source.komga.KomgaLibraryClassificationManager
-import koharia.source.komga.KomgaLocalConfigManager
-import koharia.source.komga.KomgaServerPreferences
 import koharia.telemetry.TelemetryConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
@@ -161,20 +162,26 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             .launchIn(scope)
 
         val uiPreferences = Injekt.get<UiPreferences>()
-        val komgaServerPreferences = Injekt.get<KomgaServerPreferences>()
-        val localConfigManager = Injekt.get<KomgaLocalConfigManager>()
-        val libraryClassificationManager = Injekt.get<KomgaLibraryClassificationManager>()
+        val connectionPreferences = Injekt.get<ConnectionPreferences>()
+        val localConfigManager = Injekt.get<ConnectionConfigManager>()
+        val contentScopeController = Injekt.get<ConnectionContentScopeController>()
 
-        libraryClassificationManager.enabled.changes()
-            .onEach { enabled -> AppShortcutManager.updateLibraryShortcuts(this, enabled) }
+        contentScopeController.activeScopesChanges()
+            .onEach { scopes ->
+                AppShortcutManager.updateLibraryShortcuts(
+                    context = this,
+                    classificationEnabled = LibraryContentScope.COMIC in scopes &&
+                        LibraryContentScope.BOOK in scopes,
+                )
+            }
             .launchIn(scope)
 
         uiPreferences.themeMode.changes()
             .onEach { themeMode ->
                 logcat(LogPriority.DEBUG) {
                     "Applying scoped theme mode: themeMode=$themeMode, " +
-                        "localConfigMode=${komgaServerPreferences.localConfigMode.get()}, " +
-                        "activeServerId=${komgaServerPreferences.activeServerId.get()}, " +
+                        "localConfigMode=${connectionPreferences.configMode.get()}, " +
+                        "activeConnectionId=${connectionPreferences.activeConnectionId.get()}, " +
                         "scope=${localConfigManager.currentScope().prefix}"
                 }
                 setAppCompatDelegateThemeMode(themeMode)
@@ -185,8 +192,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             .onEach { appTheme ->
                 logcat(LogPriority.DEBUG) {
                     "Scoped app theme changed: appTheme=$appTheme, " +
-                        "localConfigMode=${komgaServerPreferences.localConfigMode.get()}, " +
-                        "activeServerId=${komgaServerPreferences.activeServerId.get()}, " +
+                        "localConfigMode=${connectionPreferences.configMode.get()}, " +
+                        "activeConnectionId=${connectionPreferences.activeConnectionId.get()}, " +
                         "scope=${localConfigManager.currentScope().prefix}"
                 }
             }
@@ -196,8 +203,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             .onEach { isAmoled ->
                 logcat(LogPriority.DEBUG) {
                     "Scoped AMOLED preference changed: isAmoled=$isAmoled, " +
-                        "localConfigMode=${komgaServerPreferences.localConfigMode.get()}, " +
-                        "activeServerId=${komgaServerPreferences.activeServerId.get()}, " +
+                        "localConfigMode=${connectionPreferences.configMode.get()}, " +
+                        "activeConnectionId=${connectionPreferences.activeConnectionId.get()}, " +
                         "scope=${localConfigManager.currentScope().prefix}"
                 }
             }

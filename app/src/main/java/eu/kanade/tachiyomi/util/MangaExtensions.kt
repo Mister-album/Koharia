@@ -4,7 +4,9 @@ import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.manga.model.hasCustomCover
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.connection.isConnectionLibraryEntry
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
@@ -46,8 +48,9 @@ suspend fun Manga.editCover(
     stream: InputStream,
     updateManga: UpdateManga = Injekt.get(),
     coverCache: CoverCache = Injekt.get(),
+    sourceManager: SourceManager = Injekt.get(),
 ) {
-    if (favorite) {
+    if (isConnectionLibraryEntry(sourceManager)) {
         coverCache.setCustomCoverToCache(this, stream)
         updateManga.awaitUpdateCoverLastModified(id)
     }

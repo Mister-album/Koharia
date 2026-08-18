@@ -45,6 +45,7 @@ fun BrowseSourceContent(
     snackbarHostState: SnackbarHostState,
     contentPadding: PaddingValues,
     showLibraryBadges: Boolean = true,
+    showPagingLoadingIndicator: Boolean = true,
     onWebViewClick: () -> Unit,
     onHelpClick: () -> Unit,
     onMangaClick: (Manga) -> Unit,
@@ -73,7 +74,11 @@ fun BrowseSourceContent(
         }
     }
 
-    if (mangaList.itemCount == 0 && mangaList.loadState.refresh is LoadState.Loading) {
+    if (
+        showPagingLoadingIndicator &&
+        mangaList.itemCount == 0 &&
+        mangaList.loadState.refresh is LoadState.Loading
+    ) {
         LoadingScreen(modifier.padding(contentPadding))
         return
     }
@@ -115,6 +120,7 @@ fun BrowseSourceContent(
                 columns = columns,
                 contentPadding = contentPadding,
                 showLibraryBadges = showLibraryBadges,
+                showPagingLoadingIndicator = showPagingLoadingIndicator,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )
@@ -125,6 +131,7 @@ fun BrowseSourceContent(
                 mangaList = mangaList,
                 contentPadding = contentPadding,
                 showLibraryBadges = showLibraryBadges,
+                showPagingLoadingIndicator = showPagingLoadingIndicator,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )
@@ -137,6 +144,7 @@ fun BrowseSourceContent(
                 contentPadding = contentPadding,
                 showTitle = displayMode is LibraryDisplayMode.CompactGrid,
                 showLibraryBadges = showLibraryBadges,
+                showPagingLoadingIndicator = showPagingLoadingIndicator,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )

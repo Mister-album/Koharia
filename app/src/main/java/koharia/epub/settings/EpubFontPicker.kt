@@ -63,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import eu.kanade.presentation.components.AdaptiveSheet
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.epub.font.EpubFontFaceDescriptor
 import koharia.epub.font.EpubFontFamilyDescriptor
 import koharia.epub.font.EpubFontId
@@ -70,7 +71,6 @@ import koharia.epub.font.EpubFontImportFailure
 import koharia.epub.font.EpubFontImportResult
 import koharia.epub.font.EpubFontManager
 import koharia.epub.font.EpubFontSource
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -159,7 +159,7 @@ private fun EpubFontPickerContent(
     showTitle: Boolean,
     onFontSelected: (EpubFontId) -> Unit,
 ) {
-    val scopedPreferenceStoreFactory = remember { Injekt.get<KomgaScopedPreferenceStoreFactory>() }
+    val scopedPreferenceStoreFactory = remember { Injekt.get<ConnectionScopedPreferenceStoreFactory>() }
     val catalog by manager.catalogState.collectAsState()
     val rawSelectedId by preferences.selectedFontId.changes().collectAsState(preferences.selectedFontId.get())
     val selectedId = EpubFontId.fromPreference(rawSelectedId)

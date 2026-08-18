@@ -22,13 +22,13 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
 import koharia.epub.locator.toNavigatorLocator
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -89,7 +89,7 @@ class EpubReaderFragment : Fragment() {
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
     private val fontManager: EpubFontManager = Injekt.get()
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
+    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get()
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
         get() = requireArguments().getLong(ARG_CHAPTER_ID)

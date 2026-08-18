@@ -11,7 +11,15 @@ import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
 import eu.kanade.tachiyomi.ui.reader.SaveImageNotifier
+import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import koharia.connection.ConnectionEpubProgressAdapter
+import koharia.connection.ConnectionPublicationAdapter
+import koharia.connection.ConnectionPublicationMetadata
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.ConnectionSource
+import koharia.connection.RemoteEpubProgression
+import koharia.connection.isConnectionLibraryEntry
 import koharia.domain.epub.interactor.AddEpubBookmark
 import koharia.domain.epub.interactor.DeleteEpubBookmark
 import koharia.domain.epub.interactor.GetEpubBookmarks
@@ -30,17 +38,11 @@ import koharia.epub.locator.toPersistentLocator
 import koharia.epub.model.EpubOpenRequest
 import koharia.epub.model.EpubSearchResult
 import koharia.epub.model.EpubTocEntry
-import koharia.epub.progress.KomgaEpubProgressSyncService
-import koharia.epub.progress.KomgaEpubRemoteProgressCoordinator
+import koharia.epub.model.RemotePublicationRef
 import koharia.epub.service.EpubPublicationResolver
 import koharia.epub.session.EpubReaderSession
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubReaderPreferences
-import koharia.komga.api.dto.isDivinaCompatibleEpub
-import koharia.komga.api.dto.isEpub
-import koharia.komga.download.KomgaChapterMemo
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
-import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -114,8 +116,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private val upsertEpubProgress: UpsertEpubProgress = Injekt.get(),
     private val getEpubPaginationCache: GetEpubPaginationCache = Injekt.get(),
     private val upsertEpubPaginationCache: UpsertEpubPaginationCache = Injekt.get(),
-    private val komgaEpubProgressSyncService: KomgaEpubProgressSyncService = Injekt.get(),
-    private val epubRemoteProgressCoordinator: KomgaEpubRemoteProgressCoordinator = Injekt.get(),
     private val epubCacheManager: EpubCacheManager = Injekt.get(),
     private val epubCachePreferences: EpubCachePreferences = Injekt.get(),
     private val updateChapter: UpdateChapter = Injekt.get(),
@@ -127,7 +127,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private val imageSaver: ImageSaver = Injekt.get(),
     globalEpubReaderPreferences: EpubReaderPreferences = Injekt.get(),
     globalBasePreferences: BasePreferences = Injekt.get(),
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
+    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get(),
 ) : ViewModel() {
 
     private var epubReaderPreferences: EpubReaderPreferences =
@@ -180,6 +180,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     private var currentBookUrl: String? = null
     private var currentSourceId: Long = -1L
+    private var currentProviderId: String? = null
+    private var currentEpubProgressAdapter: ConnectionEpubProgressAdapter? = null
     private var currentProgress: EpubProgress? = null
     private var latestLocator: Locator? = null
     private var publicationPositions: List<Locator> = emptyList()
@@ -281,11 +283,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 val manga = checkNotNull(getManga.await(mangaId)) { "Manga not found" }
                 val chapter = checkNotNull(getChapter.await(chapterId)) { "Chapter not found" }
                 currentChapter = chapter
-                val source = sourceManager.get(manga.source) as? KomgaSource
+                val source = sourceManager.get(manga.source) as? ConnectionSource
                     ?: error(application.stringResource(MR.strings.source_unsupported))
+                val publicationAdapter = source as? ConnectionPublicationAdapter
 
                 savedState["source_id"] = source.id
                 currentSourceId = source.id
+                currentProviderId = source.providerId
+                currentEpubProgressAdapter = source as? ConnectionEpubProgressAdapter
                 epubReaderPreferences = scopedPreferenceStoreFactory.epubReaderPreferences(source.id)
                 basePreferences = scopedPreferenceStoreFactory.basePreferences(source.id)
                 incognitoSession = basePreferences.incognitoMode.get()
@@ -330,54 +335,33 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     ?.uri
                     ?.toString()
 
-                val memoFingerprint = KomgaChapterMemo.readFingerprint(chapter.memo)
-                val memoIsEpub = KomgaChapterMemo.isEpub(chapter.memo)
-                val memoIsDivinaCompatible = KomgaChapterMemo.isEpubDivinaCompatible(chapter.memo)
-                val memoPagesCount = KomgaChapterMemo.pagesCount(chapter.memo) ?: 0
-                val memoBookUrl = memoFingerprint?.bookUrl
-                    ?: chapter.url.substringBefore('#').removeSuffix("/")
-                val remotePublicationKey = EpubCachePolicy.publicationKey(
-                    fileHash = memoFingerprint?.fileHash,
-                    fileLastModified = KomgaChapterMemo.fileLastModified(chapter.memo),
-                    sizeBytes = memoFingerprint?.sizeBytes ?: 0L,
-                    fallback = "book:${chapter.id}:${chapter.url}",
-                )
-                val cachedBookFile = epubCacheManager.completeBookFile(source.id, remotePublicationKey)
+                val publicationMetadata = when {
+                    publicationAdapter != null -> publicationAdapter.resolvePublication(
+                        chapter = chapter,
+                        allowRemoteLookup = !hasLauncherResolution,
+                    )
+                    hasLauncherResolution && resolvedLocalUri != null -> ConnectionPublicationMetadata(
+                        remoteResourceId = resolvedRemoteBookUrl,
+                        publicationKey = resolvedPublicationKey ?: "local:$resolvedLocalUri",
+                        isPageCompatible = savedState.get<Boolean>("epub_resolution_divina") == true,
+                        fileName = savedState.get<String>("epub_resolution_file_name"),
+                        sizeBytes = savedState.get<Long>("epub_resolution_file_size")?.takeIf { it > 0L },
+                    )
+                    else -> error(application.stringResource(MR.strings.source_unsupported))
+                }
+                val cachedBookFile = epubCacheManager.completeBookFile(source.id, publicationMetadata.publicationKey)
                 val cachedBookUri = cachedBookFile?.toURI()?.toString()
                 val reusableResolvedLocalUri = resolvedLocalUri
                     .takeUnless { resolvedCompleteCache && cachedBookFile == null }
                 val preferredLocalUri = reusableResolvedLocalUri ?: downloadedUri ?: cachedBookUri
-                val needsRemoteDetails = !hasLauncherResolution &&
-                    !KomgaChapterMemo.hasCompleteEpubClassification(chapter.memo)
-                val bookDetails = if (needsRemoteDetails) {
-                    runCatching { source.getBookDetails(chapter.url) }
-                        .getOrNull()
-                        ?.takeIf { it.isEpub }
-                } else {
-                    null
-                }
-                if (bookDetails != null) {
-                    val updatedMemo = KomgaChapterMemo.mergeInto(
-                        existing = chapter.memo,
-                        baseUrl = source.baseUrl.trimEnd('/'),
-                        book = bookDetails,
-                    )
-                    if (updatedMemo != chapter.memo) {
-                        updateChapter.await(ChapterUpdate(id = chapter.id, memo = updatedMemo))
-                    }
-                }
                 val remoteBookUrl = when {
                     hasLauncherResolution -> resolvedRemoteBookUrl
-                    bookDetails != null -> chapter.url.substringBefore('#').removeSuffix("/")
-                    memoIsEpub == true || preferredLocalUri != null -> memoBookUrl
-                    else -> null
+                    else -> publicationMetadata.remoteResourceId
                 }
                 val canOpenAsPages = if (hasLauncherResolution) {
                     savedState.get<Boolean>("epub_resolution_divina") == true
                 } else {
-                    bookDetails?.media?.let { media ->
-                        media.isDivinaCompatibleEpub && media.pagesCount > 0
-                    } ?: (memoIsEpub == true && memoIsDivinaCompatible == true && memoPagesCount > 0)
+                    publicationMetadata.isPageCompatible
                 }
 
                 check(preferredLocalUri != null || remoteBookUrl != null) {
@@ -401,14 +385,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     ?.takeIf { hasLauncherResolution }
                     ?: downloadedFile?.name
                     ?: cachedBookFile?.name
-                    ?: bookDetails?.name
-                    ?: KomgaChapterMemo.fileName(chapter.memo)
+                    ?: publicationMetadata.fileName
                 val bookSizeBytes = savedState.get<Long>("epub_resolution_file_size")
                     ?.takeIf { hasLauncherResolution && it > 0L }
                     ?: downloadedFile?.length()?.takeIf { size -> size > 0L }
                     ?: cachedBookFile?.length()?.takeIf { size -> size > 0L }
-                    ?: bookDetails?.sizeBytes?.takeIf { size -> size > 0L }
-                    ?: memoFingerprint?.sizeBytes?.takeIf { size -> size > 0L }
+                    ?: publicationMetadata.sizeBytes
                 mutableState.update {
                     it.copy(
                         mangaTitle = manga.title,
@@ -430,13 +412,10 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     primarySource == EpubOpenRequest.OpenSource.LOCAL && downloadedFile != null ->
                         "local:$localUri:${downloadedFile.lastModified()}:${downloadedFile.length()}"
                     primarySource == EpubOpenRequest.OpenSource.LOCAL && cachedBookFile != null ->
-                        remotePublicationKey
+                        publicationMetadata.publicationKey
                     primarySource == EpubOpenRequest.OpenSource.LOCAL ->
                         "local:$localUri"
-                    !bookDetails?.fileHash.isNullOrBlank() -> "komga:${bookDetails.fileHash}"
-                    bookDetails != null && bookDetails.fileLastModified.isNotBlank() ->
-                        "komga:${bookDetails.fileLastModified}:${bookDetails.sizeBytes}"
-                    else -> remotePublicationKey
+                    else -> publicationMetadata.publicationKey
                 }
                 epubCacheManager.acquirePublication(source.id, checkNotNull(currentPublicationKey))
                 leasedPublicationKey = currentPublicationKey
@@ -460,14 +439,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         .getOrNull()
                 }
                 val remoteCache = if (incognito || remoteBookUrl == null ||
-                    !epubReaderPreferences.syncProgressionToKomga.get()
+                    !epubReaderPreferences.syncRemoteProgression.get()
                 ) {
                     null
                 } else {
-                    runCatching { epubRemoteProgressCoordinator.get(chapter.id) }
+                    runCatching { currentEpubProgressAdapter?.getCachedEpubProgress(chapter.id) }
                         .onFailure { error ->
                             logcat(LogPriority.WARN, error) {
-                                "Failed to load cached Komga EPUB progression for chapterId=${chapter.id}"
+                                "Failed to load cached remote EPUB progression for chapterId=${chapter.id}"
                             }
                         }
                         .getOrNull()
@@ -477,7 +456,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         ?.let { json -> runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull() }
                     val modifiedAt = cache.modifiedAt
                     if (locator != null && modifiedAt != null) {
-                        KomgaEpubProgressSyncService.RemoteProgression(locator, modifiedAt)
+                        RemoteEpubProgression(locator, modifiedAt)
                     } else {
                         null
                     }
@@ -486,7 +465,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 val persistedLocator = localProgress?.toLocatorOrNull()
                 val savedStateLocator = restoreLocator()
                 val deferCachedRemoteSelection =
-                    epubReaderPreferences.correctKomgaServerTimestamps.get() &&
+                    epubReaderPreferences.correctRemoteServerTimestamps.get() &&
                         persistedLocator != null &&
                         remoteProgress != null
                 val initialRemoteProgress = remoteProgress.takeUnless { deferCachedRemoteSelection }
@@ -531,7 +510,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         chapterId = chapter.id,
                         sourceId = source.id,
                         title = chapter.name,
-                        bookUrl = remoteBookUrl,
+                        remotePublication = remoteBookUrl?.let { resourceId ->
+                            RemotePublicationRef(checkNotNull(currentProviderId), resourceId)
+                        },
                         localUri = localUri,
                         openSource = primarySource,
                         publisherStylesOverride = publisherStylesOverride,
@@ -614,7 +595,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         currentProgress = syncedProgress
                         upsertEpubProgress.await(syncedProgress)
                     } else if (remoteBookUrl != null && localProgress != null && persistedLocator != null &&
-                        epubReaderPreferences.syncProgressionToKomga.get() &&
+                        epubReaderPreferences.syncRemoteProgression.get() &&
                         (remoteProgress == null || localProgress.updatedAt.time > remoteProgress.modifiedAt.time)
                     ) {
                         syncPersistedProgress(localProgress, persistedLocator)
@@ -823,6 +804,41 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    internal fun setSelectedImageAsCover() {
+        withSelectedImage { content ->
+            mutableImageState.update { it.copy(isLoading = true) }
+            val manga = getManga.await(mangaId)
+            if (manga == null || !manga.isConnectionLibraryEntry(sourceManager)) {
+                finishImageAction()
+                mutableImageEvents.emit(
+                    EpubImageEvent.Error(
+                        application.stringResource(MR.strings.notification_first_add_to_library),
+                    ),
+                )
+                return@withSelectedImage
+            }
+            val result = runCatching {
+                withIOContext {
+                    content.bytes.toByteArray().inputStream().use {
+                        manga.editCover(it, sourceManager = sourceManager)
+                    }
+                }
+            }
+            result.onSuccess {
+                finishImageAction()
+                mutableImageEvents.emit(EpubImageEvent.CoverUpdated)
+            }.onFailure { error ->
+                logcat(LogPriority.ERROR, error) { "Failed to update EPUB series cover" }
+                mutableImageState.update { it.copy(isLoading = false) }
+                mutableImageEvents.emit(
+                    EpubImageEvent.Error(
+                        application.stringResource(MR.strings.notification_cover_update_failed),
+                    ),
+                )
+            }
+        }
+    }
+
     private fun withSelectedImage(
         forceReload: Boolean = false,
         action: suspend (EpubImageContent) -> Unit,
@@ -994,7 +1010,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         prefetchNextResourceIfNeeded()
         if (completeCacheStarted || isIncognito() || state.value.isUsingLocalFile) return
         if (!epubCachePreferences.cacheWholeBook.get()) return
-        val source = sourceManager.get(currentSourceId) as? KomgaSource ?: return
+        val source = sourceManager.get(currentSourceId) ?: return
         val bookUrl = currentBookUrl ?: return
         val publicationKey = currentPublicationKey ?: return
         val requestedChapterId = chapterId
@@ -1019,7 +1035,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                             chapterId = chapterId,
                             sourceId = currentSourceId,
                             title = mutableState.value.chapterTitle.orEmpty(),
-                            bookUrl = bookUrl,
+                            remotePublication = RemotePublicationRef(checkNotNull(currentProviderId), bookUrl),
                             localUri = cachedUri,
                             openSource = EpubOpenRequest.OpenSource.LOCAL,
                             publisherStylesOverride = publisherStylesOverride,
@@ -1106,15 +1122,15 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     private fun refreshRemoteProgressAfterDisplay() {
-        if (remoteProgressChecked || isIncognito() || !epubReaderPreferences.syncProgressionToKomga.get()) return
+        if (remoteProgressChecked || isIncognito() || !epubReaderPreferences.syncRemoteProgression.get()) return
         val chapter = currentChapter ?: return
-        val sourceId = currentSourceId.takeIf { it > 0L } ?: return
+        val progressAdapter = currentEpubProgressAdapter ?: return
         val checkLayoutRevision = layoutChangeRevision
         val localLocatorAtCheck = latestLocator
         remoteProgressChecked = true
         viewModelScope.launch {
             val remote = runCatching {
-                epubRemoteProgressCoordinator.refreshChapter(mangaId, chapter, sourceId)
+                progressAdapter.refreshEpubProgress(mangaId, chapter)
             }.onFailure { error ->
                 logcat(LogPriority.WARN, error) {
                     "Failed to refresh EPUB remote progress for chapterId=$chapterId"
@@ -1936,13 +1952,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
         localProgress: EpubProgress,
         locator: Locator,
     ) {
-        val sourceId = currentSourceId.takeIf { it > 0 } ?: return
+        val progressAdapter = currentEpubProgressAdapter ?: return
         val bookUrl = localProgress.bookUrl ?: currentBookUrl ?: return
         val positions = authoritativePublicationPositions() ?: return
         runCatching {
-            komgaEpubProgressSyncService.pushProgression(
-                sourceId = sourceId,
-                bookUrl = bookUrl,
+            progressAdapter.pushEpubProgress(
+                resourceId = bookUrl,
                 locator = locator,
                 positions = positions,
                 modifiedAt = localProgress.updatedAt,
@@ -1952,7 +1967,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
             upsertEpubProgress.await(syncedProgress)
         }.onFailure { error ->
             logcat(LogPriority.WARN, error) {
-                "Failed to sync existing Komga EPUB progression for chapterId=${localProgress.chapterId}"
+                "Failed to sync existing remote EPUB progression for chapterId=${localProgress.chapterId}"
             }
         }
     }
@@ -1980,13 +1995,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
         markChapterCompletedIfNeeded(locator)
 
         val bookUrl = progress.bookUrl
-        if (bookUrl != null && epubReaderPreferences.syncProgressionToKomga.get()) {
-            val sourceId = currentSourceId.takeIf { it > 0 } ?: return@withLock
+        if (bookUrl != null && epubReaderPreferences.syncRemoteProgression.get()) {
+            val progressAdapter = currentEpubProgressAdapter ?: return@withLock
             val positions = positionsOverride ?: authoritativePublicationPositions() ?: return@withLock
             runCatching {
-                komgaEpubProgressSyncService.pushProgression(
-                    sourceId = sourceId,
-                    bookUrl = bookUrl,
+                progressAdapter.pushEpubProgress(
+                    resourceId = bookUrl,
                     locator = locator,
                     positions = positions,
                     modifiedAt = now,
@@ -1996,7 +2010,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 currentProgress = syncedProgress
             }.onFailure { error ->
                 logcat(LogPriority.WARN, error) {
-                    "Failed to push Komga EPUB progression for chapterId=$chapterId"
+                    "Failed to push remote EPUB progression for chapterId=$chapterId"
                 }
             }
         }
@@ -2064,7 +2078,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     private fun chooseMoreRecentLocator(
         localProgress: EpubProgress?,
-        remoteProgress: KomgaEpubProgressSyncService.RemoteProgression?,
+        remoteProgress: RemoteEpubProgression?,
     ): Locator? {
         val localLocator = localProgress?.toLocatorOrNull()
         return when {

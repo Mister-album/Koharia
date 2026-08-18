@@ -6,7 +6,7 @@ import com.jakewharton.disklrucache.DiskLruCache
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.saveTo
-import koharia.komga.download.KomgaChapterMemo
+import koharia.connection.ConnectionChapterMetadata
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import okhttp3.Response
@@ -261,7 +261,7 @@ class ChapterCache(
     }
 
     private fun getKey(chapter: Chapter): String {
-        val publicationVersion = KomgaChapterMemo.publicationVersion(chapter.memo)
+        val publicationVersion = ConnectionChapterMetadata.publicationVersion(chapter.memo)
         return buildString {
             append(chapter.mangaId)
             append(chapter.url)

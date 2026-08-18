@@ -57,13 +57,14 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
+import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionPreferences
+import koharia.connection.ui.LibraryConnectionSetupPrompt
 import koharia.epub.cache.EpubCacheManager
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
-import koharia.komga.ui.library.components.KomgaServerSetupPrompt
 import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
-import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaServerSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
@@ -90,11 +91,11 @@ import kotlin.jvm.Transient
 import kotlin.math.roundToInt
 
 data class KomgaLibraryScreen(
-    val sourceId: Long,
+    override val sourceId: Long,
     private val listingQuery: String?,
     private val showNavigationUp: Boolean = true,
     private val libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
-) : Screen(), AssistContentScreen {
+) : Screen(), AssistContentScreen, ConnectionBrowseScreen {
 
     private var assistUrl: String? = null
 
@@ -127,7 +128,7 @@ data class KomgaLibraryScreen(
         val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
         val basePreferences = remember(sourceId) { scopedPreferenceStoreFactory.basePreferences(sourceId) }
         val libraryPreferences: LibraryPreferences = Injekt.get()
-        val komgaServerPreferences: KomgaServerPreferences = Injekt.get()
+        val connectionPreferences: ConnectionPreferences = Injekt.get()
         val downloadManager: DownloadManager = Injekt.get()
         val getRemoteManga: GetRemoteManga = Injekt.get()
         val getManga: GetManga = Injekt.get()
@@ -158,9 +159,9 @@ data class KomgaLibraryScreen(
         }
         val state by screenModel.state.collectAsState()
         val columns by libraryPreferences.portraitColumns.collectAsState()
-        val serverProfiles by remember(komgaServerPreferences) {
-            komgaServerPreferences.profilesChanges()
-        }.collectAsState(initial = komgaServerPreferences.getProfiles())
+        val connectionProfiles by remember(connectionPreferences) {
+            connectionPreferences.profilesChanges()
+        }.collectAsState(initial = connectionPreferences.getProfiles())
 
         val navigator = LocalNavigator.currentOrThrow
         val navigateUp: () -> Unit = {
@@ -225,11 +226,11 @@ data class KomgaLibraryScreen(
                         onSearchQueryChange = screenModel::setToolbarQuery,
                         displayMode = screenModel.displayMode,
                         onDisplayModeChange = { screenModel.displayMode = it },
-                        serverProfiles = serverProfiles,
-                        activeServerId = sourceId,
-                        onServerSelect = { serverId ->
-                            if (serverId != sourceId) {
-                                komgaServerPreferences.activeServerId.set(serverId)
+                        connectionProfiles = connectionProfiles,
+                        activeConnectionId = sourceId,
+                        onConnectionSelect = { connectionId ->
+                            if (connectionId != sourceId) {
+                                connectionPreferences.activeConnectionId.set(connectionId)
                             }
                         },
                         showFilterAction = state.filters.isNotEmpty(),
@@ -293,8 +294,8 @@ data class KomgaLibraryScreen(
                     .pullRefresh(pullRefreshState),
             ) {
                 if (!state.isServerConfigured) {
-                    KomgaServerSetupPrompt(
-                        onConfigureServer = {
+                    LibraryConnectionSetupPrompt(
+                        onConfigureConnection = {
                             navigator.push(KomgaServerSettingsScreen(sourceId = sourceId))
                         },
                         modifier = Modifier.padding(paddingValues),
@@ -383,9 +384,9 @@ data class KomgaLibraryScreen(
         }
     }
 
-    suspend fun search(query: String) = events().query.send(SearchType.Text(query))
-    suspend fun searchGenre(name: String) = events().query.send(SearchType.Genre(name))
-    suspend fun refresh() = events().refresh.send(Unit)
+    override suspend fun search(query: String) = events().query.send(SearchType.Text(query))
+    override suspend fun searchGenre(name: String) = events().query.send(SearchType.Genre(name))
+    override suspend fun refresh() = events().refresh.send(Unit)
 
     private class RuntimeEvents {
         val query = Channel<SearchType>()

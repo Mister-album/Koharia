@@ -5,10 +5,9 @@ import android.content.Context
 import androidx.core.net.toUri
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
-import koharia.source.komga.DownloadDirectoryMode
-import koharia.source.komga.KomgaServerPreferences
-import koharia.source.komga.KomgaServerProfile
-import koharia.source.komga.KomgaSource
+import koharia.connection.ConnectionPreferences
+import koharia.connection.ConnectionRegistry
+import koharia.connection.LibraryConnectionProfile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,7 +71,8 @@ class DownloadCache(
     private val provider: DownloadProvider = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val storageManager: StorageManager = Injekt.get(),
-    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
+    private val connectionPreferences: ConnectionPreferences = Injekt.get(),
+    private val connectionRegistry: ConnectionRegistry = Injekt.get(),
 ) {
 
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -134,35 +134,32 @@ class DownloadCache(
                 }
             }
 
-            if (komgaServerPreferences.needsDownloadDirectoryLayoutMigration()) {
-                provider.migrateLegacyKomgaDirectories()
-                    .onSuccess { migrated ->
-                        komgaServerPreferences.markDownloadDirectoryLayoutMigrated()
-                        if (migrated) {
-                            invalidateCache("legacy_komga_directories_migrated")
-                        }
+            provider.migrateLegacyKomgaDirectories()
+                .onSuccess { migrated ->
+                    if (migrated) {
+                        invalidateCache("legacy_connection_directories_migrated")
                     }
-                    .onFailure { error ->
-                        logcat(LogPriority.WARN, error) {
-                            "Failed to migrate legacy Komga download directories; will retry"
-                        }
+                }
+                .onFailure { error ->
+                    logcat(LogPriority.WARN, error) {
+                        "Failed to migrate legacy connection download directories; will retry"
                     }
-            }
+                }
         }
 
         storageManager.changes
             .onEach { invalidateCache("storage_changed") }
             .launchIn(scope)
 
-        komgaServerPreferences.downloadDirectoryMode.changes()
+        connectionRegistry.configurationChanges()
             .drop(1)
-            .onEach { mode -> invalidateCache("download_directory_mode_changed:$mode") }
+            .onEach { invalidateCache("connection_configuration_changed") }
             .launchIn(scope)
 
-        komgaServerPreferences.profilesChanges()
+        connectionPreferences.profilesChanges()
             .drop(1)
             .onEach { profiles ->
-                val profileIds = profiles.mapTo(mutableSetOf(), KomgaServerProfile::id)
+                val profileIds = profiles.mapTo(mutableSetOf(), LibraryConnectionProfile::id)
                 val suppressRefresh = synchronized(profileRefreshLock) {
                     val expectedProfileIds = suppressedProfileIds
                     suppressedProfileIds = null
@@ -219,10 +216,11 @@ class DownloadCache(
             }
         }
 
-        if (allowSharedLookup &&
-            komgaServerPreferences.downloadDirectoryMode.get() == DownloadDirectoryMode.Shared
+        val source = sourceManager.getOrStub(sourceId)
+        if (
+            allowSharedLookup &&
+            provider.usesSharedDownloadStorage(source)
         ) {
-            val source = sourceManager.getOrStub(sourceId)
             return provider.findChapterDir(chapterName, chapterScanlator, chapterUrl, mangaTitle, source) != null
         }
 

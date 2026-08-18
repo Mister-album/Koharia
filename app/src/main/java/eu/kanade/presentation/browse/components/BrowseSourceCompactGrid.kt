@@ -27,6 +27,7 @@ fun BrowseSourceCompactGrid(
     contentPadding: PaddingValues,
     showTitle: Boolean = true,
     showLibraryBadges: Boolean,
+    showPagingLoadingIndicator: Boolean = true,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
 ) {
@@ -37,7 +38,7 @@ fun BrowseSourceCompactGrid(
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
-        if (mangaList.loadState.prepend is LoadState.Loading) {
+        if (showPagingLoadingIndicator && mangaList.loadState.prepend is LoadState.Loading) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 BrowseSourceLoadingItem()
             }
@@ -54,7 +55,10 @@ fun BrowseSourceCompactGrid(
             )
         }
 
-        if (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading) {
+        if (
+            showPagingLoadingIndicator &&
+            (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading)
+        ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 BrowseSourceLoadingItem()
             }
