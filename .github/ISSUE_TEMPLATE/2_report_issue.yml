@@ -1,103 +1,73 @@
-name: 🐞 Issue report
-description: Report an issue in Koharia
+name: 🐞 问题反馈 / Issue report
+description: 报告 Koharia 中的问题 / Report a problem in Koharia
 labels: [bug]
 body:
-  - type: textarea
-    id: reproduce-steps
+  - type: markdown
     attributes:
-      label: Steps to reproduce
-      description: Provide an example of the issue.
-      placeholder: |
-        Example:
-          1. First step
-          2. Second step
-          3. Issue here
-    validations:
-      required: true
+      value: |
+        请先搜索已有 Issue，并尽可能使用最新的 Koharia 构建版本。涉及 Komga 或服务器的问题，请在适用时提供服务器版本。
+        Please search existing issues first and use the latest available Koharia build when possible. For Komga or server-related problems, include the server version if relevant.
 
   - type: textarea
-    id: expected-behavior
+    id: issue-description
     attributes:
-      label: Expected behavior
-      description: Explain what you should expect to happen.
+      label: 发生了什么？ / What happened?
+      description: 请描述当时的操作和出现的问题；如有帮助，请补充复现步骤、预期结果和实际结果。 / Describe what you were doing and what went wrong. Include steps to reproduce, expected behavior, and actual behavior when useful.
       placeholder: |
-        Example:
-          "This should happen..."
-    validations:
-      required: true
+        复现步骤 / Steps:
+        1.
+        2.
 
-  - type: textarea
-    id: actual-behavior
-    attributes:
-      label: Actual behavior
-      description: Explain what actually happens.
-      placeholder: |
-        Example:
-          "This happened instead..."
+        预期结果 / Expected:
+
+        实际结果 / Actual:
     validations:
       required: true
 
   - type: textarea
     id: crash-logs
     attributes:
-      label: Crash logs
+      label: 崩溃日志 / Crash logs
       description: |
+        如遇到崩溃，请尽可能前往应用的 **More → Settings → Advanced（更多 → 设置 → 高级）** 页面，点击 **Dump crash logs（导出崩溃日志）**，并在此分享日志。
         If you're experiencing crashes, if possible, go to the app's **More → Settings → Advanced** page, press **Dump crash logs** and share the crash logs here.
       placeholder: |
-        You can upload the crash log file as an attachment, or paste the crash logs in plain text if needed.
+        可选：上传崩溃日志文件，或粘贴相关日志。 / Optional: upload the crash log file or paste the relevant logs here.
 
   - type: input
     id: koharia-version
     attributes:
-      label: Koharia version
-      description: You can find your Koharia version in **More → About**.
+      label: Koharia 版本 / Koharia version
+      description: 可在 **More → About（更多 → 关于）** 中查看 Koharia 版本。 / You can find your Koharia version in **More → About**.
       placeholder: |
-        Example: "0.19.9"
+        示例 / Example: 0.20.1
     validations:
       required: true
 
-  - type: input
-    id: android-version
+  - type: textarea
+    id: environment
     attributes:
-      label: Android version
-      description: You can find this somewhere in your Android settings.
+      label: 运行环境 / Environment
+      description: 请填写设备、Android 版本；如适用，也请填写 Komga 服务器版本。 / Include your device, Android version, and Komga server version when relevant.
       placeholder: |
-        Example: "Android 11"
-    validations:
-      required: true
-
-  - type: input
-    id: device
-    attributes:
-      label: Device
-      description: List your device and model.
-      placeholder: |
-        Example: "Google Pixel 5"
+        设备 / Device:
+        Android 版本 / Android:
+        Komga 服务器版本（如适用） / Komga server (if relevant):
     validations:
       required: true
 
   - type: textarea
     id: other-details
     attributes:
-      label: Other details
+      label: 补充信息 / Additional context
+      description: 请补充有助于调查问题的截图、文件、链接或其他信息。 / Add screenshots, files, links, or anything else that may help investigate the problem.
       placeholder: |
-        Additional details and attachments.
+        可选：截图、示例文件或相关信息。 / Optional: screenshots, sample files, or related details.
 
   - type: checkboxes
     id: acknowledgements
     attributes:
-      label: Acknowledgements
-      description: Read this carefully, we will close and ignore your issue if you skimmed through this.
+      label: 快速确认 / Quick check
       options:
-        - label: I have searched the existing issues and this is a new ticket, **NOT** a duplicate or related to another open or closed issue.
-          required: true
-        - label: I have written a short but informative title.
-          required: true
-        - label: I have checked the README, troubleshooting notes, and existing issues for this repository.
-          required: true
-        - label: I have updated the app to the latest available Koharia build for this repository.
-          required: true
-        - label: I have filled out all of the requested information in this form, including specific version numbers.
-          required: true
-        - label: I understand that Koharia is an independent third-party client and that server-side or deployment-specific issues may require separate verification.
+        - label: 我已搜索现有 Issue，确认这个问题尚未被报告。 / I have searched existing issues and this problem is not already reported.
           required: true

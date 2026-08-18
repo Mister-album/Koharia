@@ -1,36 +1,36 @@
-name: ⭐ Feature request
-description: Suggest a feature to improve Koharia
+name: ⭐ 功能请求 / Feature request
+description: 提议改进 Koharia / Suggest an improvement for Koharia
 labels: [feature request]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先搜索已有 Issue。请说明需求背后的问题或使用场景，方便我们结合上下文评估。
+        Please search existing issues before submitting. Include the problem or use case behind your request so it can be evaluated in context.
+
   - type: textarea
     id: feature-description
     attributes:
-      label: Describe your suggested feature
-      description: How can Koharia be improved?
+      label: 希望改进什么？ / What would you like to change?
+      description: 请描述问题、使用场景以及希望看到的结果。 / Describe the problem, use case, and the result you would like to see.
       placeholder: |
-        Example:
-          "It should work like this..."
+        要解决什么问题？ / What problem would this solve?
+        希望 Koharia 如何工作？ / What would you like Koharia to do?
     validations:
       required: true
 
   - type: textarea
     id: other-details
     attributes:
-      label: Other details
+      label: 补充信息 / Additional context
+      description: 如有助于说明需求，请补充示例、截图、链接或其他信息。 / Add examples, screenshots, links, or other details if they help explain the request.
       placeholder: |
-        Additional details and attachments.
+        可选：示例、截图或相关应用。 / Optional: examples, screenshots, or related apps.
 
   - type: checkboxes
     id: acknowledgements
     attributes:
-      label: Acknowledgements
-      description: Read this carefully, we will close and ignore your issue if you skimmed through this.
+      label: 快速确认 / Quick check
       options:
-        - label: I have searched the existing issues and this is a new ticket, **NOT** a duplicate or related to another open or closed issue.
-          required: true
-        - label: I have written a short but informative title.
-          required: true
-        - label: I have updated the app to the latest available Koharia build for this repository.
-          required: true
-        - label: I will fill out all of the requested information in this form.
+        - label: 我已搜索现有 Issue，确认这不是重复请求。 / I have searched existing issues and this request is not a duplicate.
           required: true
