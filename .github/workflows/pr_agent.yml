@@ -28,7 +28,12 @@ jobs:
         uses: the-pr-agent/pr-agent@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI__API_BASE: https://opencode.ai/zen/go/v1
+          OPENAI__KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
+          config.model: openai/deepseek-v4-flash
+          config.fallback_models: ${{ vars.PR_AGENT_FALLBACK_MODELS || '["openai/deepseek-v4-pro"]' }}
+          config.custom_model_max_tokens: ${{ vars.PR_AGENT_CUSTOM_MODEL_MAX_TOKENS || '128000' }}
+          config.max_model_tokens: ${{ vars.PR_AGENT_MAX_MODEL_TOKENS || '32000' }}
           config.ai_timeout: ${{ vars.PR_AGENT_AI_TIMEOUT || '300' }}
           config.verbosity_level: ${{ vars.PR_AGENT_VERBOSITY_LEVEL || '1' }}
           github_action_config.auto_review: ${{ vars.PR_AGENT_AUTO_REVIEW || 'true' }}
