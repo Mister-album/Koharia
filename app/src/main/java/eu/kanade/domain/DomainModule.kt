@@ -150,7 +150,7 @@ class DomainModule : InjektModule {
         addFactory { GetTracks(get()) }
         addFactory { InsertTrack(get()) }
         addFactory { SyncChapterProgressWithTrack(get(), get(), get()) }
-        addFactory {
+        addSingletonFactory {
             KomgaProgressSyncService(
                 get(),
                 get(),

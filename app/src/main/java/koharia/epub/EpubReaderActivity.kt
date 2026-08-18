@@ -61,6 +61,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -763,7 +764,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
             state.remoteProgressConflict?.let { conflict ->
                 AlertDialog(
-                    onDismissRequest = viewModel::dismissRemoteProgressConflict,
+                    onDismissRequest = {},
                     title = { Text(stringResource(MR.strings.epub_reader_remote_progress_title)) },
                     text = {
                         Text(
@@ -782,7 +783,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                         )
                     },
                     dismissButton = {
-                        TextButton(onClick = viewModel::dismissRemoteProgressConflict) {
+                        TextButton(onClick = viewModel::keepLocalProgress) {
                             Text(stringResource(MR.strings.epub_reader_keep_local_progress))
                         }
                     },
@@ -797,6 +798,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                             Text(stringResource(MR.strings.epub_reader_jump_remote_progress))
                         }
                     },
+                    properties = DialogProperties(
+                        dismissOnBackPress = false,
+                        dismissOnClickOutside = false,
+                    ),
                 )
             }
 

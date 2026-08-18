@@ -1306,7 +1306,7 @@
     <string name="epub_reader_remote_progress_title">服务器阅读进度</string>
     <string name="epub_reader_remote_progress_message">服务器保存了不同的阅读位置（%1$d%%），是否跳转？</string>
     <string name="reader_remote_progress_message">本地：第 %1$d/%2$d 页（%3$d%%）\n服务器：第 %4$d/%5$d 页（%6$d%%）</string>
-    <string name="epub_reader_keep_local_progress">保留当前位置</string>
+    <string name="epub_reader_keep_local_progress">保留本地位置并同步</string>
     <string name="epub_reader_jump_remote_progress">跳转至服务器进度</string>
     <string name="label_comics">漫画</string>
     <string name="label_books">书籍</string>

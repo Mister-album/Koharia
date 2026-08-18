@@ -1289,7 +1289,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         return locator
     }
 
-    fun dismissRemoteProgressConflict() {
+    fun keepLocalProgress() {
         mutableState.update { it.copy(remoteProgressConflict = null) }
         remoteProgressWriteBaseline = null
         remoteProgressWriteAllowed = true

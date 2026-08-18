@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.getSystemService
 import androidx.core.graphics.Insets
 import androidx.core.net.toUri
@@ -355,7 +356,7 @@ class ReaderActivity : BaseActivity() {
             ?.takeIf { state.dialog == null }
             ?.let { conflict ->
                 AlertDialog(
-                    onDismissRequest = viewModel::keepLocalProgress,
+                    onDismissRequest = {},
                     title = { Text(stringResource(MR.strings.epub_reader_remote_progress_title)) },
                     text = {
                         Text(
@@ -380,6 +381,10 @@ class ReaderActivity : BaseActivity() {
                             Text(stringResource(MR.strings.epub_reader_jump_remote_progress))
                         }
                     },
+                    properties = DialogProperties(
+                        dismissOnBackPress = false,
+                        dismissOnClickOutside = false,
+                    ),
                 )
             }
     }

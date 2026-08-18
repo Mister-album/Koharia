@@ -74,7 +74,6 @@ import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.service.getChapterSort
 import tachiyomi.domain.download.service.DownloadPreferences
-import tachiyomi.domain.history.interactor.GetHistory
 import tachiyomi.domain.history.interactor.GetNextChapters
 import tachiyomi.domain.history.interactor.UpsertHistory
 import tachiyomi.domain.history.model.HistoryUpdate
@@ -105,7 +104,6 @@ class ReaderViewModel @JvmOverloads constructor(
     private val getManga: GetManga = Injekt.get(),
     private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
     private val getNextChapters: GetNextChapters = Injekt.get(),
-    private val getHistory: GetHistory = Injekt.get(),
     private val upsertHistory: UpsertHistory = Injekt.get(),
     private val updateChapter: UpdateChapter = Injekt.get(),
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
@@ -710,15 +708,13 @@ class ReaderViewModel @JvmOverloads constructor(
             remoteProgressOpeningPages[chapterId]
         }?.coerceIn(0, pages.lastIndex) ?: localPageIndex
         val migratesLegacyEpubProgress = legacyEpubProgress != null
-        val localUpdatedAtMillis = getHistory.await(manga.id)
-            .firstOrNull { it.chapterId == chapterId }
-            ?.readAt
-            ?.time
         val remoteUpdatedAtMillis = remote.readDate?.toRemoteProgressTimestamp()
             ?: legacyEpubProgress?.modifiedAt?.time
         when (
             RemoteProgressConflictPolicy.decide(
-                localUpdatedAtMillis = localUpdatedAtMillis,
+                // History timestamps track reading sessions, not page changes, so they cannot
+                // safely prove that a different local page is newer than Komga's position.
+                localUpdatedAtMillis = null,
                 remoteUpdatedAtMillis = remoteUpdatedAtMillis,
                 sameLocation = remotePageIndex == localPageIndex,
                 localChangedDuringCheck = localPageIndex != openingLocalPageIndex,
