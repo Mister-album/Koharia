@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
@@ -34,6 +36,9 @@ class KomgaApi(
     private val sourceManager: SourceManager by lazy { Injekt.get<SourceManager>() }
     private val serverPreferences: KomgaServerPreferences by lazy { Injekt.get<KomgaServerPreferences>() }
     private val json: Json by injectLazy()
+    private val progressCacheMutex = Mutex()
+    private val completedProgressCache = mutableMapOf<Long, ProgressCacheEntry>()
+    private val inProgressCache = mutableMapOf<Long, ProgressCacheEntry>()
 
     suspend fun getTrackSearch(url: String): TrackSearch =
         withIOContext {
@@ -167,37 +172,62 @@ class KomgaApi(
     suspend fun getInProgressBookProgress(
         sourceId: Long? = null,
         includeCompleted: Boolean = false,
+        forceRefresh: Boolean = false,
     ): List<SeriesBookProgress> =
         withIOContext {
             val source = resolveSource(sourceId) ?: return@withIOContext emptyList()
-            with(json) {
+            progressCacheMutex.withLock {
+                val cache = if (includeCompleted) completedProgressCache else inProgressCache
+                val now = System.currentTimeMillis()
+                val cached = cache[source.id]
+                if (!forceRefresh && cached != null && now - cached.fetchedAt <= PROGRESS_CACHE_TTL_MILLIS) {
+                    return@withLock cached.books
+                }
+
+                if (!includeCompleted && !forceRefresh) {
+                    val completed = completedProgressCache[source.id]
+                    if (completed != null && now - completed.fetchedAt <= PROGRESS_CACHE_TTL_MILLIS) {
+                        return@withLock completed.books.filter { it.readProgress != null && !it.readProgress.completed }
+                    }
+                }
+
                 val baseUrl = source.baseUrl.trimEnd('/')
                 if (baseUrl.isBlank()) {
                     logcat(LogPriority.WARN) { "KomgaApi.getInProgressBookProgress: blank server base URL" }
-                    emptyList()
+                    return@withLock emptyList()
                 } else {
                     val readStatus = if (includeCompleted) "" else "&read_status=IN_PROGRESS"
-                    source.client
-                        .newCall(
-                            GET(
-                                "$baseUrl/api/v1/books?unpaged=true$readStatus&deleted=false",
-                                source.currentHeaders(),
-                            ).newBuilder()
-                                .cacheControl(CacheControl.FORCE_NETWORK)
-                                .build(),
-                        )
-                        .awaitSuccess()
-                        .parseAs<PageWrapperDto<BookDto>>()
-                        .content
-                        .map { book ->
-                            SeriesBookProgress(
-                                seriesUrl = "$baseUrl/api/v1/series/${book.seriesId}",
-                                url = "$baseUrl/api/v1/books/${book.id}",
-                                readProgress = book.readProgress,
-                                isEpub = book.media?.mediaProfile == "EPUB",
-                                isDivinaCompatibleEpub = book.media?.isDivinaCompatibleEpub == true,
+                    val books = with(json) {
+                        source.client
+                            .newCall(
+                                GET(
+                                    "$baseUrl/api/v1/books?unpaged=true$readStatus&deleted=false",
+                                    source.currentHeaders(),
+                                ).newBuilder()
+                                    .cacheControl(CacheControl.FORCE_NETWORK)
+                                    .build(),
                             )
-                        }
+                            .awaitSuccess()
+                            .parseAs<PageWrapperDto<BookDto>>()
+                            .content
+                            .map { book ->
+                                SeriesBookProgress(
+                                    seriesUrl = "$baseUrl/api/v1/series/${book.seriesId}",
+                                    url = "$baseUrl/api/v1/books/${book.id}",
+                                    readProgress = book.readProgress,
+                                    isEpub = book.media?.mediaProfile == "EPUB",
+                                    isDivinaCompatibleEpub = book.media?.isDivinaCompatibleEpub == true,
+                                )
+                            }
+                    }
+                    val entry = ProgressCacheEntry(System.currentTimeMillis(), books)
+                    cache[source.id] = entry
+                    if (includeCompleted) {
+                        inProgressCache[source.id] = entry.copy(
+                            books = books.filter { it.readProgress != null && !it.readProgress.completed },
+                        )
+                    }
+                    books
                 }
             }
         }
@@ -253,6 +283,14 @@ class KomgaApi(
                 .patch(payload.toRequestBody("application/json".toMediaType()))
                 .build(),
         ).awaitSuccess()
+        invalidateProgressCache(source.id)
+    }
+
+    suspend fun invalidateProgressCache(sourceId: Long) {
+        progressCacheMutex.withLock {
+            completedProgressCache.remove(sourceId)
+            inProgressCache.remove(sourceId)
+        }
     }
 
     private fun resolveSource(sourceId: Long?): KomgaSource? {
@@ -306,4 +344,13 @@ class KomgaApi(
         val sizeBytes: Long,
         val fileName: String,
     )
+
+    private data class ProgressCacheEntry(
+        val fetchedAt: Long,
+        val books: List<SeriesBookProgress>,
+    )
+
+    private companion object {
+        const val PROGRESS_CACHE_TTL_MILLIS = 5_000L
+    }
 }

@@ -400,7 +400,7 @@
     <string name="pref_category_display">Display</string>
     <string name="pref_library_columns">Items per row</string>
     <string name="pref_show_library_read_progress">Show reading progress</string>
-    <string name="pref_show_library_read_progress_summary">Show the number of read chapters out of the total in library items</string>
+    <string name="pref_show_library_read_progress_summary">Show read chapter counts for series and direct reading progress for individual files</string>
     <string name="portrait">Portrait</string>
     <string name="landscape">Landscape</string>
 

@@ -25,6 +25,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -38,6 +39,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import cafe.adriel.voyager.core.model.rememberScreenModel
@@ -163,12 +167,30 @@ data class KomgaLibraryScreen(
         }
         val state by screenModel.state.collectAsState()
         val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
+        val lifecycleOwner = LocalLifecycleOwner.current
         val columns by libraryPreferences.portraitColumns.collectAsState()
         val connectionProfiles by remember(connectionPreferences) {
             connectionPreferences.profilesChanges()
         }.collectAsState(initial = connectionPreferences.getProfiles())
 
         val navigator = LocalNavigator.currentOrThrow
+
+        DisposableEffect(lifecycleOwner, screenModel, showLibraryReadProgress) {
+            val refreshProgress = {
+                if (showLibraryReadProgress) {
+                    screenModel.refreshReadProgress()
+                }
+            }
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) refreshProgress()
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                refreshProgress()
+            }
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+
         val navigateUp: () -> Unit = {
             when {
                 !state.isUserQuery && state.toolbarQuery != null -> screenModel.setToolbarQuery(null)

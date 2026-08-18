@@ -140,8 +140,19 @@ class KomgaLibraryScreenModel(
     private var latestCachedManga = emptyList<Manga>()
 
     init {
+        if (libraryPreferences.showLibraryReadProgress.get()) {
+            screenModelScope.launchIO {
+                refreshKomgaReadProgress()
+            }
+        }
         screenModelScope.launchIO {
-            refreshKomgaReadProgress()
+            libraryPreferences.showLibraryReadProgress.changes().collect { enabled ->
+                if (enabled) {
+                    refreshKomgaReadProgress()
+                } else {
+                    komgaReadProgress.value = emptyMap()
+                }
+            }
         }
         if (source is CatalogueSource) {
             mutableState.update {
@@ -179,6 +190,7 @@ class KomgaLibraryScreenModel(
                             refreshSignal.value += 1
                         }
                     } else {
+                        refreshKomgaReadProgress(forceRefresh = true)
                         reloadKomgaState(
                             komgaSource = source,
                             showRefreshing = true,
@@ -578,7 +590,7 @@ class KomgaLibraryScreenModel(
 
     fun refresh() {
         if (basePreferences.downloadedOnly.get()) {
-            screenModelScope.launchIO { refreshKomgaReadProgress() }
+            refreshReadProgress(forceRefresh = true)
             refreshSignal.value += 1
             return
         }
@@ -586,7 +598,7 @@ class KomgaLibraryScreenModel(
         if (komgaSource != null) {
             screenModelScope.launchIO {
                 try {
-                    refreshKomgaReadProgress()
+                    refreshKomgaReadProgress(forceRefresh = true)
                     komgaSource.invalidateBrowseCache()
                     reloadKomgaState(
                         komgaSource = komgaSource,
@@ -610,20 +622,33 @@ class KomgaLibraryScreenModel(
                 }
             }
         } else {
-            screenModelScope.launchIO { refreshKomgaReadProgress() }
+            refreshReadProgress(forceRefresh = true)
             refreshSignal.value += 1
         }
     }
 
-    private suspend fun refreshKomgaReadProgress() {
+    fun refreshReadProgress(forceRefresh: Boolean = false) {
+        screenModelScope.launchIO {
+            refreshKomgaReadProgress(forceRefresh)
+        }
+    }
+
+    private suspend fun refreshKomgaReadProgress(forceRefresh: Boolean = false) {
         val komgaSource = source as? KomgaSource ?: return
-        if (!komgaSource.hasValidBaseUrl() || basePreferences.downloadedOnly.get()) return
+        if (
+            !libraryPreferences.showLibraryReadProgress.get() ||
+            !komgaSource.hasValidBaseUrl() ||
+            basePreferences.downloadedOnly.get()
+        ) {
+            return
+        }
 
         readProgressMutex.withLock {
             runCatching {
                 trackerManager.komga.api.getInProgressBookProgress(
                     sourceId = sourceId,
                     includeCompleted = true,
+                    forceRefresh = forceRefresh,
                 )
             }.onSuccess { books ->
                 val progressByUrl = buildMap {

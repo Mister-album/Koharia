@@ -20,14 +20,38 @@ import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
+import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.Badge
+import tachiyomi.presentation.core.i18n.stringResource
 
 private val LibraryReadProgressCornerSize = 32.dp
+
+enum class MangaReadProgressDisplay {
+    CHAPTERS,
+    PAGE,
+    PERCENTAGE,
+}
 
 data class MangaReadProgress(
     val readCount: Long,
     val totalChapterCount: Long,
+    val display: MangaReadProgressDisplay = MangaReadProgressDisplay.CHAPTERS,
 )
+
+@Composable
+internal fun MangaReadProgress.displayText(): String? {
+    return when (display) {
+        MangaReadProgressDisplay.CHAPTERS -> {
+            takeIf { totalChapterCount > 0 }?.let { "$readCount/$totalChapterCount" }
+        }
+        MangaReadProgressDisplay.PAGE -> {
+            stringResource(MR.strings.chapter_progress_short, readCount)
+        }
+        MangaReadProgressDisplay.PERCENTAGE -> {
+            stringResource(MR.strings.epub_chapter_progress_short, readCount)
+        }
+    }
+}
 
 @Composable
 internal fun DownloadsBadge(count: Long) {
@@ -51,6 +75,7 @@ internal fun UnreadBadge(count: Long) {
 internal fun LibraryReadProgressCorner(
     readCount: Long,
     totalChapterCount: Long,
+    text: String? = null,
     modifier: Modifier = Modifier,
 ) {
     if (readCount < 0 || totalChapterCount <= 0) return
@@ -70,7 +95,7 @@ internal fun LibraryReadProgressCorner(
             )
         }
         Text(
-            text = "$readCount/$totalChapterCount",
+            text = text ?: "$readCount/$totalChapterCount",
             color = progressColor,
             fontWeight = FontWeight.Bold,
             maxLines = 1,

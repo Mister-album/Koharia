@@ -160,7 +160,7 @@
     <string name="komga_filter_persist">持久化筛选</string>
     <string name="pref_library_columns">每行数目</string>
     <string name="pref_show_library_read_progress">显示阅读进度</string>
-    <string name="pref_show_library_read_progress_summary">在书架项目中显示已读章节数和总章节数</string>
+    <string name="pref_show_library_read_progress_summary">系列项目显示已读章节数，单文件项目显示直接阅读进度</string>
     <string name="portrait">竖屏</string>
     <string name="landscape">横屏</string>
     <string name="pref_library_update_interval">自动更新</string>

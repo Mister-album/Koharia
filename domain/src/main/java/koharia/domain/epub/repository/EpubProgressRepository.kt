@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 interface EpubProgressRepository {
 
     suspend fun getProgress(chapterId: Long): EpubProgress?
+
+    suspend fun getProgressesByChapterIds(chapterIds: Collection<Long>): List<EpubProgress>
+
     suspend fun getProgressesByMangaId(mangaId: Long): List<EpubProgress>
 
     fun subscribeProgressesByMangaId(mangaId: Long): Flow<List<EpubProgress>>

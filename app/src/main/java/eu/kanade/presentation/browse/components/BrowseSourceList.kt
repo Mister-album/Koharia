@@ -12,6 +12,7 @@ import androidx.paging.compose.LazyPagingItems
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaListItem
 import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.displayText
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
@@ -69,9 +70,7 @@ private fun BrowseSourceListItem(
     onLongClick: () -> Unit = onClick,
 ) {
     val isLibraryManga = showLibraryBadges && manga.favorite
-    val readProgressText = readProgress
-        ?.takeIf { it.totalChapterCount > 0 }
-        ?.let { "${it.readCount}/${it.totalChapterCount}" }
+    val readProgressText = readProgress?.displayText()
     MangaListItem(
         title = manga.title,
         coverData = MangaCover(

@@ -83,6 +83,11 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
+internal data class LocalReadProgressIndex(
+    val indexedChapterCount: Int,
+    val isIndividualFile: Boolean,
+)
+
 class LocalFolderSource(
     private val context: Context,
     override val id: Long,
@@ -827,6 +832,49 @@ class LocalFolderSource(
     internal fun isIndividualFileEntry(mangaUrl: String): Boolean {
         val resource = resolveResource(mangaUrl) ?: return false
         return indexedLibraryItem(resource)?.kind == LocalLibraryItem.Kind.FILE_ENTRY
+    }
+
+    internal fun readProgressIndex(mangaUrl: String): LocalReadProgressIndex? {
+        return readProgressIndexes(listOf(mangaUrl))[mangaUrl.trimEnd('/')]
+    }
+
+    internal fun readProgressIndexes(mangaUrls: Collection<String>): Map<String, LocalReadProgressIndex> {
+        if (mangaUrls.isEmpty()) return emptyMap()
+
+        val index = preferences.getIndex()
+        val indexedItems = index.items
+            .asSequence()
+            .filter { it.kind == LocalLibraryItem.Kind.SERIES || it.kind == LocalLibraryItem.Kind.FILE_ENTRY }
+            .associateBy(LocalLibraryItem::itemKey)
+        val chapterCounts = index.items
+            .asSequence()
+            .filter { it.kind == LocalLibraryItem.Kind.CHAPTER }
+            .groupingBy { chapter ->
+                LocalLibraryLocator.itemKey(
+                    chapter.rootId,
+                    chapter.relativePath.substringBeforeLast('/', missingDelimiterValue = ""),
+                )
+            }
+            .eachCount()
+
+        return mangaUrls.mapNotNull { mangaUrl ->
+            val location = LocalLibraryLocator.location(mangaUrl, id) ?: return@mapNotNull null
+            val itemKey = location.rootId?.let { rootId ->
+                LocalLibraryLocator.itemKey(rootId, location.relativePath)
+            } ?: resolveResource(mangaUrl)?.let { resource ->
+                LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath)
+            } ?: return@mapNotNull null
+            val item = indexedItems[itemKey] ?: return@mapNotNull null
+            val progress = if (item.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
+                LocalReadProgressIndex(indexedChapterCount = 1, isIndividualFile = true)
+            } else {
+                LocalReadProgressIndex(
+                    indexedChapterCount = chapterCounts[itemKey] ?: 0,
+                    isIndividualFile = false,
+                )
+            }
+            mangaUrl.trimEnd('/') to progress
+        }.toMap()
     }
 
     private fun indexedLibraryItem(resource: ResolvedLocalResource): LocalLibraryItem? {

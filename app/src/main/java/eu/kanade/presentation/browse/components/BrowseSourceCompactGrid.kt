@@ -18,6 +18,7 @@ import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.LibraryReadProgressCorner
 import eu.kanade.presentation.library.components.MangaCompactGridItem
 import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.displayText
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
@@ -82,7 +83,8 @@ private fun BrowseSourceCompactGridItem(
     onLongClick: () -> Unit = onClick,
 ) {
     val isLibraryManga = showLibraryBadges && manga.favorite
-    val hasReadProgress = readProgress != null && readProgress.totalChapterCount > 0
+    val readProgressText = readProgress?.displayText()
+    val hasReadProgress = readProgressText != null
     MangaCompactGridItem(
         title = manga.title.takeIf { showTitle },
         coverData = MangaCover(
@@ -102,6 +104,7 @@ private fun BrowseSourceCompactGridItem(
                 LibraryReadProgressCorner(
                     readCount = readProgress.readCount,
                     totalChapterCount = readProgress.totalChapterCount,
+                    text = readProgressText,
                     modifier = Modifier.align(Alignment.TopEnd),
                 )
             }
