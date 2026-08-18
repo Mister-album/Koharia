@@ -1,4 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <path d="M0 0h512v512H0z" fill="#2f3e4c"/>
+  <circle cx="256" cy="256" r="256" fill="#2f3e4c"/>
   <circle cx="256" cy="256" r="138.153" fill="#86b9e9"/>
 </svg>

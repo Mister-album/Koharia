@@ -533,7 +533,9 @@
 
     <!--== Splash Theme ==-->
     <style name="Theme.Tachiyomi.SplashScreen" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <!-- Use a standalone drawable for the splash screen. Adaptive launcher icons
+             expose their full background layer on some Android 12+ devices. -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_koharia_splash</item>
         <item name="windowSplashScreenBackground">@color/splash</item>
         <item name="postSplashScreenTheme">@style/Theme.Tachiyomi</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
