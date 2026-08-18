@@ -49,6 +49,11 @@ class ConnectionArchitectureTest {
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    private abstract class ProviderManagedCatalogueSource :
+        CatalogueSource,
+        ConnectionMangaBehaviorAdapter,
+        ConnectionLibraryMembershipAdapter
+
     @Test
     fun `legacy Komga state migrates without changing old keys`() {
         val legacyProfile = """{"id":42,"name":"Home"}"""
@@ -407,20 +412,13 @@ class ConnectionArchitectureTest {
     fun `provider managed entries apply the source membership filter`() = runTest {
         val indexed = Manga.create().copy(id = 1L, source = 42L, url = "indexed")
         val stale = Manga.create().copy(id = 2L, source = 42L, url = "stale")
-        val source = mockk<CatalogueSource>(
-            moreInterfaces = arrayOf(
-                ConnectionMangaBehaviorAdapter::class,
-                ConnectionLibraryMembershipAdapter::class,
-            ),
-        ) {
+        val source = mockk<ProviderManagedCatalogueSource> {
             every { id } returns 42L
         }
-        every { (source as ConnectionMangaBehaviorAdapter).mangaBehavior } returns ConnectionMangaBehavior(
+        every { source.mangaBehavior } returns ConnectionMangaBehavior(
             providerManagedLibrary = true,
         )
-        coEvery {
-            (source as ConnectionLibraryMembershipAdapter).filterLibraryEntries(listOf(indexed, stale))
-        } returns listOf(indexed)
+        coEvery { source.filterLibraryEntries(listOf(indexed, stale)) } returns listOf(indexed)
         val sourceManager = mockk<SourceManager> {
             every { getCatalogueSources() } returns listOf(source)
             every { get(42L) } returns source
