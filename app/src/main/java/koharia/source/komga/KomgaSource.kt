@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.connection.ConnectionAccountAdapter
 import koharia.connection.ConnectionBrowseAdapter
 import koharia.connection.ConnectionDownloadStorageAdapter
+import koharia.connection.ConnectionEpubHistorySyncAdapter
 import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionHealthAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
@@ -33,6 +34,7 @@ import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPagePublication
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.connection.ConnectionRawDownloadAdapter
+import koharia.connection.ConnectionReadStatusAdapter
 import koharia.connection.ConnectionSource
 import koharia.connection.ConnectionViewerSettingsAdapter
 import koharia.connection.LibraryConnectionProfile
@@ -94,7 +96,9 @@ class KomgaSource(
     ConnectionPublicationAdapter,
     ConnectionViewerSettingsAdapter,
     ConnectionMangaProgressAdapter,
+    ConnectionReadStatusAdapter,
     ConnectionHistorySyncAdapter,
+    ConnectionEpubHistorySyncAdapter,
     ConnectionPageProgressAdapter,
     ConnectionEpubProgressAdapter {
 
@@ -383,8 +387,19 @@ class KomgaSource(
         Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>().syncFromServer(manga)
     }
 
+    override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) {
+        if (!apiClient.isBook(chapterUrl)) return
+        apiClient.setBookReadStatus(chapterUrl, read)
+    }
+
     override suspend fun syncConnectionHistory() {
-        Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>().syncHistoryFromServer(id)
+        Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>()
+            .syncHistoryFromServer(sourceId = id, includeCompleted = true)
+    }
+
+    override suspend fun syncConnectionEpubProgress() {
+        Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>()
+            .syncEpubProgressFromServer(sourceId = id)
     }
 
     override suspend fun pullPageProgress(

@@ -109,7 +109,10 @@ class KomgaApi(
             with(json) {
                 val baseUrl = url.substringBefore("/api/v1/series/")
                 source.client.newCall(
-                    GET("$url/books?unpaged=true&media_status=READY&deleted=false", source.currentHeaders()),
+                    GET("$url/books?unpaged=true&media_status=READY&deleted=false", source.currentHeaders())
+                        .newBuilder()
+                        .cacheControl(CacheControl.FORCE_NETWORK)
+                        .build(),
                 )
                     .awaitSuccess()
                     .parseAs<PageWrapperDto<BookDto>>()
@@ -139,6 +142,10 @@ class KomgaApi(
                     .parseAs<BookDto>()
                 BookProgressSnapshot(
                     url = bookUrl,
+                    seriesUrl = book.seriesId.takeIf(String::isNotBlank)?.let {
+                        "${bookUrl.substringBefore("/api/")}/api/v1/series/$it"
+                    },
+                    readProgress = book.readProgress,
                     pageIndex = book.readProgress?.page?.let { (it - 1).coerceAtLeast(0) },
                     totalPages = book.media?.pagesCount ?: 0,
                     completed = book.readProgress?.completed ?: false,
@@ -153,7 +160,10 @@ class KomgaApi(
             }
         }
 
-    suspend fun getInProgressBookProgress(sourceId: Long? = null): List<SeriesBookProgress> =
+    suspend fun getInProgressBookProgress(
+        sourceId: Long? = null,
+        includeCompleted: Boolean = false,
+    ): List<SeriesBookProgress> =
         withIOContext {
             val source = resolveSource(sourceId) ?: return@withIOContext emptyList()
             with(json) {
@@ -162,12 +172,15 @@ class KomgaApi(
                     logcat(LogPriority.WARN) { "KomgaApi.getInProgressBookProgress: blank server base URL" }
                     emptyList()
                 } else {
+                    val readStatus = if (includeCompleted) "" else "&read_status=IN_PROGRESS"
                     source.client
                         .newCall(
                             GET(
-                                "$baseUrl/api/v1/books?unpaged=true&read_status=IN_PROGRESS&deleted=false",
+                                "$baseUrl/api/v1/books?unpaged=true$readStatus&deleted=false",
                                 source.currentHeaders(),
-                            ),
+                            ).newBuilder()
+                                .cacheControl(CacheControl.FORCE_NETWORK)
+                                .build(),
                         )
                         .awaitSuccess()
                         .parseAs<PageWrapperDto<BookDto>>()
@@ -272,6 +285,8 @@ class KomgaApi(
 
     data class BookProgressSnapshot(
         val url: String,
+        val seriesUrl: String?,
+        val readProgress: BookReadProgressDto?,
         val pageIndex: Int?,
         val totalPages: Int,
         val completed: Boolean,

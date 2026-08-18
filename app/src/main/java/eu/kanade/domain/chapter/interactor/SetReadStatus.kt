@@ -1,6 +1,7 @@
 package eu.kanade.domain.chapter.interactor
 
 import eu.kanade.domain.download.interactor.DeleteDownload
+import koharia.connection.ConnectionReadStatusAdapter
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.core.common.util.system.logcat
@@ -10,12 +11,14 @@ import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.source.service.SourceManager
 
 class SetReadStatus(
     private val downloadPreferences: DownloadPreferences,
     private val deleteDownload: DeleteDownload,
     private val mangaRepository: MangaRepository,
     private val chapterRepository: ChapterRepository,
+    private val sourceManager: SourceManager,
 ) {
 
     private val mapper = { chapter: Chapter, read: Boolean ->
@@ -46,6 +49,8 @@ class SetReadStatus(
             return@withNonCancellableContext Result.InternalError(e)
         }
 
+        pushConnectionReadStatus(chaptersToUpdate, read)
+
         if (read && downloadPreferences.removeAfterMarkedAsRead.get()) {
             chaptersToUpdate
                 .groupBy { it.mangaId }
@@ -58,6 +63,31 @@ class SetReadStatus(
         }
 
         Result.Success
+    }
+
+    private suspend fun pushConnectionReadStatus(chapters: List<Chapter>, read: Boolean) {
+        chapters
+            .groupBy { it.mangaId }
+            .forEach { (mangaId, mangaChapters) ->
+                val manga = runCatching { mangaRepository.getMangaById(mangaId) }
+                    .onFailure { error ->
+                        logcat(LogPriority.WARN, error) {
+                            "Failed to resolve connection for read-status update mangaId=$mangaId"
+                        }
+                    }
+                    .getOrNull() ?: return@forEach
+                val adapter = sourceManager.get(manga.source) as? ConnectionReadStatusAdapter ?: return@forEach
+
+                mangaChapters.forEach { chapter ->
+                    runCatching {
+                        adapter.setChapterReadStatus(chapter.url, read)
+                    }.onFailure { error ->
+                        logcat(LogPriority.WARN, error) {
+                            "Failed to push connection read status for chapterId=${chapter.id}"
+                        }
+                    }
+                }
+            }
     }
 
     suspend fun await(mangaId: Long, read: Boolean): Result = withNonCancellableContext {

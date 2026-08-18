@@ -31,6 +31,10 @@ class KomgaActiveServerSseManager(
         networkHelper = networkHelper,
         komgaProgressSyncService = komgaProgressSyncService,
         baseUrlProvider = { currentSource()?.baseUrl.orEmpty() },
+        sourceIdProvider = {
+            komgaServerPreferences.activeServerId.get()
+                .takeIf { it != KomgaServerPreferences.NO_ACTIVE_SERVER }
+        },
         headersProvider = { currentSource()?.currentHeaders() ?: Headers.Builder().build() },
         cachedOnlyProvider = { basePreferences.downloadedOnly.get() },
     )

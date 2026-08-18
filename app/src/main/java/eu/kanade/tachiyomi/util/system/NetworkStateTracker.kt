@@ -36,6 +36,7 @@ fun Context.networkStateFlow() = callbackFlow {
     }
 
     connectivityManager.registerDefaultNetworkCallback(networkCallback)
+    trySend(activeNetworkState())
     awaitClose {
         connectivityManager.unregisterNetworkCallback(networkCallback)
     }

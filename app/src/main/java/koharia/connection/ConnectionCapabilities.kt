@@ -362,8 +362,18 @@ interface ConnectionMangaProgressAdapter {
     suspend fun syncMangaProgress(manga: Manga)
 }
 
+/** Writes an explicit chapter read/unread action back to the owning connection. */
+interface ConnectionReadStatusAdapter {
+    suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean)
+}
+
 interface ConnectionHistorySyncAdapter {
     suspend fun syncConnectionHistory()
+}
+
+/** Optional full refresh of Readium locator progress for locally indexed EPUB books. */
+interface ConnectionEpubHistorySyncAdapter {
+    suspend fun syncConnectionEpubProgress()
 }
 
 interface ConnectionPageProgressAdapter {

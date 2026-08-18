@@ -12,6 +12,7 @@ import koharia.komga.api.dto.LibraryDto
 import koharia.komga.api.dto.PageWrapperDto
 import koharia.source.komga.KomgaCachePolicy
 import koharia.source.komga.komgaCachePolicy
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -218,6 +219,23 @@ class KomgaApiClient(
 
     suspend fun execute(request: Request): Response = client.newCall(request).awaitSuccess()
 
+    fun bookReadStatusRequest(bookUrl: String, read: Boolean): Request {
+        val builder = Request.Builder()
+            .url("$bookUrl/read-progress")
+            .headers(headers)
+
+        return if (read) {
+            val payload = json.encodeToString(BookReadStatusUpdateDto(completed = true))
+            builder.patch(payload.toRequestBody(JSON_MEDIA_TYPE)).build()
+        } else {
+            builder.delete().build()
+        }
+    }
+
+    suspend fun setBookReadStatus(bookUrl: String, read: Boolean) {
+        client.newCall(bookReadStatusRequest(bookUrl, read)).awaitSuccess().close()
+    }
+
     fun detailsRequest(url: String, cachePolicy: KomgaCachePolicy = KomgaCachePolicy.Default): Request =
         GET(url, headers)
             .newBuilder()
@@ -403,3 +421,8 @@ class KomgaApiClient(
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
     }
 }
+
+@Serializable
+private data class BookReadStatusUpdateDto(
+    val completed: Boolean,
+)

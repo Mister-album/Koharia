@@ -277,6 +277,7 @@ class ConnectionArchitectureTest {
         assertTrue(source is ConnectionHistorySyncAdapter)
         assertFalse(source is ConnectionViewerSettingsAdapter)
         assertFalse(source is ConnectionMangaProgressAdapter)
+        assertFalse(source is ConnectionReadStatusAdapter)
         assertFalse(source is ConnectionPageProgressAdapter)
         assertFalse(source is ConnectionBrowseAdapter)
         assertFalse(source is ConnectionLibraryRefreshAdapter)

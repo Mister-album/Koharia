@@ -9,6 +9,8 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.networkStateFlow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -20,6 +22,7 @@ import okhttp3.Response
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
+import org.json.JSONObject
 import tachiyomi.core.common.util.system.logcat
 
 class KomgaSseClient(
@@ -27,6 +30,7 @@ class KomgaSseClient(
     private val networkHelper: NetworkHelper,
     private val komgaProgressSyncService: Lazy<KomgaProgressSyncService>,
     private val baseUrlProvider: () -> String,
+    private val sourceIdProvider: () -> Long?,
     private val headersProvider: () -> Headers,
     private val cachedOnlyProvider: () -> Boolean,
 ) : DefaultLifecycleObserver {
@@ -34,10 +38,14 @@ class KomgaSseClient(
     private var appScope: CoroutineScope? = null
     private var eventSource: EventSource? = null
     private var isForeground = false
-    private var isWifi = false
+    private var isNetworkConnected = false
     private var isConnecting = false
     private var isStarted = false
     private var lastSkippedReason: String? = null
+    private val progressSyncLock = Any()
+    private val pendingBookIds = linkedSetOf<String>()
+    private var pendingFullSync = false
+    private var progressSyncJob: Job? = null
 
     fun start(scope: CoroutineScope) {
         if (isStarted) return
@@ -47,7 +55,10 @@ class KomgaSseClient(
 
         context.networkStateFlow()
             .onEach { state ->
-                isWifi = state.isWifi && state.isOnline
+                // Komga is commonly hosted on a LAN without Android's validated
+                // internet capability. A connected network is sufficient here;
+                // the SSE request itself remains the reachability check.
+                isNetworkConnected = state.isConnected || state.isWifi || state.isValidated
                 checkAndReconnect()
             }
             .launchIn(scope)
@@ -70,14 +81,14 @@ class KomgaSseClient(
 
     private fun checkAndReconnect() {
         val cachedOnly = cachedOnlyProvider()
-        if (isForeground && isWifi && !cachedOnly) {
+        if (isForeground && isNetworkConnected && !cachedOnly) {
             lastSkippedReason = null
             connect()
         } else {
             disconnect()
             val reason = when {
                 !isForeground -> "app not in foreground"
-                !isWifi -> "network is not validated Wi-Fi"
+                !isNetworkConnected -> "no connected network"
                 cachedOnly -> "cached-only mode enabled"
                 else -> "connection requirements not met"
             }
@@ -163,11 +174,78 @@ class KomgaSseClient(
         if (type == null) return
         when (type) {
             "ReadProgressChanged", "ReadProgressDeleted" -> {
-                logcat(LogPriority.DEBUG) { "Komga SSE: received $type, scheduling history sync" }
-                appScope?.launch(Dispatchers.IO) {
-                    komgaProgressSyncService.value.syncHistoryFromServer()
+                val bookId = runCatching { JSONObject(data).optString("bookId") }
+                    .getOrNull()
+                    ?.takeIf(String::isNotBlank)
+                logcat(LogPriority.DEBUG) {
+                    "Komga SSE: received $type bookId=${bookId ?: "unknown"}, scheduling progress sync"
+                }
+                scheduleProgressSync(bookId)
+            }
+        }
+    }
+
+    private fun scheduleProgressSync(bookId: String?) {
+        val scope = appScope ?: return
+        synchronized(progressSyncLock) {
+            if (bookId == null) {
+                pendingFullSync = true
+            } else {
+                pendingBookIds += bookId
+            }
+            if (progressSyncJob?.isActive == true) return
+            progressSyncJob = scope.launch(Dispatchers.IO) {
+                drainProgressSyncQueue()
+            }
+        }
+    }
+
+    private suspend fun drainProgressSyncQueue() {
+        while (true) {
+            delay(PROGRESS_SYNC_DEBOUNCE_MS)
+            val (bookIds, fullSync) = synchronized(progressSyncLock) {
+                val ids = pendingBookIds.toList()
+                pendingBookIds.clear()
+                val shouldFullSync = pendingFullSync
+                pendingFullSync = false
+                ids to shouldFullSync
+            }
+
+            if (fullSync) {
+                runCatching {
+                    komgaProgressSyncService.value.syncHistoryFromServer(includeCompleted = true)
+                }.onFailure { error ->
+                    logcat(LogPriority.WARN, error) { "Komga SSE full progress sync failed" }
+                }
+            }
+
+            val sourceId = sourceIdProvider()
+            if (sourceId != null) {
+                val baseUrl = baseUrlProvider().trimEnd('/')
+                bookIds.forEach { bookId ->
+                    runCatching {
+                        komgaProgressSyncService.value.syncBookProgress(
+                            sourceId = sourceId,
+                            chapterUrl = "$baseUrl/api/v1/books/$bookId",
+                        )
+                    }.onFailure { error ->
+                        logcat(LogPriority.WARN, error) {
+                            "Komga SSE book progress sync failed bookId=$bookId"
+                        }
+                    }
+                }
+            }
+
+            synchronized(progressSyncLock) {
+                if (pendingBookIds.isEmpty() && !pendingFullSync) {
+                    progressSyncJob = null
+                    return
                 }
             }
         }
+    }
+
+    private companion object {
+        const val PROGRESS_SYNC_DEBOUNCE_MS = 300L
     }
 }

@@ -24,6 +24,8 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.connection.ConnectionEpubHistorySyncAdapter
+import koharia.connection.ConnectionHistorySyncAdapter
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.epub.cache.EpubCacheManager
 import koharia.komga.api.dto.KOMGA_LIBRARY_IDS_MEMO_KEY
@@ -567,13 +569,28 @@ class KomgaLibraryScreenModel(
         val komgaSource = source as? KomgaSource
         if (komgaSource != null) {
             screenModelScope.launchIO {
-                komgaSource.invalidateBrowseCache()
-                reloadKomgaState(
-                    komgaSource = komgaSource,
-                    showRefreshing = true,
-                    resetSelection = false,
-                    forceRefresh = true,
-                )
+                try {
+                    komgaSource.invalidateBrowseCache()
+                    reloadKomgaState(
+                        komgaSource = komgaSource,
+                        showRefreshing = true,
+                        resetSelection = false,
+                        forceRefresh = true,
+                        finishRefreshing = false,
+                        emitRefreshSignal = false,
+                    )
+                    runCatching {
+                        (komgaSource as? ConnectionHistorySyncAdapter)?.syncConnectionHistory()
+                        (komgaSource as? ConnectionEpubHistorySyncAdapter)?.syncConnectionEpubProgress()
+                    }.onFailure { error ->
+                        logcat(LogPriority.WARN, error) {
+                            "Failed to sync Komga progress during manual library refresh sourceId=$sourceId"
+                        }
+                    }
+                } finally {
+                    mutableState.update { it.copy(isRefreshing = false) }
+                    refreshSignal.value += 1
+                }
             }
         } else {
             refreshSignal.value += 1
@@ -622,6 +639,8 @@ class KomgaLibraryScreenModel(
         resetSelection: Boolean,
         forceRefresh: Boolean,
         forceShelfLibrarySelection: Boolean = false,
+        finishRefreshing: Boolean = true,
+        emitRefreshSignal: Boolean = true,
     ) {
         if (resetSelection) {
             libraryFilterBeforeQuickSelection = null
@@ -638,7 +657,7 @@ class KomgaLibraryScreenModel(
                     filters = filters,
                     komgaLibraries = persistentListOf(),
                     selectedKomgaLibraryId = null,
-                    isRefreshing = false,
+                    isRefreshing = if (finishRefreshing) false else it.isRefreshing,
                     isServerConfigured = false,
                     isLibraryScopeEmpty = false,
                     toolbarQuery = null,
@@ -646,7 +665,9 @@ class KomgaLibraryScreenModel(
                     persistentFilteringEnabled = komgaSource.isPersistentFilteringEnabled(libraryScope),
                 )
             }
-            refreshSignal.value += 1
+            if (emitRefreshSignal) {
+                refreshSignal.value += 1
+            }
             return
         }
 
@@ -715,8 +736,12 @@ class KomgaLibraryScreenModel(
             }
             Log.e("KomgaLibraryScreenModel", "Failed to refresh Komga libraries", e)
         } finally {
-            mutableState.update { it.copy(isRefreshing = false) }
-            refreshSignal.value += 1
+            if (finishRefreshing) {
+                mutableState.update { it.copy(isRefreshing = false) }
+            }
+            if (emitRefreshSignal) {
+                refreshSignal.value += 1
+            }
         }
     }
 

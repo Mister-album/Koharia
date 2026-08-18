@@ -8,6 +8,7 @@ import koharia.epub.alignToEpubPositions
 import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaSource
 import logcat.LogPriority
+import okhttp3.CacheControl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -41,7 +42,12 @@ class KomgaEpubProgressSyncService(
     ): PullResult = withIOContext {
         val source = sourceManager.get(sourceId) as? KomgaSource ?: return@withIOContext PullResult()
         val normalizedBookUrl = normalizeBookUrl(bookUrl)
-        source.client.newCall(GET("$normalizedBookUrl/progression", source.currentReadiumHeaders()))
+        source.client.newCall(
+            GET("$normalizedBookUrl/progression", source.currentReadiumHeaders())
+                .newBuilder()
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .build(),
+        )
             .await()
             .use { response ->
                 response.requireSuccess("pull")

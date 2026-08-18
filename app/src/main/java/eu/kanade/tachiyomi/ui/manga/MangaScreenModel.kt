@@ -119,11 +119,11 @@ private fun mergeEpubProgressions(
         .mapNotNull { chapterId ->
             val local = localByChapter[chapterId]
             val remote = remoteByChapter[chapterId]
-            val remoteModifiedAt = remote?.modifiedAt
-            val progression = if (remoteModifiedAt != null &&
-                (local == null || remoteModifiedAt.time > local.updatedAt.time)
+            val remoteUpdatedAt = remote?.modifiedAt ?: remote?.checkedAt
+            val progression = if (remoteUpdatedAt != null &&
+                (local == null || remoteUpdatedAt.time > local.updatedAt.time)
             ) {
-                remote.progression
+                remote?.progression
             } else {
                 local?.progression
             }
@@ -372,7 +372,14 @@ class MangaScreenModel(
             updateSuccessState { it.copy(isRefreshingData = false) }
 
             successState?.let { current ->
-                syncEpubProgressInBackground(source, current.chapters.map { it.chapter })
+                // A series screen is a user-visible refresh point. Pull Komga's EPUB
+                // progression from the network so changes made in the web reader are
+                // not hidden behind the short-lived local remote-progress cache.
+                syncEpubProgressInBackground(
+                    source = source,
+                    chapters = current.chapters.map { it.chapter },
+                    force = true,
+                )
             }
             syncConnectionProgressInBackground(source)
         }
@@ -439,11 +446,11 @@ class MangaScreenModel(
                     chapters = state.chapters.map { item ->
                         val localProgress = local[item.chapter.id]
                         val remoteProgress = remote[item.chapter.id]
-                        val remoteModifiedAt = remoteProgress?.modifiedAt
-                        val progression = if (remoteModifiedAt != null &&
-                            (localProgress == null || remoteModifiedAt.time > localProgress.updatedAt.time)
+                        val remoteUpdatedAt = remoteProgress?.modifiedAt ?: remoteProgress?.checkedAt
+                        val progression = if (remoteUpdatedAt != null &&
+                            (localProgress == null || remoteUpdatedAt.time > localProgress.updatedAt.time)
                         ) {
-                            remoteProgress.progression
+                            remoteProgress?.progression
                         } else {
                             localProgress?.progression
                         }
