@@ -10,6 +10,8 @@ import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.MangaReadProgressDisplay
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.util.editCover
 import koharia.connection.ConnectionLibraryRefreshAdapter
@@ -17,19 +19,25 @@ import koharia.connection.ConnectionLibraryShelf
 import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.connection.ConnectionSeriesCoverAdapter
 import koharia.connection.LibraryContentScope
+import koharia.domain.epub.interactor.GetEpubProgress
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
+import kotlin.math.roundToLong
 
 class LocalLibraryScreenModel(
     private val sourceId: Long,
@@ -37,7 +45,10 @@ class LocalLibraryScreenModel(
     initialQuery: String?,
     private val sourceManager: SourceManager,
     sourcePreferences: SourcePreferences,
-    mangaRepository: MangaRepository,
+    private val mangaRepository: MangaRepository,
+    private val getChaptersByMangaId: GetChaptersByMangaId,
+    private val getEpubProgress: GetEpubProgress,
+    private val libraryPreferences: LibraryPreferences,
     private val entryOpenManager: LocalLibraryEntryOpenManager,
     private val updateManga: UpdateManga,
     private val coverCache: CoverCache,
@@ -55,9 +66,30 @@ class LocalLibraryScreenModel(
     private val selectedBookshelfId = MutableStateFlow<String?>(null)
     private val refreshSignal = MutableStateFlow(0)
     private val eventChannel = Channel<Event>(Channel.BUFFERED)
+    private val readProgressRefreshRequests = Channel<Unit>(Channel.CONFLATED)
+    private val localReadProgress = MutableStateFlow<Map<String, MangaReadProgress>>(emptyMap())
+
     val events = eventChannel.receiveAsFlow()
+    val readProgressByUrl: StateFlow<Map<String, MangaReadProgress>> = localReadProgress.asStateFlow()
 
     init {
+        screenModelScope.launchIO {
+            for (ignored in readProgressRefreshRequests) {
+                refreshLocalReadProgress()
+            }
+        }
+        if (libraryPreferences.showLibraryReadProgress.get()) {
+            refreshReadProgress()
+        }
+        screenModelScope.launchIO {
+            libraryPreferences.showLibraryReadProgress.changes().collect { enabled ->
+                if (enabled) {
+                    refreshReadProgress()
+                } else {
+                    localReadProgress.value = emptyMap()
+                }
+            }
+        }
         (source as? LocalFolderSource)?.let { localSource ->
             screenModelScope.launchIO {
                 if (localSource.needsInitialScan()) refresh()
@@ -67,6 +99,9 @@ class LocalLibraryScreenModel(
             screenModelScope.launchIO {
                 refreshAdapter.libraryRefreshes.collect {
                     refreshSignal.value += 1
+                    if (libraryPreferences.showLibraryReadProgress.get()) {
+                        refreshReadProgress()
+                    }
                 }
             }
         }
@@ -83,6 +118,51 @@ class LocalLibraryScreenModel(
                     refreshSignal.value += 1
                 }
             }
+        }
+    }
+
+    fun refreshReadProgress() {
+        readProgressRefreshRequests.trySend(Unit)
+    }
+
+    private suspend fun refreshLocalReadProgress() {
+        val localSource = source as? LocalFolderSource ?: return
+        if (!libraryPreferences.showLibraryReadProgress.get()) return
+
+        val mangas = mangaRepository.getMangaBySourceId(sourceId)
+        val chaptersByMangaId = getChaptersByMangaId.await(mangas.map(Manga::id))
+        val readProgressIndexes = localSource.readProgressIndexes(mangas.map(Manga::url))
+        val entries = mangas.map { manga ->
+            val chapters = chaptersByMangaId[manga.id].orEmpty()
+            val index = readProgressIndexes[manga.url.trimEnd('/')]
+            LocalReadProgressEntry(
+                manga = manga,
+                chapters = chapters,
+                indexedChapterCount = index?.indexedChapterCount ?: chapters.size,
+                isIndividualFile = index?.isIndividualFile == true,
+            )
+        }
+        val epubProgressByChapterId = getEpubProgress.await(
+            entries.asSequence()
+                .filter { it.isIndividualFile }
+                .flatMap { it.chapters.asSequence() }
+                .mapTo(mutableSetOf(), Chapter::id),
+        )
+        val progressByUrl = entries.mapNotNull { entry ->
+            val epubProgression = entry.chapters.firstOrNull()?.id?.let { chapterId ->
+                epubProgressByChapterId[chapterId]?.progression
+            }
+            buildLocalReadProgress(
+                indexedChapterCount = entry.indexedChapterCount,
+                chapters = entry.chapters,
+                isIndividualFile = entry.isIndividualFile,
+                epubProgression = epubProgression,
+            )?.let { progress ->
+                entry.manga.url.trimEnd('/') to progress
+            }
+        }.toMap()
+        if (libraryPreferences.showLibraryReadProgress.get()) {
+            localReadProgress.value = progressByUrl
         }
     }
 
@@ -273,5 +353,53 @@ class LocalLibraryScreenModel(
         val filters: LocalLibraryFilters,
         val bookshelfId: String?,
         @Suppress("unused") val refresh: Int,
+    )
+
+    private data class LocalReadProgressEntry(
+        val manga: Manga,
+        val chapters: List<Chapter>,
+        val indexedChapterCount: Int,
+        val isIndividualFile: Boolean,
+    )
+}
+
+internal fun buildLocalReadProgress(
+    indexedChapterCount: Int,
+    chapters: List<Chapter>,
+    isIndividualFile: Boolean = false,
+    epubProgression: Double? = null,
+): MangaReadProgress? {
+    val totalChapterCount = if (indexedChapterCount > 0) indexedChapterCount else chapters.size
+    if (totalChapterCount <= 0) return null
+
+    if (isIndividualFile) {
+        val chapter = chapters.firstOrNull { it.read } ?: chapters.maxByOrNull { it.lastPageRead }
+        return when {
+            chapter?.read == true -> MangaReadProgress(
+                readCount = 100,
+                totalChapterCount = 100,
+                display = MangaReadProgressDisplay.PERCENTAGE,
+            )
+            epubProgression != null -> MangaReadProgress(
+                readCount = (epubProgression.coerceIn(0.0, 1.0) * 100).roundToLong(),
+                totalChapterCount = 100,
+                display = MangaReadProgressDisplay.PERCENTAGE,
+            )
+            chapter != null && chapter.lastPageRead > 0L -> MangaReadProgress(
+                readCount = chapter.lastPageRead + 1,
+                totalChapterCount = 1,
+                display = MangaReadProgressDisplay.PAGE,
+            )
+            else -> MangaReadProgress(
+                readCount = 0,
+                totalChapterCount = 100,
+                display = MangaReadProgressDisplay.PERCENTAGE,
+            )
+        }
+    }
+
+    return MangaReadProgress(
+        readCount = chapters.count { it.read }.coerceAtMost(totalChapterCount).toLong(),
+        totalChapterCount = totalChapterCount.toLong(),
     )
 }

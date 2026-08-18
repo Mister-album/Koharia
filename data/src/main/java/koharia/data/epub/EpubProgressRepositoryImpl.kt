@@ -21,6 +21,13 @@ class EpubProgressRepositoryImpl(
             .awaitAsOneOrNull()
     }
 
+    override suspend fun getProgressesByChapterIds(chapterIds: Collection<Long>): List<EpubProgress> {
+        if (chapterIds.isEmpty()) return emptyList()
+        return database.epub_progressQueries
+            .getByChapterIds(chapterIds.toList(), ::mapEpubProgress)
+            .awaitAsList()
+    }
+
     override suspend fun getProgressesByMangaId(mangaId: Long): List<EpubProgress> {
         return database.epub_progressQueries
             .getByMangaId(mangaId, ::mapEpubProgress)

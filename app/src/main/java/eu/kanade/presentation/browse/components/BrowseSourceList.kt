@@ -11,6 +11,8 @@ import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaListItem
+import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.displayText
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
@@ -22,6 +24,7 @@ fun BrowseSourceList(
     mangaList: LazyPagingItems<StateFlow<Manga>>,
     contentPadding: PaddingValues,
     showLibraryBadges: Boolean,
+    readProgress: ((Manga) -> MangaReadProgress?)? = null,
     showPagingLoadingIndicator: Boolean = true,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
@@ -41,6 +44,7 @@ fun BrowseSourceList(
             BrowseSourceListItem(
                 manga = manga,
                 showLibraryBadges = showLibraryBadges,
+                readProgress = readProgress?.invoke(manga),
                 onClick = { onMangaClick(manga) },
                 onLongClick = { onMangaLongClick(manga) },
             )
@@ -61,10 +65,12 @@ fun BrowseSourceList(
 private fun BrowseSourceListItem(
     manga: Manga,
     showLibraryBadges: Boolean,
+    readProgress: MangaReadProgress?,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
     val isLibraryManga = showLibraryBadges && manga.favorite
+    val readProgressText = readProgress?.displayText()
     MangaListItem(
         title = manga.title,
         coverData = MangaCover(
@@ -78,6 +84,7 @@ private fun BrowseSourceListItem(
         badge = {
             InLibraryBadge(enabled = isLibraryManga)
         },
+        readProgressText = readProgressText,
         onLongClick = onLongClick,
         onClick = onClick,
     )

@@ -10,7 +10,9 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.MangaCover
+import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
+import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.plus
 
 @Composable
@@ -60,6 +62,15 @@ internal fun LibraryList(
                         isLocal = libraryItem.isLocal,
                         sourceLanguage = libraryItem.sourceLanguage,
                     )
+                },
+                readProgressText = if (libraryItem.hasReadProgress) {
+                    stringResource(
+                        MR.strings.library_read_progress,
+                        libraryItem.readCount,
+                        libraryItem.totalChapterCount,
+                    )
+                } else {
+                    null
                 },
                 onLongClick = { onLongClick(libraryItem.libraryManga) },
                 onClick = { onClick(libraryItem.libraryManga) },

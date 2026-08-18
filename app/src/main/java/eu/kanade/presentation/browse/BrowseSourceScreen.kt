@@ -20,6 +20,7 @@ import eu.kanade.presentation.browse.components.BrowseSourceComfortableGrid
 import eu.kanade.presentation.browse.components.BrowseSourceCompactGrid
 import eu.kanade.presentation.browse.components.BrowseSourceList
 import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.library.components.MangaReadProgress
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.source.Source
 import kotlinx.collections.immutable.persistentListOf
@@ -45,6 +46,7 @@ fun BrowseSourceContent(
     snackbarHostState: SnackbarHostState,
     contentPadding: PaddingValues,
     showLibraryBadges: Boolean = true,
+    readProgress: ((Manga) -> MangaReadProgress?)? = null,
     showPagingLoadingIndicator: Boolean = true,
     onWebViewClick: () -> Unit,
     onHelpClick: () -> Unit,
@@ -120,6 +122,7 @@ fun BrowseSourceContent(
                 columns = columns,
                 contentPadding = contentPadding,
                 showLibraryBadges = showLibraryBadges,
+                readProgress = readProgress,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
@@ -131,6 +134,7 @@ fun BrowseSourceContent(
                 mangaList = mangaList,
                 contentPadding = contentPadding,
                 showLibraryBadges = showLibraryBadges,
+                readProgress = readProgress,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
@@ -144,6 +148,7 @@ fun BrowseSourceContent(
                 contentPadding = contentPadding,
                 showTitle = displayMode is LibraryDisplayMode.CompactGrid,
                 showLibraryBadges = showLibraryBadges,
+                readProgress = readProgress,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,

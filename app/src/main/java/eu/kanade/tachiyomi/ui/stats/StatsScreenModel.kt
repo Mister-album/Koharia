@@ -10,8 +10,13 @@ import eu.kanade.presentation.more.stats.data.StatsData
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.connection.NO_ACTIVE_CONNECTION
+import koharia.source.komga.KomgaServerPreferences
+import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.flow.update
+import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.history.interactor.GetTotalReadDuration
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -19,6 +24,7 @@ import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_HAS_U
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_COMPLETED
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_READ
 import tachiyomi.domain.manga.interactor.GetLibraryManga
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.model.Track
 import uy.kohesive.injekt.Injekt
@@ -31,6 +37,8 @@ class StatsScreenModel(
     private val getTracks: GetTracks = Injekt.get(),
     private val preferences: LibraryPreferences = Injekt.get(),
     private val trackerManager: TrackerManager = Injekt.get(),
+    private val sourceManager: SourceManager = Injekt.get(),
+    private val komgaServerPreferences: KomgaServerPreferences = Injekt.get(),
 ) : StateScreenModel<StatsScreenState>(StatsScreenState.Loading) {
 
     private val loggedInTrackers by lazy { trackerManager.loggedInTrackers() }
@@ -45,10 +53,11 @@ class StatsScreenModel(
             val scoredMangaTrackerMap = getScoredMangaTrackMap(mangaTrackMap)
 
             val meanScore = getTrackMeanScore(scoredMangaTrackerMap)
+            val remoteStats = getKomgaStats()
 
             val overviewStatData = StatsData.Overview(
-                libraryMangaCount = distinctLibraryManga.size,
-                completedMangaCount = distinctLibraryManga.count {
+                libraryMangaCount = remoteStats?.titleCount ?: distinctLibraryManga.size,
+                completedMangaCount = remoteStats?.completedTitleCount ?: distinctLibraryManga.count {
                     it.manga.status.toInt() == SManga.COMPLETED && it.unreadCount == 0L
                 },
                 totalReadDuration = getTotalReadDuration.await(),
@@ -56,13 +65,14 @@ class StatsScreenModel(
 
             val titlesStatData = StatsData.Titles(
                 globalUpdateItemCount = getGlobalUpdateItemCount(libraryManga),
-                startedMangaCount = distinctLibraryManga.count { it.hasStarted },
+                startedMangaCount = remoteStats?.startedTitleCount ?: distinctLibraryManga.count { it.hasStarted },
                 cachedMangaCount = distinctLibraryManga.count { downloadManager.getDownloadCount(it.manga) > 0 },
             )
 
             val chaptersStatData = StatsData.Chapters(
-                totalChapterCount = distinctLibraryManga.sumOf { it.totalChapters }.toInt(),
-                readChapterCount = distinctLibraryManga.sumOf { it.readCount }.toInt(),
+                totalChapterCount =
+                remoteStats?.totalBookCount ?: distinctLibraryManga.sumOf { it.totalChapters }.toInt(),
+                readChapterCount = remoteStats?.readBookCount ?: distinctLibraryManga.sumOf { it.readCount }.toInt(),
                 downloadCount = downloadManager.getDownloadCount(),
             )
 
@@ -81,6 +91,33 @@ class StatsScreenModel(
                 )
             }
         }
+    }
+
+    private suspend fun getKomgaStats(): RemoteStats? {
+        val sourceId = komgaServerPreferences.activeServerId.get()
+        if (sourceId == NO_ACTIVE_CONNECTION) return null
+        if ((sourceManager.get(sourceId) as? KomgaSource)?.hasValidBaseUrl() != true) return null
+
+        return runCatching {
+            val books = trackerManager.komga.api.getInProgressBookProgress(
+                sourceId = sourceId,
+                includeCompleted = true,
+            )
+            val titleGroups = books.groupBy { it.seriesUrl.statsKey() ?: it.url.statsKey() }
+            RemoteStats(
+                titleCount = titleGroups.size,
+                completedTitleCount = titleGroups.count { (_, titleBooks) ->
+                    titleBooks.isNotEmpty() && titleBooks.all { it.readProgress?.completed == true }
+                },
+                startedTitleCount = titleGroups.count { (_, titleBooks) ->
+                    titleBooks.any { it.readProgress != null }
+                },
+                totalBookCount = books.size,
+                readBookCount = books.count { it.readProgress?.completed == true },
+            )
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "Failed to load Komga stats" }
+        }.getOrNull()
     }
 
     private fun getGlobalUpdateItemCount(libraryManga: List<LibraryManga>): Int {
@@ -133,4 +170,17 @@ class StatsScreenModel(
         val service = trackerManager.get(track.trackerId)!!
         return service.get10PointScore(track)
     }
+
+    private data class RemoteStats(
+        val titleCount: Int,
+        val completedTitleCount: Int,
+        val startedTitleCount: Int,
+        val totalBookCount: Int,
+        val readBookCount: Int,
+    )
+}
+
+private fun String?.statsKey(): String? {
+    val key = this?.substringBefore('#')?.trimEnd('/') ?: return null
+    return key.takeIf { it.isNotBlank() && !it.endsWith("/api/v1/series") }
 }

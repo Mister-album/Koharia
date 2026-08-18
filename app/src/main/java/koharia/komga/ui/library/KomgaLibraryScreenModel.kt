@@ -19,8 +19,10 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.presentation.library.components.MangaReadProgress
 import eu.kanade.presentation.util.ioCoroutineScope
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SManga
@@ -66,6 +68,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -74,6 +77,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -108,6 +113,7 @@ class KomgaLibraryScreenModel(
     private val getIncognitoState: GetIncognitoState,
     private val libraryScope: KomgaLibraryScope,
     private val libraryClassificationManager: KomgaLibraryClassificationManager,
+    private val trackerManager: TrackerManager,
 ) : StateScreenModel<KomgaLibraryScreenModel.State>(
     State(
         listing = Listing.valueOf(listingQuery),
@@ -117,6 +123,10 @@ class KomgaLibraryScreenModel(
     var displayMode by sourcePreferences.sourceDisplayMode.asState(screenModelScope)
     var cachedOnly by basePreferences.downloadedOnly.asState(screenModelScope)
     private val refreshSignal = MutableStateFlow(0)
+    private val komgaReadProgress = MutableStateFlow<Map<String, MangaReadProgress>>(emptyMap())
+    private val readProgressMutex = Mutex()
+
+    val readProgressByUrl: StateFlow<Map<String, MangaReadProgress>> = komgaReadProgress.asStateFlow()
 
     val source = sourceManager.getOrStub(sourceId)
     private var komgaSettingsChangeListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
@@ -130,6 +140,20 @@ class KomgaLibraryScreenModel(
     private var latestCachedManga = emptyList<Manga>()
 
     init {
+        if (libraryPreferences.showLibraryReadProgress.get()) {
+            screenModelScope.launchIO {
+                refreshKomgaReadProgress()
+            }
+        }
+        screenModelScope.launchIO {
+            libraryPreferences.showLibraryReadProgress.changes().collect { enabled ->
+                if (enabled) {
+                    refreshKomgaReadProgress()
+                } else {
+                    komgaReadProgress.value = emptyMap()
+                }
+            }
+        }
         if (source is CatalogueSource) {
             mutableState.update {
                 var query: String? = null
@@ -166,6 +190,7 @@ class KomgaLibraryScreenModel(
                             refreshSignal.value += 1
                         }
                     } else {
+                        refreshKomgaReadProgress(forceRefresh = true)
                         reloadKomgaState(
                             komgaSource = source,
                             showRefreshing = true,
@@ -184,6 +209,7 @@ class KomgaLibraryScreenModel(
             screenModelScope.launchIO {
                 basePreferences.downloadedOnly.changes().collect { cachedOnly ->
                     if (cachedOnly) {
+                        komgaReadProgress.value = emptyMap()
                         val filters = state.value.filters.withoutUnsupportedCachedSelections()
                         mutableState.update { current ->
                             current.copy(
@@ -192,6 +218,7 @@ class KomgaLibraryScreenModel(
                             )
                         }
                     } else {
+                        refreshKomgaReadProgress()
                         reloadKomgaState(source, showRefreshing = true, resetSelection = true, forceRefresh = true)
                     }
                 }
@@ -563,6 +590,7 @@ class KomgaLibraryScreenModel(
 
     fun refresh() {
         if (basePreferences.downloadedOnly.get()) {
+            refreshReadProgress(forceRefresh = true)
             refreshSignal.value += 1
             return
         }
@@ -570,6 +598,7 @@ class KomgaLibraryScreenModel(
         if (komgaSource != null) {
             screenModelScope.launchIO {
                 try {
+                    refreshKomgaReadProgress(forceRefresh = true)
                     komgaSource.invalidateBrowseCache()
                     reloadKomgaState(
                         komgaSource = komgaSource,
@@ -593,7 +622,66 @@ class KomgaLibraryScreenModel(
                 }
             }
         } else {
+            refreshReadProgress(forceRefresh = true)
             refreshSignal.value += 1
+        }
+    }
+
+    fun refreshReadProgress(forceRefresh: Boolean = false) {
+        screenModelScope.launchIO {
+            refreshKomgaReadProgress(forceRefresh)
+        }
+    }
+
+    private suspend fun refreshKomgaReadProgress(forceRefresh: Boolean = false) {
+        val komgaSource = source as? KomgaSource ?: return
+        if (
+            !libraryPreferences.showLibraryReadProgress.get() ||
+            !komgaSource.hasValidBaseUrl() ||
+            basePreferences.downloadedOnly.get()
+        ) {
+            return
+        }
+
+        readProgressMutex.withLock {
+            runCatching {
+                trackerManager.komga.api.getInProgressBookProgress(
+                    sourceId = sourceId,
+                    includeCompleted = true,
+                    forceRefresh = forceRefresh,
+                )
+            }.onSuccess { books ->
+                val progressByUrl = buildMap {
+                    books.groupBy { it.seriesUrl.progressKey() ?: it.url.progressKey() }
+                        .forEach { (seriesUrl, seriesBooks) ->
+                            if (seriesUrl != null) {
+                                put(
+                                    seriesUrl,
+                                    MangaReadProgress(
+                                        readCount = seriesBooks.count { it.readProgress?.completed == true }.toLong(),
+                                        totalChapterCount = seriesBooks.size.toLong(),
+                                    ),
+                                )
+                            }
+                        }
+                    books.forEach { book ->
+                        book.url.progressKey()?.let { bookUrl ->
+                            put(
+                                bookUrl,
+                                MangaReadProgress(
+                                    readCount = if (book.readProgress?.completed == true) 1 else 0,
+                                    totalChapterCount = 1,
+                                ),
+                            )
+                        }
+                    }
+                }
+                komgaReadProgress.value = progressByUrl
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) {
+                    "Failed to load Komga read progress for library sourceId=$sourceId"
+                }
+            }
         }
     }
 
@@ -933,6 +1021,11 @@ private fun mergeRemoteWithLocal(remote: Manga, local: Manga?): Manga {
         notes = local.notes,
         memo = mergeKomgaOfflineMemo(local.memo, remote.memo) ?: local.memo,
     )
+}
+
+private fun String?.progressKey(): String? {
+    val key = this?.substringBefore('#')?.trimEnd('/') ?: return null
+    return key.takeIf { it.isNotBlank() && !it.endsWith("/api/v1/series") }
 }
 
 internal fun Manga.matchesCachedOnlyQuery(query: String?): Boolean {

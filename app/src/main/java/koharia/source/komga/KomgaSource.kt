@@ -10,6 +10,7 @@ import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.AppInfo
+import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -396,6 +397,7 @@ class KomgaSource(
     override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) {
         if (!apiClient.isBook(chapterUrl)) return
         apiClient.setBookReadStatus(chapterUrl, read)
+        Injekt.get<TrackerManager>().komga.api.invalidateProgressCache(id)
     }
 
     override suspend fun syncConnectionHistory() {

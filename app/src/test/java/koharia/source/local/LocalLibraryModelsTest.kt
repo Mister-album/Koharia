@@ -1,5 +1,7 @@
 package koharia.source.local
 
+import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.MangaReadProgressDisplay
 import koharia.connection.LibraryContentScope
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -10,8 +12,106 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import tachiyomi.domain.chapter.model.Chapter
 
 class LocalLibraryModelsTest {
+
+    @Test
+    fun `local read progress uses indexed series count and chapter read state`() {
+        val chapters = listOf(
+            Chapter.create().copy(id = 1L, mangaId = 7L, read = true),
+            Chapter.create().copy(id = 2L, mangaId = 7L, read = false),
+        )
+
+        assertEquals(
+            MangaReadProgress(readCount = 1L, totalChapterCount = 3L),
+            buildLocalReadProgress(indexedChapterCount = 3, chapters = chapters),
+        )
+    }
+
+    @Test
+    fun `local read progress supports an individual file with no synced chapter`() {
+        assertEquals(
+            MangaReadProgress(
+                readCount = 0L,
+                totalChapterCount = 100L,
+                display = MangaReadProgressDisplay.PERCENTAGE,
+            ),
+            buildLocalReadProgress(
+                indexedChapterCount = 1,
+                chapters = emptyList(),
+                isIndividualFile = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `individual file progress uses current page while unread`() {
+        val chapters = listOf(Chapter.create().copy(lastPageRead = 4L))
+
+        assertEquals(
+            MangaReadProgress(
+                readCount = 5L,
+                totalChapterCount = 1L,
+                display = MangaReadProgressDisplay.PAGE,
+            ),
+            buildLocalReadProgress(
+                indexedChapterCount = 1,
+                chapters = chapters,
+                isIndividualFile = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `individual file progress uses epub progression when available`() {
+        val chapters = listOf(Chapter.create())
+
+        assertEquals(
+            MangaReadProgress(
+                readCount = 42L,
+                totalChapterCount = 100L,
+                display = MangaReadProgressDisplay.PERCENTAGE,
+            ),
+            buildLocalReadProgress(
+                indexedChapterCount = 1,
+                chapters = chapters,
+                isIndividualFile = true,
+                epubProgression = 0.42,
+            ),
+        )
+    }
+
+    @Test
+    fun `individual file progress uses completion percentage when read`() {
+        val chapters = listOf(Chapter.create().copy(read = true))
+
+        assertEquals(
+            MangaReadProgress(
+                readCount = 100L,
+                totalChapterCount = 100L,
+                display = MangaReadProgressDisplay.PERCENTAGE,
+            ),
+            buildLocalReadProgress(
+                indexedChapterCount = 1,
+                chapters = chapters,
+                isIndividualFile = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `local read progress caps stale read chapters to the indexed total`() {
+        val chapters = listOf(
+            Chapter.create().copy(id = 1L, mangaId = 7L, read = true),
+            Chapter.create().copy(id = 2L, mangaId = 7L, read = true),
+        )
+
+        assertEquals(
+            MangaReadProgress(readCount = 1L, totalChapterCount = 1L),
+            buildLocalReadProgress(indexedChapterCount = 1, chapters = chapters),
+        )
+    }
 
     @Test
     fun `locator round trips encoded relative paths`() {

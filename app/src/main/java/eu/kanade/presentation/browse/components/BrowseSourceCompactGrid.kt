@@ -2,18 +2,23 @@ package eu.kanade.presentation.browse.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
+import eu.kanade.presentation.library.components.LibraryReadProgressCorner
 import eu.kanade.presentation.library.components.MangaCompactGridItem
+import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.displayText
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
@@ -27,6 +32,7 @@ fun BrowseSourceCompactGrid(
     contentPadding: PaddingValues,
     showTitle: Boolean = true,
     showLibraryBadges: Boolean,
+    readProgress: ((Manga) -> MangaReadProgress?)? = null,
     showPagingLoadingIndicator: Boolean = true,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
@@ -50,6 +56,7 @@ fun BrowseSourceCompactGrid(
                 manga = manga,
                 showTitle = showTitle,
                 showLibraryBadges = showLibraryBadges,
+                readProgress = readProgress?.invoke(manga),
                 onClick = { onMangaClick(manga) },
                 onLongClick = { onMangaLongClick(manga) },
             )
@@ -71,10 +78,13 @@ private fun BrowseSourceCompactGridItem(
     manga: Manga,
     showTitle: Boolean,
     showLibraryBadges: Boolean,
+    readProgress: MangaReadProgress?,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
     val isLibraryManga = showLibraryBadges && manga.favorite
+    val readProgressText = readProgress?.displayText()
+    val hasReadProgress = readProgressText != null
     MangaCompactGridItem(
         title = manga.title.takeIf { showTitle },
         coverData = MangaCover(
@@ -87,6 +97,19 @@ private fun BrowseSourceCompactGridItem(
         coverAlpha = if (isLibraryManga) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         coverBadgeStart = {
             InLibraryBadge(enabled = isLibraryManga)
+        },
+        coverBadgeEndModifier = if (hasReadProgress) Modifier.padding(top = 32.dp) else Modifier,
+        coverOverlay = if (hasReadProgress) {
+            {
+                LibraryReadProgressCorner(
+                    readCount = readProgress.readCount,
+                    totalChapterCount = readProgress.totalChapterCount,
+                    text = readProgressText,
+                    modifier = Modifier.align(Alignment.TopEnd),
+                )
+            }
+        } else {
+            null
         },
         onLongClick = onLongClick,
         onClick = onClick,

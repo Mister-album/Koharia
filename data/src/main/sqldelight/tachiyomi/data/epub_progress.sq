@@ -31,6 +31,19 @@ last_synced_at
 FROM epub_progress
 WHERE chapter_id = :chapterId;
 
+getByChapterIds:
+SELECT
+chapter_id,
+manga_id,
+book_url,
+locator_json,
+progression,
+position_index,
+updated_at,
+last_synced_at
+FROM epub_progress
+WHERE chapter_id IN :chapterIds;
+
 getByMangaId:
 SELECT
 chapter_id,

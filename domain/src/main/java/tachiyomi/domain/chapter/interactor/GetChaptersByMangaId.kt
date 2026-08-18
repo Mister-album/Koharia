@@ -17,4 +17,22 @@ class GetChaptersByMangaId(
             emptyList()
         }
     }
+
+    suspend fun await(mangaIds: Collection<Long>): Map<Long, List<Chapter>> {
+        if (mangaIds.isEmpty()) return emptyMap()
+        return try {
+            buildList {
+                mangaIds.distinct().chunked(QUERY_CHUNK_SIZE).forEach { chunk ->
+                    addAll(chapterRepository.getChaptersByMangaIds(chunk))
+                }
+            }.groupBy(Chapter::mangaId)
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e)
+            emptyMap()
+        }
+    }
+
+    private companion object {
+        const val QUERY_CHUNK_SIZE = 500
+    }
 }

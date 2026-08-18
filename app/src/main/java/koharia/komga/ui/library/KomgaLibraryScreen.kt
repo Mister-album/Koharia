@@ -25,6 +25,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -38,6 +39,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import cafe.adriel.voyager.core.model.rememberScreenModel
@@ -53,6 +57,7 @@ import eu.kanade.presentation.more.settings.screen.KomgaLibraryClassificationScr
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
@@ -128,6 +133,7 @@ data class KomgaLibraryScreen(
         val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
         val basePreferences = remember(sourceId) { scopedPreferenceStoreFactory.basePreferences(sourceId) }
         val libraryPreferences: LibraryPreferences = Injekt.get()
+        val showLibraryReadProgress by libraryPreferences.showLibraryReadProgress.collectAsState()
         val connectionPreferences: ConnectionPreferences = Injekt.get()
         val downloadManager: DownloadManager = Injekt.get()
         val getRemoteManga: GetRemoteManga = Injekt.get()
@@ -137,6 +143,7 @@ data class KomgaLibraryScreen(
         val epubCacheManager: EpubCacheManager = Injekt.get()
         val getIncognitoState: GetIncognitoState = Injekt.get()
         val libraryClassificationManager: KomgaLibraryClassificationManager = Injekt.get()
+        val trackerManager: TrackerManager = Injekt.get()
 
         val screenModel = rememberScreenModel(tag = "$sourceId:$libraryScope:$listingQuery") {
             KomgaLibraryScreenModel(
@@ -155,15 +162,35 @@ data class KomgaLibraryScreen(
                 getIncognitoState = getIncognitoState,
                 libraryScope = libraryScope,
                 libraryClassificationManager = libraryClassificationManager,
+                trackerManager = trackerManager,
             )
         }
         val state by screenModel.state.collectAsState()
+        val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
+        val lifecycleOwner = LocalLifecycleOwner.current
         val columns by libraryPreferences.portraitColumns.collectAsState()
         val connectionProfiles by remember(connectionPreferences) {
             connectionPreferences.profilesChanges()
         }.collectAsState(initial = connectionPreferences.getProfiles())
 
         val navigator = LocalNavigator.currentOrThrow
+
+        DisposableEffect(lifecycleOwner, screenModel, showLibraryReadProgress) {
+            val refreshProgress = {
+                if (showLibraryReadProgress) {
+                    screenModel.refreshReadProgress()
+                }
+            }
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) refreshProgress()
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                refreshProgress()
+            }
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+
         val navigateUp: () -> Unit = {
             when {
                 !state.isUserQuery && state.toolbarQuery != null -> screenModel.setToolbarQuery(null)
@@ -321,6 +348,11 @@ data class KomgaLibraryScreen(
                         snackbarHostState = snackbarHostState,
                         contentPadding = paddingValues,
                         showLibraryBadges = false,
+                        readProgress = if (showLibraryReadProgress) {
+                            { manga -> readProgressByUrl[manga.url.trimEnd('/')] }
+                        } else {
+                            null
+                        },
                         onWebViewClick = onWebViewClick,
                         onHelpClick = onHelpClick,
                         onMangaClick = {

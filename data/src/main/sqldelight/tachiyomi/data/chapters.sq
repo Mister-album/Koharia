@@ -68,6 +68,11 @@ AND (
     OR ES.scanlator IS NULL
 );
 
+getChaptersByMangaIds:
+SELECT C.*
+FROM chapters C
+WHERE C.manga_id IN :mangaIds;
+
 getScanlatorsByMangaId:
 SELECT scanlator
 FROM chapters

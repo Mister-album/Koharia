@@ -78,6 +78,11 @@ object SettingsLibraryScreen : SearchableSettings {
                         libraryPreferences.landscapeColumns.set(it)
                     },
                 ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = libraryPreferences.showLibraryReadProgress,
+                    title = stringResource(MR.strings.pref_show_library_read_progress),
+                    subtitle = stringResource(MR.strings.pref_show_library_read_progress_summary),
+                ),
             ),
         )
     }

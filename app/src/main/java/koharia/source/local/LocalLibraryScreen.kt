@@ -27,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +38,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import cafe.adriel.voyager.core.model.rememberScreenModel
@@ -57,6 +61,7 @@ import koharia.connection.ConnectionPreferences
 import koharia.connection.LibraryContentScope
 import koharia.connection.ui.ConnectionLibraryShelfDialog
 import koharia.connection.ui.SeriesMetadataEditScreen
+import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.EpubReaderLauncher
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
@@ -114,6 +119,7 @@ data class LocalLibraryScreen(
         val connectionPreferences: ConnectionPreferences = Injekt.get()
         val mangaRepository: MangaRepository = Injekt.get()
         val chapterRepository: ChapterRepository = Injekt.get()
+        val getEpubProgress: GetEpubProgress = Injekt.get()
         val syncChaptersWithSource: SyncChaptersWithSource = Injekt.get()
         val updateManga: UpdateManga = Injekt.get()
         val coverCache: CoverCache = Injekt.get()
@@ -127,6 +133,9 @@ data class LocalLibraryScreen(
                 sourceManager = sourceManager,
                 sourcePreferences = sourcePreferences,
                 mangaRepository = mangaRepository,
+                getChaptersByMangaId = Injekt.get(),
+                getEpubProgress = getEpubProgress,
+                libraryPreferences = libraryPreferences,
                 entryOpenManager = LocalLibraryEntryOpenManager(
                     syncChaptersWithSource = syncChaptersWithSource,
                     chapterRepository = chapterRepository,
@@ -138,13 +147,27 @@ data class LocalLibraryScreen(
         }
         val state by screenModel.state.collectAsState()
         val coverUpdatedMessage = stringResource(MR.strings.cover_updated)
+        val showLibraryReadProgress by libraryPreferences.showLibraryReadProgress.collectAsState()
+        val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
         val columns by libraryPreferences.portraitColumns.collectAsState()
         val connectionProfiles by connectionPreferences.profilesChanges()
             .collectAsState(initial = connectionPreferences.getProfiles())
         val mangaList = screenModel.mangaPagerFlow.collectAsLazyPagingItems()
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
+        val lifecycleOwner = LocalLifecycleOwner.current
         val snackbarHostState = remember { SnackbarHostState() }
+
+        DisposableEffect(lifecycleOwner, screenModel, showLibraryReadProgress) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME && showLibraryReadProgress) {
+                    screenModel.refreshReadProgress()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+
         val isRefreshing = state.isRefreshing
         val pullRefreshState = rememberPullRefreshState(
             refreshing = isRefreshing,
@@ -287,6 +310,11 @@ data class LocalLibraryScreen(
                             snackbarHostState = snackbarHostState,
                             contentPadding = paddingValues,
                             showLibraryBadges = false,
+                            readProgress = if (showLibraryReadProgress) {
+                                { manga -> readProgressByUrl[manga.url.trimEnd('/')] }
+                            } else {
+                                null
+                            },
                             showPagingLoadingIndicator = false,
                             onWebViewClick = {},
                             onHelpClick = {},

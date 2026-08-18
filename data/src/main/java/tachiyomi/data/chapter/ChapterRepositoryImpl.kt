@@ -94,6 +94,13 @@ class ChapterRepositoryImpl(
             .awaitAsList()
     }
 
+    override suspend fun getChaptersByMangaIds(mangaIds: Collection<Long>): List<Chapter> {
+        if (mangaIds.isEmpty()) return emptyList()
+        return database.chaptersQueries
+            .getChaptersByMangaIds(mangaIds.toList(), ::mapChapter)
+            .awaitAsList()
+    }
+
     override suspend fun getScanlatorsByMangaId(mangaId: Long): List<String> {
         return database.chaptersQueries
             .getScanlatorsByMangaId(mangaId) { it.orEmpty() }
