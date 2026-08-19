@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.annotation.IntRange
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.SavedStateHandle
@@ -14,6 +15,7 @@ import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.tachiyomi.crash.CrashDiagnostics
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -47,7 +49,11 @@ import koharia.connection.isConnectionLibraryEntry
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.progress.EpubPageProgress
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,6 +65,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.preference.ScopedPreferenceStore
@@ -86,6 +93,7 @@ import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.Date
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Presenter used by the activity to perform background operations.
@@ -111,6 +119,9 @@ class ReaderViewModel @JvmOverloads constructor(
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
     private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get(),
 ) : ViewModel() {
+
+    private val resourceCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val resourcesReleased = AtomicBoolean(false)
 
     private val persistentReaderSettingsStore =
         scopedPreferenceStoreFactory.storeForSavedSource(savedState) ?: globalReaderPreferenceStore
@@ -296,11 +307,48 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     override fun onCleared() {
+        releaseReaderResources()
+    }
+
+    /**
+     * Stops reader work and releases file-backed resources away from the main thread. This is
+     * deliberately safe to call from both the activity and [onCleared].
+     */
+    fun releaseReaderResources() {
+        if (!resourcesReleased.compareAndSet(false, true)) return
+
+        viewModelScope.coroutineContext.cancelChildren()
         val currentChapters = state.value.viewerChapters
-        if (currentChapters != null) {
-            currentChapters.unref()
-            chapterToDownload?.let {
-                downloadManager.addDownloadsToStartOfQueue(listOf(it))
+        val pendingDownload = chapterToDownload
+
+        resourceCleanupScope.launch {
+            val startedAt = SystemClock.uptimeMillis()
+            try {
+                currentChapters?.unref()
+            } catch (error: Throwable) {
+                CrashDiagnostics.recordNonFatal(
+                    Injekt.get<Application>(),
+                    "reader.resource.cleanup",
+                    error,
+                )
+            } finally {
+                CrashDiagnostics.recordSlowOperation(
+                    Injekt.get<Application>(),
+                    "reader.resource.cleanup",
+                    SystemClock.uptimeMillis() - startedAt,
+                )
+            }
+
+            try {
+                pendingDownload?.let { downloadManager.addDownloadsToStartOfQueue(listOf(it)) }
+            } catch (error: Throwable) {
+                CrashDiagnostics.recordNonFatal(
+                    Injekt.get<Application>(),
+                    "reader.download.queue.restore",
+                    error,
+                )
+            } finally {
+                resourceCleanupScope.cancel()
             }
         }
     }

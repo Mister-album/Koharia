@@ -8,4 +8,7 @@ object TelemetryConfig {
     fun setAnalyticsEnabled(enabled: Boolean) = TelemetryImplementation.setAnalyticsEnabled(enabled)
 
     fun setCrashlyticsEnabled(enabled: Boolean) = TelemetryImplementation.setCrashlyticsEnabled(enabled)
+
+    fun recordException(exception: Throwable, message: String? = null) =
+        TelemetryImplementation.recordException(exception, message)
 }

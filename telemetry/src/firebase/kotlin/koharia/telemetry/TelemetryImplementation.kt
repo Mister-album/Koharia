@@ -51,6 +51,16 @@ internal object TelemetryImplementation {
         crashlytics?.isCrashlyticsCollectionEnabled = enabled
     }
 
+    fun recordException(exception: Throwable, message: String?) {
+        val crashlytics = crashlytics ?: return
+        try {
+            message?.let(crashlytics::log)
+            crashlytics.recordException(exception)
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Failed to record non-fatal exception in Crashlytics" }
+        }
+    }
+
     private fun Context.isKohariaProductionApp(): Boolean {
         if (packageName !in KOHARIA_PACKAGES) return false
 

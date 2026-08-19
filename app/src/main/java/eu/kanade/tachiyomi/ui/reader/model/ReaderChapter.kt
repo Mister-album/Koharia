@@ -26,17 +26,28 @@ data class ReaderChapter(val chapter: Chapter) {
 
     constructor(chapter: tachiyomi.domain.chapter.model.Chapter) : this(chapter.toDbChapter())
 
+    @Synchronized
     fun ref() {
         references++
     }
 
+    @Synchronized
     fun unref() {
+        if (references <= 0) {
+            logcat { "Ignoring duplicate unref for chapter ${chapter.name}" }
+            return
+        }
+
         references--
-        if (references == 0) {
-            if (pageLoader != null) {
+        if (references != 0) return
+
+        val loader = pageLoader
+        try {
+            if (loader != null) {
                 logcat { "Recycling chapter ${chapter.name}" }
+                loader.recycle()
             }
-            pageLoader?.recycle()
+        } finally {
             pageLoader = null
             state = State.Wait
         }

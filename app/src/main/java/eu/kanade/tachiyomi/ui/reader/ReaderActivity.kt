@@ -14,6 +14,7 @@ import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -62,6 +63,7 @@ import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.crash.CrashDiagnostics
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.data.download.DownloadNetworkQoS
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
@@ -91,6 +93,7 @@ import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.importing.IncomingMediaNavigation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -404,11 +407,41 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
     override fun onDestroy() {
-        super.onDestroy()
-        viewModel.state.value.viewer?.destroy()
-        config = null
-        menuToggleToast?.cancel()
-        readingModeToast?.cancel()
+        val startedAt = SystemClock.uptimeMillis()
+        try {
+            try {
+                viewModel.state.value.viewer?.destroy()
+            } catch (error: Throwable) {
+                CrashDiagnostics.recordNonFatal(this, "reader.viewer.destroy", error)
+            }
+
+            if (!isChangingConfigurations) {
+                try {
+                    viewModel.releaseReaderResources()
+                } catch (error: Throwable) {
+                    CrashDiagnostics.recordNonFatal(this, "reader.resource.release.start", error)
+                }
+            }
+
+            config = null
+            menuToggleToast?.cancel()
+            readingModeToast?.cancel()
+        } finally {
+            try {
+                try {
+                    super.onDestroy()
+                } catch (error: Throwable) {
+                    CrashDiagnostics.recordNonFatal(this, "reader.activity.super.onDestroy", error)
+                    throw error
+                }
+            } finally {
+                CrashDiagnostics.recordSlowOperation(
+                    this,
+                    "reader.activity.destroy",
+                    SystemClock.uptimeMillis() - startedAt,
+                )
+            }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -418,7 +451,13 @@ class ReaderActivity : BaseActivity() {
 
     override fun onPause() {
         lifecycleScope.launchNonCancellable {
-            viewModel.updateHistory()
+            try {
+                viewModel.updateHistory()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                CrashDiagnostics.recordNonFatal(this@ReaderActivity, "reader.updateHistory", error)
+            }
         }
         super.onPause()
     }
@@ -623,7 +662,11 @@ class ReaderActivity : BaseActivity() {
 
         // Destroy previous viewer if there was one
         if (prevViewer != null) {
-            prevViewer.destroy()
+            try {
+                prevViewer.destroy()
+            } catch (error: Throwable) {
+                CrashDiagnostics.recordNonFatal(this, "reader.viewer.replace.destroy", error)
+            }
             binding.viewerContainer.removeAllViews()
         }
         viewModel.onViewerLoaded(newViewer)
@@ -701,7 +744,11 @@ class ReaderActivity : BaseActivity() {
     @SuppressLint("RestrictedApi")
     private fun setChapters(viewerChapters: ViewerChapters) {
         binding.readerContainer.removeView(loadingIndicator)
-        viewModel.state.value.viewer?.setChapters(viewerChapters)
+        try {
+            viewModel.state.value.viewer?.setChapters(viewerChapters)
+        } catch (error: Throwable) {
+            CrashDiagnostics.recordNonFatal(this, "reader.viewer.setChapters", error)
+        }
 
         lifecycleScope.launchIO {
             viewModel.getChapterUrl()?.let { url ->

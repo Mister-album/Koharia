@@ -9,4 +9,6 @@ internal object TelemetryImplementation {
     fun setAnalyticsEnabled(enabled: Boolean) = Unit
 
     fun setCrashlyticsEnabled(enabled: Boolean) = Unit
+
+    fun recordException(exception: Throwable, message: String?) = Unit
 }

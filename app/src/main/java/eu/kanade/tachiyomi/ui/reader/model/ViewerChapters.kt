@@ -13,8 +13,15 @@ data class ViewerChapters(
     }
 
     fun unref() {
-        currChapter.unref()
-        prevChapter?.unref()
-        nextChapter?.unref()
+        var firstError: Throwable? = null
+        listOf(currChapter, prevChapter, nextChapter).forEach { chapter ->
+            if (chapter == null) return@forEach
+            try {
+                chapter.unref()
+            } catch (error: Throwable) {
+                firstError = firstError ?: error
+            }
+        }
+        firstError?.let { throw it }
     }
 }

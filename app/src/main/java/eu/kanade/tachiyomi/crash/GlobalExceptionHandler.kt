@@ -14,7 +14,7 @@ import tachiyomi.core.common.util.system.logcat
 
 class GlobalExceptionHandler private constructor(
     private val applicationContext: Context,
-    private val defaultHandler: Thread.UncaughtExceptionHandler,
+    private val defaultHandler: Thread.UncaughtExceptionHandler?,
     private val activityToBeLaunched: Class<*>,
 ) : Thread.UncaughtExceptionHandler {
 
@@ -30,9 +30,29 @@ class GlobalExceptionHandler private constructor(
     }
 
     override fun uncaughtException(thread: Thread, exception: Throwable) {
-        logcat(priority = LogPriority.ERROR, throwable = exception)
-        launchActivity(applicationContext, activityToBeLaunched, exception)
-        defaultHandler.uncaughtException(thread, exception)
+        try {
+            CrashDiagnostics.recordUncaughtException(applicationContext, thread, exception)
+        } catch (_: Throwable) {
+            // Never replace the original exception with a diagnostics failure.
+        }
+
+        try {
+            logcat(priority = LogPriority.ERROR, throwable = exception)
+        } catch (_: Throwable) {
+            // Continue to the platform handler even if logging is unavailable.
+        }
+
+        try {
+            launchActivity(applicationContext, activityToBeLaunched, exception)
+        } catch (error: Throwable) {
+            try {
+                logcat(LogPriority.ERROR, error) { "Unable to launch crash activity" }
+            } catch (_: Throwable) {
+                // Continue to the platform handler even if the crash screen cannot be launched.
+            }
+        } finally {
+            defaultHandler?.uncaughtException(thread, exception)
+        }
     }
 
     private fun launchActivity(
@@ -55,9 +75,12 @@ class GlobalExceptionHandler private constructor(
             applicationContext: Context,
             activityToBeLaunched: Class<*>,
         ) {
+            val currentHandler = Thread.getDefaultUncaughtExceptionHandler()
+            if (currentHandler is GlobalExceptionHandler) return
+
             val handler = GlobalExceptionHandler(
                 applicationContext,
-                Thread.getDefaultUncaughtExceptionHandler() as Thread.UncaughtExceptionHandler,
+                currentHandler,
                 activityToBeLaunched,
             )
             Thread.setDefaultUncaughtExceptionHandler(handler)
