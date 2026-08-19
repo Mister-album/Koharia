@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.loader
 
 internal class PageLoadGate(
     private val preloadSize: Int = 2,
+    private val prefetchOnActivate: Boolean = false,
 ) {
     private var activePageIndexes: Set<Int> = emptySet()
     private var logicalPageIndex: Int? = null
@@ -29,7 +30,11 @@ internal class PageLoadGate(
         this.logicalPageIndex = logicalPageIndex
         return Activation(
             changed = changed,
-            prefetchIndexes = if (prefetchUnlocked) prefetchIndexes(pageCount) else emptyList(),
+            prefetchIndexes = if (prefetchUnlocked || prefetchOnActivate) {
+                prefetchIndexes(pageCount)
+            } else {
+                emptyList()
+            },
         )
     }
 

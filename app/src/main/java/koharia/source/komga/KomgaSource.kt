@@ -62,6 +62,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.Credentials
 import okhttp3.Dns
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -112,6 +113,9 @@ class KomgaSource(
     override val lang: String = SOURCE_LANG
     override val supportsLatest: Boolean = true
     override val versionId: Int = SOURCE_VERSION
+
+    // PDF pages are rasterized by Komga on demand. Two requests avoid saturating the server's
+    // PDF renderer while still keeping a visible double-page spread responsive.
     override val pageLoadConcurrency: Int = 2
     override val mangaBehavior = MANGA_BEHAVIOR
     override val allowsUnvalidatedNetwork: Boolean = true
@@ -334,12 +338,25 @@ class KomgaSource(
         chapterMemo: kotlinx.serialization.json.JsonObject,
     ): List<Page> {
         val pageImageCacheToken = KomgaChapterMemo.pageImageCacheToken(chapterMemo)
+        val isPdf = KomgaChapterMemo.mediaProfile(chapterMemo).equals("PDF", ignoreCase = true) ||
+            KomgaChapterMemo.fileName(chapterMemo)?.substringBefore('?')?.endsWith(".pdf", ignoreCase = true) == true
         return pages.map { page ->
             val imageUrl = page.imageUrl ?: return@map page
+            val networkImageUrl = KomgaChapterMemo.networkPageImageUrl(imageUrl)
+            val optimizedImageUrl = if (isPdf) {
+                networkImageUrl.toHttpUrlOrNull()
+                    ?.newBuilder()
+                    ?.setQueryParameter("convert", "jpeg")
+                    ?.build()
+                    ?.toString()
+                    ?: networkImageUrl
+            } else {
+                networkImageUrl
+            }
             Page(
                 index = page.index,
                 url = page.url,
-                imageUrl = KomgaChapterMemo.versionedPageImageUrl(imageUrl, pageImageCacheToken),
+                imageUrl = KomgaChapterMemo.versionedPageImageUrl(optimizedImageUrl, pageImageCacheToken),
             )
         }
     }

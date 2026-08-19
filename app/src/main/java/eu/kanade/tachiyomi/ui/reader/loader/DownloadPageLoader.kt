@@ -102,4 +102,20 @@ internal class DownloadPageLoader(
         epubPageLoader?.loadPage(page)
         pdfPageLoader?.loadPage(page)
     }
+
+    override fun setActivePage(page: ReaderPage) {
+        pdfPageLoader?.setActivePage(page)
+    }
+
+    override fun setActivePages(pages: List<ReaderPage>) {
+        pdfPageLoader?.setActivePages(pages)
+    }
+
+    override fun onPageDisplayed(page: ReaderPage) {
+        pdfPageLoader?.onPageDisplayed(page)
+    }
+
+    override fun onPagesDisplayed(pages: List<ReaderPage>) {
+        pdfPageLoader?.onPagesDisplayed(pages)
+    }
 }

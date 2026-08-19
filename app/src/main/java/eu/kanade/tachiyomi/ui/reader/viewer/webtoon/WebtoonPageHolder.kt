@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.webtoon
 
 import android.content.res.Resources
+import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -18,6 +20,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.collectLatest
@@ -187,31 +190,77 @@ class WebtoonPageHolder(
     private suspend fun setImage() {
         progressIndicator.setProgress(0)
 
-        val streamFn = page?.stream ?: return
+        val page = page ?: return
 
         try {
+            val bitmapProvider = page.bitmap
+            if (bitmapProvider != null) {
+                var bitmap: Bitmap? = withIOContext { process(bitmapProvider()) }
+                try {
+                    withUIContext {
+                        frame.setImage(
+                            BitmapDrawable(frame.resources, checkNotNull(bitmap)),
+                            imageConfig(),
+                        )
+                        bitmap = null
+                        removeErrorLayout()
+                    }
+                } finally {
+                    bitmap?.takeUnless(Bitmap::isRecycled)?.recycle()
+                }
+                return
+            }
+
+            val streamFn = page.stream ?: return
             val (source, isAnimated) = withIOContext {
                 val source = streamFn().use { process(Buffer().readFrom(it)) }
-                val isAnimated = ImageUtil.isAnimatedAndSupported(source)
-                Pair(source, isAnimated)
+                Pair(source, ImageUtil.isAnimatedAndSupported(source))
             }
             withUIContext {
                 frame.setImage(
                     source,
                     isAnimated,
-                    ReaderPageImageView.Config(
-                        zoomDuration = viewer.config.doubleTapAnimDuration,
-                        minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
-                        cropBorders = viewer.config.imageCropBorders,
-                    ),
+                    imageConfig(),
                 )
                 removeErrorLayout()
             }
         } catch (e: Throwable) {
+            if (e is CancellationException) throw e
             logcat(LogPriority.ERROR, e)
             withUIContext {
                 setError(e)
             }
+        }
+    }
+
+    private fun imageConfig() = ReaderPageImageView.Config(
+        zoomDuration = viewer.config.doubleTapAnimDuration,
+        minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
+        cropBorders = viewer.config.imageCropBorders,
+    )
+
+    private fun process(source: Bitmap): Bitmap {
+        var ownedBitmap = source
+        try {
+            val processed = when {
+                viewer.config.dualPageRotateToFit && ownedBitmap.width > ownedBitmap.height -> {
+                    val rotation = if (viewer.config.dualPageRotateToFitInvert) -90f else 90f
+                    ImageUtil.rotateImage(ownedBitmap, rotation)
+                }
+                viewer.config.dualPageSplit && ownedBitmap.width > ownedBitmap.height -> {
+                    val upperSide = if (viewer.config.dualPageInvert) ImageUtil.Side.LEFT else ImageUtil.Side.RIGHT
+                    ImageUtil.splitAndMerge(ownedBitmap, upperSide)
+                }
+                else -> ownedBitmap
+            }
+            if (processed !== ownedBitmap) {
+                ownedBitmap.recycle()
+                ownedBitmap = processed
+            }
+            return ownedBitmap
+        } catch (error: Throwable) {
+            ownedBitmap.recycle()
+            throw error
         }
     }
 

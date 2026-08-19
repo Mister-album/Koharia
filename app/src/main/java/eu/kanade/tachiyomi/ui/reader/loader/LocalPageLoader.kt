@@ -49,6 +49,22 @@ internal class LocalPageLoader(
         pdfLoader?.loadPage(page)
     }
 
+    override fun setActivePage(page: ReaderPage) {
+        pdfLoader?.setActivePage(page)
+    }
+
+    override fun setActivePages(pages: List<ReaderPage>) {
+        pdfLoader?.setActivePages(pages)
+    }
+
+    override fun onPageDisplayed(page: ReaderPage) {
+        pdfLoader?.onPageDisplayed(page)
+    }
+
+    override fun onPagesDisplayed(pages: List<ReaderPage>) {
+        pdfLoader?.onPagesDisplayed(pages)
+    }
+
     private suspend fun getPagesFromArchive(file: UniFile): List<ReaderPage> {
         return ArchivePageLoader(file.archiveReader(context)).also { archiveLoader = it }.getPages()
     }

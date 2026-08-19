@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.model
 
+import android.graphics.Bitmap
 import eu.kanade.tachiyomi.source.model.Page
 import java.io.InputStream
 
@@ -9,6 +10,8 @@ open class ReaderPage(
     imageUrl: String? = null,
     var stream: (() -> InputStream)? = null,
 ) : Page(index, url, imageUrl, null) {
+
+    var bitmap: (() -> Bitmap)? = null
 
     open lateinit var chapter: ReaderChapter
 

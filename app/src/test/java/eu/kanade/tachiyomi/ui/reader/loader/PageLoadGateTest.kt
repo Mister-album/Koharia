@@ -19,6 +19,15 @@ class PageLoadGateTest {
     }
 
     @Test
+    fun `optional early prefetch starts when a page is selected`() {
+        val gate = PageLoadGate(preloadSize = 2, prefetchOnActivate = true)
+
+        val activation = gate.activate(7, 20)
+
+        assertEquals(listOf(8), activation.prefetchIndexes)
+    }
+
+    @Test
     fun `selection advances prefetch window after first page is displayed`() {
         val gate = PageLoadGate(preloadSize = 4)
         assertEquals(emptyList<Int>(), gate.activate(2, 20).prefetchIndexes)

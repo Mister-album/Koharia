@@ -2,8 +2,10 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -83,6 +85,7 @@ class PagerPageHolder(
         renderJob?.cancel()
         renderJob = null
         clearPairViews()
+        recycle()
         scope.cancel()
     }
 
@@ -201,7 +204,7 @@ class PagerPageHolder(
     }
 
     private fun scheduleRender() {
-        if (slot.pages.any { it.stream == null }) return
+        if (slot.pages.any { it.status != Page.State.Ready || (it.stream == null && it.bitmap == null) }) return
         renderJob?.cancel()
         renderJob = scope.launch { renderPages() }
     }
@@ -209,91 +212,129 @@ class PagerPageHolder(
     private suspend fun renderPages() {
         progressIndicator?.setProgress(0)
         failedPage = null
-        var streamPage: ReaderPage? = null
-        val pageBytes = try {
+        var contentPage: ReaderPage? = null
+        val pageContents = linkedMapOf<ReaderPage, PageContent>()
+        try {
             withIOContext {
-                slot.pages.associateWith { physicalPage ->
-                    streamPage = physicalPage
-                    val stream = checkNotNull(physicalPage.stream)
-                    stream().use { Buffer().apply { readFrom(it) } }
-                }
-            }
-        } catch (error: Throwable) {
-            if (error is CancellationException) throw error
-            logcat(LogPriority.ERROR, error)
-            setError(error, streamPage ?: page)
-            return
-        }
-
-        if (viewer.config.doublePages) {
-            val classifications = withIOContext {
-                pageBytes.mapValues { (_, source) ->
-                    try {
-                        classify(source)
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (_: Exception) {
-                        ReaderPage.SpreadInfo.UNKNOWN
+                slot.pages.forEach { physicalPage ->
+                    contentPage = physicalPage
+                    pageContents[physicalPage] = when {
+                        physicalPage is InsertPage -> {
+                            val parentContent = pageContents[physicalPage.parent]
+                            if (parentContent is PageContent.Rendered) {
+                                PageContent.Rendered(
+                                    checkNotNull(parentContent.peek().copy(Bitmap.Config.ARGB_8888, true)),
+                                )
+                            } else {
+                                loadContent(physicalPage)
+                            }
+                        }
+                        else -> loadContent(physicalPage)
                     }
                 }
             }
-            val layoutChanged = withUIContext { viewer.onPagesClassified(classifications) }
-            if (layoutChanged) return
-            withUIContext { viewer.onPagesPrepared(slot) }
-        }
 
-        val second = extraPage
-        if (second == null) {
-            renderSingle(pageBytes.getValue(page))
-            return
-        }
-
-        val firstBytes = pageBytes.getValue(page)
-        val secondBytes = pageBytes.getValue(second)
-        renderTiledPair(firstBytes, secondBytes)
-    }
-
-    private fun classify(source: BufferedSource): ReaderPage.SpreadInfo {
-        val isAnimated = ImageUtil.isAnimated(source)
-        val decoder = ImageDecoder.newInstance(source.peek().inputStream())
-            ?: return if (isAnimated) {
-                ReaderPage.SpreadInfo(ReaderPage.SpreadKind.ANIMATED)
-            } else {
-                ReaderPage.SpreadInfo.UNKNOWN
+            if (viewer.config.doublePages) {
+                val classifications = withIOContext {
+                    pageContents.mapValues { (_, content) ->
+                        try {
+                            classify(content)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                            ReaderPage.SpreadInfo.UNKNOWN
+                        }
+                    }
+                }
+                val layoutChanged = withUIContext { viewer.onPagesClassified(classifications) }
+                if (layoutChanged) return
+                withUIContext { viewer.onPagesPrepared(slot) }
             }
-        return try {
-            val width = decoder.width
-            val height = decoder.height
-            val kind = when {
-                isAnimated -> ReaderPage.SpreadKind.ANIMATED
-                width > height -> ReaderPage.SpreadKind.WIDE
-                else -> ReaderPage.SpreadKind.PAIRABLE
+
+            val second = extraPage
+            if (second == null) {
+                renderSingle(pageContents.getValue(page))
+                return
             }
-            ReaderPage.SpreadInfo(kind, width, height)
+
+            renderTiledPair(pageContents.getValue(page), pageContents.getValue(second))
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            logcat(LogPriority.ERROR, error)
+            setError(error, contentPage ?: page)
         } finally {
-            decoder.recycle()
+            pageContents.values.forEach(PageContent::recycle)
         }
     }
 
-    private suspend fun renderSingle(sourceBuffer: Buffer) {
-        val source = withIOContext { process(page, sourceBuffer) }
-        val isAnimated = ImageUtil.isAnimatedAndSupported(source)
-        val background = if (!isAnimated && viewer.config.automaticBackground) {
-            withIOContext { ImageUtil.chooseBackground(context, source.peek().inputStream()) }
-        } else {
-            null
-        }
-        withUIContext {
-            clearPairViews()
-            setImage(source, isAnimated, imageConfig(landscapeZoom = viewer.config.landscapeZoom))
-            if (!isAnimated) pageBackground = background
-            removeErrorLayout()
+    private fun loadContent(physicalPage: ReaderPage): PageContent {
+        return physicalPage.bitmap?.invoke()?.let(PageContent::Rendered)
+            ?: physicalPage.stream?.invoke()?.use { PageContent.Encoded(Buffer().apply { readFrom(it) }) }
+            ?: error("Reader page has no content")
+    }
+
+    private fun classify(content: PageContent): ReaderPage.SpreadInfo {
+        return when (content) {
+            is PageContent.Rendered -> {
+                val bitmap = content.peek()
+                ReaderPage.SpreadInfo(
+                    kind = if (bitmap.width > bitmap.height) {
+                        ReaderPage.SpreadKind.WIDE
+                    } else {
+                        ReaderPage.SpreadKind.PAIRABLE
+                    },
+                    width = bitmap.width,
+                    height = bitmap.height,
+                )
+            }
+            is PageContent.Encoded -> {
+                val isAnimated = ImageUtil.isAnimated(content.source)
+                val decoder = ImageDecoder.newInstance(content.source.peek().inputStream())
+                    ?: return if (isAnimated) {
+                        ReaderPage.SpreadInfo(ReaderPage.SpreadKind.ANIMATED)
+                    } else {
+                        ReaderPage.SpreadInfo.UNKNOWN
+                    }
+                try {
+                    val width = decoder.width
+                    val height = decoder.height
+                    val kind = when {
+                        isAnimated -> ReaderPage.SpreadKind.ANIMATED
+                        width > height -> ReaderPage.SpreadKind.WIDE
+                        else -> ReaderPage.SpreadKind.PAIRABLE
+                    }
+                    ReaderPage.SpreadInfo(kind, width, height)
+                } finally {
+                    decoder.recycle()
+                }
+            }
         }
     }
 
-    private suspend fun renderTiledPair(firstSource: Buffer, secondSource: Buffer) {
-        val firstBackground = automaticBackground(firstSource)
-        val secondBackground = automaticBackground(secondSource)
+    private suspend fun renderSingle(content: PageContent) {
+        val processed = withIOContext { process(page, content) }
+        try {
+            val isAnimated = processed is PageContent.Encoded && ImageUtil.isAnimatedAndSupported(processed.source)
+            val background = if (!isAnimated) automaticBackground(processed) else null
+            withUIContext {
+                clearPairViews()
+                displayContent(
+                    view = this@PagerPageHolder,
+                    content = processed,
+                    isAnimated = isAnimated,
+                    config = imageConfig(landscapeZoom = viewer.config.landscapeZoom),
+                )
+                if (!isAnimated) pageBackground = background
+                removeErrorLayout()
+            }
+        } finally {
+            processed.recycle()
+        }
+    }
+
+    private suspend fun renderTiledPair(firstContent: PageContent, secondContent: PageContent) {
+        val firstBackground = automaticBackground(firstContent)
+        val secondBackground = automaticBackground(secondContent)
         withUIContext {
             recycle()
             clearPairViews()
@@ -303,37 +344,49 @@ class PagerPageHolder(
 
             val physicalPages = if (firstPageOnLeft()) {
                 listOf(
-                    Triple(page, firstSource, firstBackground),
-                    Triple(checkNotNull(extraPage), secondSource, secondBackground),
+                    Triple(page, firstContent, firstBackground),
+                    Triple(checkNotNull(extraPage), secondContent, secondBackground),
                 )
             } else {
                 listOf(
-                    Triple(checkNotNull(extraPage), secondSource, secondBackground),
-                    Triple(page, firstSource, firstBackground),
+                    Triple(checkNotNull(extraPage), secondContent, secondBackground),
+                    Triple(page, firstContent, firstBackground),
                 )
             }
             val container = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
             }
-            val children = physicalPages.map { (physicalPage, source, background) ->
-                ReaderPageImageView(
-                    context = context,
-                    basePreferences = viewer.activity.basePreferences,
-                ).apply {
-                    onImageLoaded = {
-                        displayedPairViews++
-                        if (displayedPairViews == physicalPages.size && !spreadDisplayed) {
-                            spreadDisplayed = true
-                            progressIndicator?.hide()
-                            viewer.onTransitionTargetReady(slot)
-                            viewer.activity.onPagesDisplayed(slot.pages)
+            val children = mutableListOf<ReaderPageImageView>()
+            try {
+                physicalPages.forEach { (physicalPage, content, background) ->
+                    children += ReaderPageImageView(
+                        context = context,
+                        basePreferences = viewer.activity.basePreferences,
+                    ).apply {
+                        onImageLoaded = {
+                            displayedPairViews++
+                            if (displayedPairViews == physicalPages.size && !spreadDisplayed) {
+                                spreadDisplayed = true
+                                progressIndicator?.hide()
+                                viewer.onTransitionTargetReady(slot)
+                                viewer.activity.onPagesDisplayed(slot.pages)
+                            }
                         }
+                        onImageLoadError = { error -> setError(error, physicalPage) }
+                        onScaleChanged = { viewer.activity.hideMenu() }
+                        pageBackground = background
+                        displayContent(
+                            view = this,
+                            content = content,
+                            isAnimated = false,
+                            config = imageConfig(landscapeZoom = false),
+                            cloneEncodedSource = true,
+                        )
                     }
-                    onImageLoadError = { error -> setError(error, physicalPage) }
-                    onScaleChanged = { viewer.activity.hideMenu() }
-                    pageBackground = background
-                    setImage(source.clone(), false, imageConfig(landscapeZoom = false))
                 }
+            } catch (error: Throwable) {
+                children.forEach(ReaderPageImageView::recycle)
+                throw error
             }
             children.forEach { child ->
                 container.addView(child, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
@@ -345,10 +398,15 @@ class PagerPageHolder(
         }
     }
 
-    private suspend fun automaticBackground(source: BufferedSource) = if (viewer.config.automaticBackground) {
-        withIOContext { ImageUtil.chooseBackground(context, source.peek().inputStream()) }
-    } else {
+    private suspend fun automaticBackground(content: PageContent) = if (!viewer.config.automaticBackground) {
         null
+    } else {
+        withIOContext {
+            when (content) {
+                is PageContent.Encoded -> ImageUtil.chooseBackground(context, content.source.peek().inputStream())
+                is PageContent.Rendered -> ImageUtil.chooseBackground(context, content.peek())
+            }
+        }
     }
 
     private fun firstPageOnLeft(): Boolean = DoublePagePlacement.firstPageOnLeft(
@@ -363,6 +421,66 @@ class PagerPageHolder(
         zoomStartPosition = viewer.config.imageZoomType,
         landscapeZoom = landscapeZoom,
     )
+
+    private fun displayContent(
+        view: ReaderPageImageView,
+        content: PageContent,
+        isAnimated: Boolean,
+        config: Config,
+        cloneEncodedSource: Boolean = false,
+    ) {
+        when (content) {
+            is PageContent.Encoded -> {
+                val source = if (cloneEncodedSource) content.source.peek() else content.source
+                view.setImage(source, isAnimated, config)
+            }
+            is PageContent.Rendered -> {
+                view.setImage(BitmapDrawable(view.resources, content.take()), config)
+            }
+        }
+    }
+
+    private fun process(physicalPage: ReaderPage, content: PageContent): PageContent {
+        return when (content) {
+            is PageContent.Encoded -> PageContent.Encoded(process(physicalPage, content.source))
+            is PageContent.Rendered -> PageContent.Rendered(process(physicalPage, content.take()))
+        }
+    }
+
+    private fun process(physicalPage: ReaderPage, source: Bitmap): Bitmap {
+        var ownedBitmap = source
+        try {
+            val processed = when {
+                viewer.config.automaticallySplitsWidePages && physicalPage is InsertPage -> {
+                    ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+                }
+                viewer.config.automaticallySplitsWidePages && ownedBitmap.width > ownedBitmap.height -> {
+                    onPageSplit(physicalPage)
+                    ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+                }
+                viewer.config.dualPageRotateToFit && ownedBitmap.width > ownedBitmap.height -> {
+                    val rotation = if (viewer.config.dualPageRotateToFitInvert) -90f else 90f
+                    ImageUtil.rotateImage(ownedBitmap, rotation)
+                }
+                viewer.config.dualPageSplit && physicalPage is InsertPage -> {
+                    ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+                }
+                viewer.config.dualPageSplit && ownedBitmap.width > ownedBitmap.height -> {
+                    onPageSplit(physicalPage)
+                    ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+                }
+                else -> ownedBitmap
+            }
+            if (processed !== ownedBitmap) {
+                ownedBitmap.recycle()
+                ownedBitmap = processed
+            }
+            return ownedBitmap
+        } catch (error: Throwable) {
+            ownedBitmap.recycle()
+            throw error
+        }
+    }
 
     private fun process(physicalPage: ReaderPage, imageSource: BufferedSource): BufferedSource {
         if (viewer.config.automaticallySplitsWidePages) {
@@ -386,6 +504,10 @@ class PagerPageHolder(
     }
 
     private fun splitInHalf(physicalPage: ReaderPage, imageSource: BufferedSource): BufferedSource {
+        return ImageUtil.splitInHalf(imageSource, splitSide(physicalPage))
+    }
+
+    private fun splitSide(physicalPage: ReaderPage): ImageUtil.Side {
         var side = when {
             viewer is L2RPagerViewer && physicalPage is InsertPage -> ImageUtil.Side.RIGHT
             viewer !is L2RPagerViewer && physicalPage is InsertPage -> ImageUtil.Side.LEFT
@@ -395,7 +517,7 @@ class PagerPageHolder(
         if (viewer.config.dualPageInvert) {
             side = if (side == ImageUtil.Side.RIGHT) ImageUtil.Side.LEFT else ImageUtil.Side.RIGHT
         }
-        return ImageUtil.splitInHalf(imageSource, side)
+        return side
     }
 
     private fun onPageSplit(physicalPage: ReaderPage) {
@@ -465,5 +587,26 @@ class PagerPageHolder(
         pairContainer = null
         pairViews = emptyList()
         displayedPairViews = 0
+    }
+
+    private sealed interface PageContent {
+        fun recycle()
+
+        class Encoded(val source: BufferedSource) : PageContent {
+            override fun recycle() = Unit
+        }
+
+        class Rendered(bitmap: Bitmap) : PageContent {
+            private var bitmap: Bitmap? = bitmap
+
+            fun peek(): Bitmap = checkNotNull(bitmap)
+
+            fun take(): Bitmap = checkNotNull(bitmap).also { bitmap = null }
+
+            override fun recycle() {
+                bitmap?.takeUnless(Bitmap::isRecycled)?.recycle()
+                bitmap = null
+            }
+        }
     }
 }

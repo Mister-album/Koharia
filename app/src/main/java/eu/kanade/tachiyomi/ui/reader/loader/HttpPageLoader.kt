@@ -49,7 +49,12 @@ internal class HttpPageLoader(
     /** A priority queue whose concurrency is selected by the connection provider. */
     private val queue = PriorityBlockingQueue<PriorityPage>()
 
-    private val pageLoadGate = PageLoadGate(preloadSize = 2)
+    // Start the next-page request as soon as the active page is selected. The active page still
+    // wins in the priority queue, while the spare connection can warm the next page.
+    private val pageLoadGate = PageLoadGate(
+        preloadSize = 2,
+        prefetchOnActivate = connectionPageAdapter != null,
+    )
     private val schedulerLock = Any()
     private val scheduledPages = Collections.newSetFromMap(IdentityHashMap<ReaderPage, Boolean>())
     private val activeLoads = mutableSetOf<ActivePageLoad>()
@@ -224,9 +229,7 @@ internal class HttpPageLoader(
                     (queued.priority == PriorityPage.DEFAULT && queued.page !in activeSet)
             }
             activePages.forEach { enqueuePageLocked(it, PriorityPage.DEFAULT) }
-            if (!needsUrgentLoad) {
-                enqueuePrefetchWindowLocked(chapterPages, activation.prefetchIndexes)
-            }
+            enqueuePrefetchWindowLocked(chapterPages, activation.prefetchIndexes)
         }
         if (activation.changed) {
             logcat {
@@ -265,11 +268,11 @@ internal class HttpPageLoader(
         val maxDistance = activePages.size * 2
         val staleLoads = synchronized(schedulerLock) {
             activeLoads.filter {
-                it.priority != PriorityPage.RETRY && it.page !in activePages && it.job.isActive &&
-                    (
-                        it.page.index < firstActiveIndex - maxDistance ||
-                            it.page.index > lastActiveIndex + maxDistance
-                        )
+                val outsideActiveWindow = it.page.index < firstActiveIndex - maxDistance ||
+                    it.page.index > lastActiveIndex + maxDistance
+                it.page !in activePages && it.job.isActive &&
+                    outsideActiveWindow &&
+                    it.priority != PriorityPage.RETRY
             }
         }
         staleLoads.forEach { load ->
@@ -359,12 +362,17 @@ internal class HttpPageLoader(
         }
 
         val queuedPage = if (page.status == Page.State.Queue && pageLoadGate.isActive(page.index)) {
-            preemptPrefetchFor(page, reason = "active-page-load")
+            val alreadyScheduled = synchronized(schedulerLock) { scheduledPages.contains(page) }
+            if (!alreadyScheduled) {
+                preemptPrefetchFor(page, reason = "active-page-load")
+            }
             synchronized(schedulerLock) {
                 val activePages = chapter.pages
                     ?.filterTo(linkedSetOf()) { pageLoadGate.isActive(it.index) }
                     .orEmpty()
-                removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT && it.page !in activePages }
+                if (!alreadyScheduled) {
+                    removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT && it.page !in activePages }
+                }
                 enqueuePageLocked(page, PriorityPage.DEFAULT)
             }
         } else {

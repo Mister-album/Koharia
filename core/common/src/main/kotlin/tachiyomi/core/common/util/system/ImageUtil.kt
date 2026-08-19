@@ -137,28 +137,34 @@ object ImageUtil {
      */
     fun splitInHalf(imageSource: BufferedSource, side: Side): BufferedSource {
         val imageBitmap = BitmapFactory.decodeStream(imageSource.inputStream())
-        val height = imageBitmap.height
-        val width = imageBitmap.width
+        val half = splitInHalf(imageBitmap, side)
 
-        val singlePage = Rect(0, 0, width / 2, height)
-
-        val half = createBitmap(width / 2, height)
-        val part = when (side) {
-            Side.RIGHT -> Rect(width - width / 2, 0, width, height)
-            Side.LEFT -> Rect(0, 0, width / 2, height)
-        }
-        half.applyCanvas {
-            drawBitmap(imageBitmap, part, singlePage, null)
-        }
         val output = Buffer()
         half.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
 
         return output
     }
 
+    fun splitInHalf(imageBitmap: Bitmap, side: Side): Bitmap {
+        val height = imageBitmap.height
+        val width = imageBitmap.width
+
+        val singlePage = Rect(0, 0, width / 2, height)
+        val part = when (side) {
+            Side.RIGHT -> Rect(width - width / 2, 0, width, height)
+            Side.LEFT -> Rect(0, 0, width / 2, height)
+        }
+
+        return createBitmap(width / 2, height).apply {
+            applyCanvas {
+                drawBitmap(imageBitmap, part, singlePage, null)
+            }
+        }
+    }
+
     fun rotateImage(imageSource: BufferedSource, degrees: Float): BufferedSource {
         val imageBitmap = BitmapFactory.decodeStream(imageSource.inputStream())
-        val rotated = rotateBitMap(imageBitmap, degrees)
+        val rotated = rotateImage(imageBitmap, degrees)
 
         val output = Buffer()
         rotated.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
@@ -166,40 +172,41 @@ object ImageUtil {
         return output
     }
 
-    private fun rotateBitMap(bitmap: Bitmap, degrees: Float): Bitmap {
+    fun rotateImage(bitmap: Bitmap, degrees: Float): Bitmap {
         val matrix = Matrix().apply { postRotate(degrees) }
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
-    /**
-     * Split the image into left and right parts, then merge them into a new image.
-     */
+    /** Split the image into left and right parts, then merge them into a new image. */
     fun splitAndMerge(imageSource: BufferedSource, upperSide: Side): BufferedSource {
         val imageBitmap = BitmapFactory.decodeStream(imageSource.inputStream())
-        val height = imageBitmap.height
-        val width = imageBitmap.width
-
-        val result = createBitmap(width / 2, height * 2)
-        result.applyCanvas {
-            // right -> upper
-            val rightPart = when (upperSide) {
-                Side.RIGHT -> Rect(width - width / 2, 0, width, height)
-                Side.LEFT -> Rect(0, 0, width / 2, height)
-            }
-            val upperPart = Rect(0, 0, width / 2, height)
-            drawBitmap(imageBitmap, rightPart, upperPart, null)
-            // left -> bottom
-            val leftPart = when (upperSide) {
-                Side.LEFT -> Rect(width - width / 2, 0, width, height)
-                Side.RIGHT -> Rect(0, 0, width / 2, height)
-            }
-            val bottomPart = Rect(0, height, width / 2, height * 2)
-            drawBitmap(imageBitmap, leftPart, bottomPart, null)
-        }
+        val result = splitAndMerge(imageBitmap, upperSide)
 
         val output = Buffer()
         result.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
         return output
+    }
+
+    fun splitAndMerge(imageBitmap: Bitmap, upperSide: Side): Bitmap {
+        val height = imageBitmap.height
+        val width = imageBitmap.width
+
+        return createBitmap(width / 2, height * 2).apply {
+            applyCanvas {
+                val rightPart = when (upperSide) {
+                    Side.RIGHT -> Rect(width - width / 2, 0, width, height)
+                    Side.LEFT -> Rect(0, 0, width / 2, height)
+                }
+                val upperPart = Rect(0, 0, width / 2, height)
+                drawBitmap(imageBitmap, rightPart, upperPart, null)
+                val leftPart = when (upperSide) {
+                    Side.LEFT -> Rect(width - width / 2, 0, width, height)
+                    Side.RIGHT -> Rect(0, 0, width / 2, height)
+                }
+                val bottomPart = Rect(0, height, width / 2, height * 2)
+                drawBitmap(imageBitmap, leftPart, bottomPart, null)
+            }
+        }
     }
 
     enum class Side {
@@ -346,30 +353,43 @@ object ImageUtil {
         val image = decoder?.decode()
         decoder?.recycle()
 
+        if (image == null) return ColorDrawable(Color.WHITE)
+        return chooseBackground(context, image.width, image.height) { x, y -> image[x, y] }
+    }
+
+    fun chooseBackground(context: Context, bitmap: Bitmap): Drawable {
+        return chooseBackground(context, bitmap.width, bitmap.height, bitmap::getPixel)
+    }
+
+    private inline fun chooseBackground(
+        context: Context,
+        width: Int,
+        height: Int,
+        pixelAt: (Int, Int) -> Int,
+    ): Drawable {
         val whiteColor = Color.WHITE
-        if (image == null) return ColorDrawable(whiteColor)
-        if (image.width < 50 || image.height < 50) {
+        if (width < 50 || height < 50) {
             return ColorDrawable(whiteColor)
         }
 
         val top = 5
-        val bot = image.height - 5
-        val left = (image.width * 0.0275).toInt()
-        val right = image.width - left
-        val midX = image.width / 2
-        val midY = image.height / 2
-        val offsetX = (image.width * 0.01).toInt()
+        val bot = height - 5
+        val left = (width * 0.0275).toInt()
+        val right = width - left
+        val midX = width / 2
+        val midY = height / 2
+        val offsetX = (width * 0.01).toInt()
         val leftOffsetX = left - offsetX
         val rightOffsetX = right + offsetX
 
-        val topLeftPixel = image[left, top]
-        val topRightPixel = image[right, top]
-        val midLeftPixel = image[left, midY]
-        val midRightPixel = image[right, midY]
-        val topCenterPixel = image[midX, top]
-        val botLeftPixel = image[left, bot]
-        val bottomCenterPixel = image[midX, bot]
-        val botRightPixel = image[right, bot]
+        val topLeftPixel = pixelAt(left, top)
+        val topRightPixel = pixelAt(right, top)
+        val midLeftPixel = pixelAt(left, midY)
+        val midRightPixel = pixelAt(right, midY)
+        val topCenterPixel = pixelAt(midX, top)
+        val botLeftPixel = pixelAt(left, bot)
+        val bottomCenterPixel = pixelAt(midX, bot)
+        val botRightPixel = pixelAt(right, bot)
 
         val topLeftIsDark = topLeftPixel.isDark()
         val topRightIsDark = topRightPixel.isDark()
@@ -423,9 +443,9 @@ object ImageUtil {
             var blackStreak = false
             var whiteStreak = false
             val notOffset = x == left || x == right
-            inner@ for ((index, y) in (0..<image.height step image.height / 25).withIndex()) {
-                val pixel = image[x, y]
-                val pixelOff = image[x + (if (x < image.width / 2) -offsetX else offsetX), y]
+            inner@ for ((index, y) in (0..<height step height / 25).withIndex()) {
+                val pixel = pixelAt(x, y)
+                val pixelOff = pixelAt(x + (if (x < width / 2) -offsetX else offsetX), y)
                 if (pixel.isWhite()) {
                     whitePixelsStreak++
                     whitePixels++
@@ -516,8 +536,8 @@ object ImageUtil {
         val topCornersIsDark = topLeftIsDark && topRightIsDark
         val botCornersIsDark = botLeftIsDark && botRightIsDark
 
-        val topOffsetCornersIsDark = image[leftOffsetX, top].isDark() && image[rightOffsetX, top].isDark()
-        val botOffsetCornersIsDark = image[leftOffsetX, bot].isDark() && image[rightOffsetX, bot].isDark()
+        val topOffsetCornersIsDark = pixelAt(leftOffsetX, top).isDark() && pixelAt(rightOffsetX, top).isDark()
+        val botOffsetCornersIsDark = pixelAt(leftOffsetX, bot).isDark() && pixelAt(rightOffsetX, bot).isDark()
 
         val gradient = when {
             darkBG && botCornersIsWhite -> {

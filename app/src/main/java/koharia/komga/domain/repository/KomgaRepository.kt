@@ -276,8 +276,17 @@ class KomgaRepository(
             val pageDtos = apiClient.parse<List<PageDto>>(it)
             ConnectionPageList(
                 pages = pageDtos.map { page ->
-                    val url = "${response.request.url}/${page.number}" +
-                        if (page.mediaType !in SUPPORTED_IMAGE_TYPES) "?convert=png" else ""
+                    val url = response.request.url.newBuilder()
+                        .addPathSegment(page.number.toString())
+                        .apply {
+                            // Komga supports JPEG/PNG conversion for server-rendered pages. JPEG
+                            // keeps PDF page transfers substantially smaller than PNG.
+                            if (page.mediaType !in SUPPORTED_IMAGE_TYPES) {
+                                addQueryParameter("convert", "jpeg")
+                            }
+                        }
+                        .build()
+                        .toString()
                     Page(page.number, imageUrl = url)
                 },
                 metadata = pageDtos.associate { page ->
