@@ -260,7 +260,10 @@ actual class LocalSource(
         val chapters = fileSystem.getFilesInMangaDirectory(manga.url)
             // Only keep supported formats
             .filterNot { it.name.orEmpty().startsWith('.') }
-            .filter { it.isDirectory || Archive.isSupported(it) || it.extension.equals("epub", true) }
+            .filter {
+                it.isDirectory || Archive.isSupported(it) ||
+                    it.extension.orEmpty().lowercase() in SUPPORTED_FILE_EXTENSIONS
+            }
             .map { chapterFile ->
                 SChapter.create().apply {
                     url = "${manga.url}/${chapterFile.name}"
@@ -275,14 +278,18 @@ actual class LocalSource(
                         .toFloat()
 
                     val format = Format.valueOf(chapterFile)
-                    if (format is Format.Epub) {
-                        format.file.epubReader(context).use { epub ->
-                            epub.fillMetadata(manga, this)
+                    when (format) {
+                        is Format.Epub -> {
+                            format.file.epubReader(context).use { epub ->
+                                epub.fillMetadata(manga, this)
+                            }
                         }
-                    } else {
-                        getComicInfoForChapter(chapterFile) { stream ->
-                            setChapterDetailsFromComicInfoFile(stream, this)
+                        is Format.Directory, is Format.Archive -> {
+                            getComicInfoForChapter(chapterFile) { stream ->
+                                setChapterDetailsFromComicInfoFile(stream, this)
+                            }
                         }
+                        is Format.Image, is Format.Text, is Format.Mobi, is Format.Djvu -> Unit
                     }
                 }
             }
@@ -355,6 +362,8 @@ actual class LocalSource(
                         entry?.let { coverManager.update(manga, epub.getInputStream(it)!!) }
                     }
                 }
+                is Format.Image -> coverManager.update(manga, format.file.openInputStream())
+                is Format.Text, is Format.Mobi, is Format.Djvu -> null
             }
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e) { "Error updating cover for ${manga.title}" }
@@ -367,6 +376,10 @@ actual class LocalSource(
         fun helpUrl(context: Context) = DocumentationUrls.storage(context)
 
         private val LATEST_THRESHOLD = 7.days.inWholeMilliseconds
+        private val SUPPORTED_FILE_EXTENSIONS = setOf(
+            "jpg", "jpeg", "png", "gif", "webp", "avif", "heif", "heic", "jxl",
+            "epub", "txt", "mobi", "prc", "azw", "azw3", "djvu", "djv",
+        )
     }
 }
 

@@ -105,6 +105,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private var pendingPageMove: PendingPageMove? = null
 
+    /** Keeps the reader controls visible while restoring a page after a document relayout. */
+    private var suppressMenuHidingForNextSelection = false
+
     private var pendingProgressCommitAnchor: ReaderPage? = null
 
     private var awaitingImageRefresh = false
@@ -160,7 +163,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private val pagerListener = object : ViewPager.SimpleOnPageChangeListener() {
         override fun onPageSelected(position: Int) {
-            if (!activity.isScrollingThroughPages) {
+            val suppressMenuHiding = suppressMenuHidingForNextSelection
+            suppressMenuHidingForNextSelection = false
+            if (!suppressMenuHiding && !activity.isScrollingThroughPages) {
                 activity.hideMenu()
             }
             val pendingMove = pendingPageMove?.takeIf { it.position == position }
@@ -519,7 +524,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     override fun restorePage(page: ReaderPage) {
         pendingProgressCommitAnchor = null
+        val targetPosition = adapter.positionOf(page)
+        suppressMenuHidingForNextSelection = targetPosition >= 0 && targetPosition != pager.currentItem
         moveToPage(page, PageChangeCause.RESTORE)
+        if (targetPosition == pager.currentItem) {
+            suppressMenuHidingForNextSelection = false
+        }
     }
 
     private fun moveToPage(page: ReaderPage, cause: PageChangeCause) {

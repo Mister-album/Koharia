@@ -175,8 +175,9 @@ internal fun EpubReaderBottomArea(
     onToggleNightMode: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleMore: () -> Unit,
-    onOpenFontPicker: () -> Unit,
+    onOpenFontPicker: (() -> Unit)?,
     morePanel: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val backgroundColor = MaterialTheme.colorScheme
         .surfaceColorAtElevation(3.dp)
@@ -185,7 +186,7 @@ internal fun EpubReaderBottomArea(
         totalVisualPages?.let { totalPages -> currentPage to totalPages }
     }
 
-    Column {
+    Column(modifier = modifier) {
         AnimatedVisibility(
             visible = visible,
             enter = slideInVertically(readerBarsSlideAnimationSpec) { it } + fadeIn(readerBarsFadeAnimationSpec),
@@ -378,6 +379,87 @@ internal fun EpubReaderMorePanel(
             )
         }
     }
+}
+
+@Composable
+internal fun EpubDocumentMorePanel(
+    onShowBookInfo: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        MoreActionRow(
+            icon = Icons.AutoMirrored.Outlined.MenuBook,
+            title = stringResource(MR.strings.epub_reader_book_info),
+            onClick = onShowBookInfo,
+        )
+    }
+}
+
+@Composable
+internal fun DocumentBookInfoDialog(
+    seriesTitle: String?,
+    bookTitle: String?,
+    format: String,
+    fileName: String?,
+    fileSizeBytes: Long?,
+    currentPage: Int,
+    totalPages: Int,
+    onDismissRequest: () -> Unit,
+) {
+    val context = LocalContext.current
+    val progressPercent = if (totalPages > 0) {
+        (currentPage * 100f / totalPages).roundToInt().coerceIn(0, 100)
+    } else {
+        0
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text(stringResource(MR.strings.epub_reader_book_info)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                BookInfoItem(
+                    label = stringResource(MR.strings.epub_reader_book_info_series),
+                    value = seriesTitle.orEmpty(),
+                )
+                BookInfoItem(
+                    label = stringResource(MR.strings.epub_reader_book_info_book),
+                    value = bookTitle.orEmpty(),
+                )
+                BookInfoItem(
+                    label = stringResource(MR.strings.epub_reader_book_info_format),
+                    value = format,
+                )
+                fileName?.takeIf(String::isNotBlank)?.let { value ->
+                    BookInfoItem(
+                        label = stringResource(MR.strings.epub_reader_book_info_file_name),
+                        value = value,
+                    )
+                }
+                fileSizeBytes?.takeIf { it > 0L }?.let { value ->
+                    BookInfoItem(
+                        label = stringResource(MR.strings.epub_reader_book_info_file_size),
+                        value = Formatter.formatFileSize(context, value),
+                    )
+                }
+                BookInfoItem(
+                    label = stringResource(MR.strings.epub_reader_book_info_reading_progress),
+                    value = "$progressPercent%",
+                )
+                BookInfoItem(
+                    label = stringResource(MR.strings.epub_reader_book_info_pages),
+                    value = "$currentPage / $totalPages",
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text(stringResource(MR.strings.action_ok))
+            }
+        },
+    )
 }
 
 @Composable

@@ -1,9 +1,11 @@
 package koharia.connection
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 
 object ConnectionChapterMetadata {
     private const val SIZE_BYTES = "sizeBytes"
@@ -15,6 +17,14 @@ object ConnectionChapterMetadata {
     fun sizeBytes(memo: JsonObject): Long? = memo.long(SIZE_BYTES)?.takeIf { it > 0L }
 
     fun pagesCount(memo: JsonObject): Int? = memo.long(PAGES_COUNT)?.toInt()?.takeIf { it > 0 }
+
+    fun withPagesCount(memo: JsonObject, pagesCount: Int): JsonObject {
+        if (pagesCount <= 0 || pagesCount(memo) == pagesCount) return memo
+        return buildJsonObject {
+            memo.forEach { (key, value) -> put(key, value) }
+            put(PAGES_COUNT, pagesCount)
+        }
+    }
 
     fun publicationVersion(memo: JsonObject): String? {
         val fileHash = memo.string(FILE_HASH)

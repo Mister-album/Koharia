@@ -111,7 +111,7 @@ data class LocalLibraryItem(
 
 @Serializable
 data class LocalLibraryIndex(
-    val schemaVersion: Int = 4,
+    val schemaVersion: Int = 5,
     val scannedAt: Long = 0L,
     val items: List<LocalLibraryItem> = emptyList(),
     val pendingChapterRefreshItemKeys: Set<String> = emptySet(),
@@ -435,6 +435,50 @@ internal fun LocalLibraryConfig.bookshelf(id: String): LocalBookshelf? {
 internal fun LocalLibraryConfig.organizationMode(root: LocalLibraryRootConfig): LocalLibraryOrganizationMode {
     val shelfId = root.bookshelfId.ifBlank { this.defaultBookshelfId(root.contentType) }
     return bookshelf(shelfId)?.organizationMode ?: LocalLibraryOrganizationMode.SERIES
+}
+
+internal fun mergeLocalLibraryScanItems(
+    scannedItems: List<LocalLibraryItem>,
+    previousItems: List<LocalLibraryItem>,
+    configuredRootIds: Set<String>,
+    successfulRootIds: Set<String>,
+): List<LocalLibraryItem> {
+    val preservedItems = previousItems.filter { item ->
+        item.rootId in configuredRootIds && item.rootId !in successfulRootIds
+    }
+    return (scannedItems + preservedItems).distinctBy(LocalLibraryItem::itemKey)
+}
+
+internal fun recoverLocalLibraryItems(
+    sourceId: Long,
+    config: LocalLibraryConfig,
+    mangaUrls: Collection<String>,
+): List<LocalLibraryItem> {
+    val rootsById = config.roots.associateBy(LocalLibraryRootConfig::id)
+    return mangaUrls.mapNotNull { url ->
+        val location = LocalLibraryLocator.location(url, sourceId) ?: return@mapNotNull null
+        val root = location.rootId?.let(rootsById::get) ?: return@mapNotNull null
+        val kind = when (config.organizationMode(root)) {
+            LocalLibraryOrganizationMode.SERIES -> LocalLibraryItem.Kind.SERIES
+            LocalLibraryOrganizationMode.INDIVIDUAL_FILES -> LocalLibraryItem.Kind.FILE_ENTRY
+        }
+        LocalLibraryItem(
+            itemKey = LocalLibraryLocator.itemKey(root.id, location.relativePath),
+            rootId = root.id,
+            relativePath = location.relativePath,
+            contentType = root.contentType,
+            kind = kind,
+            format = if (kind == LocalLibraryItem.Kind.SERIES ||
+                location.relativePath == LocalLibraryLocator.ROOT_DIRECTORY_ENTRY
+            ) {
+                "directory"
+            } else {
+                location.relativePath.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            },
+            sizeBytes = 0L,
+            modifiedAt = 0L,
+        )
+    }.distinctBy(LocalLibraryItem::itemKey)
 }
 
 object LocalLibraryLocator {

@@ -1,0 +1,141 @@
+<!doctype html>
+<meta charset="utf-8">
+<script>
+"use strict";
+
+const WASM_URL = "https://koharia.local/djvu_rs_bg.wasm";
+const DOCUMENT_URL = "https://koharia.local/document.djvu";
+const IMPORT_MODULE = "./djvu_rs_bg.js";
+const IMPORT_NAMES = [
+  "__wbg_wasmpixmap_new",
+  "__wbg_length_13032799523c5735",
+  "__wbg_set_5c15d3c5973de97a",
+  "__wbg_new_with_length_5d351ffdb6e3397d",
+  "__wbg___wbindgen_throw_bb96b2010945f0bc",
+  "__wbg_Error_408e67f47ca7b58b",
+  "__wbindgen_init_externref_table",
+  "__wbindgen_cast_0000000000000001",
+];
+
+const state = {
+  status: "idle",
+  error: null,
+  pages: 0,
+  instance: null,
+  memory: null,
+  document: 0,
+  errorPointer: 0,
+  canvas: document.createElement("canvas"),
+};
+
+function imports() {
+  const moduleImports = {};
+  for (const name of IMPORT_NAMES) {
+    moduleImports[name] = () => 0;
+  }
+  return { [IMPORT_MODULE]: moduleImports };
+}
+
+function memoryView() {
+  return new DataView(state.memory.buffer);
+}
+
+function readCString(pointer) {
+  if (!pointer) return null;
+  const bytes = new Uint8Array(state.memory.buffer);
+  let end = pointer;
+  while (end < bytes.length && bytes[end] !== 0) end += 1;
+  return new TextDecoder().decode(bytes.subarray(pointer, end));
+}
+
+function takeError(operation) {
+  const view = memoryView();
+  const code = view.getInt32(state.errorPointer, true);
+  const messagePointer = view.getInt32(state.errorPointer + 4, true);
+  if (code === 0 && messagePointer === 0) return null;
+  const message = readCString(messagePointer);
+  if (messagePointer) state.instance.exports.djvu_error_free(state.errorPointer);
+  view.setInt32(state.errorPointer, 0, true);
+  view.setInt32(state.errorPointer + 4, 0, true);
+  return `DJVU ${operation} failed${message ? `: ${message}` : ""}`;
+}
+
+function requireNoError(operation) {
+  const message = takeError(operation);
+  if (message) throw new Error(message);
+}
+
+async function initialize() {
+  const wasmResponse = await fetch(WASM_URL);
+  if (!wasmResponse.ok) throw new Error(`Unable to load DJVU decoder (${wasmResponse.status})`);
+  const wasmBytes = await wasmResponse.arrayBuffer();
+  const result = await WebAssembly.instantiate(wasmBytes, imports());
+  state.instance = result.instance;
+  state.memory = state.instance.exports.memory;
+  const exports = state.instance.exports;
+  state.errorPointer = exports.__wbindgen_malloc(8, 4);
+  const input = new Uint8Array(await (await fetch(DOCUMENT_URL)).arrayBuffer());
+  const inputPointer = exports.__wbindgen_malloc(input.length, 1);
+  new Uint8Array(state.memory.buffer).set(input, inputPointer);
+  state.document = exports.djvu_doc_open(inputPointer, input.length, state.errorPointer);
+  exports.__wbindgen_free(inputPointer, input.length, 1);
+  requireNoError("open");
+  if (!state.document) throw new Error("DJVU decoder returned an empty document");
+  state.pages = exports.djvu_doc_page_count(state.document);
+  if (state.pages <= 0) throw new Error("DJVU document contains no pages");
+}
+
+function render(index, dpi) {
+  if (state.status !== "ready") throw new Error("DJVU decoder is not ready");
+  const exports = state.instance.exports;
+  const pixmap = exports.djvu_page_render(state.document, index, dpi, state.errorPointer);
+  requireNoError("render");
+  if (!pixmap) throw new Error("DJVU page rendering failed");
+  try {
+    const width = exports.djvu_pixmap_width(pixmap);
+    const height = exports.djvu_pixmap_height(pixmap);
+    const dataPointer = exports.djvu_pixmap_data(pixmap);
+    const dataLength = exports.djvu_pixmap_data_len(pixmap);
+    if (!width || !height || !dataPointer || dataLength !== width * height * 4) {
+      throw new Error("DJVU decoder returned an invalid pixel buffer");
+    }
+    state.canvas.width = width;
+    state.canvas.height = height;
+    const pixels = new Uint8ClampedArray(state.memory.buffer, dataPointer, dataLength);
+    state.canvas.getContext("2d").putImageData(new ImageData(pixels, width, height), 0, 0);
+    return state.canvas.toDataURL("image/jpeg", 0.92);
+  } finally {
+    exports.djvu_pixmap_free(pixmap);
+  }
+}
+
+function close() {
+  if (!state.instance) return;
+  const exports = state.instance.exports;
+  if (state.document) exports.djvu_doc_free(state.document);
+  if (state.errorPointer) exports.__wbindgen_free(state.errorPointer, 8, 4);
+  state.document = 0;
+  state.errorPointer = 0;
+  state.instance = null;
+  state.memory = null;
+  state.status = "closed";
+}
+
+window.kohariaDjvu = {
+  start() {
+    if (state.status !== "idle") return;
+    state.status = "loading";
+    initialize()
+      .then(() => { state.status = "ready"; })
+      .catch((error) => {
+        state.error = String(error && error.message ? error.message : error);
+        state.status = "error";
+      });
+  },
+  status() {
+    return JSON.stringify({ status: state.status, error: state.error, pages: state.pages });
+  },
+  render,
+  close,
+};
+</script>

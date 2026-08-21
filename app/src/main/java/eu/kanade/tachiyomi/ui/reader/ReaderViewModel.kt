@@ -40,17 +40,20 @@ import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.connection.ConnectionRawDownloadAdapter
 import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.connection.isConnectionLibraryEntry
+import koharia.document.DocumentRenderSettings
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.progress.EpubPageProgress
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
@@ -94,6 +97,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.Date
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Presenter used by the activity to perform background operations.
@@ -175,6 +179,13 @@ class ReaderViewModel @JvmOverloads constructor(
      * The chapter loader for the loaded manga. It'll be null until [manga] is set.
      */
     private var loader: ChapterLoader? = null
+
+    private var documentSettingsProvider: () -> DocumentRenderSettings = {
+        DocumentRenderSettings.DEFAULT
+    }
+
+    private var documentRefreshJob: Job? = null
+    private val documentRefreshGeneration = AtomicLong(0L)
 
     /**
      * The time the chapter was started reading
@@ -366,6 +377,61 @@ class ReaderViewModel @JvmOverloads constructor(
         persistReaderSettingsChanges.set(enabled)
     }
 
+    fun setSessionReaderSettingsPersistence(enabled: Boolean) {
+        readerSettingsStore.setPersistChanges(enabled)
+    }
+
+    /** Supplies the activity's session-backed EPUB preferences to document page loaders. */
+    fun setDocumentRenderSettingsProvider(provider: () -> DocumentRenderSettings) {
+        documentSettingsProvider = provider
+    }
+
+    /** Recreates document pages after a typography or theme preference changes. */
+    fun onDocumentLayoutPreferencesChanged() {
+        val readerChapter = getCurrentChapter() ?: return
+        val pageLoader = readerChapter.pageLoader ?: return
+        val generation = documentRefreshGeneration.incrementAndGet()
+        documentRefreshJob?.cancel()
+        documentRefreshJob = viewModelScope.launchIO {
+            val oldPageCount = readerChapter.pages?.size ?: return@launchIO
+            val oldPageIndex = readerChapter.requestedPage.coerceIn(0, (oldPageCount - 1).coerceAtLeast(0))
+            val refreshedPages = pageLoader.refreshPages() ?: return@launchIO
+            if (
+                refreshedPages.isEmpty() ||
+                generation != documentRefreshGeneration.get() ||
+                getCurrentChapter() !== readerChapter
+            ) {
+                return@launchIO
+            }
+
+            refreshedPages.forEach { it.chapter = readerChapter }
+            val newPageIndex = if (oldPageCount <= 1 || refreshedPages.size <= 1) {
+                0
+            } else {
+                (oldPageIndex.toLong() * (refreshedPages.size - 1) / (oldPageCount - 1))
+                    .toInt()
+                    .coerceIn(0, refreshedPages.lastIndex)
+            }
+            val committed = withUIContext {
+                if (
+                    generation == documentRefreshGeneration.get() &&
+                    getCurrentChapter() === readerChapter
+                ) {
+                    readerChapter.requestedPage = newPageIndex
+                    readerChapter.state = ReaderChapter.State.Loaded(refreshedPages)
+                    pageLoader.setActivePage(refreshedPages[newPageIndex])
+                    eventChannel.send(Event.DocumentPagesRefreshed(refreshedPages[newPageIndex]))
+                    true
+                } else {
+                    false
+                }
+            }
+            if (committed && generation == documentRefreshGeneration.get()) {
+                persistDocumentPageCount(readerChapter)
+            }
+        }
+    }
+
     /**
      * Whether this presenter is initialized yet.
      */
@@ -390,7 +456,14 @@ class ReaderViewModel @JvmOverloads constructor(
 
                     val context = Injekt.get<Application>()
                     val source = sourceManager.getOrStub(manga.source)
-                    loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
+                    loader = ChapterLoader(
+                        context = context,
+                        downloadManager = downloadManager,
+                        downloadProvider = downloadProvider,
+                        manga = manga,
+                        source = source,
+                        documentSettingsProvider = { documentSettingsProvider() },
+                    )
 
                     val initialChapter = chapterList.first { chapterId == it.chapter.id }
                     val initialPageIndex = chapterPageIndex.takeIf { it >= 0 }
@@ -424,6 +497,7 @@ class ReaderViewModel @JvmOverloads constructor(
         initialPageIndex: Int? = null,
     ): ViewerChapters {
         loader.loadChapter(chapter, initialPageIndex)
+        persistDocumentPageCount(chapter)
 
         val chapterPos = chapterList.indexOf(chapter)
         val newChapters = ViewerChapters(
@@ -446,6 +520,15 @@ class ReaderViewModel @JvmOverloads constructor(
             }
         }
         return newChapters
+    }
+
+    private suspend fun persistDocumentPageCount(chapter: ReaderChapter) {
+        val chapterId = chapter.chapter.id ?: return
+        val pageCount = chapter.pageLoader?.progressPageCount ?: return
+        val updatedMemo = ConnectionChapterMetadata.withPagesCount(chapter.chapter.memo, pageCount)
+        if (updatedMemo == chapter.chapter.memo) return
+        chapter.chapter.memo = updatedMemo
+        updateChapter.await(ChapterUpdate(id = chapterId, memo = updatedMemo))
     }
 
     /**
@@ -627,6 +710,7 @@ class ReaderViewModel @JvmOverloads constructor(
             "MangaStartup: active images displayed chapterId=${page.chapter.chapter.id} " +
                 "pages=${physicalPages.joinToString { it.number.toString() }}"
         }
+        if (page.chapter.pageLoader?.supportsRemoteProgress == false) return
         if (incognitoMode) return
         val manga = manga ?: return
         val progressAdapter = sourceManager.get(manga.source) as? ConnectionPageProgressAdapter ?: return
@@ -643,6 +727,7 @@ class ReaderViewModel @JvmOverloads constructor(
         manga: Manga,
         readerChapter: ReaderChapter,
     ) {
+        if (readerChapter.pageLoader?.supportsRemoteProgress == false) return
         val chapter = readerChapter.chapter
         val chapterId = chapter.id ?: return
         logcat { "MangaStartup: remote progress check start chapterId=$chapterId" }
@@ -871,6 +956,7 @@ class ReaderViewModel @JvmOverloads constructor(
         pageIndex: Int,
         totalPages: Int,
     ) {
+        if (readerChapter.pageLoader?.supportsRemoteProgress == false) return
         val chapterId = readerChapter.chapter.id ?: return
         if (!canWriteRemoteProgress(chapterId)) {
             logcat(LogPriority.DEBUG) {
@@ -1490,6 +1576,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
     sealed interface Event {
         data object ReloadViewerChapters : Event
+        data class DocumentPagesRefreshed(val page: ReaderPage) : Event
         data object PageChanged : Event
         data class SetOrientation(val orientation: Int) : Event
         data class SetCoverResult(val result: SetAsCoverResult) : Event

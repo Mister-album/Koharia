@@ -1493,6 +1493,7 @@
     <string name="local_library_directory_location">Directory</string>
     <string name="local_library_directory_added">Local directory added</string>
     <string name="local_library_directory_already_added">This directory is already part of the library</string>
+    <string name="local_library_scan_incomplete">Some local library directories could not be read. Existing entries were kept. Check directory access and try again.</string>
     <string name="local_library_permission_failed">Unable to retain access to this directory</string>
     <string name="local_library_write_permission_failed">Write access is required to create the library directories</string>
     <string name="local_library_create_failed">Unable to create the library directory structure</string>

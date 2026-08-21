@@ -6,6 +6,7 @@ import koharia.connection.LibraryMetadataField
 import koharia.connection.LibraryMetadataSuggestion
 import koharia.connection.MetadataFilenameTemplate
 import koharia.connection.MetadataSuggestionSource
+import koharia.media.LocalMediaFormats
 import org.jsoup.nodes.Document
 
 internal data class LocalEmbeddedMetadata(
@@ -476,4 +477,4 @@ private val TRAILING_VOLUME_NUMBER_PATTERN = Regex("""(?:^|[\s._\-–—(])\d{1,
 
 private val SERIES_TITLE_SEPARATOR = Regex("""\s+(?:-|－|–|—|\||·)\s+""")
 
-private val MEDIA_EXTENSIONS = setOf("cbz", "zip", "cbr", "rar", "7z", "tar", "epub", "pdf")
+private val MEDIA_EXTENSIONS = LocalMediaFormats.allExtensions

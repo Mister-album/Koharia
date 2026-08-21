@@ -18,3 +18,6 @@ Koharia-specific modifications include, among other changes:
 Koharia is an independent third-party project and is not affiliated with, endorsed by, or maintained by the Mihon project or the Komga project.
 
 Names of upstream projects are used in this repository only to identify origin, compatibility, or attribution where required.
+
+Additional third-party components:
+- djvu-rs 0.30.0 scalar WASM decoder, MIT License, executed by Android WebView/V8, https://github.com/matyushkin/djvu-rs

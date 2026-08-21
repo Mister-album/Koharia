@@ -14,6 +14,7 @@ import eu.kanade.presentation.library.components.MangaReadProgress
 import eu.kanade.presentation.library.components.MangaReadProgressDisplay
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.util.editCover
+import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionLibraryRefreshAdapter
 import koharia.connection.ConnectionLibraryShelf
 import koharia.connection.ConnectionLibraryShelfAdapter
@@ -32,7 +33,9 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
@@ -47,6 +50,7 @@ class LocalLibraryScreenModel(
     sourcePreferences: SourcePreferences,
     private val mangaRepository: MangaRepository,
     private val getChaptersByMangaId: GetChaptersByMangaId,
+    private val updateChapter: UpdateChapter,
     private val getEpubProgress: GetEpubProgress,
     private val libraryPreferences: LibraryPreferences,
     private val entryOpenManager: LocalLibraryEntryOpenManager,
@@ -152,11 +156,25 @@ class LocalLibraryScreenModel(
             val epubProgression = entry.chapters.firstOrNull()?.id?.let { chapterId ->
                 epubProgressByChapterId[chapterId]?.progression
             }
+            val documentPageCount = entry.chapters.firstOrNull()?.let { chapter ->
+                chapter.memo.let(ConnectionChapterMetadata::pagesCount)
+                    ?: chapter.lastPageRead.takeIf { it > 0L }
+                        ?.let { localSource.documentPageCount(chapter.url) }
+                        ?.also { pageCount ->
+                            updateChapter.await(
+                                ChapterUpdate(
+                                    id = chapter.id,
+                                    memo = ConnectionChapterMetadata.withPagesCount(chapter.memo, pageCount),
+                                ),
+                            )
+                        }
+            }
             buildLocalReadProgress(
                 indexedChapterCount = entry.indexedChapterCount,
                 chapters = entry.chapters,
                 isIndividualFile = entry.isIndividualFile,
                 epubProgression = epubProgression,
+                documentPageCount = documentPageCount,
             )?.let { progress ->
                 entry.manga.url.trimEnd('/') to progress
             }
@@ -368,6 +386,7 @@ internal fun buildLocalReadProgress(
     chapters: List<Chapter>,
     isIndividualFile: Boolean = false,
     epubProgression: Double? = null,
+    documentPageCount: Int? = null,
 ): MangaReadProgress? {
     val totalChapterCount = if (indexedChapterCount > 0) indexedChapterCount else chapters.size
     if (totalChapterCount <= 0) return null
@@ -385,11 +404,18 @@ internal fun buildLocalReadProgress(
                 totalChapterCount = 100,
                 display = MangaReadProgressDisplay.PERCENTAGE,
             )
-            chapter != null && chapter.lastPageRead > 0L -> MangaReadProgress(
-                readCount = chapter.lastPageRead + 1,
-                totalChapterCount = 1,
-                display = MangaReadProgressDisplay.PAGE,
+            documentPageCount != null && chapter != null && chapter.lastPageRead > 0L -> MangaReadProgress(
+                readCount = (((chapter.lastPageRead + 1).toDouble() / documentPageCount) * 100)
+                    .roundToLong()
+                    .coerceIn(0L, 100L),
+                totalChapterCount = 100,
+                display = MangaReadProgressDisplay.PERCENTAGE,
             )
+            // Do not expose a page number as a library progress label. Page counts are loaded
+            // for supported single-file formats before this function is called; if counting
+            // fails, omit the progress until the next refresh rather than showing a misleading
+            // value such as "Page 12".
+            chapter != null && chapter.lastPageRead > 0L -> null
             else -> MangaReadProgress(
                 readCount = 0,
                 totalChapterCount = 100,

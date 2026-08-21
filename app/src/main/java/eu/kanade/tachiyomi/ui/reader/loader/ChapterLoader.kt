@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import koharia.connection.ConnectionLocalFileAdapter
 import koharia.connection.ConnectionPagePublication
 import koharia.connection.ConnectionPublicationAdapter
+import koharia.document.DocumentRenderSettings
 import koharia.epub.cache.EpubCacheManager
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
@@ -32,6 +33,7 @@ class ChapterLoader(
     private val manga: Manga,
     private val source: Source,
     private val epubCacheManager: EpubCacheManager = Injekt.get(),
+    private val documentSettingsProvider: () -> DocumentRenderSettings = { DocumentRenderSettings.DEFAULT },
 ) {
 
     /**
@@ -149,11 +151,13 @@ class ChapterLoader(
                 source,
                 downloadManager,
                 downloadProvider,
+                documentSettingsProvider,
             )
             source is ConnectionLocalFileAdapter -> LocalPageLoader(
                 chapter = chapter,
                 source = source,
                 fileAdapter = source,
+                documentSettingsProvider = documentSettingsProvider,
             )
             completeEpubCache != null -> CompleteEpubCachePageLoader(
                 file = completeEpubCache.file,

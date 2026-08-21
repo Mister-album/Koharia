@@ -85,9 +85,17 @@ class MangaCoverFetcher(
     }
 
     private suspend fun connectionChapterLoader(chapterUrl: String): FetchResult {
+        val localCoverCacheFile = coverFileLazy.value
+        if (localCoverCacheFile?.exists() == true && options.diskCachePolicy.readEnabled) {
+            return fileLoader(localCoverCacheFile)
+        }
         val bytes = chapterThumbnailSourceLazy.value
             ?.loadChapterThumbnail(chapterUrl)
             ?: error("No chapter thumbnail specified")
+        if (localCoverCacheFile != null && options.diskCachePolicy.writeEnabled) {
+            writeBytesToCoverCache(bytes, localCoverCacheFile)
+            if (localCoverCacheFile.exists()) return fileLoader(localCoverCacheFile)
+        }
         return SourceFetchResult(
             source = ImageSource(
                 source = Buffer().write(bytes),
@@ -111,15 +119,35 @@ class MangaCoverFetcher(
     }
 
     private fun fileUriLoader(uri: String): FetchResult {
-        val source = UniFile.fromUri(options.context, uri.toUri())!!
-            .openInputStream()
-            .source()
-            .buffer()
+        val localCoverCacheFile = coverFileLazy.value
+        if (localCoverCacheFile?.exists() == true && options.diskCachePolicy.readEnabled) {
+            return fileLoader(localCoverCacheFile)
+        }
+        val file = UniFile.fromUri(options.context, uri.toUri())!!
+        if (localCoverCacheFile != null && options.diskCachePolicy.writeEnabled) {
+            runCatching {
+                file.openInputStream().source().use { input ->
+                    writeSourceToCoverCache(input, localCoverCacheFile)
+                }
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) { "Failed to write local cover cache ${localCoverCacheFile.name}" }
+            }
+            if (localCoverCacheFile.exists()) return fileLoader(localCoverCacheFile)
+        }
+        val source = file.openInputStream().source().buffer()
         return SourceFetchResult(
             source = ImageSource(source = source, fileSystem = FileSystem.SYSTEM),
             mimeType = "image/*",
             dataSource = DataSource.DISK,
         )
+    }
+
+    private fun writeBytesToCoverCache(bytes: ByteArray, cacheFile: File) {
+        runCatching {
+            Buffer().write(bytes).use { input -> writeSourceToCoverCache(input, cacheFile) }
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "Failed to write local cover cache ${cacheFile.name}" }
+        }
     }
 
     private suspend fun httpLoader(): FetchResult {

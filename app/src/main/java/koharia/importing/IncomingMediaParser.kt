@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import koharia.connection.ConnectionMediaImportItem
+import koharia.media.LocalMediaFormats
 import tachiyomi.core.common.util.lang.withIOContext
 import java.util.Locale
 
@@ -71,9 +72,18 @@ internal fun detectMediaExtension(
         ?.takeIf { it in SUPPORTED_MEDIA_EXTENSIONS }
     if (extension != null) return extension
 
+    if (mimeType?.lowercase(Locale.ROOT) in LocalMediaFormats.images.mimeTypes) {
+        return LocalMediaFormats.extensionFromMimeType(mimeType)
+    }
+
     return when (mimeType?.lowercase(Locale.ROOT)) {
         "application/epub+zip" -> "epub"
         "application/pdf" -> "pdf"
+        "text/plain" -> "txt"
+        "application/x-mobipocket-ebook", "application/vnd.amazon.ebook",
+        "application/x-palm-database",
+        -> "mobi"
+        "image/vnd.djvu", "image/x-djvu" -> "djvu"
         "application/vnd.comicbook+zip", "application/x-cbz" -> "cbz"
         "application/vnd.comicbook-rar", "application/x-cbr" -> "cbr"
         "application/zip", "application/x-zip-compressed" -> detectZipContainerExtension(header)
@@ -81,12 +91,19 @@ internal fun detectMediaExtension(
         "application/x-7z-compressed" -> "7z"
         "application/x-tar" -> "tar"
         else -> detectMediaExtensionFromHeader(header)
-    }
+    }.takeIf { it in SUPPORTED_MEDIA_EXTENSIONS }
 }
 
 private fun detectMediaExtensionFromHeader(header: ByteArray): String? {
     return when {
         header.startsWith("%PDF-".encodeToByteArray()) -> "pdf"
+        header.startsWith("AT&TFORM".encodeToByteArray()) -> "djvu"
+        header.size >= 68 && header.copyOfRange(64, 68).contentEquals("MOBI".encodeToByteArray()) -> "mobi"
+        header.startsWith(byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte())) -> "jpg"
+        header.startsWith(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) -> "png"
+        header.startsWith("GIF8".encodeToByteArray()) -> "gif"
+        header.size >= 12 && header.copyOfRange(0, 4).contentEquals("RIFF".encodeToByteArray()) &&
+            header.copyOfRange(8, 12).contentEquals("WEBP".encodeToByteArray()) -> "webp"
         header.startsWith(byteArrayOf(0x50, 0x4b, 0x03, 0x04)) -> detectZipContainerExtension(header)
         header.startsWith(byteArrayOf(0x52, 0x61, 0x72, 0x21, 0x1a, 0x07)) -> "rar"
         header.startsWith(byteArrayOf(0x37, 0x7a, 0xbc.toByte(), 0xaf.toByte(), 0x27, 0x1c)) -> "7z"
@@ -126,4 +143,4 @@ private fun normalizedMediaDisplayName(displayName: String?, extension: String):
     }
 }
 
-internal val SUPPORTED_MEDIA_EXTENSIONS = setOf("cbz", "zip", "cbr", "rar", "7z", "tar", "epub", "pdf")
+internal val SUPPORTED_MEDIA_EXTENSIONS = LocalMediaFormats.allExtensions

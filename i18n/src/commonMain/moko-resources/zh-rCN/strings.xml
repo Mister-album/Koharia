@@ -1354,6 +1354,7 @@
     <string name="local_library_directory_location">目录位置</string>
     <string name="local_library_directory_added">本地目录已添加</string>
     <string name="local_library_directory_already_added">该目录已经属于当前本地库</string>
+    <string name="local_library_scan_incomplete">部分本地库目录无法读取，已保留现有条目。请检查目录访问权限后重试。</string>
     <string name="local_library_permission_failed">无法保留对此目录的访问权限</string>
     <string name="local_library_write_permission_failed">创建库目录需要写入权限</string>
     <string name="local_library_create_failed">无法创建本地库目录结构</string>

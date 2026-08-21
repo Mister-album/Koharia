@@ -134,6 +134,7 @@ data class LocalLibraryScreen(
                 sourcePreferences = sourcePreferences,
                 mangaRepository = mangaRepository,
                 getChaptersByMangaId = Injekt.get(),
+                updateChapter = Injekt.get(),
                 getEpubProgress = getEpubProgress,
                 libraryPreferences = libraryPreferences,
                 entryOpenManager = LocalLibraryEntryOpenManager(

@@ -60,8 +60,11 @@ class IncomingMediaParserTest {
     }
 
     @Test
-    fun `unsupported media is rejected`() {
-        assertNull(detectMediaExtension("notes.txt", "text/plain", "hello".encodeToByteArray()))
+    fun `text and document formats are recognized`() {
+        assertEquals("txt", detectMediaExtension("notes.txt", "text/plain", "hello".encodeToByteArray()))
+        assertEquals("mobi", detectMediaExtension("download", "application/x-mobipocket-ebook", byteArrayOf()))
+        assertEquals("djvu", detectMediaExtension("download", "image/vnd.djvu", byteArrayOf()))
+        assertNull(detectMediaExtension("notes.bin", "application/octet-stream", "hello".encodeToByteArray()))
     }
 
     @Test

@@ -17,6 +17,7 @@ import koharia.connection.ConnectionMediaImportSeries
 import koharia.connection.ConnectionMediaType
 import koharia.connection.ConnectionPreferences
 import koharia.connection.LibraryContentScope
+import koharia.media.LocalMediaFormats
 import koharia.source.local.LocalFolderConnectionProvider
 import koharia.source.local.LocalFolderSource
 import koharia.source.local.LocalLibraryEntryOpenManager
@@ -529,7 +530,7 @@ private fun ConnectionMediaImportDestination.shelfScope(
 ): LibraryContentScope = when (mediaType) {
     ConnectionMediaType.COMIC -> LibraryContentScope.COMIC
     ConnectionMediaType.BOOK -> LibraryContentScope.BOOK
-    ConnectionMediaType.MIXED -> if (items.all { it.extension in setOf("epub", "pdf") }) {
+    ConnectionMediaType.MIXED -> if (items.all { it.extension in LocalMediaFormats.bookExtensions }) {
         LibraryContentScope.BOOK
     } else {
         LibraryContentScope.COMIC

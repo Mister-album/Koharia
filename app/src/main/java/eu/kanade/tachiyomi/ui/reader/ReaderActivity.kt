@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,8 +85,10 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.L2RPagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.isNightMode
 import eu.kanade.tachiyomi.util.system.openInBrowser
@@ -92,9 +96,22 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.document.toDocumentRenderSettings
+import koharia.epub.DocumentBookInfoDialog
+import koharia.epub.EpubBottomPanel
+import koharia.epub.EpubDocumentMorePanel
+import koharia.epub.EpubReaderBottomArea
+import koharia.epub.EpubReaderTopBar
+import koharia.epub.font.EpubFontManager
+import koharia.epub.settings.EpubLayoutPreferences
+import koharia.epub.settings.EpubReaderPreferences
+import koharia.epub.settings.EpubReaderSettingsSheet
 import koharia.importing.IncomingMediaNavigation
+import koharia.importing.IncomingMediaSessionLocator
+import koharia.source.local.LocalLibraryLocator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
@@ -106,6 +123,9 @@ import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.preference.ScopedPreferenceStore
+import tachiyomi.core.common.preference.SessionPreferenceStore
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withUIContext
@@ -115,15 +135,25 @@ import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
+import kotlin.math.roundToInt
 
 class ReaderActivity : BaseActivity() {
 
     companion object {
-        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?, sourceId: Long? = null): Intent {
+        private const val EXTRA_USE_EPUB_SETTINGS = "use_epub_settings"
+
+        fun newIntent(
+            context: Context,
+            mangaId: Long?,
+            chapterId: Long?,
+            sourceId: Long? = null,
+            useEpubSettings: Boolean = false,
+        ): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
                 sourceId?.let { putExtra("source", it) }
+                putExtra(EXTRA_USE_EPUB_SETTINGS, useEpubSettings)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
@@ -131,6 +161,9 @@ class ReaderActivity : BaseActivity() {
 
     private val scopedPreferenceStoreFactory = Injekt.get<ConnectionScopedPreferenceStoreFactory>()
     val readerPreferences: ReaderPreferences by lazy { viewModel.readerPreferences }
+    private val useEpubSettings: Boolean by lazy {
+        intent.getBooleanExtra(EXTRA_USE_EPUB_SETTINGS, false)
+    }
     val basePreferences: BasePreferences by lazy {
         val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
         if (sourceId > 0L) {
@@ -155,6 +188,24 @@ class ReaderActivity : BaseActivity() {
     private val displayRefreshHost by lazy { DisplayRefreshHost(readerPreferences) }
 
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
+
+    private val epubSettingsBackingStore: PreferenceStore by lazy {
+        val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
+        if (sourceId > 0L) {
+            scopedPreferenceStoreFactory.storeForServer(sourceId)
+        } else {
+            Injekt.get<ScopedPreferenceStore>()
+        }
+    }
+    private val epubReaderPreferences by lazy { EpubReaderPreferences(epubSettingsBackingStore) }
+    private val epubFontManager: EpubFontManager by lazy { Injekt.get() }
+    private val epubSettingsStore by lazy {
+        SessionPreferenceStore(
+            backingStore = epubSettingsBackingStore,
+            persistChanges = epubReaderPreferences.persistReaderSettingsChanges.get(),
+        )
+    }
+    private val epubLayoutPreferences by lazy { EpubLayoutPreferences(epubSettingsStore) }
 
     private var loadingIndicator: ReaderProgressIndicator? = null
 
@@ -188,6 +239,24 @@ class ReaderActivity : BaseActivity() {
         binding = ReaderActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
         binding.setComposeOverlay()
+
+        if (useEpubSettings) {
+            syncEpubViewerPreferences()
+        }
+
+        viewModel.setDocumentRenderSettingsProvider {
+            epubLayoutPreferences.toDocumentRenderSettings()
+        }
+
+        if (useEpubSettings) {
+            epubReaderPreferences.persistReaderSettingsChanges.changes()
+                .onEach { enabled ->
+                    epubSettingsStore.setPersistChanges(enabled)
+                    viewModel.setSessionReaderSettingsPersistence(enabled)
+                }
+                .launchIn(lifecycleScope)
+            observeDocumentLayoutPreferences()
+        }
 
         if (viewModel.needsInit()) {
             val manga = intent.extras?.getLong("manga", -1) ?: -1L
@@ -244,6 +313,13 @@ class ReaderActivity : BaseActivity() {
                     ReaderViewModel.Event.ReloadViewerChapters -> {
                         viewModel.state.value.viewerChapters?.let(::setChapters)
                     }
+                    is ReaderViewModel.Event.DocumentPagesRefreshed -> {
+                        if (useEpubSettings && documentViewerNeedsRecreation()) {
+                            updateViewer()
+                        }
+                        viewModel.state.value.viewerChapters?.let(::setChapters)
+                        viewModel.state.value.viewer?.restorePage(event.page)
+                    }
                     ReaderViewModel.Event.PageChanged -> {
                         displayRefreshHost.flash()
                     }
@@ -280,6 +356,7 @@ class ReaderActivity : BaseActivity() {
     private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
         val state by viewModel.state.collectAsState()
         val showPageNumber by readerPreferences.showPageNumber.collectAsState()
+        val activeEpubPanel = remember { mutableStateOf(EpubBottomPanel.NONE) }
         val settingsScreenModel = remember {
             ReaderSettingsScreenModel(
                 readerState = viewModel.state,
@@ -305,7 +382,11 @@ class ReaderActivity : BaseActivity() {
 
             ContentOverlay(state = state)
 
-            AppBars(state = state)
+            AppBars(
+                state = state,
+                activeEpubPanel = activeEpubPanel.value,
+                onEpubPanelChange = { activeEpubPanel.value = it },
+            )
         }
 
         val onDismissRequest = viewModel::closeDialog
@@ -326,12 +407,24 @@ class ReaderActivity : BaseActivity() {
                 )
             }
             is ReaderViewModel.Dialog.Settings -> {
-                ReaderSettingsDialog(
-                    onDismissRequest = onDismissRequest,
-                    onShowMenus = { setMenuVisibility(true) },
-                    onHideMenus = { setMenuVisibility(false) },
-                    screenModel = settingsScreenModel,
-                )
+                if (useEpubSettings) {
+                    EpubReaderSettingsSheet(
+                        preferences = epubLayoutPreferences,
+                        readerPreferences = readerPreferences,
+                        epubReaderPreferences = epubReaderPreferences,
+                        onDismissRequest = {
+                            onDismissRequest()
+                            setMenuVisibility(true)
+                        },
+                    )
+                } else {
+                    ReaderSettingsDialog(
+                        onDismissRequest = onDismissRequest,
+                        onShowMenus = { setMenuVisibility(true) },
+                        onHideMenus = { setMenuVisibility(false) },
+                        screenModel = settingsScreenModel,
+                    )
+                }
             }
             is ReaderViewModel.Dialog.ReadingModeSelect -> {
                 ReadingModeSelectDialog(
@@ -558,8 +651,21 @@ class ReaderActivity : BaseActivity() {
     }
 
     @Composable
-    fun AppBars(state: ReaderViewModel.State) {
+    private fun AppBars(
+        state: ReaderViewModel.State,
+        activeEpubPanel: EpubBottomPanel,
+        onEpubPanelChange: (EpubBottomPanel) -> Unit,
+    ) {
         if (!ifSourcesLoaded()) {
+            return
+        }
+
+        if (useEpubSettings) {
+            EpubStyleAppBars(
+                state = state,
+                activePanel = activeEpubPanel,
+                onPanelChange = onEpubPanelChange,
+            )
             return
         }
 
@@ -567,7 +673,7 @@ class ReaderActivity : BaseActivity() {
 
         val cropBorderPaged by readerPreferences.cropBorders.collectAsState()
         val cropBorderWebtoon by readerPreferences.cropBordersWebtoon.collectAsState()
-        val isPagerType = ReadingMode.isPagerType(viewModel.getMangaReadingMode())
+        val isPagerType = ReadingMode.isPagerType(effectiveReadingModePreference())
         val cropEnabled = if (isPagerType) cropBorderPaged else cropBorderWebtoon
 
         val verticalNavigatorForLongStrip by readerPreferences.verticalNavigatorForLongStrip.collectAsState()
@@ -615,9 +721,13 @@ class ReaderActivity : BaseActivity() {
             },
 
             readingMode = ReadingMode.fromPreference(
-                viewModel.getMangaReadingMode(resolveDefault = false),
+                effectiveReadingModePreference(),
             ),
-            onClickReadingMode = viewModel::openReadingModeSelectDialog,
+            onClickReadingMode = if (useEpubSettings) {
+                viewModel::openSettingsDialog
+            } else {
+                viewModel::openReadingModeSelectDialog
+            },
             orientation = ReaderOrientation.fromPreference(
                 viewModel.getMangaOrientation(resolveDefault = false),
             ),
@@ -630,6 +740,174 @@ class ReaderActivity : BaseActivity() {
             },
             onClickSettings = viewModel::openSettingsDialog,
         )
+    }
+
+    @Composable
+    private fun EpubStyleAppBars(
+        state: ReaderViewModel.State,
+        activePanel: EpubBottomPanel,
+        onPanelChange: (EpubBottomPanel) -> Unit,
+    ) {
+        val currentReadingMode by epubLayoutPreferences.readingMode.changes()
+            .collectAsState(epubLayoutPreferences.readingMode.get())
+        val currentPageDirection by epubLayoutPreferences.pageDirection.changes()
+            .collectAsState(epubLayoutPreferences.pageDirection.get())
+        val totalPages = state.totalPages.coerceAtLeast(1)
+        val currentPage = state.currentPage.coerceIn(1, totalPages)
+        val progression = if (totalPages <= 1) {
+            0.0
+        } else {
+            (currentPage - 1).toDouble() / (totalPages - 1).toDouble()
+        }
+        val showBookInfo = remember { mutableStateOf(false) }
+        val chapter = state.currentChapter?.chapter
+        val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
+        val fileName = chapter?.let { currentChapter ->
+            documentFileName(
+                chapterUrl = currentChapter.url,
+                sourceId = sourceId,
+                fallback = currentChapter.name,
+            )
+        }
+        val format = fileName
+            ?.substringAfterLast('.', missingDelimiterValue = "")
+            ?.takeIf(String::isNotBlank)
+            ?.uppercase()
+            ?: "BOOK"
+        val fileSizeBytes = chapter?.let { currentChapter ->
+            IncomingMediaSessionLocator.chapterFile(this@ReaderActivity, currentChapter.url, sourceId)
+                ?.length()
+                ?.takeIf { it > 0L }
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            EpubReaderTopBar(
+                visible = state.menuVisible,
+                title = state.manga?.title,
+                subtitle = state.currentChapter?.chapter?.name,
+                isSearchable = false,
+                isBookmarked = state.bookmarked,
+                bookmarkEnabled = state.currentChapter != null,
+                modifier = Modifier.align(Alignment.TopCenter),
+                onNavigateUp = onBackPressedDispatcher::onBackPressed,
+                onClick = ::openMangaScreen,
+                onSearch = {},
+                onToggleBookmark = {
+                    onPanelChange(EpubBottomPanel.NONE)
+                    viewModel.toggleChapterBookmark()
+                },
+                onImportTemporaryMedia = ::importTemporaryMedia.takeIf {
+                    IncomingMediaNavigation.temporaryMediaUri(intent) != null
+                },
+            )
+            EpubReaderBottomArea(
+                visible = state.menuVisible,
+                activePanel = activePanel,
+                preferences = epubLayoutPreferences,
+                readerPreferences = readerPreferences,
+                epubReaderPreferences = epubReaderPreferences,
+                chapterNavigatorType = if (
+                    currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED &&
+                    currentPageDirection == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
+                ) {
+                    ChapterNavigatorType.HORIZONTAL_RTL
+                } else {
+                    ChapterNavigatorType.HORIZONTAL_LTR
+                },
+                currentPosition = currentPage,
+                totalPositions = totalPages,
+                progression = progression,
+                currentVisualPage = currentPage
+                    .takeIf { currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED },
+                totalVisualPages = totalPages
+                    .takeIf { currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED },
+                enabledPreviousChapter = state.viewerChapters?.prevChapter != null,
+                enabledNextChapter = state.viewerChapters?.nextChapter != null,
+                onPositionChange = { index ->
+                    isScrollingThroughPages = true
+                    moveToPageIndex(index)
+                },
+                onProgressionChange = { targetProgression ->
+                    isScrollingThroughPages = true
+                    val targetPage = (targetProgression * (totalPages - 1))
+                        .roundToInt()
+                        .coerceIn(0, totalPages - 1)
+                    moveToPageIndex(targetPage)
+                },
+                onPreviousChapter = ::loadPreviousChapter,
+                onNextChapter = ::loadNextChapter,
+                onOpenContents = {
+                    onPanelChange(EpubBottomPanel.NONE)
+                    openMangaScreen()
+                },
+                onToggleNightMode = {
+                    val target = if (epubLayoutPreferences.theme.get() == EpubLayoutPreferences.Theme.DARK) {
+                        EpubLayoutPreferences.Theme.LIGHT
+                    } else {
+                        EpubLayoutPreferences.Theme.DARK
+                    }
+                    epubLayoutPreferences.theme.set(target)
+                },
+                onToggleSettings = {
+                    onPanelChange(
+                        if (activePanel == EpubBottomPanel.SETTINGS) {
+                            EpubBottomPanel.NONE
+                        } else {
+                            EpubBottomPanel.SETTINGS
+                        },
+                    )
+                },
+                onToggleMore = {
+                    onPanelChange(
+                        if (activePanel == EpubBottomPanel.MORE) {
+                            EpubBottomPanel.NONE
+                        } else {
+                            EpubBottomPanel.MORE
+                        },
+                    )
+                },
+                onOpenFontPicker = null,
+                morePanel = {
+                    EpubDocumentMorePanel(
+                        onShowBookInfo = {
+                            onPanelChange(EpubBottomPanel.NONE)
+                            showBookInfo.value = true
+                        },
+                    )
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+            )
+
+            if (showBookInfo.value) {
+                DocumentBookInfoDialog(
+                    seriesTitle = state.manga?.title,
+                    bookTitle = chapter?.name,
+                    format = format,
+                    fileName = fileName,
+                    fileSizeBytes = fileSizeBytes,
+                    currentPage = currentPage,
+                    totalPages = totalPages,
+                    onDismissRequest = { showBookInfo.value = false },
+                )
+            }
+        }
+    }
+
+    private fun documentFileName(
+        chapterUrl: String,
+        sourceId: Long,
+        fallback: String?,
+    ): String? {
+        return IncomingMediaSessionLocator.location(chapterUrl, sourceId)?.fileName
+            ?: LocalLibraryLocator.location(chapterUrl, sourceId)
+                ?.relativePath
+                ?.substringAfterLast('/')
+            ?: runCatching { Uri.parse(chapterUrl).lastPathSegment }
+                .getOrNull()
+                ?.takeIf(String::isNotBlank)
+            ?: fallback?.takeIf(String::isNotBlank)
     }
 
     /**
@@ -649,7 +927,7 @@ class ReaderActivity : BaseActivity() {
      */
     private fun updateViewer() {
         val prevViewer = viewModel.state.value.viewer
-        val newViewer = ReadingMode.toViewer(viewModel.getMangaReadingMode(), this)
+        val newViewer = ReadingMode.toViewer(effectiveReadingModePreference(), this)
 
         if (window.sharedElementEnterTransition is MaterialContainerTransform) {
             // Wait until transition is complete to avoid crash on API 26
@@ -674,7 +952,7 @@ class ReaderActivity : BaseActivity() {
         binding.viewerContainer.addView(newViewer.getView())
 
         if (readerPreferences.showReadingMode.get()) {
-            showReadingModeToast(viewModel.getMangaReadingMode())
+            showReadingModeToast(effectiveReadingModePreference())
         }
 
         loadingIndicator = ReaderProgressIndicator(this)
@@ -928,6 +1206,74 @@ class ReaderActivity : BaseActivity() {
                 Error -> MR.strings.notification_cover_update_failed
             },
         )
+    }
+
+    private fun observeDocumentLayoutPreferences() {
+        val renderingChanges = listOf(
+            epubLayoutPreferences.readingMode.changes().map { it as Any },
+            epubLayoutPreferences.pageDirection.changes().map { it as Any },
+            epubLayoutPreferences.theme.changes().map { it as Any },
+            epubLayoutPreferences.customBackgroundColor.changes().map { it as Any },
+            epubLayoutPreferences.fontSize.changes().map { it as Any },
+            epubLayoutPreferences.lineHeight.changes().map { it as Any },
+            epubLayoutPreferences.paragraphSpacing.changes().map { it as Any },
+            epubLayoutPreferences.paragraphIndent.changes().map { it as Any },
+            epubLayoutPreferences.pageMargins.changes().map { it as Any },
+            epubLayoutPreferences.verticalMargins.changes().map { it as Any },
+            epubLayoutPreferences.spacingMode.changes().map { it as Any },
+            epubLayoutPreferences.selectedFontId.changes().map { it as Any },
+            epubLayoutPreferences.textAlignment.changes().map { it as Any },
+            epubLayoutPreferences.publisherStyles.changes().map { it as Any },
+            epubFontManager.catalogState.map { it as Any },
+        )
+        combine(renderingChanges) { values -> values.toList() }
+            .distinctUntilChanged()
+            .drop(1)
+            .debounce(100)
+            .onEach { viewModel.onDocumentLayoutPreferencesChanged() }
+            .launchIn(lifecycleScope)
+
+        if (useEpubSettings) {
+            epubLayoutPreferences.pageTransitionEffect.changes()
+                .drop(1)
+                .onEach(readerPreferences.pagerPageTransitionEffect::set)
+                .launchIn(lifecycleScope)
+            epubLayoutPreferences.readWithVolumeKeys.changes()
+                .drop(1)
+                .onEach(readerPreferences.readWithVolumeKeys::set)
+                .launchIn(lifecycleScope)
+            epubLayoutPreferences.readWithVolumeKeysInverted.changes()
+                .drop(1)
+                .onEach(readerPreferences.readWithVolumeKeysInverted::set)
+                .launchIn(lifecycleScope)
+        }
+    }
+
+    private fun syncEpubViewerPreferences() {
+        readerPreferences.pagerPageTransitionEffect.set(epubLayoutPreferences.pageTransitionEffect.get())
+        readerPreferences.readWithVolumeKeys.set(epubLayoutPreferences.readWithVolumeKeys.get())
+        readerPreferences.readWithVolumeKeysInverted.set(epubLayoutPreferences.readWithVolumeKeysInverted.get())
+    }
+
+    private fun effectiveReadingModePreference(): Int {
+        if (!useEpubSettings) return viewModel.getMangaReadingMode()
+        return when (epubLayoutPreferences.readingMode.get()) {
+            EpubLayoutPreferences.ReadingMode.SCROLL -> ReadingMode.WEBTOON.flagValue
+            EpubLayoutPreferences.ReadingMode.PAGINATED -> when (epubLayoutPreferences.pageDirection.get()) {
+                EpubLayoutPreferences.PageDirection.LEFT_TO_RIGHT -> ReadingMode.LEFT_TO_RIGHT.flagValue
+                EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT -> ReadingMode.RIGHT_TO_LEFT.flagValue
+            }
+        }
+    }
+
+    private fun documentViewerNeedsRecreation(): Boolean {
+        val viewer = viewModel.state.value.viewer ?: return true
+        return when (effectiveReadingModePreference()) {
+            ReadingMode.WEBTOON.flagValue -> viewer !is WebtoonViewer
+            ReadingMode.LEFT_TO_RIGHT.flagValue -> viewer !is L2RPagerViewer
+            ReadingMode.RIGHT_TO_LEFT.flagValue -> viewer !is R2LPagerViewer
+            else -> false
+        }
     }
 
     /**

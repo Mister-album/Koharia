@@ -1,12 +1,15 @@
 package koharia.source.local
 
+import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.preference.PreferenceScreen
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.manga.model.toSManga
+import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.UnmeteredSource
@@ -18,6 +21,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import koharia.connection.ConnectionBrowseAdapter
 import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionChapterThumbnailAdapter
 import koharia.connection.ConnectionLibraryMembershipAdapter
 import koharia.connection.ConnectionLibraryRefreshAdapter
@@ -36,6 +40,7 @@ import koharia.connection.ConnectionMediaImportSeries
 import koharia.connection.ConnectionMediaType
 import koharia.connection.ConnectionMetadataAdapter
 import koharia.connection.ConnectionMetadataGenerationAdapter
+import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.connection.ConnectionSeriesCoverAdapter
 import koharia.connection.ConnectionSource
 import koharia.connection.LibraryConnectionProfile
@@ -45,8 +50,12 @@ import koharia.connection.LibraryMetadataSuggestion
 import koharia.connection.MetadataFilenameTemplate
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
+import koharia.document.DocumentEngines
+import koharia.document.MobiDocumentEngine
+import koharia.document.toDocumentRenderSettings
 import koharia.domain.manga.model.toDomainManga
 import koharia.importing.IncomingMediaSessionLocator
+import koharia.media.LocalMediaFormats
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -57,6 +66,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonObject
 import logcat.LogPriority
 import nl.adaptivity.xmlutil.core.AndroidXmlReader
 import nl.adaptivity.xmlutil.serialization.XML
@@ -71,8 +81,11 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.core.metadata.comicinfo.COMIC_INFO_FILE
 import tachiyomi.core.metadata.comicinfo.ComicInfo
 import tachiyomi.core.metadata.comicinfo.copyFromComicInfo
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
@@ -80,6 +93,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
@@ -87,6 +101,11 @@ internal data class LocalReadProgressIndex(
     val indexedChapterCount: Int,
     val isIndividualFile: Boolean,
 )
+
+internal class LocalLibraryPartialScanException(
+    val failedRootIds: Set<String>,
+    message: String,
+) : IOException(message)
 
 class LocalFolderSource(
     private val context: Context,
@@ -115,6 +134,11 @@ class LocalFolderSource(
     private val preferences by lazy { LocalLibraryPreferences(id, json) }
     private val metadataStore by lazy { LocalMetadataStore(context, id, json, xml) }
     private val mangaRepository: MangaRepository by injectLazy()
+    private val getChaptersByMangaId: GetChaptersByMangaId by injectLazy()
+    private val coverCache: CoverCache by injectLazy()
+    private val documentLayoutPreferences by lazy {
+        Injekt.get<ConnectionScopedPreferenceStoreFactory>().epubLayoutPreferences(id)
+    }
     private val refreshMutex = Mutex()
     private val mutableLibraryRefreshes = MutableSharedFlow<ConnectionLibraryRefreshResult>(
         replay = 1,
@@ -174,7 +198,7 @@ class LocalFolderSource(
 
     suspend fun needsInitialScan(): Boolean = withIOContext {
         val index = preferences.getIndex()
-        if (index.scannedAt <= 0L || index.schemaVersion < 4) return@withIOContext true
+        if (index.scannedAt <= 0L || index.schemaVersion < 5) return@withIOContext true
         val indexedUrls = index.items.asSequence()
             .filter {
                 it.kind in setOf(LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.FILE_ENTRY) &&
@@ -547,7 +571,7 @@ class LocalFolderSource(
                         request.shelfId?.takeIf(String::isNotBlank)?.let { shelfId ->
                             preferences.setBookshelfAssignment(itemKey, shelfId)
                         }
-                        refreshLibrary().getOrThrow()
+                        refreshAfterImport(root.id)
                     } catch (error: Throwable) {
                         rollBackImport()
                         throw error
@@ -619,7 +643,7 @@ class LocalFolderSource(
                     throw error
                 }
             }
-            refreshLibrary().getOrThrow()
+            refreshAfterImport(root.id)
         } catch (error: Throwable) {
             rollBackImport()
             throw error
@@ -672,17 +696,24 @@ class LocalFolderSource(
                     }
             }
         val resource = resolveResource(manga.url) ?: return@withIOContext emptyList()
+        val existingChaptersByUrl = mangaRepository.getMangaByUrlAndSourceId(manga.url, id)
+            ?.let { storedManga -> getChaptersByMangaId.await(storedManga.id) }
+            .orEmpty()
+            .associateBy(Chapter::url)
         if (indexedLibraryItem(resource)?.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
+            val chapterUrl = LocalLibraryLocator.chapterUrl(id, resource.root.id, resource.relativePath)
+            val modifiedAt = resource.file.lastModified()
             return@withIOContext listOf(
                 SChapter.create().apply {
-                    url = LocalLibraryLocator.chapterUrl(id, resource.root.id, resource.relativePath)
+                    url = chapterUrl
                     name = if (resource.file.isDirectory) {
                         resource.file.name.orEmpty()
                     } else {
                         resource.file.nameWithoutExtension.orEmpty()
                     }
-                    date_upload = resource.file.lastModified()
+                    date_upload = modifiedAt
                     chapter_number = 1F
+                    memo = documentPageMemo(resource.file, modifiedAt, existingChaptersByUrl[chapterUrl])
                 },
             )
         }
@@ -691,15 +722,18 @@ class LocalFolderSource(
             .filter(::isSupportedChapter)
             .map { file ->
                 val relative = "${resource.relativePath}/${file.name.orEmpty()}"
+                val chapterUrl = LocalLibraryLocator.chapterUrl(id, resource.root.id, relative)
+                val modifiedAt = file.lastModified()
                 SChapter.create().apply {
-                    url = LocalLibraryLocator.chapterUrl(id, resource.root.id, relative)
+                    url = chapterUrl
                     name = if (file.isDirectory) file.name.orEmpty() else file.nameWithoutExtension.orEmpty()
-                    date_upload = file.lastModified()
+                    date_upload = modifiedAt
                     chapter_number = ChapterRecognition.parseChapterNumber(
                         manga.title,
                         name,
                         chapter_number.toDouble(),
                     ).toFloat()
+                    memo = documentPageMemo(file, modifiedAt, existingChaptersByUrl[chapterUrl])
                 }
             }
             .sortedWith { first, second ->
@@ -834,6 +868,54 @@ class LocalFolderSource(
         return indexedLibraryItem(resource)?.kind == LocalLibraryItem.Kind.FILE_ENTRY
     }
 
+    internal suspend fun documentPageCount(chapterUrl: String): Int? = withIOContext {
+        val file = localChapterFile(chapterUrl) ?: return@withIOContext null
+        runCatching {
+            when {
+                DocumentEngines.forExtension(file.extension) != null -> {
+                    DocumentEngines.open(context, file, documentLayoutPreferences.toDocumentRenderSettings())
+                        .use { session -> session.pageCount }
+                }
+                LocalMediaFormats.isImage(file.extension) -> 1
+                LocalMediaFormats.isArchive(file.extension) -> {
+                    file.archiveReader(context).use { reader ->
+                        reader.useEntries { entries ->
+                            entries.count { entry ->
+                                entry.isFile && ImageUtil.isImage(entry.name) {
+                                    reader.getInputStream(entry.name)!!
+                                }
+                            }
+                        }
+                    }
+                }
+                file.extension.equals("pdf", ignoreCase = true) -> {
+                    context.contentResolver.openFileDescriptor(file.uri, "r")?.use { descriptor ->
+                        PdfRenderer(descriptor).use { renderer -> renderer.pageCount }
+                    } ?: 0
+                }
+                else -> 0
+            }
+        }.getOrNull()?.takeIf { it > 0 }
+    }
+
+    private fun documentPageMemo(
+        file: UniFile,
+        modifiedAt: Long,
+        existingChapter: Chapter?,
+    ): JsonObject {
+        if (DocumentEngines.forExtension(file.extension) == null) return JsonObject(emptyMap())
+        return existingChapter
+            ?.takeIf { modifiedAt <= 0L || it.dateUpload == modifiedAt }
+            ?.memo
+            ?: JsonObject(emptyMap())
+    }
+
+    private suspend fun refreshAfterImport(destinationRootId: String) {
+        val error = refreshLibrary().exceptionOrNull() ?: return
+        if (error is LocalLibraryPartialScanException && destinationRootId !in error.failedRootIds) return
+        throw error
+    }
+
     internal fun readProgressIndex(mangaUrl: String): LocalReadProgressIndex? {
         return readProgressIndexes(listOf(mangaUrl))[mangaUrl.trimEnd('/')]
     }
@@ -911,6 +993,11 @@ class LocalFolderSource(
                 metadata.contributors.takeIf(List<String>::isNotEmpty)?.let { manga.artist = it.joinToString(", ") }
                 metadata.description?.let { manga.description = it }
                 metadata.subjects.takeIf(List<String>::isNotEmpty)?.let { manga.genre = it.joinToString(", ") }
+            }
+        } else if (!file.isDirectory && isMobiFile(file)) {
+            readMobiMetadata(file)?.let { metadata ->
+                metadata.title?.let { manga.title = it }
+                metadata.authors.takeIf(List<String>::isNotEmpty)?.let { manga.author = it.joinToString(", ") }
             }
         }
         if (!file.isDirectory) {
@@ -1054,8 +1141,12 @@ class LocalFolderSource(
 
         val epubFile = files
             .firstOrNull { !it.isDirectory && it.extension.equals("epub", ignoreCase = true) }
-            ?: return null
-        return readEpubMetadata(epubFile)?.forSeriesDisplay(isDirectoryMetadata = false)
+        if (epubFile != null) {
+            return readEpubMetadata(epubFile)?.forSeriesDisplay(isDirectoryMetadata = false)
+        }
+
+        val mobiFile = files.firstOrNull { !it.isDirectory && isMobiFile(it) } ?: return null
+        return readMobiMetadata(mobiFile)?.forSeriesDisplay(isDirectoryMetadata = false)
     }
 
     private fun readEmbeddedMetadata(
@@ -1065,6 +1156,8 @@ class LocalFolderSource(
         directory.findFile("metadata.opf")?.let(::readOpfFile)?.let(::add)
         items.filter { !it.isDirectory && it.extension.equals("epub", ignoreCase = true) }
             .mapNotNullTo(this, ::readEpubMetadata)
+        items.filter { !it.isDirectory && isMobiFile(it) }
+            .mapNotNullTo(this, ::readMobiMetadata)
     }
 
     private fun readOpfFile(file: UniFile): LocalEmbeddedMetadata? = runCatching {
@@ -1078,6 +1171,17 @@ class LocalFolderSource(
             parseLocalOpfMetadata(epub.getPackageDocument(epub.getPackageHref()))
         }
     }.getOrNull()
+
+    private fun readMobiMetadata(file: UniFile): LocalEmbeddedMetadata? = runCatching {
+        val metadata = MobiDocumentEngine.readMetadata(file)
+        LocalEmbeddedMetadata(
+            title = metadata.title,
+            authors = listOfNotNull(metadata.author),
+        )
+    }.getOrNull()
+
+    private fun isMobiFile(file: UniFile): Boolean =
+        file.extension.orEmpty().lowercase() in LocalMediaFormats.mobi.extensions
 
     private fun Manga.matchesIndexedLibrary(
         query: String,
@@ -1154,13 +1258,20 @@ class LocalFolderSource(
                 ?.use { it.readBytes() }
         }
 
-        return when (file.extension.orEmpty().lowercase()) {
-            "epub" -> file.epubReader(context).use { epub ->
+        val extension = file.extension.orEmpty().lowercase()
+        return when {
+            LocalMediaFormats.isImage(extension) -> file.openInputStream().use { it.readBytes() }
+            extension == "epub" -> file.epubReader(context).use { epub ->
                 epub.getCoverOrFirstImage()
                     ?.let(epub::getInputStream)
                     ?.use { it.readBytes() }
             }
-            "pdf" -> renderFirstPdfPage(file)
+            extension == "pdf" -> renderFirstPdfPage(file)
+            extension in LocalMediaFormats.text.extensions ||
+                extension in LocalMediaFormats.mobi.extensions ||
+                extension in LocalMediaFormats.djvu.extensions -> {
+                renderFirstDocumentPage(file)
+            }
             else -> file.archiveReader(context).use { reader ->
                 val entry = reader.useEntries { entries ->
                     entries
@@ -1173,6 +1284,22 @@ class LocalFolderSource(
                 entry?.let { reader.getInputStream(it.name)?.use { input -> input.readBytes() } }
             }
         }
+    }
+
+    private fun renderFirstDocumentPage(file: UniFile): ByteArray? {
+        return runCatching {
+            DocumentEngines.open(context, file).use { session ->
+                val bitmap = session.page(0).render()
+                try {
+                    ByteArrayOutputStream().use { output ->
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+                        output.toByteArray()
+                    }
+                } finally {
+                    bitmap.recycle()
+                }
+            }
+        }.getOrNull()
     }
 
     private fun renderFirstPdfPage(file: UniFile): ByteArray? {
@@ -1208,10 +1335,10 @@ class LocalFolderSource(
     }
 
     private fun candidateSeriesDirectories(root: ResolvedLocalLibraryRoot): List<ScanCandidate> {
-        return root.directory.listFiles().orEmpty()
+        return listFilesForScan(root.directory)
             .filter { it.isDirectory && !it.name.orEmpty().startsWith('.') }
             .map { directory ->
-                val files = directory.listFiles().orEmpty()
+                val files = listFilesForScan(directory)
                     .filterNot { it.name.orEmpty().startsWith('.') }
                 val chapterFiles = files.filter(::isSupportedChapter)
                 ScanCandidate(
@@ -1234,11 +1361,7 @@ class LocalFolderSource(
         fun visit(directory: UniFile, parentPath: String) {
             val uriKey = directory.uri.normalizeScheme().toString()
             if (!visitedUris.add(uriKey)) return
-            val children = runCatching { directory.listFiles().orEmpty().toList() }
-                .onFailure { error ->
-                    logcat(LogPriority.WARN, error) { "Unable to scan local directory ${directory.name}" }
-                }
-                .getOrDefault(emptyList())
+            val children = listFilesForScan(directory)
                 .filterNot(::isIgnoredScanEntry)
             val directImages = children.filter { child ->
                 !child.isDirectory && runCatching {
@@ -1296,6 +1419,41 @@ class LocalFolderSource(
 
         visit(root.directory, "")
         return entries.distinctBy { it.relativePath }
+    }
+
+    private fun listFilesForScan(directory: UniFile): List<UniFile> {
+        if (!directory.isDirectory) {
+            throw IOException("Local library path is not a directory: ${directory.uri}")
+        }
+        val expectedCount = directory.uri
+            .takeIf { uri ->
+                uri.scheme == ContentResolver.SCHEME_CONTENT && DocumentsContract.isTreeUri(uri)
+            }
+            ?.let { uri ->
+                val documentId = if (DocumentsContract.isDocumentUri(context, uri)) {
+                    DocumentsContract.getDocumentId(uri)
+                } else {
+                    DocumentsContract.getTreeDocumentId(uri)
+                }
+                val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, documentId)
+                context.contentResolver.query(
+                    childrenUri,
+                    arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                    null,
+                    null,
+                    null,
+                )?.use { cursor -> cursor.count }
+                    ?: throw IOException("Unable to query local library directory: $uri")
+            }
+        val files = directory.listFiles()?.toList()
+            ?: throw IOException("Unable to list local library directory: ${directory.uri}")
+        if (expectedCount != null && files.size != expectedCount) {
+            throw IOException(
+                "Incomplete local library directory listing: ${directory.uri} " +
+                    "(${files.size}/$expectedCount)",
+            )
+        }
+        return files
     }
 
     private fun isIgnoredScanEntry(file: UniFile): Boolean {
@@ -1376,15 +1534,44 @@ class LocalFolderSource(
         val previousIndex = preferences.getIndex()
         val existingByUrl = mangaRepository.getMangaBySourceId(id).associateBy(Manga::url)
         val metadataOverrides = preferences.getMetadataOverrides()
-        val candidates = preferences.rootDirectories(context)
-            .flatMap(::candidateResources)
+        val config = preferences.getConfig()
+        val configuredRootIds = config.roots.mapTo(mutableSetOf(), LocalLibraryRootConfig::id)
+        val successfulRootIds = mutableSetOf<String>()
+        val failedRoots = mutableListOf<LocalLibraryRootConfig>()
+        val candidates = buildList {
+            config.roots.forEach { root ->
+                try {
+                    val directory = preferences.resolveRoot(context, root)
+                        ?: throw IOException("Unable to resolve local library directory: ${root.displayPath}")
+                    addAll(candidateResources(ResolvedLocalLibraryRoot(root, directory)))
+                    successfulRootIds += root.id
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    failedRoots += root
+                    logcat(LogPriority.WARN, error) {
+                        "Unable to scan local library directory ${root.displayPath}"
+                    }
+                }
+            }
+        }
+        val previousItems = previousIndex.items.ifEmpty {
+            recoverLocalLibraryItems(
+                sourceId = id,
+                config = config,
+                mangaUrls = existingByUrl.keys,
+            )
+        }
+        val effectivePreviousIndex = previousIndex.copy(items = previousItems)
         val refreshedAt = System.currentTimeMillis()
         val refreshedIndex = buildIndex(
             candidates = candidates,
-            previousIndex = previousIndex,
-            scannedAt = refreshedAt,
+            previousIndex = effectivePreviousIndex,
+            scannedAt = refreshedAt.takeIf { successfulRootIds.isNotEmpty() } ?: previousIndex.scannedAt,
+            configuredRootIds = configuredRootIds,
+            successfulRootIds = successfulRootIds,
         )
-        val previousEntriesByKey = previousIndex.items
+        val previousEntriesByKey = effectivePreviousIndex.items
             .filter { it.kind in setOf(LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.FILE_ENTRY) }
             .associateBy { it.itemKey }
 
@@ -1442,11 +1629,28 @@ class LocalFolderSource(
             }
         }.filterNotNull()
         if (changedManga.isNotEmpty()) {
+            val changedExistingManga = changedManga.mapNotNull { existingByUrl[it.url] }
+            changedExistingManga.forEach { coverCache.deleteFromCache(it, deleteCustomCover = false) }
+            if (changedExistingManga.isNotEmpty()) {
+                mangaRepository.updateAll(
+                    changedExistingManga.map { manga ->
+                        MangaUpdate(id = manga.id, coverLastModified = refreshedAt)
+                    },
+                )
+            }
             mangaRepository.insertNetworkManga(changedManga)
         }
         preferences.setIndex(refreshedIndex)
+        if (failedRoots.isNotEmpty()) {
+            throw LocalLibraryPartialScanException(
+                failedRootIds = failedRoots.mapTo(mutableSetOf(), LocalLibraryRootConfig::id),
+                message = context.stringResource(MR.strings.local_library_scan_incomplete),
+            )
+        }
         ConnectionLibraryRefreshResult(
-            itemCount = candidates.size,
+            itemCount = refreshedIndex.items.count {
+                it.kind in setOf(LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.FILE_ENTRY)
+            },
             refreshedAt = refreshedAt,
         )
     }
@@ -1455,8 +1659,10 @@ class LocalFolderSource(
         candidates: List<ScanCandidate>,
         previousIndex: LocalLibraryIndex,
         scannedAt: Long,
+        configuredRootIds: Set<String>,
+        successfulRootIds: Set<String>,
     ): LocalLibraryIndex {
-        val items = candidates.flatMap { candidate ->
+        val scannedItems = candidates.flatMap { candidate ->
             if (candidate.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
                 return@flatMap listOf(
                     LocalLibraryItem(
@@ -1510,10 +1716,16 @@ class LocalFolderSource(
                 }
             listOf(seriesItem) + chapterItems
         }
+        val items = mergeLocalLibraryScanItems(
+            scannedItems = scannedItems,
+            previousItems = previousIndex.items,
+            configuredRootIds = configuredRootIds,
+            successfulRootIds = successfulRootIds,
+        )
 
         val previousChapterSignatures = previousIndex.chapterSignatures()
         val currentIndex = LocalLibraryIndex(
-            schemaVersion = 4,
+            schemaVersion = 5,
             scannedAt = scannedAt,
             items = items,
         )
@@ -1616,10 +1828,10 @@ class LocalFolderSource(
             showSourceName = true,
             detailsRefreshIntervalMillis = null,
         )
-        private val SUPPORTED_FILE_EXTENSIONS = setOf("cbz", "zip", "cbr", "rar", "7z", "tar", "epub", "pdf")
-        private val COMIC_IMPORT_EXTENSIONS = setOf("cbz", "zip", "cbr", "rar", "7z", "tar", "pdf")
-        private val BOOK_IMPORT_EXTENSIONS = setOf("epub", "pdf")
-        private val BOOK_FILE_EXTENSIONS = setOf("epub", "pdf")
+        private val COMIC_IMPORT_EXTENSIONS = LocalMediaFormats.comicExtensions
+        private val BOOK_IMPORT_EXTENSIONS = LocalMediaFormats.bookExtensions
+        private val BOOK_FILE_EXTENSIONS = LocalMediaFormats.bookExtensions
+        private val SUPPORTED_FILE_EXTENSIONS = LocalMediaFormats.allExtensions
         private val COMIC_FILE_EXTENSIONS = SUPPORTED_FILE_EXTENSIONS - BOOK_FILE_EXTENSIONS
         private val IMPORT_INVALID_CHARACTERS = Regex("[\\\\/:*?\"<>|]")
         private const val SCAN_METADATA_BATCH_SIZE = 8

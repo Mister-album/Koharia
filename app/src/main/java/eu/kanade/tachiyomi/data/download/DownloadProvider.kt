@@ -9,6 +9,7 @@ import koharia.connection.ConnectionDownloadStorageAdapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionRegistry
 import koharia.connection.LibraryConnectionProfile
+import koharia.media.LocalMediaFormats
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
@@ -336,7 +337,7 @@ class DownloadProvider(
 
     companion object {
         val SUPPORTED_CHAPTER_FILE_EXTENSIONS =
-            setOf("cbz", "zip", "rar", "cbr", "7z", "cb7", "tar", "cbt", "epub", "pdf")
+            LocalMediaFormats.allExtensions
 
         private const val CACHE_TTL_MS = 10_000L
 

@@ -6,6 +6,7 @@ import android.net.Uri
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import koharia.domain.manga.model.toDomainManga
 import koharia.epub.EpubReaderLauncher
+import koharia.media.LocalMediaFormats
 import kotlinx.coroutines.CancellationException
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.chapter.model.Chapter
@@ -94,7 +95,13 @@ class IncomingMediaOpenManager(
             val readerIntent = if (item.extension.equals("epub", ignoreCase = true)) {
                 epubReaderLauncher.resolveIntent(context, manga.id, chapter.id)
             } else {
-                ReaderActivity.newIntent(context, manga.id, chapter.id, sourceId)
+                ReaderActivity.newIntent(
+                    context = context,
+                    mangaId = manga.id,
+                    chapterId = chapter.id,
+                    sourceId = sourceId,
+                    useEpubSettings = LocalMediaFormats.isReflowableBook(item.extension),
+                )
             }
             return IncomingMediaNavigation.attachToReaderIntent(readerIntent, target)
         } catch (error: Throwable) {

@@ -46,19 +46,20 @@ class LocalLibraryModelsTest {
     }
 
     @Test
-    fun `individual file progress uses current page while unread`() {
+    fun `individual file progress uses document page count percentage while unread`() {
         val chapters = listOf(Chapter.create().copy(lastPageRead = 4L))
 
         assertEquals(
             MangaReadProgress(
-                readCount = 5L,
-                totalChapterCount = 1L,
-                display = MangaReadProgressDisplay.PAGE,
+                readCount = 25L,
+                totalChapterCount = 100L,
+                display = MangaReadProgressDisplay.PERCENTAGE,
             ),
             buildLocalReadProgress(
                 indexedChapterCount = 1,
                 chapters = chapters,
                 isIndividualFile = true,
+                documentPageCount = 20,
             ),
         )
     }
@@ -78,6 +79,39 @@ class LocalLibraryModelsTest {
                 chapters = chapters,
                 isIndividualFile = true,
                 epubProgression = 0.42,
+            ),
+        )
+    }
+
+    @Test
+    fun `epub progression takes precedence over document page count`() {
+        val chapters = listOf(Chapter.create().copy(lastPageRead = 49L))
+
+        assertEquals(
+            MangaReadProgress(
+                readCount = 42L,
+                totalChapterCount = 100L,
+                display = MangaReadProgressDisplay.PERCENTAGE,
+            ),
+            buildLocalReadProgress(
+                indexedChapterCount = 1,
+                chapters = chapters,
+                isIndividualFile = true,
+                epubProgression = 0.42,
+                documentPageCount = 100,
+            ),
+        )
+    }
+
+    @Test
+    fun `individual file progress omits unknown page count instead of showing a page label`() {
+        val chapters = listOf(Chapter.create().copy(lastPageRead = 11L))
+
+        assertNull(
+            buildLocalReadProgress(
+                indexedChapterCount = 1,
+                chapters = chapters,
+                isIndividualFile = true,
             ),
         )
     }
@@ -539,7 +573,7 @@ class LocalLibraryModelsTest {
 
         val restored = Json.decodeFromString<LocalLibraryIndex>(Json.encodeToString(index))
 
-        assertEquals(4, restored.schemaVersion)
+        assertEquals(5, restored.schemaVersion)
         assertEquals(LocalLibraryItem.Kind.FILE_ENTRY, restored.items.single().kind)
         assertEquals("Nested/Book.epub", restored.items.single().relativePath)
     }
@@ -682,5 +716,81 @@ class LocalLibraryModelsTest {
 
         assertEquals(setOf(LibraryContentScope.ALL), localLibraryContentScopes(mixed))
         assertEquals(setOf(LibraryContentScope.ALL), localLibraryContentScopes(comicsOnly))
+    }
+
+    @Test
+    fun `failed root keeps old items while successful root replaces its items`() {
+        val oldSuccessful = localItem("successful", "Removed.cbz")
+        val oldFailed = localItem("failed", "Kept.epub")
+        val rescanned = localItem("successful", "Current.cbz")
+
+        val merged = mergeLocalLibraryScanItems(
+            scannedItems = listOf(rescanned),
+            previousItems = listOf(oldSuccessful, oldFailed),
+            configuredRootIds = setOf("successful", "failed"),
+            successfulRootIds = setOf("successful"),
+        )
+
+        assertEquals(listOf(rescanned, oldFailed), merged)
+    }
+
+    @Test
+    fun `successful empty scan clears root without preserving removed root`() {
+        val configured = localItem("configured", "Removed.cbz")
+        val removedRoot = localItem("removed", "Old.epub")
+
+        val merged = mergeLocalLibraryScanItems(
+            scannedItems = emptyList(),
+            previousItems = listOf(configured, removedRoot),
+            configuredRootIds = setOf("configured"),
+            successfulRootIds = setOf("configured"),
+        )
+
+        assertTrue(merged.isEmpty())
+    }
+
+    @Test
+    fun `empty index recovers stable file entries from manga urls`() {
+        val root = LocalLibraryRootConfig(
+            id = "books",
+            contentType = LocalLibraryContentType.BOOKS,
+            bookshelfId = "individual",
+        )
+        val config = LocalLibraryConfig(
+            roots = listOf(root),
+            bookshelves = listOf(
+                LocalBookshelf(
+                    id = "individual",
+                    name = "Loose books",
+                    contentType = LocalLibraryContentType.BOOKS,
+                    organizationMode = LocalLibraryOrganizationMode.INDIVIDUAL_FILES,
+                ),
+            ),
+        )
+        val url = LocalLibraryLocator.entryUrl(42L, "books", "Nested/Book.azw3")
+
+        val recovered = recoverLocalLibraryItems(
+            sourceId = 42L,
+            config = config,
+            mangaUrls = listOf(url, "koharia-incoming://session/book.epub"),
+        )
+
+        assertEquals(1, recovered.size)
+        assertEquals("books", recovered.single().rootId)
+        assertEquals("Nested/Book.azw3", recovered.single().relativePath)
+        assertEquals(LocalLibraryItem.Kind.FILE_ENTRY, recovered.single().kind)
+        assertEquals("azw3", recovered.single().format)
+    }
+
+    private fun localItem(rootId: String, relativePath: String): LocalLibraryItem {
+        return LocalLibraryItem(
+            itemKey = LocalLibraryLocator.itemKey(rootId, relativePath),
+            rootId = rootId,
+            relativePath = relativePath,
+            kind = LocalLibraryItem.Kind.FILE_ENTRY,
+            format = relativePath.substringAfterLast('.', missingDelimiterValue = ""),
+            sizeBytes = 1L,
+            modifiedAt = 1L,
+        )
     }
 }

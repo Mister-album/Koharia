@@ -17,6 +17,12 @@ abstract class PageLoader {
 
     abstract var isLocal: Boolean
 
+    /** Whether the reader position can be represented as a stable remote page index. */
+    open val supportsRemoteProgress: Boolean = true
+
+    /** Total pages when this loader can provide a stable document progress denominator. */
+    open val progressPageCount: Int? = null
+
     /**
      * Returns the list of pages of a chapter.
      */

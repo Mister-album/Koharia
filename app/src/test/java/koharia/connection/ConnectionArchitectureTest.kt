@@ -480,6 +480,10 @@ class ConnectionArchitectureTest {
         assertEquals(2048L, ConnectionChapterMetadata.sizeBytes(memo))
         assertEquals(12, ConnectionChapterMetadata.pagesCount(memo))
         assertEquals("hash:abc123", ConnectionChapterMetadata.publicationVersion(memo))
+        val updatedMemo = ConnectionChapterMetadata.withPagesCount(memo, 24)
+        assertEquals(24, ConnectionChapterMetadata.pagesCount(updatedMemo))
+        assertEquals("hash:abc123", ConnectionChapterMetadata.publicationVersion(updatedMemo))
+        assertSame(updatedMemo, ConnectionChapterMetadata.withPagesCount(updatedMemo, 24))
         assertEquals(
             "Chapter 1",
             ConnectionChapterMetadata.removeTrailingEmbeddedFileSize("Chapter 1 (2 MB)", memo),

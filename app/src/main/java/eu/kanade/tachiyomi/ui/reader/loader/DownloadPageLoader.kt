@@ -12,6 +12,9 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
+import koharia.document.DocumentEngines
+import koharia.document.DocumentRenderSettings
+import koharia.media.LocalMediaFormats
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
@@ -26,6 +29,7 @@ internal class DownloadPageLoader(
     private val source: Source,
     private val downloadManager: DownloadManager,
     private val downloadProvider: DownloadProvider,
+    private val documentSettingsProvider: () -> DocumentRenderSettings = { DocumentRenderSettings.DEFAULT },
 ) : PageLoader() {
 
     private val context: Application by injectLazy()
@@ -33,8 +37,15 @@ internal class DownloadPageLoader(
     private var archivePageLoader: ArchivePageLoader? = null
     private var epubPageLoader: EpubPageLoader? = null
     private var pdfPageLoader: PdfPageLoader? = null
+    private var documentPageLoader: DocumentPageLoader? = null
 
     override var isLocal: Boolean = true
+
+    override val supportsRemoteProgress: Boolean
+        get() = documentPageLoader?.supportsRemoteProgress ?: true
+
+    override val progressPageCount: Int?
+        get() = documentPageLoader?.progressPageCount
 
     override suspend fun getPages(): List<ReaderPage> {
         val dbChapter = chapter.chapter
@@ -57,6 +68,9 @@ internal class DownloadPageLoader(
             when {
                 chapterPath.extension.equals("epub", true) -> getPagesFromEpub(chapterPath)
                 chapterPath.extension.equals("pdf", true) -> getPagesFromPdf(chapterPath)
+                DocumentEngines.forExtension(chapterPath.extension) != null ->
+                    getPagesFromDocument(chapterPath)
+                LocalMediaFormats.isImage(chapterPath.extension) -> getPagesFromImage(chapterPath)
                 else -> getPagesFromArchive(chapterPath)
             }
         } else {
@@ -69,6 +83,7 @@ internal class DownloadPageLoader(
         archivePageLoader?.recycle()
         epubPageLoader?.recycle()
         pdfPageLoader?.recycle()
+        documentPageLoader?.recycle()
     }
 
     private suspend fun getPagesFromArchive(file: UniFile): List<ReaderPage> {
@@ -86,6 +101,20 @@ internal class DownloadPageLoader(
         return loader.getPages()
     }
 
+    private suspend fun getPagesFromDocument(file: UniFile): List<ReaderPage> {
+        val loader = DocumentPageLoader(context, file, documentSettingsProvider).also { documentPageLoader = it }
+        return loader.getPages()
+    }
+
+    private fun getPagesFromImage(file: UniFile): List<ReaderPage> {
+        return listOf(
+            ReaderPage(0).apply {
+                stream = { file.openInputStream() }
+                status = Page.State.Ready
+            },
+        )
+    }
+
     private fun getPagesFromDirectory(): List<ReaderPage> {
         val pages = downloadManager.buildPageList(source, manga, chapter.chapter.toDomainChapter()!!)
         return pages.map { page ->
@@ -101,6 +130,7 @@ internal class DownloadPageLoader(
         archivePageLoader?.loadPage(page)
         epubPageLoader?.loadPage(page)
         pdfPageLoader?.loadPage(page)
+        documentPageLoader?.loadPage(page)
     }
 
     override fun setActivePage(page: ReaderPage) {
@@ -118,4 +148,6 @@ internal class DownloadPageLoader(
     override fun onPagesDisplayed(pages: List<ReaderPage>) {
         pdfPageLoader?.onPagesDisplayed(pages)
     }
+
+    override suspend fun refreshPages(): List<ReaderPage>? = documentPageLoader?.refreshPages()
 }
