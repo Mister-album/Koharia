@@ -54,5 +54,36 @@ class DoublePageProgressPolicyTest {
         assertFalse(selection?.transfersPendingCommit == true)
     }
 
+    @Test
+    fun `activation displays stable anchor instead of provisional later page`() {
+        val first = page(0)
+        val second = page(1)
+
+        val displayPage = DoublePageProgressPolicy.activationDisplayPage(listOf(first, second), first)
+        val visiblePageEnd = DoublePageProgressPolicy.visiblePageEnd(listOf(first, second))
+
+        assertSame(first, displayPage)
+        assertSame(second, visiblePageEnd)
+    }
+
+    @Test
+    fun `activation falls back to last visible page without anchor`() {
+        val first = page(0)
+        val second = page(1)
+
+        val displayPage = DoublePageProgressPolicy.activationDisplayPage(listOf(first, second), null)
+
+        assertSame(second, displayPage)
+    }
+
+    @Test
+    fun `activation resolves replacement page with the same physical index`() {
+        val replacement = page(0)
+
+        val displayPage = DoublePageProgressPolicy.activationDisplayPage(listOf(replacement, page(1)), page(0))
+
+        assertSame(replacement, displayPage)
+    }
+
     private fun page(index: Int) = ReaderPage(index, "page-$index", null)
 }

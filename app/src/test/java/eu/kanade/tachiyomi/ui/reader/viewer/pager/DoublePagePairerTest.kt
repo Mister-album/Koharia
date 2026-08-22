@@ -65,4 +65,49 @@ class DoublePagePairerTest {
             ),
         )
     }
+
+    @Test
+    fun `content-aware rejection preserves later pair boundaries`() {
+        assertEquals(
+            listOf(Slot(0, null), Slot(1, null), Slot(2, 3)),
+            DoublePagePairer.pair(
+                soloPages = List(4) { false },
+                shift = false,
+                preservePairBoundaries = true,
+                canPair = { first, _ -> first == 2 },
+            ),
+        )
+    }
+
+    @Test
+    fun `content-aware solo page preserves later pair boundaries`() {
+        assertEquals(
+            listOf(Slot(0, null), Slot(1, null), Slot(2, 3)),
+            DoublePagePairer.pair(
+                soloPages = listOf(true, false, false, false),
+                shift = false,
+                preservePairBoundaries = true,
+            ),
+        )
+        assertEquals(
+            listOf(Slot(0, null), Slot(1, null), Slot(2, 3)),
+            DoublePagePairer.pair(
+                soloPages = listOf(false, true, false, false),
+                shift = false,
+                preservePairBoundaries = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `content-aware shift remains consumed when first page becomes solo`() {
+        assertEquals(
+            listOf(Slot(0, null), Slot(1, 2), Slot(3, 4)),
+            DoublePagePairer.pair(
+                soloPages = listOf(true, false, false, false, false),
+                shift = true,
+                preservePairBoundaries = true,
+            ),
+        )
+    }
 }

@@ -164,6 +164,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
             val layout = DoublePagePairer.pair(
                 soloPages = segment.map { it.spreadKind.occupiesFullSlot },
                 shift = viewer.config.shiftDoublePages,
+                preservePairBoundaries = viewer.config.usesContentAwarePairing,
                 canPair = { first, second ->
                     !viewer.config.usesContentAwarePairing ||
                         DoublePageCompatibilityPolicy.canPair(

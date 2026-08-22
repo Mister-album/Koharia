@@ -35,6 +35,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.DoublePageProgressPolicy
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
 import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
@@ -651,7 +652,10 @@ class ReaderViewModel @JvmOverloads constructor(
         chapterPageIndex = page.index
         selectedChapter.pageLoader?.setActivePages(physicalPages)
         mutableState.update {
-            it.copy(visiblePageStart = physicalPages.minOf { visiblePage -> visiblePage.index } + 1)
+            it.copy(
+                visiblePageStart = physicalPages.minOf { visiblePage -> visiblePage.index } + 1,
+                visiblePageEnd = page.index + 1,
+            )
         }
 
         // Save last page read and mark as read if needed
@@ -677,10 +681,11 @@ class ReaderViewModel @JvmOverloads constructor(
         val chapter = physicalPages.firstOrNull()?.chapter ?: return
         if (physicalPages.any { it.chapter !== chapter }) return
         chapter.pageLoader?.setActivePages(physicalPages)
-        val displayPage = physicalPages.maxByOrNull { it.index } ?: return
         val anchor = anchorPage?.takeIf { candidate ->
             candidate.chapter === chapter && physicalPages.any { it.index == candidate.index }
         }
+        val displayPage = DoublePageProgressPolicy.activationDisplayPage(physicalPages, anchor) ?: return
+        val visiblePageEnd = DoublePageProgressPolicy.visiblePageEnd(physicalPages)?.index?.plus(1) ?: return
         anchor?.let { stableAnchor ->
             stableAnchor.chapter.chapter.id?.let { chapterId ->
                 synchronized(remoteProgressOpeningPages) {
@@ -692,6 +697,7 @@ class ReaderViewModel @JvmOverloads constructor(
             it.copy(
                 currentPage = displayPage.index + 1,
                 visiblePageStart = physicalPages.minOf { page -> page.index } + 1,
+                visiblePageEnd = visiblePageEnd,
             )
         }
     }
@@ -1557,6 +1563,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val remoteProgressConflict: MangaRemoteProgressConflict? = null,
         val menuVisible: Boolean = false,
         val visiblePageStart: Int = -1,
+        val visiblePageEnd: Int = -1,
         @IntRange(from = -100, to = 100) val brightnessOverlayValue: Int = 0,
     ) {
         val currentChapter: ReaderChapter?

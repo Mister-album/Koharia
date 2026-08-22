@@ -23,4 +23,15 @@ internal object DoublePageProgressPolicy {
             transfersPendingCommit = transfersPendingCommit,
         )
     }
+
+    fun activationDisplayPage(
+        visiblePages: List<ReaderPage>,
+        anchorPage: ReaderPage?,
+    ): ReaderPage? {
+        return anchorPage
+            ?.let { anchor -> visiblePages.firstOrNull { it === anchor || it.index == anchor.index } }
+            ?: visiblePageEnd(visiblePages)
+    }
+
+    fun visiblePageEnd(visiblePages: List<ReaderPage>): ReaderPage? = visiblePages.maxByOrNull { it.index }
 }

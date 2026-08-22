@@ -371,7 +371,7 @@ class ReaderActivity : BaseActivity() {
         Box(modifier = Modifier.fillMaxSize()) {
             if (!state.menuVisible && showPageNumber) {
                 ReaderPageIndicator(
-                    currentPage = state.currentPage,
+                    currentPage = state.visiblePageEnd.takeIf { it > 0 } ?: state.currentPage,
                     totalPages = state.totalPages,
                     visiblePageStart = state.visiblePageStart,
                     modifier = Modifier
@@ -714,6 +714,7 @@ class ReaderActivity : BaseActivity() {
             enabledPrevious = state.viewerChapters?.prevChapter != null,
             currentPage = state.currentPage,
             visiblePageStart = state.visiblePageStart,
+            visiblePageEnd = state.visiblePageEnd.takeIf { it > 0 } ?: state.currentPage,
             totalPages = state.totalPages,
             onPageIndexChange = {
                 isScrollingThroughPages = true

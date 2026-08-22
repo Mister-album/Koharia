@@ -62,6 +62,7 @@ fun ReaderAppBars(
     enabledPrevious: Boolean,
     currentPage: Int,
     visiblePageStart: Int,
+    visiblePageEnd: Int,
     totalPages: Int,
     onPageIndexChange: (Int) -> Unit,
 
@@ -123,7 +124,7 @@ fun ReaderAppBars(
                                 currentPage = currentPage,
                                 totalPages = totalPages,
                                 onPageIndexChange = onPageIndexChange,
-                                displayCurrentText = visiblePageRangeText(visiblePageStart, currentPage),
+                                displayCurrentText = visiblePageRangeText(visiblePageStart, visiblePageEnd),
                             )
                         }
                     }
@@ -150,7 +151,7 @@ fun ReaderAppBars(
                         currentPage = currentPage,
                         totalPages = totalPages,
                         onPageIndexChange = onPageIndexChange,
-                        displayCurrentText = visiblePageRangeText(visiblePageStart, currentPage),
+                        displayCurrentText = visiblePageRangeText(visiblePageStart, visiblePageEnd),
                     )
                 }
                 ReaderBottomBar(
