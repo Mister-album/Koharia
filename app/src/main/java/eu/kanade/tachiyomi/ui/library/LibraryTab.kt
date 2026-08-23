@@ -6,7 +6,6 @@ import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,14 +46,15 @@ sealed class ConnectionLibraryTab(
     @Volatile
     private var runtimeBrowseScreen: ConnectionBrowseScreen? = null
 
-    private fun browseScreen(): ConnectionBrowseScreen? {
-        runtimeBrowseScreen?.let { return it }
-        val activeConnectionId = Injekt.get<ConnectionPreferences>().activeConnectionId.get()
+    private fun browseScreen(
+        activeConnectionId: Long = Injekt.get<ConnectionPreferences>().activeConnectionId.get(),
+    ): ConnectionBrowseScreen? {
         if (activeConnectionId == NO_ACTIVE_CONNECTION) return null
+        runtimeBrowseScreen?.takeIf { it.sourceId == activeConnectionId }?.let { return it }
         return synchronized(this) {
-            runtimeBrowseScreen ?: newScreen(activeConnectionId)?.also {
-                runtimeBrowseScreen = it
-            }
+            runtimeBrowseScreen
+                ?.takeIf { it.sourceId == activeConnectionId }
+                ?: newScreen(activeConnectionId)?.also { runtimeBrowseScreen = it }
         }
     }
 
@@ -98,7 +98,9 @@ sealed class ConnectionLibraryTab(
             }
             return
         }
-        val activeScreen = remember(activeServerId) { newScreen(activeServerId) }
+        // Keep the same screen instance while opening details or a reader. Its ScreenModel owns
+        // the selected shelf, filters, search, and paging cache.
+        val activeScreen = remember(activeServerId) { browseScreen(activeServerId) }
         if (activeScreen == null) {
             tachiyomi.presentation.core.screens.EmptyScreen(
                 stringRes = MR.strings.connection_unavailable,
@@ -107,10 +109,6 @@ sealed class ConnectionLibraryTab(
         }
         val isSelected = LocalTabNavigator.current.current.key == key
         var hasEntered by remember { mutableStateOf(false) }
-
-        SideEffect {
-            runtimeBrowseScreen = activeScreen
-        }
 
         LaunchedEffect(isSelected) {
             if (isSelected) {
@@ -129,6 +127,20 @@ sealed class ConnectionLibraryTab(
 
     suspend fun searchGenre(name: String) = browseScreen()?.searchGenre(name)
 
+    private fun clearRuntimeState() {
+        val cachedSourceId = synchronized(this) {
+            runtimeBrowseScreen?.sourceId.also { runtimeBrowseScreen = null }
+        }
+        val activeSourceId = Injekt.get<ConnectionPreferences>().activeConnectionId.get()
+        setOfNotNull(
+            cachedSourceId,
+            activeSourceId.takeUnless { it == NO_ACTIVE_CONNECTION },
+        ).forEach { sourceId ->
+            (Injekt.get<SourceManager>().get(sourceId) as? ConnectionBrowseAdapter)
+                ?.clearBrowseSession(libraryScope)
+        }
+    }
+
     private fun newScreen(sourceId: Long): ConnectionBrowseScreen? {
         val source = Injekt.get<SourceManager>().get(sourceId) ?: return null
         return (source as? ConnectionBrowseAdapter)?.createBrowseScreen(
@@ -136,6 +148,13 @@ sealed class ConnectionLibraryTab(
             listingQuery = null,
             showNavigationUp = false,
         )
+    }
+
+    companion object {
+        fun clearAllRuntimeState() {
+            listOf<ConnectionLibraryTab>(LibraryTab, ComicsTab, BooksTab)
+                .forEach(ConnectionLibraryTab::clearRuntimeState)
+        }
     }
 }
 

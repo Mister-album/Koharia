@@ -21,6 +21,8 @@ interface ConnectionBrowseAdapter {
 
     fun contentScopesChanges(): Flow<Set<LibraryContentScope>> = flowOf(availableContentScopes())
 
+    fun clearBrowseSession(scope: LibraryContentScope) = Unit
+
     fun createBrowseScreen(
         scope: LibraryContentScope,
         listingQuery: String? = null,

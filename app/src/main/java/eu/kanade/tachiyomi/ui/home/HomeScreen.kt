@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.home
 
+import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -25,6 +26,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.util.fastForEach
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -87,6 +89,8 @@ object HomeScreen : Screen() {
             tab = defaultLibraryTab,
             key = TabNavigatorKey,
         ) { tabNavigator ->
+            val activity = LocalContext.current as? Activity
+
             // Provide usable navigator to content screen
             CompositionLocalProvider(LocalNavigator provides navigator) {
                 Scaffold(
@@ -143,6 +147,16 @@ object HomeScreen : Screen() {
             val goToLibraryTab = { tabNavigator.current = defaultLibraryTab }
 
             BackHandler(enabled = tabNavigator.current != defaultLibraryTab, onBack = goToLibraryTab)
+            // Backgrounding, tab changes, and nested screens keep the browse session. Only a
+            // back press from the root library screen starts a fresh session on the next launch.
+            BackHandler(
+                enabled = activity != null &&
+                    navigator.lastItem is HomeScreen &&
+                    tabNavigator.current == defaultLibraryTab,
+            ) {
+                ConnectionLibraryTab.clearAllRuntimeState()
+                activity?.finish()
+            }
 
             LaunchedEffect(classificationEnabled) {
                 tabNavigator.current = when {

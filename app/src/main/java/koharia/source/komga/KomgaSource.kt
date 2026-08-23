@@ -142,6 +142,10 @@ class KomgaSource(
         }
     }
 
+    override fun clearBrowseSession(scope: LibraryContentScope) {
+        resetSessionFilterState(scope)
+    }
+
     override fun shouldRefreshMangaDetails(
         manga: tachiyomi.domain.manga.model.Manga,
         nowMillis: Long,
