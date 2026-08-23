@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+import kotlin.math.roundToInt
+
 internal object DoublePageCompositionPolicy {
     private const val BYTES_PER_PIXEL = 4L
     private const val OVERHEAD_BYTES = 16L * 1024L * 1024L
@@ -17,6 +19,21 @@ internal object DoublePageCompositionPolicy {
         val outputWidth: Int,
     )
 
+    data class ViewportLayout(
+        val viewportWidth: Int,
+        val left: Int,
+        val top: Int,
+        val firstWidth: Int,
+        val secondWidth: Int,
+        val height: Int,
+    ) {
+        val outputWidth: Int
+            get() = firstWidth + secondWidth
+
+        val splitFraction: Float
+            get() = (left + firstWidth).toFloat() / viewportWidth
+    }
+
     fun compositionLayout(first: Image, second: Image): CompositionLayout? {
         if (minOf(first.width, first.height, second.width, second.height) <= 0) return null
         val targetHeight = maxOf(first.height, second.height)
@@ -25,6 +42,33 @@ internal object DoublePageCompositionPolicy {
         val outputWidth = firstWidth.toLong() + secondWidth
         if (outputWidth > Int.MAX_VALUE) return null
         return CompositionLayout(firstWidth, secondWidth, targetHeight, outputWidth.toInt())
+    }
+
+    fun fitInViewport(
+        first: Image,
+        second: Image,
+        viewportWidth: Int,
+        viewportHeight: Int,
+    ): ViewportLayout? {
+        if (viewportWidth < 2 || viewportHeight <= 0) return null
+        val composition = compositionLayout(first, second) ?: return null
+        val scale = minOf(
+            viewportWidth.toDouble() / composition.outputWidth,
+            viewportHeight.toDouble() / composition.height,
+        )
+        val outputWidth = (composition.outputWidth * scale).roundToInt().coerceIn(2, viewportWidth)
+        val height = (composition.height * scale).roundToInt().coerceIn(1, viewportHeight)
+        val firstWidth = (outputWidth.toLong() * composition.firstWidth / composition.outputWidth)
+            .toInt()
+            .coerceIn(1, outputWidth - 1)
+        return ViewportLayout(
+            viewportWidth = viewportWidth,
+            left = (viewportWidth - outputWidth) / 2,
+            top = (viewportHeight - height) / 2,
+            firstWidth = firstWidth,
+            secondWidth = outputWidth - firstWidth,
+            height = height,
+        )
     }
 
     fun estimatedPeakBytes(first: Image, second: Image): Long {

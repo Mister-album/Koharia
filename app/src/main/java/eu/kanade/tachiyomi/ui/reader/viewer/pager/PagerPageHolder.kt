@@ -9,7 +9,6 @@ import android.graphics.drawable.BitmapDrawable
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
-import android.widget.LinearLayout
 import androidx.core.view.isVisible
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
@@ -65,7 +64,7 @@ class PagerPageHolder(
     private val scope = MainScope()
     private val loadJobs = mutableListOf<Job>()
     private var renderJob: Job? = null
-    private var pairContainer: LinearLayout? = null
+    private var pairContainer: DoublePageLayout? = null
     private var pairViews: List<ReaderPageImageView> = emptyList()
     private var displayedPairViews = 0
     private var spreadDisplayed = false
@@ -353,9 +352,19 @@ class PagerPageHolder(
                     Triple(page, firstContent, firstBackground),
                 )
             }
-            val container = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
+            val pageSizes = physicalPages.map { (physicalPage) ->
+                DoublePageCompositionPolicy.Image(
+                    width = physicalPage.spreadInfo.width ?: 0,
+                    height = physicalPage.spreadInfo.height ?: 0,
+                    compressedBytes = 0,
+                )
             }
+            val container = DoublePageLayout(
+                context = context,
+                firstPage = pageSizes[0],
+                secondPage = pageSizes[1],
+                onSplitFractionChanged = { physicalSplitFraction = it },
+            )
             val children = mutableListOf<ReaderPageImageView>()
             try {
                 physicalPages.forEach { (physicalPage, content, background) ->
@@ -388,9 +397,7 @@ class PagerPageHolder(
                 children.forEach(ReaderPageImageView::recycle)
                 throw error
             }
-            children.forEach { child ->
-                container.addView(child, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
-            }
+            children.forEach { child -> container.addView(child) }
             pairViews = children
             pairContainer = container
             addView(container, ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT))
