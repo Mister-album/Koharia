@@ -6,7 +6,7 @@
 
 # Koharia
 
-An Android reader for both comics and EPUB books
+An Android comic and book reader for Komga and local media libraries
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0877d2?labelColor=27303D)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Mister-album/Koharia?label=release)](https://github.com/Mister-album/Koharia/releases/latest)
@@ -15,9 +15,9 @@ An Android reader for both comics and EPUB books
 
 ## Overview
 
-Koharia is a third-party Android client and reader for [Komga](https://komga.org/) servers. It provides dedicated reading experiences for comics, scanned image content, and reflowable EPUB books. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app, while comics and books are each presented in the way that best suits them.
+Koharia is a third-party Android client and reader for [Komga](https://komga.org/) servers and local media libraries. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, and MOBI. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app.
 
-The project is built on the mature Android reading foundation of [Mihon](https://github.com/mihonapp/mihon). Koharia does not provide or host any content. What you can browse depends on the media libraries you connect to and the permissions of your account.
+The project is built on the mature Android reading foundation of [Mihon](https://github.com/mihonapp/mihon). Koharia does not provide or host any content. What you can browse depends on the servers you connect to, your account permissions, and the local directories you explicitly grant the app access to.
 
 <table>
   <tr>
@@ -42,8 +42,9 @@ The project is built on the mature Android reading foundation of [Mihon](https:/
 
 ## Who is it for?
 
-- Readers who want comics and EPUB books in a single Android app.
+- Readers who want comics, PDFs, and multiple ebook formats in a single Android app.
 - People with a personal or family media library who need cover browsing, series details, reading history, and progress synchronization.
+- Users who want to link existing folders on their device or let the app create and manage comic and book directories.
 - Readers who value control over reading direction, typography, background colors, page turning, and offline access.
 - Users who want manual downloads, book caching, and comic page caching to be managed separately.
 
@@ -55,7 +56,31 @@ Koharia focuses on reading from personal media libraries. It does not provide pu
 
 - Optionally split media libraries into Comics and Books, or keep everything in a combined library.
 - Cover grid and list views, search, filters, sorting, series details, reading history, and quick switching between servers.
-- Server library classification is kept separate from local preferences, making it easier to organize different media libraries.
+- Komga server library classification is kept separate from local bookshelf settings, making it easier to organize content from different sources.
+
+### Local libraries and file import
+
+- Link existing folders through Android's system directory picker without moving or deleting their files, or let Koharia create a managed `Comics`, `Books`, and `.koharia` directory structure.
+- Mark local directories as comics, books, or mixed content and assign them to custom bookshelves.
+- Choose between a series-based library, where each top-level folder is treated as a series, and an individual-file library, which recursively lists files and image folders that can be opened directly.
+- Local indexing, pull-to-refresh, cover extraction, format filters, entry metadata editing, and first-page cover generation.
+- Open supported files from Android file pickers or share actions for temporary reading, or import them into a writable local library directory.
+- Consistent format detection based on file extensions, MIME types, and file signatures, including files with missing or inaccurate extensions.
+- Store metadata edits only in the app database, in adjacent `ComicInfo.xml` / `metadata.opf` sidecars, or in the library's unified `.koharia/metadata` directory.
+
+### Supported local formats
+
+| Content type | Extensions or form | Reader and limitations |
+| --- | --- | --- |
+| Comic archives | `CBZ`, `ZIP`, `CBR`, `RAR`, `7Z`, `CB7`, `TAR`, `CBT` | Comic reader with paged, continuous scrolling, and dual-page modes |
+| Images and image folders | `JPG`, `JPEG`, `PNG`, `GIF`, `WEBP`, `AVIF`, `HEIF`, `HEIC`, `JXL` | Read as individual entries or organized image directories |
+| EPUB | `EPUB` | Native reflowable reader with table of contents, bookmarks, search, and typography controls |
+| PDF | `PDF` | Native page rendering through the paged or continuous comic reading flow |
+| Plain text | `TXT` | Detects common encodings including UTF-8, UTF-16, and GB18030; supports pagination and book typography controls; 64 MiB file limit |
+| Mobipocket / Kindle | `MOBI`, `PRC`, `AZW`, `AZW3` | Experimental PalmDOC / KF8 text and basic metadata support with reflowable pagination; DRM, complex layouts, and embedded images are not supported; 256 MiB file limit |
+| DjVu | `DJVU`, `DJV` | Uses the MIT-licensed `djvu-rs` WASM decoder for JB2 / IW44 pages and displays them in the comic reader; requires WebAssembly support in Android WebView |
+
+The DjVu decoder runs in the JavaScript / WebAssembly runtime provided by the system WebView. Chicory is not bundled or used by the current build. See [`app/src/main/assets/djvu/README.txt`](./app/src/main/assets/djvu/README.txt) for its source, license, and checksum.
 
 ### Comic reading
 
@@ -77,7 +102,7 @@ Koharia focuses on reading from personal media libraries. It does not provide pu
 - Saves local reading positions, history, and bookmarks, and synchronizes supported reading progress with the server.
 - Manual downloads, book cache, and comic page cache use separate policies; cached content is never incorrectly marked as downloaded.
 - Cache size limits, on-demand resource loading, offline access, and server-specific download directories.
-- Multiple server profiles, independent reader settings, backup and restore, and database migration from older releases.
+- Multiple server and local library connections, independent reader settings, backup and restore, and database migration from older releases.
 
 ## Download
 
@@ -132,7 +157,7 @@ If Koharia is useful to your reading workflow, you can support the project throu
 
 ## Disclaimer
 
-Koharia does not provide, host, or index any content. The app only connects to personal media servers configured by the user and displays content the account is authorized to access. Make sure you have the right to use the content in your libraries and comply with the laws applicable in your region.
+Koharia does not provide or host any content. The app only connects to personal media servers configured by the user and scans or imports local files the user explicitly authorizes; the local index is used solely to organize and display that content on the device. Make sure you have the right to use the content on your servers and in your local directories, and comply with the laws applicable in your region.
 
 ## License
 
