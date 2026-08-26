@@ -32,6 +32,7 @@ import koharia.source.komga.TYPE_BOOKS_INDEX
 import koharia.source.komga.TYPE_READ_LISTS_INDEX
 import koharia.source.komga.TypeSelect
 import koharia.source.komga.UnreadFilter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import okhttp3.Request
@@ -305,7 +306,17 @@ class KomgaRepository(
         coroutineScope {
             // These endpoints are independent. Keep the library-order request separate because
             // it only affects local sorting after the library list has been fetched.
-            val libraryOrders = async { apiClient.getLibraryOrders(cachePolicy) }
+            val libraryOrders = async {
+                try {
+                    apiClient.getLibraryOrders(cachePolicy)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // Client settings were introduced after the library endpoint. Older Komga
+                    // servers can still provide libraries, just without the WebUI ordering.
+                    emptyMap()
+                }
+            }
             val libraries = async { apiClient.getLibraries(cachePolicy) }
             val collections = async { apiClient.getCollections(cachePolicy) }
             val genres = async { apiClient.getGenres(cachePolicy) }
