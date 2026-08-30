@@ -1410,7 +1410,8 @@
     <string name="metadata_source_epub">来自 EPUB 内嵌元数据</string>
     <string name="metadata_source_filename">来自项目文件名</string>
     <string name="local_library_edit_add_hint">可使用下方目录操作继续关联漫画或书籍目录。</string>
-    <string name="local_library_empty_import_hint">本地库中还没有作品。请将媒体导入已配置的目录，然后刷新书架。</string>
+    <string name="local_library_empty_import_hint">本地库中还没有作品。可导入本机文件，或将媒体添加到已配置目录。</string>
+    <string name="local_library_import_files">导入本机文件</string>
     <string name="local_library_refresh_complete">本地库刷新完成，发现 %1$d 个作品</string>
     <string name="local_library_refresh_failed">无法刷新本地库</string>
     <string name="local_library_bookshelves">书库</string>
@@ -1444,7 +1445,7 @@
     <string name="external_media_open_after_import">导入完成后打开</string>
     <string name="external_media_action_import">导入</string>
     <string name="external_media_action_import_summary">继续选择目标连接、目录、书库和系列信息</string>
-    <string name="external_media_unsupported">没有检测到支持的漫画或书籍文件。Koharia 支持 CBZ、ZIP、CBR、RAR、7Z、TAR、EPUB 和 PDF。</string>
+    <string name="external_media_unsupported">没有检测到支持的漫画或书籍文件。Koharia 支持常见图片、CBZ、ZIP、CBR、RAR、7Z、TAR、EPUB、PDF、TXT、MOBI、PRC、AZW、AZW3、DJVU 和 DJV。</string>
     <string name="external_media_no_destination">没有可写且支持全部所选文件的目标位置。请配置本地库后重试。</string>
     <string name="external_media_import_success">导入完成</string>
     <string name="external_media_import_failed">无法导入所选文件</string>

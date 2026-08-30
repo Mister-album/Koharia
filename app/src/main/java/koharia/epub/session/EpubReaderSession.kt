@@ -3,6 +3,7 @@ package koharia.epub.session
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class EpubReaderSession(
     val chapterId: Long,
@@ -13,7 +14,11 @@ data class EpubReaderSession(
     val positionsController: EpubPositionsController,
     val prefetchNextResource: suspend (Locator?) -> Unit = {},
 ) {
+    private val closed = AtomicBoolean(false)
+
     fun close() {
-        publication.close()
+        if (closed.compareAndSet(false, true)) {
+            publication.close()
+        }
     }
 }

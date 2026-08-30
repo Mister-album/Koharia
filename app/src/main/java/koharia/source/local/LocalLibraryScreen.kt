@@ -1,5 +1,7 @@
 package koharia.source.local
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +16,7 @@ import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
@@ -63,6 +66,7 @@ import koharia.connection.ui.ConnectionLibraryShelfDialog
 import koharia.connection.ui.SeriesMetadataEditScreen
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.EpubReaderLauncher
+import koharia.importing.ExternalMediaImportScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
@@ -158,6 +162,23 @@ data class LocalLibraryScreen(
         val context = LocalContext.current
         val lifecycleOwner = LocalLifecycleOwner.current
         val snackbarHostState = remember { SnackbarHostState() }
+        val importFiles = rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenMultipleDocuments(),
+        ) { uris ->
+            if (uris.isEmpty()) return@rememberLauncherForActivityResult
+            navigator.push(
+                ExternalMediaImportScreen(
+                    uriValues = uris.map(android.net.Uri::toString),
+                    startAtImportConfiguration = true,
+                    restrictedConnectionId = sourceId,
+                    preferredShelfId = state.selectedBookshelfId,
+                    returnToCallerAfterImport = true,
+                ),
+            )
+        }
+        val openImportPicker = {
+            importFiles.launch(arrayOf("*/*"))
+        }
 
         DisposableEffect(lifecycleOwner, screenModel, showLibraryReadProgress) {
             val observer = LifecycleEventObserver { _, event ->
@@ -209,6 +230,7 @@ data class LocalLibraryScreen(
                         activeConnectionId = sourceId,
                         onConnectionSelect = connectionPreferences.activeConnectionId::set,
                         hasActiveFilters = state.filters.isActive,
+                        onImportClick = openImportPicker,
                         onFilterClick = screenModel::openFilterDialog,
                         onRefreshClick = screenModel::refresh,
                         onSettingsClick = openSettings,
@@ -274,6 +296,7 @@ data class LocalLibraryScreen(
                             stringRes = MR.strings.local_library_empty_import_hint,
                             modifier = Modifier.padding(paddingValues),
                             actions = localLibraryEmptyActions(
+                                onImport = openImportPicker,
                                 onRefresh = screenModel::refresh,
                                 onManageDirectories = openSettings,
                             ),
@@ -297,6 +320,7 @@ data class LocalLibraryScreen(
                             message = with(context) { refreshError.formattedMessage },
                             modifier = Modifier.padding(paddingValues),
                             actions = localLibraryEmptyActions(
+                                onImport = openImportPicker,
                                 onRefresh = screenModel::refresh,
                                 onManageDirectories = openSettings,
                             ),
@@ -458,9 +482,15 @@ data class LocalLibraryScreen(
 }
 
 private fun localLibraryEmptyActions(
+    onImport: () -> Unit,
     onRefresh: () -> Unit,
     onManageDirectories: () -> Unit,
 ) = persistentListOf(
+    EmptyScreenAction(
+        stringRes = MR.strings.local_library_import_files,
+        icon = Icons.Outlined.UploadFile,
+        onClick = onImport,
+    ),
     EmptyScreenAction(
         stringRes = MR.strings.action_webview_refresh,
         icon = Icons.Outlined.Refresh,

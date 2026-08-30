@@ -16,17 +16,10 @@ import com.materialkolor.toColorScheme
 internal class MonetColorScheme(context: Context) : BaseColorScheme() {
 
     private val monet = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        MonetSystemColorScheme(context)
+        runCatching { MonetSystemColorScheme(context) }
+            .getOrElse { createCompatColorScheme(context) }
     } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-        val seed = WallpaperManager.getInstance(context)
-            .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
-            ?.primaryColor
-            ?.toArgb()
-        if (seed != null) {
-            MonetCompatColorScheme(Color(seed))
-        } else {
-            TachiyomiColorScheme
-        }
+        createCompatColorScheme(context)
     } else {
         TachiyomiColorScheme
     }
@@ -36,6 +29,16 @@ internal class MonetColorScheme(context: Context) : BaseColorScheme() {
 
     override val lightScheme
         get() = monet.lightScheme
+}
+
+private fun createCompatColorScheme(context: Context): BaseColorScheme {
+    val seed = runCatching {
+        WallpaperManager.getInstance(context)
+            .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
+            ?.primaryColor
+            ?.toArgb()
+    }.getOrNull()
+    return seed?.let { MonetCompatColorScheme(Color(it)) } ?: TachiyomiColorScheme
 }
 
 @RequiresApi(Build.VERSION_CODES.S)

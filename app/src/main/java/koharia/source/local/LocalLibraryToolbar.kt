@@ -6,6 +6,7 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +43,7 @@ internal fun LocalLibraryToolbar(
     activeConnectionId: Long,
     onConnectionSelect: (Long) -> Unit,
     hasActiveFilters: Boolean,
+    onImportClick: () -> Unit,
     onFilterClick: () -> Unit,
     onRefreshClick: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -68,6 +70,13 @@ internal fun LocalLibraryToolbar(
             AppBarActions(
                 actions = persistentListOf<AppBar.AppBarAction>().builder()
                     .apply {
+                        add(
+                            AppBar.Action(
+                                title = stringResource(MR.strings.local_library_import_files),
+                                icon = Icons.Outlined.UploadFile,
+                                onClick = onImportClick,
+                            ),
+                        )
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_display_mode),

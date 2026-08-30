@@ -141,6 +141,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         scopedPreferenceStoreFactory.basePreferencesForSavedSource(savedState) ?: globalBasePreferences
     private var transientReaderSettingsStore: PreferenceStore? = null
     private var publisherStylesOverride: Boolean? = null
+    private var sessionReleaseScheduled = false
 
     private companion object {
         val sessionReleaseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -1916,6 +1917,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     fun releaseSession() {
+        if (sessionReleaseScheduled) return
+        sessionReleaseScheduled = true
         completeCacheJob?.cancel()
         completeCacheJob = null
         paginationPersistJob?.cancel()
@@ -1924,8 +1927,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         dismissFootnote()
         locatorPersistenceJob.cancel()
         val finalPositions = authoritativePublicationPositions()
-        sessionRepository.remove(chapterId)?.close()
-        releaseCacheLeases()
+        sessionRepository.remove(chapterId, onReleased = ::releaseCacheLeases)
 
         val locator = latestLocator
         if (locator != null && !isIncognito()) {
@@ -1951,7 +1953,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
         imageRequestTracker.invalidate()
         searchIterator?.close()
         searchIterator = null
-        releaseCacheLeases()
+        if (!sessionReleaseScheduled && sessionRepository.get(chapterId) == null) {
+            releaseCacheLeases()
+        }
         super.onCleared()
     }
 

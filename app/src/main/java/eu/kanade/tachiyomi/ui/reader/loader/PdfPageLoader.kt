@@ -16,6 +16,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import tachiyomi.core.common.util.system.logcat
 import kotlin.math.roundToInt
@@ -31,7 +32,7 @@ internal class PdfPageLoader(
     private val stateLock = Any()
     private val renderScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val pageLoadGate = PageLoadGate(preloadSize = 2)
-    private val allowedPageIndexes = MutableStateFlow<Set<Int>>(emptySet())
+    private val allowedPageIndexes = MutableStateFlow<Set<Int>?>(emptySet())
     private val renderJobs = mutableMapOf<Int, Deferred<Unit>>()
     private val renderGenerations = mutableMapOf<Int, Long>()
     private val renderedPages = mutableMapOf<Int, Bitmap>()
@@ -70,11 +71,9 @@ internal class PdfPageLoader(
     }
 
     override suspend fun loadPage(page: ReaderPage) {
-        check(!isRecycled)
-        if (page.status == Page.State.Ready) return
+        if (isRecycled || page.status == Page.State.Ready) return
 
-        allowedPageIndexes.first { isRecycled || page.index in it }
-        check(!isRecycled)
+        if (!awaitPdfPageAccess(allowedPageIndexes, page.index) || isRecycled) return
         scheduleRender(page.index).await()
     }
 
@@ -106,6 +105,7 @@ internal class PdfPageLoader(
 
     private fun updateDesiredPages(indexes: Set<Int>) {
         val staleBitmaps = synchronized(stateLock) {
+            if (isRecycled) return
             desiredPageIndexes = indexes
             allowedPageIndexes.value = indexes
             renderJobs.filterKeys { it !in indexes }.values.forEach { it.cancel() }
@@ -118,7 +118,7 @@ internal class PdfPageLoader(
 
     private fun scheduleRender(index: Int): Deferred<Unit> {
         return synchronized(stateLock) {
-            if (pages.getOrNull(index)?.status == Page.State.Ready) {
+            if (isRecycled || pages.getOrNull(index)?.status == Page.State.Ready) {
                 return@synchronized CompletableDeferred(Unit)
             }
             renderJobs[index]?.takeIf { it.isActive } ?: run {
@@ -183,7 +183,7 @@ internal class PdfPageLoader(
     }
 
     private fun renderPage(index: Int): Bitmap = synchronized(renderLock) {
-        check(!isRecycled)
+        if (isRecycled) throw CancellationException("PDF page loader was recycled")
         renderer.openPage(index).use { page ->
             pages.getOrNull(index)?.spreadInfo = ReaderPage.SpreadInfo(
                 kind = if (page.width > page.height) {
@@ -216,11 +216,13 @@ internal class PdfPageLoader(
         }
     }
 
+    @Synchronized
     override fun recycle() {
+        if (isRecycled) return
         super.recycle()
         renderScope.cancel()
         val cachedBitmaps = synchronized(stateLock) {
-            allowedPageIndexes.value = emptySet()
+            allowedPageIndexes.value = null
             desiredPageIndexes = emptySet()
             renderJobs.values.forEach { it.cancel() }
             renderJobs.clear()
@@ -239,6 +241,13 @@ internal data class PdfRenderSize(
     val width: Int,
     val height: Int,
 )
+
+internal suspend fun awaitPdfPageAccess(
+    allowedPageIndexes: StateFlow<Set<Int>?>,
+    pageIndex: Int,
+): Boolean {
+    return allowedPageIndexes.first { indexes -> indexes == null || pageIndex in indexes } != null
+}
 
 internal fun calculatePdfRenderSize(
     pageWidth: Int,

@@ -938,10 +938,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onDestroy() {
-        if (isFinishing) {
-            viewModel.releaseSession()
-        }
+        val releaseSession = isFinishing
         super.onDestroy()
+        // FragmentActivity destroys the Readium navigator during super.onDestroy(). Closing the
+        // publication afterwards prevents outstanding navigator reads from seeing a closed ZIP.
+        if (releaseSession) viewModel.releaseSession()
     }
 
     override fun finish() {

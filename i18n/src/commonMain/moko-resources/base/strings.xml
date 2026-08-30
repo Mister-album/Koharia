@@ -1549,7 +1549,8 @@
     <string name="metadata_source_epub">From EPUB metadata</string>
     <string name="metadata_source_filename">From item filename</string>
     <string name="local_library_edit_add_hint">Use the directory actions below to attach a comic or book folder.</string>
-    <string name="local_library_empty_import_hint">This local library has no titles yet. Import media into a configured directory, then refresh the library.</string>
+    <string name="local_library_empty_import_hint">This local library has no titles yet. Import files from your device or add media to a configured directory.</string>
+    <string name="local_library_import_files">Import files from device</string>
     <string name="local_library_refresh_complete">Local library refreshed: %1$d titles found</string>
     <string name="local_library_refresh_failed">Unable to refresh the local library</string>
     <string name="local_library_bookshelves">Libraries</string>
@@ -1583,7 +1584,7 @@
     <string name="external_media_open_after_import">Open after import</string>
     <string name="external_media_action_import">Import</string>
     <string name="external_media_action_import_summary">Choose a target connection, destination, library, and series information</string>
-    <string name="external_media_unsupported">No supported comic or book files were found. Koharia supports CBZ, ZIP, CBR, RAR, 7Z, TAR, EPUB, and PDF.</string>
+    <string name="external_media_unsupported">No supported comic or book files were found. Koharia supports common images, CBZ, ZIP, CBR, RAR, 7Z, TAR, EPUB, PDF, TXT, MOBI, PRC, AZW, AZW3, DJVU, and DJV.</string>
     <string name="external_media_no_destination">No writable destination accepts all selected files. Configure a local library, then try again.</string>
     <string name="external_media_import_success">Import completed</string>
     <string name="external_media_import_failed">Couldn’t import the selected files.</string>

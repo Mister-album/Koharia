@@ -117,6 +117,69 @@ class ExternalMediaImportGroupingTest {
         )
     }
 
+    @Test
+    fun `initial target uses the current compatible bookshelf`() {
+        val seriesDestination = ConnectionMediaImportDestination(
+            id = "series-root",
+            name = "Series books",
+            mediaType = ConnectionMediaType.BOOK,
+            supportedExtensions = setOf("epub", "pdf"),
+            grouping = ConnectionMediaGrouping.SERIES,
+            compatibleShelfIds = setOf("series-books"),
+        )
+        val individualDestination = individualDestination()
+        val connection = ExternalMediaImportScreenModel.ImportConnection(
+            id = 42L,
+            name = "Local",
+            destinations = listOf(seriesDestination, individualDestination),
+            shelves = listOf(
+                ConnectionLibraryShelf(
+                    id = "series-books",
+                    name = "Series",
+                    contentScope = LibraryContentScope.BOOK,
+                ),
+                ConnectionLibraryShelf(
+                    id = "individual-books",
+                    name = "Loose books",
+                    contentScope = LibraryContentScope.BOOK,
+                ),
+            ),
+        )
+
+        val target = selectInitialImportTarget(connection, "individual-books", listOf(importItem()))
+
+        assertEquals(individualDestination, target.destination)
+        assertEquals("individual-books", target.shelfId)
+    }
+
+    @Test
+    fun `initial target falls back when the current bookshelf is incompatible`() {
+        val destination = individualDestination()
+        val connection = ExternalMediaImportScreenModel.ImportConnection(
+            id = 42L,
+            name = "Local",
+            destinations = listOf(destination),
+            shelves = listOf(
+                ConnectionLibraryShelf(
+                    id = "series-books",
+                    name = "Series",
+                    contentScope = LibraryContentScope.BOOK,
+                ),
+                ConnectionLibraryShelf(
+                    id = "individual-books",
+                    name = "Loose books",
+                    contentScope = LibraryContentScope.BOOK,
+                    isDefault = true,
+                ),
+            ),
+        )
+
+        val target = selectInitialImportTarget(connection, "series-books", listOf(importItem()))
+
+        assertEquals(destination, target.destination)
+        assertEquals("individual-books", target.shelfId)
+    }
+
     private fun individualDestination() = ConnectionMediaImportDestination(
         id = "books-root",
         name = "Books",

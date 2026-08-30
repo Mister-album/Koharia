@@ -39,6 +39,8 @@ class ExternalMediaImportScreenModel(
     private val mangaRepository: MangaRepository,
     private val openManager: IncomingMediaOpenManager,
     private val localLibraryEntryOpenManager: LocalLibraryEntryOpenManager,
+    private val restrictedConnectionId: Long? = null,
+    private val preferredShelfId: String? = null,
     initialStep: Step = Step.ACTIONS,
 ) : StateScreenModel<ExternalMediaImportScreenModel.State>(State(step = initialStep)) {
 
@@ -56,19 +58,20 @@ class ExternalMediaImportScreenModel(
             val items = IncomingMediaParser.parse(context, uriValues)
             val connections = loadConnections(items)
             val openSourceId = preferredOpenSourceId()
-            val preferredConnectionId = connectionPreferences.activeConnectionId.get()
-                .takeIf { id -> connections.any { it.id == id } }
+            val preferredConnectionId = restrictedConnectionId
+                ?: connectionPreferences.activeConnectionId.get()
+                    .takeIf { id -> connections.any { it.id == id } }
                 ?: connections.firstOrNull()?.id
             val selectedConnection = connections.firstOrNull { it.id == preferredConnectionId }
-            val selectedDestination = selectedConnection?.destinations?.firstOrNull()
+            val initialTarget = selectInitialImportTarget(selectedConnection, preferredShelfId, items)
             mutableState.update {
                 it.copy(
                     isLoading = false,
                     items = items,
                     connections = connections,
                     selectedConnectionId = selectedConnection?.id,
-                    selectedDestinationId = selectedDestination?.id,
-                    selectedShelfId = defaultShelfId(selectedConnection, selectedDestination, items),
+                    selectedDestinationId = initialTarget.destination?.id,
+                    selectedShelfId = initialTarget.shelfId,
                     openSourceId = openSourceId,
                     seriesName = it.seriesName.ifBlank { suggestedSeriesName(items) },
                     loadFailure = when {
@@ -286,6 +289,7 @@ class ExternalMediaImportScreenModel(
     private suspend fun loadConnections(items: List<ConnectionMediaImportItem>): List<ImportConnection> {
         if (items.isEmpty()) return emptyList()
         return connectionPreferences.getProfiles()
+            .filter { restrictedConnectionId == null || it.id == restrictedConnectionId }
             .mapNotNull { profile ->
                 val source = sourceManager.get(profile.id) ?: return@mapNotNull null
                 val adapter = source as? ConnectionMediaImportAdapter ?: return@mapNotNull null
@@ -523,6 +527,32 @@ private fun defaultShelfId(
     return destination.defaultShelfId?.takeIf { id -> shelves.any { it.id == id } }
         ?: shelves.firstOrNull { it.isDefault }?.id
         ?: shelves.firstOrNull()?.id
+}
+
+internal data class InitialImportTarget(
+    val destination: ConnectionMediaImportDestination?,
+    val shelfId: String?,
+)
+
+internal fun selectInitialImportTarget(
+    connection: ExternalMediaImportScreenModel.ImportConnection?,
+    preferredShelfId: String?,
+    items: List<ConnectionMediaImportItem>,
+): InitialImportTarget {
+    val preferredShelf = connection?.shelves?.firstOrNull { it.id == preferredShelfId }
+    val preferredDestination = preferredShelf?.let { shelf ->
+        connection.destinations.firstOrNull { destination ->
+            destination.defaultShelfId == shelf.id && destination.supportsShelf(shelf, items)
+        } ?: connection.destinations.firstOrNull { destination ->
+            destination.supportsShelf(shelf, items)
+        }
+    }
+    val destination = preferredDestination ?: connection?.destinations?.firstOrNull()
+    val shelfId = preferredShelf
+        ?.takeIf { shelf -> destination?.supportsShelf(shelf, items) == true }
+        ?.id
+        ?: defaultShelfId(connection, destination, items)
+    return InitialImportTarget(destination, shelfId)
 }
 
 private fun ConnectionMediaImportDestination.shelfScope(

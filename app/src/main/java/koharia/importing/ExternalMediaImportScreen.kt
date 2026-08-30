@@ -56,6 +56,8 @@ import koharia.connection.ConnectionMediaImportDestination
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.epub.EpubReaderLauncher
+import koharia.source.local.LocalFolderSettingsScreen
+import koharia.source.local.LocalFolderSource
 import koharia.source.local.LocalLibraryEntryOpenManager
 import kotlinx.coroutines.flow.collectLatest
 import tachiyomi.domain.chapter.repository.ChapterRepository
@@ -73,6 +75,9 @@ data class ExternalMediaImportScreen(
     private val startAtImportConfiguration: Boolean = false,
     private val openImmediately: Boolean = false,
     private val skipActionSelection: Boolean = startAtImportConfiguration || openImmediately,
+    private val restrictedConnectionId: Long? = null,
+    private val preferredShelfId: String? = null,
+    private val returnToCallerAfterImport: Boolean = false,
 ) : Screen() {
 
     @Composable
@@ -80,14 +85,22 @@ data class ExternalMediaImportScreen(
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
         val flowHost = context as? ExternalMediaFlowHost
+        val sourceManager = Injekt.get<SourceManager>()
         val screenModel = rememberScreenModel(
-            tag = uriValues.joinToString() + startAtImportConfiguration + openImmediately,
+            tag = listOf(
+                uriValues.joinToString(),
+                startAtImportConfiguration,
+                openImmediately,
+                restrictedConnectionId,
+                preferredShelfId,
+                returnToCallerAfterImport,
+            ).joinToString("|"),
         ) {
             ExternalMediaImportScreenModel(
                 context = context.applicationContext,
                 uriValues = uriValues,
                 connectionPreferences = Injekt.get<ConnectionPreferences>(),
-                sourceManager = Injekt.get<SourceManager>(),
+                sourceManager = sourceManager,
                 mangaRepository = Injekt.get<MangaRepository>(),
                 openManager = IncomingMediaOpenManager(
                     context = context.applicationContext,
@@ -100,6 +113,8 @@ data class ExternalMediaImportScreen(
                     chapterRepository = Injekt.get(),
                     epubReaderLauncher = EpubReaderLauncher(),
                 ),
+                restrictedConnectionId = restrictedConnectionId,
+                preferredShelfId = preferredShelfId,
                 initialStep = when {
                     openImmediately -> ExternalMediaImportScreenModel.Step.OPENING
                     startAtImportConfiguration -> ExternalMediaImportScreenModel.Step.IMPORT_CONFIGURATION
@@ -111,6 +126,20 @@ data class ExternalMediaImportScreen(
         var dialog by remember { mutableStateOf<SelectionDialog?>(null) }
         var resetNavigationWhenCovered by remember { mutableStateOf(false) }
         val lifecycleOwner = LocalLifecycleOwner.current
+        val openDestinationSettings = {
+            val restrictedSource = restrictedConnectionId?.let(sourceManager::get)
+            if (restrictedSource is LocalFolderSource) {
+                navigator.push(
+                    LocalFolderSettingsScreen(
+                        sourceId = restrictedSource.id,
+                        profileName = restrictedSource.name,
+                        titleOverride = null,
+                    ),
+                )
+            } else {
+                navigator.push(LibraryConnectionProfilesScreen(openAddDialog = true))
+            }
+        }
 
         DisposableEffect(lifecycleOwner, navigator, flowHost) {
             val observer = LifecycleEventObserver { _, event ->
@@ -229,9 +258,7 @@ data class ExternalMediaImportScreen(
                 state.loadFailure != null -> {
                     ImportFailureContent(
                         failure = state.loadFailure!!,
-                        onConfigure = {
-                            navigator.push(LibraryConnectionProfilesScreen(openAddDialog = true))
-                        },
+                        onConfigure = openDestinationSettings,
                         onRetry = screenModel::reload,
                         modifier = Modifier.padding(contentPadding),
                     )
@@ -345,9 +372,7 @@ data class ExternalMediaImportScreen(
                                 TextPreferenceWidget(
                                     title = stringResource(MR.strings.external_media_import_unavailable),
                                     subtitle = stringResource(MR.strings.external_media_no_destination),
-                                    onPreferenceClick = {
-                                        navigator.push(LibraryConnectionProfilesScreen(openAddDialog = false))
-                                    },
+                                    onPreferenceClick = openDestinationSettings,
                                 )
                             }
                         } else {
@@ -508,10 +533,26 @@ data class ExternalMediaImportScreen(
                         if (event.readerIntent != null && flowHost != null) {
                             flowHost.openReader(event.readerIntent)
                         } else if (event.readerIntent != null) {
-                            resetNavigationWhenCovered = true
+                            if (returnToCallerAfterImport) {
+                                navigator.pop()
+                            } else {
+                                resetNavigationWhenCovered = true
+                            }
                             context.startActivity(event.readerIntent)
                         } else if (flowHost != null) {
                             flowHost.finishImport(event.manga, event.openAfterImport)
+                        } else if (returnToCallerAfterImport) {
+                            navigator.pop()
+                            if (event.openAfterImport && event.manga != null) {
+                                navigator.push(
+                                    MangaScreen(
+                                        mangaId = event.manga.id,
+                                        fromSource = true,
+                                        sourceId = event.manga.source,
+                                        mangaUrl = event.manga.url,
+                                    ),
+                                )
+                            }
                         } else {
                             navigator.popUntilRoot()
                             if (event.openAfterImport && event.manga != null) {
