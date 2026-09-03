@@ -11,9 +11,12 @@ import android.view.ViewPropertyAnimator
 import androidx.core.graphics.withScale
 import androidx.core.graphics.withTranslation
 import androidx.core.view.isVisible
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
 import eu.kanade.tachiyomi.ui.reader.viewer.navigation.DisabledNavigation
 import tachiyomi.core.common.i18n.stringResource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import kotlin.math.abs
 
 class ReaderNavigationOverlayView(context: Context, attributeSet: AttributeSet?) : View(context, attributeSet) {
@@ -22,12 +25,23 @@ class ReaderNavigationOverlayView(context: Context, attributeSet: AttributeSet?)
 
     private var navigation: ViewerNavigation? = null
 
+    private val eInkEnabled: Boolean
+        get() = Injekt.get<EInkPreferences>().enabled.get()
+
     fun setNavigation(navigation: ViewerNavigation, showOnStart: Boolean) {
         val firstLaunch = this.navigation == null
         this.navigation = navigation
         invalidate()
 
         if (isVisible || (!showOnStart && firstLaunch) || navigation is DisabledNavigation) {
+            return
+        }
+
+        if (eInkEnabled) {
+            viewPropertyAnimator?.cancel()
+            viewPropertyAnimator = null
+            alpha = 1f
+            isVisible = true
             return
         }
 
@@ -90,6 +104,11 @@ class ReaderNavigationOverlayView(context: Context, attributeSet: AttributeSet?)
         super.performClick()
 
         if (viewPropertyAnimator == null && isVisible) {
+            if (eInkEnabled) {
+                alpha = 0f
+                isVisible = false
+                return true
+            }
             viewPropertyAnimator = animate()
                 .alpha(0f)
                 .setDuration(FADE_DURATION)

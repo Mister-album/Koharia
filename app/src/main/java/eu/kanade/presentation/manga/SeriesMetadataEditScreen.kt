@@ -14,7 +14,6 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
@@ -29,6 +28,7 @@ import eu.kanade.presentation.manga.components.MetadataGenerationDialog
 import koharia.connection.MetadataFilenameTemplate
 import koharia.connection.ui.SeriesMetadataEditScreenModel
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkLinearProgressIndicator
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -85,7 +85,7 @@ fun SeriesMetadataEditScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (state.isLoading || state.isSaving) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                EInkLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             if (state.supportsMetadataGeneration) {
                 ListItem(

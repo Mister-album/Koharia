@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.core.net.toUri
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.presentation.webview.WebViewScreenContent
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -27,6 +28,8 @@ import uy.kohesive.injekt.injectLazy
 
 class WebViewActivity : BaseActivity() {
 
+    private val eInkPreferences: EInkPreferences by injectLazy()
+
     private val sourceManager: SourceManager by injectLazy()
     private val network: NetworkHelper by injectLazy()
 
@@ -37,7 +40,9 @@ class WebViewActivity : BaseActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (eInkPreferences.enabled.get()) {
+            disableActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(
                 Activity.OVERRIDE_TRANSITION_OPEN,
                 R.anim.shared_axis_x_push_enter,
@@ -88,7 +93,9 @@ class WebViewActivity : BaseActivity() {
 
     override fun finish() {
         super.finish()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (eInkPreferences.enabled.get()) {
+            disableActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(
                 Activity.OVERRIDE_TRANSITION_CLOSE,
                 R.anim.shared_axis_x_pop_enter,
@@ -97,6 +104,15 @@ class WebViewActivity : BaseActivity() {
         } else {
             @Suppress("DEPRECATION")
             overridePendingTransition(R.anim.shared_axis_x_pop_enter, R.anim.shared_axis_x_pop_exit)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun disableActivityTransition(transitionType: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(transitionType, 0, 0)
+        } else {
+            overridePendingTransition(0, 0)
         }
     }
 

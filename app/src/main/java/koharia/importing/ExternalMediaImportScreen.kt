@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -64,6 +63,7 @@ import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -231,7 +231,7 @@ data class ExternalMediaImportScreen(
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                     ) {
                         if (state.isImporting) {
-                            CircularProgressIndicator(
+                            EInkCircularProgressIndicator(
                                 modifier = Modifier.size(20.dp),
                                 strokeWidth = 2.dp,
                             )
@@ -252,7 +252,7 @@ data class ExternalMediaImportScreen(
                             .padding(contentPadding),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CircularProgressIndicator()
+                        EInkCircularProgressIndicator()
                     }
                 }
                 state.loadFailure != null -> {
@@ -273,7 +273,7 @@ data class ExternalMediaImportScreen(
                                         .padding(48.dp),
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    CircularProgressIndicator()
+                                    EInkCircularProgressIndicator()
                                 }
                             }
                         } else if (state.step == ExternalMediaImportScreenModel.Step.SERIES_SELECTION) {
@@ -285,7 +285,7 @@ data class ExternalMediaImportScreen(
                                             .padding(48.dp),
                                         contentAlignment = Alignment.Center,
                                     ) {
-                                        CircularProgressIndicator()
+                                        EInkCircularProgressIndicator()
                                     }
                                 }
                                 state.filteredExistingSeries.isEmpty() -> item {

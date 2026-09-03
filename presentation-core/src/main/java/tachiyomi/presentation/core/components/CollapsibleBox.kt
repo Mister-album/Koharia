@@ -1,6 +1,9 @@
 package tachiyomi.presentation.core.components
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
 import tachiyomi.presentation.core.theme.header
 
 @Composable
@@ -49,7 +53,11 @@ fun CollapsibleBox(
             )
         }
 
-        AnimatedVisibility(visible = expanded) {
+        EInkAnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + expandVertically(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
             content()
         }
     }

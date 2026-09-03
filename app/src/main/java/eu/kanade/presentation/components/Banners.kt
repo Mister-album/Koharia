@@ -1,6 +1,5 @@
 package eu.kanade.presentation.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,7 +30,9 @@ import androidx.compose.ui.util.fastMap
 import androidx.compose.ui.util.fastMaxBy
 import dev.icerock.moko.resources.StringResource
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
 
 val DownloadedOnlyBannerBackgroundColor
     @Composable get() = MaterialTheme.colorScheme.tertiary
@@ -70,7 +70,7 @@ fun AppStateBanners(
     val mainInsetsTop = mainInsets.getTop(density)
     SubcomposeLayout(modifier = modifier) { constraints ->
         val indexingPlaceable = subcompose(0) {
-            AnimatedVisibility(
+            EInkAnimatedVisibility(
                 visible = indexing,
                 enter = expandVertically(),
                 exit = shrinkVertically(),
@@ -83,7 +83,7 @@ fun AppStateBanners(
         val indexingHeight = indexingPlaceable.fastMaxBy { it.height }?.height ?: 0
 
         val downloadedOnlyPlaceable = subcompose(1) {
-            AnimatedVisibility(
+            EInkAnimatedVisibility(
                 visible = downloadedOnlyMode,
                 enter = expandVertically(),
                 exit = shrinkVertically(),
@@ -97,7 +97,7 @@ fun AppStateBanners(
         val downloadedOnlyHeight = downloadedOnlyPlaceable.fastMaxBy { it.height }?.height ?: 0
 
         val incognitoPlaceable = subcompose(2) {
-            AnimatedVisibility(
+            EInkAnimatedVisibility(
                 visible = incognitoMode,
                 enter = expandVertically(),
                 exit = shrinkVertically(),
@@ -166,7 +166,7 @@ private fun IndexingDownloadBanner(modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.Center,
     ) {
         var textHeight by remember { mutableStateOf(0.dp) }
-        CircularProgressIndicator(
+        EInkCircularProgressIndicator(
             modifier = Modifier.requiredSize(textHeight),
             color = MaterialTheme.colorScheme.onSecondary,
             strokeWidth = textHeight / 8,

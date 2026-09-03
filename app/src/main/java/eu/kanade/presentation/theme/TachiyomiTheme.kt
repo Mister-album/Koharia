@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.AppTheme
 import eu.kanade.presentation.theme.colorscheme.BaseColorScheme
@@ -24,6 +25,9 @@ import eu.kanade.presentation.theme.colorscheme.TealTurqoiseColorScheme
 import eu.kanade.presentation.theme.colorscheme.TidalWaveColorScheme
 import eu.kanade.presentation.theme.colorscheme.YinYangColorScheme
 import eu.kanade.presentation.theme.colorscheme.YotsubaColorScheme
+import tachiyomi.presentation.core.motion.EInkDisplayPolicy
+import tachiyomi.presentation.core.motion.EInkMotionScheme
+import tachiyomi.presentation.core.motion.ProvideEInkDisplayPolicy
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -35,11 +39,14 @@ fun TachiyomiTheme(
     content: @Composable () -> Unit,
 ) {
     val uiPreferences = Injekt.get<UiPreferences>()
+    val eInkPreferences = Injekt.get<EInkPreferences>()
     val scopedAppTheme = uiPreferences.appTheme.collectAsState().value
     val scopedAmoled = uiPreferences.themeDarkAmoled.collectAsState().value
+    val eInkEnabled = eInkPreferences.enabled.collectAsState().value
     BaseTachiyomiTheme(
         appTheme = appTheme ?: scopedAppTheme,
         isAmoled = amoled ?: scopedAmoled,
+        eInkEnabled = eInkEnabled,
         content = content,
     )
 }
@@ -48,17 +55,20 @@ fun TachiyomiTheme(
 fun TachiyomiPreviewTheme(
     appTheme: AppTheme = AppTheme.DEFAULT,
     isAmoled: Boolean = false,
+    eInkEnabled: Boolean = false,
     content: @Composable () -> Unit,
-) = BaseTachiyomiTheme(appTheme, isAmoled, content)
+) = BaseTachiyomiTheme(appTheme, isAmoled, eInkEnabled = eInkEnabled, content)
 
 @Composable
 private fun BaseTachiyomiTheme(
     appTheme: AppTheme,
     isAmoled: Boolean,
+    eInkEnabled: Boolean,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val isDark = isSystemInDarkTheme()
+    val eInkPolicy = remember(eInkEnabled) { EInkDisplayPolicy(enabled = eInkEnabled) }
     MaterialExpressiveTheme(
         colorScheme = remember(appTheme, isDark, isAmoled) {
             getThemeColorScheme(
@@ -68,8 +78,10 @@ private fun BaseTachiyomiTheme(
                 isAmoled = isAmoled,
             )
         },
-        content = content,
-    )
+        motionScheme = EInkMotionScheme.takeIf { eInkEnabled },
+    ) {
+        ProvideEInkDisplayPolicy(policy = eInkPolicy, content = content)
+    }
 }
 
 private fun getThemeColorScheme(

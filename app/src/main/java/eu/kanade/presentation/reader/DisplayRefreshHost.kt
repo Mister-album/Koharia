@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderEInkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import kotlinx.coroutines.delay
 import tachiyomi.presentation.core.util.collectAsState
@@ -27,6 +28,7 @@ class DisplayRefreshHost(
 
     internal val flashMillis = readerPreferences.flashDurationMillis
     internal val flashMode = readerPreferences.flashColor
+    private val flashEnabled = readerPreferences.flashOnPageChange
 
     internal val flashIntervalPref = readerPreferences.flashPageInterval
 
@@ -35,6 +37,7 @@ class DisplayRefreshHost(
     private var timesCalled = 0
 
     fun flash() {
+        if (!flashEnabled.get()) return
         if (timesCalled % flashInterval == 0) {
             currentDisplayRefresh = true
         }
@@ -66,13 +69,13 @@ fun DisplayRefreshHost(
         }
 
         val refreshDurationHalf = refreshDuration.milliseconds / 2
-        currentColor = if (flashMode == ReaderPreferences.FlashColor.BLACK) {
+        currentColor = if (flashMode == ReaderEInkPreferences.FlashColor.BLACK) {
             Color.Black
         } else {
             Color.White
         }
         delay(refreshDurationHalf)
-        if (flashMode == ReaderPreferences.FlashColor.WHITE_BLACK) {
+        if (flashMode == ReaderEInkPreferences.FlashColor.WHITE_BLACK) {
             currentColor = Color.Black
         }
         delay(refreshDurationHalf)

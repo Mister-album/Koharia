@@ -23,6 +23,7 @@ import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.presentation.core.components.material.PullRefresh
+import tachiyomi.presentation.core.motion.LocalEInkDisplayPolicy
 import kotlin.time.Duration.Companion.seconds
 
 @Composable
@@ -56,6 +57,7 @@ fun LibraryContent(
         val pagerState = rememberPagerState(currentPage) { categories.size }
 
         val scope = rememberCoroutineScope()
+        val eInkEnabled = LocalEInkDisplayPolicy.current.enabled
         var isRefreshing by remember(pagerState.currentPage) { mutableStateOf(false) }
 
         if (showPageTabs && categories.isNotEmpty() && (categories.size > 1 || !categories.first().isSystemCategory)) {
@@ -70,7 +72,7 @@ fun LibraryContent(
                 getItemCountForCategory = getItemCountForCategory,
                 onTabItemClick = {
                     scope.launch {
-                        pagerState.animateScrollToPage(it)
+                        if (eInkEnabled) pagerState.scrollToPage(it) else pagerState.animateScrollToPage(it)
                     }
                 },
             )

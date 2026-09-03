@@ -71,8 +71,10 @@ import androidx.fragment.app.commitNow
 import androidx.fragment.compose.AndroidFragment
 import androidx.lifecycle.lifecycleScope
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.SearchToolbar
+import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -173,6 +175,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private val viewModel by viewModels<EpubReaderViewModel>()
     private val scopedPreferenceStoreFactory = Injekt.get<ConnectionScopedPreferenceStoreFactory>()
     private val sessionRepository = Injekt.get<EpubReaderSessionRepository>()
+    private val eInkPreferences = Injekt.get<EInkPreferences>()
     private val sourceId by lazy { intent.extras?.getLong("source", -1L) ?: -1L }
     private val basePreferences by lazy {
         sourceId
@@ -205,6 +208,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private val readerPreferences by lazy {
         ReaderPreferences(readerSettingsStore)
     }
+    private val displayRefreshHost by lazy { DisplayRefreshHost(readerPreferences) }
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val epubFontManager: EpubFontManager = Injekt.get()
     private val epubReaderLauncher by lazy { EpubReaderLauncher() }
@@ -248,8 +252,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             }
             .launchIn(lifecycleScope)
 
-        setComposeContent {
+        setComposeContent(enableAppRefresh = false) {
             val state by viewModel.state.collectAsState()
+            val flashOnPageChange by readerPreferences.flashOnPageChange.changes()
+                .collectAsState(readerPreferences.flashOnPageChange.get())
             val imageState by viewModel.imageState.collectAsState()
             val footnoteState by viewModel.footnoteState.collectAsState()
             val tocEntries =
@@ -833,6 +839,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 typeface = footnoteTypeface,
                 onDismissRequest = viewModel::dismissFootnote,
             )
+
+            if (flashOnPageChange) {
+                DisplayRefreshHost(hostState = displayRefreshHost)
+            }
         }
 
         viewModel.imageEvents
@@ -993,6 +1003,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
         viewModel.onFirstContentDisplayed()
         viewModel.updateVisualPage(pageIndex, totalPages, locator)
+        displayRefreshHost.flash()
     }
 
     override fun onBookPaginationChanged(
@@ -1256,6 +1267,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             .launchIn(lifecycleScope)
 
         epubLayoutPreferences.pageTransitionEffect.changes()
+            .distinctUntilChanged()
+            .drop(1)
+            .onEach { epubReaderFragment()?.cancelPageTransition() }
+            .launchIn(lifecycleScope)
+
+        eInkPreferences.enabled.changes()
             .distinctUntilChanged()
             .drop(1)
             .onEach { epubReaderFragment()?.cancelPageTransition() }

@@ -1,17 +1,28 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import tachiyomi.core.common.preference.Preference
+import tachiyomi.presentation.core.motion.EInkDisplayPolicy
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * Common configuration for all viewers.
  */
-abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val scope: CoroutineScope) {
+abstract class ViewerConfig(
+    readerPreferences: ReaderPreferences,
+    private val scope: CoroutineScope,
+    eInkPreferences: EInkPreferences = Injekt.get(),
+) {
 
     var imagePropertyChangedListener: (() -> Unit)? = null
 
@@ -53,17 +64,38 @@ abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val sc
         readerPreferences.readWithLongTap
             .register({ longTapEnabled = it })
 
-        readerPreferences.pagerPageTransitionEffect
-            .register(
-                valueAssignment = { pageTransitionEffect = PageTransitionEffect.fromPreference(it) },
-                onChanged = { pageTransitionEffectChangedListener?.invoke() },
-            )
+        combine(readerPreferences.pagerPageTransitionEffect.changes(), eInkPreferences.enabled.changes()) {
+                preferred,
+                eInkEnabled,
+            ->
+            EInkDisplayPolicy(eInkEnabled).effectivePageTransition(preferred, PageTransitionEffect.NONE.value)
+        }
+            .mapDistinct { PageTransitionEffect.fromPreference(it) }
+            .onEach {
+                pageTransitionEffect = it
+                pageTransitionEffectChangedListener?.invoke()
+            }
+            .launchIn(scope)
 
-        readerPreferences.webtoonSmoothScroll
-            .register({ webtoonSmoothScroll = it })
+        combine(readerPreferences.webtoonSmoothScroll.changes(), eInkPreferences.enabled.changes()) {
+                preferred,
+                eInkEnabled,
+            ->
+            EInkDisplayPolicy(eInkEnabled).effectiveSmoothScroll(preferred)
+        }
+            .mapDistinct { it }
+            .onEach { webtoonSmoothScroll = it }
+            .launchIn(scope)
 
-        readerPreferences.doubleTapAnimSpeed
-            .register({ doubleTapAnimDuration = it })
+        combine(readerPreferences.doubleTapAnimSpeed.changes(), eInkPreferences.enabled.changes()) {
+                preferred,
+                eInkEnabled,
+            ->
+            EInkDisplayPolicy(eInkEnabled).effectiveAnimationDuration(preferred)
+        }
+            .mapDistinct { it }
+            .onEach { doubleTapAnimDuration = it }
+            .launchIn(scope)
 
         readerPreferences.readWithVolumeKeys
             .register({ volumeKeysEnabled = it })
@@ -97,4 +129,6 @@ abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val sc
             .onEach { onChanged(it) }
             .launchIn(scope)
     }
+
+    private fun <T, R> Flow<T>.mapDistinct(transform: (T) -> R) = map(transform).distinctUntilChanged()
 }

@@ -1,9 +1,10 @@
 package eu.kanade.tachiyomi.ui.library
 
 import androidx.compose.animation.graphics.res.animatedVectorResource
-import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,6 +31,7 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.rememberEInkAwareAnimatedVectorPainter
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -71,7 +73,7 @@ sealed class ConnectionLibraryTab(
                 painterResource(R.drawable.ic_book_24dp)
             } else {
                 val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_library_enter)
-                rememberAnimatedVectorPainter(image, isSelected)
+                rememberEInkAwareAnimatedVectorPainter(image, isSelected, Icons.Outlined.CollectionsBookmark)
             }
             return TabOptions(
                 index = tabIndex,

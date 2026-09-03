@@ -9,7 +9,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,8 +34,10 @@ import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.model.Download
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.components.material.IconButtonTokens
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.eInkAnimationSpec
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 
 enum class ChapterDownloadAction {
@@ -142,7 +143,7 @@ private fun DownloadingIndicator(
             (downloadState == Download.State.DOWNLOADING && downloadProgress == 0)
         if (indeterminate) {
             arrowColor = strokeColor
-            CircularProgressIndicator(
+            EInkCircularProgressIndicator(
                 modifier = IndicatorModifier,
                 color = strokeColor,
                 strokeWidth = IndicatorStrokeWidth,
@@ -152,7 +153,7 @@ private fun DownloadingIndicator(
         } else {
             val animatedProgress by animateFloatAsState(
                 targetValue = downloadProgress / 100f,
-                animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
+                animationSpec = eInkAnimationSpec(ProgressIndicatorDefaults.ProgressAnimationSpec),
                 label = "progress",
             )
             arrowColor = if (animatedProgress < 0.5f) {
@@ -160,7 +161,7 @@ private fun DownloadingIndicator(
             } else {
                 MaterialTheme.colorScheme.background
             }
-            CircularProgressIndicator(
+            EInkCircularProgressIndicator(
                 progress = { animatedProgress },
                 modifier = IndicatorModifier,
                 color = strokeColor,

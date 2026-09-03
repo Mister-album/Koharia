@@ -20,6 +20,8 @@ class ReaderPreferences(
     preferenceStore: PreferenceStore,
 ) {
 
+    val eInk = ReaderEInkPreferences(preferenceStore)
+
     // region General
 
     val persistReaderSettingsChanges: Preference<Boolean> =
@@ -37,13 +39,13 @@ class ReaderPreferences(
         .getBoolean("pref_webtoon_smooth_scroll", true)
         .migrateFrom(legacyPageTransitions) { it }
 
-    val flashOnPageChange: Preference<Boolean> = preferenceStore.getBoolean("pref_reader_flash", false)
+    val flashOnPageChange = eInk.flashOnPageChange
 
-    val flashDurationMillis: Preference<Int> = preferenceStore.getInt("pref_reader_flash_duration", MILLI_CONVERSION)
+    val flashDurationMillis = eInk.flashDurationMillis
 
-    val flashPageInterval: Preference<Int> = preferenceStore.getInt("pref_reader_flash_interval", 1)
+    val flashPageInterval = eInk.flashPageInterval
 
-    val flashColor: Preference<FlashColor> = preferenceStore.getEnum("pref_reader_flash_mode", FlashColor.BLACK)
+    val flashColor = eInk.flashColor
 
     val doubleTapAnimSpeed: Preference<Int> = preferenceStore.getInt("pref_double_tap_anim_speed", 500)
 
@@ -212,12 +214,6 @@ class ReaderPreferences(
 
     // endregion
 
-    enum class FlashColor {
-        BLACK,
-        WHITE,
-        WHITE_BLACK,
-    }
-
     enum class TappingInvertMode(
         val titleRes: StringResource,
         val shouldInvertHorizontal: Boolean = false,
@@ -240,7 +236,7 @@ class ReaderPreferences(
         const val WEBTOON_PADDING_MIN = 0
         const val WEBTOON_PADDING_MAX = 25
 
-        const val MILLI_CONVERSION = 100
+        const val MILLI_CONVERSION = ReaderEInkPreferences.DEFAULT_FLASH_DURATION_MILLIS
 
         val TapZones = listOf(
             MR.strings.label_default,

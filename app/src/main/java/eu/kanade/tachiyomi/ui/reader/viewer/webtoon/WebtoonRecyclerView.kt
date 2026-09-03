@@ -11,7 +11,10 @@ import android.view.animation.DecelerateInterpolator
 import androidx.core.animation.doOnEnd
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import kotlin.math.abs
 
 /**
@@ -22,6 +25,8 @@ class WebtoonRecyclerView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyle: Int = 0,
 ) : RecyclerView(context, attrs, defStyle) {
+
+    private val eInkPreferences = Injekt.get<EInkPreferences>()
 
     private var isZooming = false
     private var atLastPosition = false
@@ -119,6 +124,14 @@ class WebtoonRecyclerView @JvmOverloads constructor(
         fromY: Float,
         toY: Float,
     ) {
+        if (eInkPreferences.enabled.get()) {
+            x = toX
+            y = toY
+            currentScale = toRate
+            setScaleRate(toRate)
+            isZooming = false
+            return
+        }
         isZooming = true
         val animatorSet = AnimatorSet()
         val translationXAnimator = ValueAnimator.ofFloat(fromX, toX)

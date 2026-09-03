@@ -26,6 +26,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.components.material.topSmallPaddingValues
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.LocalEInkDisplayPolicy
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.util.plus
 
@@ -83,6 +84,7 @@ private fun CategoryContent(
     onChangeOrder: (Category, Int) -> Unit,
 ) {
     val categoriesState = remember { categories.toMutableStateList() }
+    val eInkEnabled = LocalEInkDisplayPolicy.current.enabled
     val reorderableState = rememberReorderableLazyListState(lazyListState, paddingValues) { from, to ->
         val item = categoriesState.removeAt(from.index)
         categoriesState.add(to.index, item)
@@ -110,7 +112,7 @@ private fun CategoryContent(
         ) { category ->
             ReorderableItem(reorderableState, category.key) {
                 CategoryListItem(
-                    modifier = Modifier.animateItem(),
+                    modifier = if (eInkEnabled) Modifier else Modifier.animateItem(),
                     category = category,
                     onRename = { onClickRename(category) },
                     onDelete = { onClickDelete(category) },

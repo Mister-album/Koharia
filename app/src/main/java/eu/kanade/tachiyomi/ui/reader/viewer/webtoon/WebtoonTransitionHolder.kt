@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.webtoon
 
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.LinearLayout
@@ -9,6 +10,7 @@ import androidx.appcompat.widget.AppCompatTextView
 import androidx.core.view.isNotEmpty
 import androidx.core.view.isVisible
 import com.google.android.material.progressindicator.CircularProgressIndicator
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderTransitionView
@@ -19,6 +21,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * Holder of the webtoon viewer that contains a chapter transition.
@@ -103,7 +107,13 @@ class WebtoonTransitionHolder(
      */
     private fun setLoading() {
         val progress = CircularProgressIndicator(context)
-        progress.isIndeterminate = true
+        progress.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        if (Injekt.get<EInkPreferences>().enabled.get()) {
+            progress.isIndeterminate = false
+            progress.progress = 75
+        } else {
+            progress.isIndeterminate = true
+        }
 
         val textView = AppCompatTextView(context).apply {
             wrapContent()

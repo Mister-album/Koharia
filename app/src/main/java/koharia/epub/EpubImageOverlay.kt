@@ -23,7 +23,6 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +47,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import okio.Buffer
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.ActionButton
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -122,7 +122,7 @@ private fun EpubImagePreview(
 
         when {
             state.isLoading -> {
-                CircularProgressIndicator(
+                EInkCircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center),
                     color = Color.White,
                 )
@@ -231,7 +231,7 @@ private fun EpubImageActionsSheet(
                     .padding(vertical = MaterialTheme.padding.medium),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                EInkCircularProgressIndicator(modifier = Modifier.size(28.dp))
             }
         } else {
             val actionColors = ButtonDefaults.textButtonColors(

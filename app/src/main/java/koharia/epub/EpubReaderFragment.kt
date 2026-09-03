@@ -18,6 +18,7 @@ import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
@@ -89,6 +90,7 @@ class EpubReaderFragment : Fragment() {
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
     private val fontManager: EpubFontManager = Injekt.get()
+    private val eInkPreferences: EInkPreferences = Injekt.get()
     private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get()
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
@@ -305,7 +307,11 @@ class EpubReaderFragment : Fragment() {
                 content = viewportView,
                 overlay = overlay,
                 effectProvider = {
-                    PageTransitionEffect.fromPreference(epubLayoutPreferences.pageTransitionEffect.get())
+                    if (eInkPreferences.enabled.get()) {
+                        PageTransitionEffect.NONE
+                    } else {
+                        PageTransitionEffect.fromPreference(epubLayoutPreferences.pageTransitionEffect.get())
+                    }
                 },
                 rightToLeftProvider = {
                     epubLayoutPreferences.pageDirection.get() == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT

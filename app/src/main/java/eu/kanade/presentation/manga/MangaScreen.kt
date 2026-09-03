@@ -3,6 +3,7 @@ package eu.kanade.presentation.manga
 import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -102,6 +103,7 @@ import tachiyomi.presentation.core.components.VerticalFastScroller
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.eInkAnimationSpec
 import tachiyomi.presentation.core.util.shouldExpandFAB
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
@@ -338,11 +340,13 @@ private fun MangaScreenSmallImpl(
                 }
             }
             val titleAlpha by animateFloatAsState(
-                if (!isFirstItemVisible) 1f else 0f,
+                targetValue = if (!isFirstItemVisible) 1f else 0f,
+                animationSpec = eInkAnimationSpec(spring()),
                 label = "Top Bar Title",
             )
             val backgroundAlpha by animateFloatAsState(
-                if (!isFirstItemVisible || isFirstItemScrolled) 1f else 0f,
+                targetValue = if (!isFirstItemVisible || isFirstItemScrolled) 1f else 0f,
+                animationSpec = eInkAnimationSpec(spring()),
                 label = "Top Bar Background",
             )
             MangaToolbar(

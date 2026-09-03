@@ -1,7 +1,6 @@
 package eu.kanade.presentation.more.onboarding
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +21,7 @@ import soup.compose.material.motion.animation.rememberSlideDistance
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.EInkAnimatedContent
 import tachiyomi.presentation.core.screens.InfoScreen
 
 @Composable
@@ -79,7 +79,7 @@ fun OnboardingScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            AnimatedContent(
+            EInkAnimatedContent(
                 targetState = currentStep,
                 transitionSpec = {
                     materialSharedAxisX(

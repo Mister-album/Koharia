@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.TabText
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.LocalEInkDisplayPolicy
 
 @Composable
 fun TabbedScreen(
@@ -38,6 +39,7 @@ fun TabbedScreen(
     onChangeSearchQuery: (String?) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val eInkEnabled = LocalEInkDisplayPolicy.current.enabled
     val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
@@ -69,7 +71,11 @@ fun TabbedScreen(
                 tabs.forEachIndexed { index, tab ->
                     Tab(
                         selected = state.currentPage == index,
-                        onClick = { scope.launch { state.animateScrollToPage(index) } },
+                        onClick = {
+                            scope.launch {
+                                if (eInkEnabled) state.scrollToPage(index) else state.animateScrollToPage(index)
+                            }
+                        },
                         text = { TabText(text = stringResource(tab.titleRes), badgeCount = tab.badgeNumber) },
                         unselectedContentColor = MaterialTheme.colorScheme.onSurface,
                     )

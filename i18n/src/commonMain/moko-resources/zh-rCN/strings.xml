@@ -1041,6 +1041,11 @@
     <string name="pref_relative_format_summary">显示 \"%1$s\" 而不是 \"%2$s\"</string>
     <string name="relative_time_span_never">尚未</string>
     <string name="pref_flash_page_summ">减轻墨水屏上的残影</string>
+    <string name="pref_category_eink">墨水屏</string>
+    <string name="pref_eink_mode">无动画模式</string>
+    <string name="pref_eink_mode_summary">移除整个应用中的非必要动态效果，且不修改已保存的阅读器设置</string>
+    <string name="pref_eink_app_refresh">主要页面切换时闪烁</string>
+    <string name="pref_eink_app_refresh_summary">可在导航后刷新显示，以减轻残影</string>
     <string name="last_auto_backup_info">上次自动备份时间：%s</string>
     <string name="pref_flash_page">翻页时闪烁</string>
     <string name="label_data_storage">数据与存储</string>

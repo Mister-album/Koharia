@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.ActivityCompat
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
@@ -20,8 +21,10 @@ import eu.kanade.presentation.more.settings.widget.AppThemeModePreferenceWidget
 import eu.kanade.presentation.more.settings.widget.AppThemePreferenceWidget
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
@@ -37,10 +40,11 @@ object SettingsAppearanceScreen : SearchableSettings {
     @Composable
     override fun getPreferences(): List<Preference> {
         val uiPreferences = remember { Injekt.get<UiPreferences>() }
+        val eInkPreferences = remember { Injekt.get<EInkPreferences>() }
 
         return listOf(
             getThemeGroup(uiPreferences = uiPreferences),
-            getDisplayGroup(uiPreferences = uiPreferences),
+            getDisplayGroup(uiPreferences = uiPreferences, eInkPreferences = eInkPreferences),
         )
     }
 
@@ -97,6 +101,7 @@ object SettingsAppearanceScreen : SearchableSettings {
     @Composable
     private fun getDisplayGroup(
         uiPreferences: UiPreferences,
+        eInkPreferences: EInkPreferences,
     ): Preference.PreferenceGroup {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
@@ -107,6 +112,10 @@ object SettingsAppearanceScreen : SearchableSettings {
         val formattedNow = remember(dateFormat) {
             UiPreferences.dateFormat(dateFormat).format(now)
         }
+        val eInkEnabled by eInkPreferences.enabled.collectAsState()
+        val appRefreshEnabled by eInkPreferences.appRefreshEnabled.collectAsState()
+        val appRefreshDuration by eInkPreferences.appRefreshDurationMillis.collectAsState()
+        val appRefreshInterval by eInkPreferences.appRefreshInterval.collectAsState()
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_category_display),
@@ -148,6 +157,48 @@ object SettingsAppearanceScreen : SearchableSettings {
                 Preference.PreferenceItem.SwitchPreference(
                     preference = uiPreferences.imagesInDescription,
                     title = stringResource(MR.strings.pref_display_images_description),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = eInkPreferences.enabled,
+                    title = stringResource(MR.strings.pref_eink_mode),
+                    subtitle = stringResource(MR.strings.pref_eink_mode_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = eInkPreferences.appRefreshEnabled,
+                    title = stringResource(MR.strings.pref_eink_app_refresh),
+                    subtitle = stringResource(MR.strings.pref_eink_app_refresh_summary),
+                    enabled = eInkEnabled,
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = appRefreshDuration / EInkPreferences.DEFAULT_REFRESH_DURATION_MILLIS,
+                    valueRange = 1..15,
+                    title = stringResource(MR.strings.pref_flash_duration),
+                    valueString = stringResource(MR.strings.pref_flash_duration_summary, appRefreshDuration),
+                    enabled = eInkEnabled && appRefreshEnabled,
+                    onValueChanged = {
+                        eInkPreferences.appRefreshDurationMillis.set(
+                            it * EInkPreferences.DEFAULT_REFRESH_DURATION_MILLIS,
+                        )
+                    },
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = appRefreshInterval,
+                    valueRange = EInkPreferences.MIN_REFRESH_INTERVAL..EInkPreferences.MAX_REFRESH_INTERVAL,
+                    title = stringResource(MR.strings.pref_flash_page_interval),
+                    valueString = pluralStringResource(MR.plurals.pref_pages, appRefreshInterval, appRefreshInterval),
+                    enabled = eInkEnabled && appRefreshEnabled,
+                    onValueChanged = eInkPreferences.appRefreshInterval::set,
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = eInkPreferences.appRefreshColor,
+                    entries = persistentMapOf(
+                        EInkPreferences.RefreshColor.BLACK to stringResource(MR.strings.pref_flash_style_black),
+                        EInkPreferences.RefreshColor.WHITE to stringResource(MR.strings.pref_flash_style_white),
+                        EInkPreferences.RefreshColor.WHITE_BLACK to
+                            stringResource(MR.strings.pref_flash_style_white_black),
+                    ),
+                    title = stringResource(MR.strings.pref_flash_with),
+                    enabled = eInkEnabled && appRefreshEnabled,
                 ),
             ),
         )

@@ -8,6 +8,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderEInkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
@@ -29,9 +30,9 @@ private val themes = listOf(
 )
 
 private val flashColors = listOf(
-    MR.strings.pref_flash_style_black to ReaderPreferences.FlashColor.BLACK,
-    MR.strings.pref_flash_style_white to ReaderPreferences.FlashColor.WHITE,
-    MR.strings.pref_flash_style_white_black to ReaderPreferences.FlashColor.WHITE_BLACK,
+    MR.strings.pref_flash_style_black to ReaderEInkPreferences.FlashColor.BLACK,
+    MR.strings.pref_flash_style_white to ReaderEInkPreferences.FlashColor.WHITE,
+    MR.strings.pref_flash_style_white_black to ReaderEInkPreferences.FlashColor.WHITE_BLACK,
 )
 
 @Composable

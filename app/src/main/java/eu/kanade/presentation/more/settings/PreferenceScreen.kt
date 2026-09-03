@@ -15,6 +15,7 @@ import eu.kanade.presentation.more.settings.screen.SearchableSettings
 import eu.kanade.presentation.more.settings.widget.PreferenceGroupHeader
 import kotlinx.coroutines.delay
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
+import tachiyomi.presentation.core.motion.LocalEInkDisplayPolicy
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -29,13 +30,14 @@ fun PreferenceScreen(
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
     val state = rememberLazyListState()
+    val eInkEnabled = LocalEInkDisplayPolicy.current.enabled
     val highlightKey = SearchableSettings.highlightKey
     if (highlightKey != null) {
         LaunchedEffect(Unit) {
             val i = items.findHighlightedIndex(highlightKey)
             if (i >= 0) {
                 delay(0.5.seconds)
-                state.animateScrollToItem(i)
+                if (eInkEnabled) state.scrollToItem(i) else state.animateScrollToItem(i)
             }
             SearchableSettings.highlightKey = null
         }

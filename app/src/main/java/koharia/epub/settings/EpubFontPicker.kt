@@ -4,9 +4,12 @@ import android.graphics.Typeface
 import android.widget.TextView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +31,6 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,7 +77,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
+import tachiyomi.presentation.core.motion.eInkAnimateContentSize
+import tachiyomi.presentation.core.motion.eInkAnimationSpec
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -242,7 +248,11 @@ private fun EpubFontPickerContent(
                 Icon(Icons.Outlined.UploadFile, contentDescription = stringResource(MR.strings.epub_font_import))
             }
         }
-        AnimatedVisibility(visible = showSearch) {
+        EInkAnimatedVisibility(
+            visible = showSearch,
+            enter = fadeIn() + expandVertically(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -283,7 +293,7 @@ private fun EpubFontPickerContent(
         val loading = (tabIndex == 1 && catalog.isSystemLoading) || (tabIndex == 2 && catalog.isLocalLoading)
         if (loading) {
             Row(modifier = Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) {
-                CircularProgressIndicator()
+                EInkCircularProgressIndicator()
             }
         } else {
             LazyColumn(
@@ -442,8 +452,12 @@ private fun EpubFontSeriesItem(
     onExpand: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    val arrowRotation by animateFloatAsState(if (expanded) 180f else 0f, label = "fontSeriesArrow")
-    Column(modifier = Modifier.fillMaxWidth().animateContentSize()) {
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = eInkAnimationSpec(spring()),
+        label = "fontSeriesArrow",
+    )
+    Column(modifier = Modifier.fillMaxWidth().eInkAnimateContentSize()) {
         Surface(
             onClick = onExpand,
             modifier = Modifier.fillMaxWidth(),
@@ -501,7 +515,11 @@ private fun EpubFontSeriesItem(
                 }
             }
         }
-        AnimatedVisibility(visible = expanded) {
+        EInkAnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + expandVertically(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
             Column(
                 modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 4.dp),
             ) {
@@ -529,10 +547,14 @@ private fun EpubFontFamilyItem(
         MaterialTheme.colorScheme.onSurfaceVariant
     }
     val previewColor = secondaryTextColor.toArgb()
-    val arrowRotation by animateFloatAsState(if (expanded) 180f else 0f, label = "fontFamilyArrow")
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = eInkAnimationSpec(spring()),
+        label = "fontFamilyArrow",
+    )
     Surface(
         onClick = if (canExpand) onExpand else onSelect,
-        modifier = Modifier.fillMaxWidth().animateContentSize(),
+        modifier = Modifier.fillMaxWidth().eInkAnimateContentSize(),
         shape = MaterialTheme.shapes.extraLarge,
         color = if (selected) {
             MaterialTheme.colorScheme.secondaryContainer
@@ -604,7 +626,11 @@ private fun EpubFontFamilyItem(
                     }
                 }
             }
-            AnimatedVisibility(visible = expanded && canExpand) {
+            EInkAnimatedVisibility(
+                visible = expanded && canExpand,
+                enter = fadeIn() + expandVertically(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
                 Column(modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp)) {
                     HorizontalDivider(
                         modifier = Modifier.padding(bottom = 6.dp),

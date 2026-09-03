@@ -1,7 +1,7 @@
 package eu.kanade.presentation.manga.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -64,6 +64,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
+import tachiyomi.presentation.core.motion.eInkAnimationSpec
 import kotlin.time.Duration.Companion.seconds
 
 @Composable
@@ -79,7 +81,7 @@ fun MangaBottomActionMenu(
     onDeleteClicked: (() -> Unit)? = null,
     isConnectionCacheMode: Boolean = false,
 ) {
-    AnimatedVisibility(
+    EInkAnimatedVisibility(
         visible = visible,
         enter = expandVertically(expandFrom = Alignment.Bottom),
         exit = shrinkVertically(shrinkTowards = Alignment.Bottom),
@@ -192,6 +194,7 @@ private fun RowScope.Button(
 ) {
     val animatedWeight by animateFloatAsState(
         targetValue = if (toConfirm) 2f else 1f,
+        animationSpec = eInkAnimationSpec(spring()),
         label = "weight",
     )
     Box(
@@ -214,7 +217,7 @@ private fun RowScope.Button(
                 imageVector = icon,
                 contentDescription = title,
             )
-            AnimatedVisibility(
+            EInkAnimatedVisibility(
                 visible = toConfirm,
                 enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
@@ -243,7 +246,7 @@ fun LibraryBottomActionMenu(
     isConnectionCacheMode: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    AnimatedVisibility(
+    EInkAnimatedVisibility(
         visible = visible,
         enter = expandVertically(animationSpec = tween(delayMillis = 300)),
         exit = shrinkVertically(animationSpec = tween()),

@@ -29,6 +29,9 @@ val hasReleaseKeystore = keystorePropertiesFile.exists().also { exists ->
         keystorePropertiesFile.inputStream().use(keystoreProperties::load)
     }
 }
+val useEInkDeviceFixture = providers.gradleProperty("einkDeviceFixture")
+    .map(String::toBoolean)
+    .getOrElse(false)
 
 fun requireKeystoreProperty(name: String): String {
     return keystoreProperties.getProperty(name)?.takeIf { it.isNotBlank() }
@@ -71,7 +74,7 @@ android {
 
     buildTypes {
         val debug = getByName("debug") {
-            applicationIdSuffix = ".dev"
+            applicationIdSuffix = if (useEInkDeviceFixture) ".dev.einkfixture" else ".dev"
             versionNameSuffix = "-${getLatestCommitCount()}"
             isPseudoLocalesEnabled = true
         }
@@ -323,6 +326,10 @@ dependencies {
     // Tests
     testImplementation(libs.bundles.test)
     testRuntimeOnly(libs.junit.platform.launcher)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.compose.uiTestJunit4)
+    debugImplementation(libs.androidx.compose.uiTestManifest)
 
     // For detecting memory leaks; see https://square.github.io/leakcanary/
     // debugImplementation(libs.leakCanary.android)

@@ -1,6 +1,5 @@
 package eu.kanade.presentation.track
 
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -60,6 +59,7 @@ import eu.kanade.tachiyomi.util.lang.toLocalDate
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.eInkAnimateContentSize
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -79,7 +79,7 @@ fun TrackInfoDialogHome(
 ) {
     Column(
         modifier = Modifier
-            .animateContentSize()
+            .eInkAnimateContentSize()
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(16.dp)

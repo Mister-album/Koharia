@@ -1,7 +1,6 @@
 package koharia.epub
 
 import android.text.format.Formatter
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -68,6 +67,7 @@ import koharia.epub.settings.EpubReaderPreferences
 import koharia.epub.settings.EpubReaderSettingsContent
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
 import kotlin.math.roundToInt
 
 private val readerBarsSlideAnimationSpec = tween<IntOffset>(200)
@@ -97,7 +97,7 @@ internal fun EpubReaderTopBar(
     val backgroundColor = MaterialTheme.colorScheme
         .surfaceColorAtElevation(3.dp)
         .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
-    AnimatedVisibility(
+    EInkAnimatedVisibility(
         modifier = modifier,
         visible = visible,
         enter = slideInVertically(readerBarsSlideAnimationSpec) { -it } + fadeIn(readerBarsFadeAnimationSpec),
@@ -187,7 +187,7 @@ internal fun EpubReaderBottomArea(
     }
 
     Column(modifier = modifier) {
-        AnimatedVisibility(
+        EInkAnimatedVisibility(
             visible = visible,
             enter = slideInVertically(readerBarsSlideAnimationSpec) { it } + fadeIn(readerBarsFadeAnimationSpec),
             exit = slideOutVertically(readerBarsSlideAnimationSpec) { it } + fadeOut(readerBarsFadeAnimationSpec),
@@ -209,7 +209,7 @@ internal fun EpubReaderBottomArea(
                         ?: "${(progression * 100).roundToInt().coerceIn(0, 100)}%",
                     displayTotalText = visualPagePair?.second?.toString().orEmpty(),
                 )
-                AnimatedVisibility(
+                EInkAnimatedVisibility(
                     visible = activePanel != EpubBottomPanel.NONE,
                     modifier = Modifier.padding(top = 8.dp),
                     enter = expandVertically(

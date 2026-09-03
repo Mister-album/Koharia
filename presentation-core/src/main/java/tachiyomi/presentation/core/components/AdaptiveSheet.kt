@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.anchoredDraggable
 import androidx.compose.foundation.gestures.animateTo
+import androidx.compose.foundation.gestures.snapTo
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -47,6 +48,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import tachiyomi.presentation.core.motion.LocalEInkDisplayPolicy
+import tachiyomi.presentation.core.motion.eInkAnimationSpec
 import kotlin.math.roundToInt
 
 @Composable
@@ -59,11 +62,12 @@ fun AdaptiveSheet(
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    val eInkEnabled = LocalEInkDisplayPolicy.current.enabled
     if (isTabletUi) {
         var targetAlpha by remember { mutableFloatStateOf(0f) }
         val alpha by animateFloatAsState(
             targetValue = targetAlpha,
-            animationSpec = sheetAnimationSpec,
+            animationSpec = eInkAnimationSpec(sheetAnimationSpec),
             label = "alpha",
         )
         val internalOnDismissRequest: () -> Unit = {
@@ -117,11 +121,13 @@ fun AdaptiveSheet(
         val flingBehavior = AnchoredDraggableDefaults.flingBehavior(
             state = anchoredDraggableState,
             positionalThreshold = { _: Float -> with(density) { 56.dp.toPx() } },
-            animationSpec = sheetAnimationSpec,
+            animationSpec = eInkAnimationSpec(sheetAnimationSpec),
         )
         val internalOnDismissRequest = {
             if (anchoredDraggableState.settledValue == 0) {
-                scope.launch { anchoredDraggableState.animateTo(1) }
+                scope.launch {
+                    if (eInkEnabled) anchoredDraggableState.snapTo(1) else anchoredDraggableState.animateTo(1)
+                }
             }
         }
         Box(
@@ -192,7 +198,9 @@ fun AdaptiveSheet(
             )
 
             LaunchedEffect(anchoredDraggableState) {
-                scope.launch { anchoredDraggableState.animateTo(0) }
+                scope.launch {
+                    if (eInkEnabled) anchoredDraggableState.snapTo(0) else anchoredDraggableState.animateTo(0)
+                }
                 snapshotFlow { anchoredDraggableState.settledValue }
                     .drop(1)
                     .filter { it == 1 }

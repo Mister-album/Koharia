@@ -12,6 +12,8 @@ import eu.kanade.tachiyomi.util.view.setSafeComposeContent
 
 class CrashActivity : BaseActivity() {
 
+    protected override val usePersistedEInkPreferences = false
+
     override fun applyAppTheme(activity: Activity) {
         activity.setTheme(R.style.Theme_Tachiyomi)
     }

@@ -2,8 +2,9 @@ package eu.kanade.tachiyomi.ui.history
 
 import android.content.Context
 import androidx.compose.animation.graphics.res.animatedVectorResource
-import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +38,7 @@ import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.rememberEInkAwareAnimatedVectorPainter
 
 data object HistoryTab : Tab {
 
@@ -52,7 +54,7 @@ data object HistoryTab : Tab {
             return TabOptions(
                 index = 2u,
                 title = stringResource(MR.strings.label_recent_manga),
-                icon = rememberAnimatedVectorPainter(image, isSelected),
+                icon = rememberEInkAwareAnimatedVectorPainter(image, isSelected, Icons.Outlined.History),
             )
         }
 

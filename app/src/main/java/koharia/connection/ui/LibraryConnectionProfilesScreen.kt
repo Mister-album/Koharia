@@ -21,7 +21,6 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -79,9 +78,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.LocalEInkDisplayPolicy
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -536,6 +537,7 @@ private fun ConnectionRow(
     onDelete: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val eInkEnabled = LocalEInkDisplayPolicy.current.enabled
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val revealDistancePx = with(density) { CONNECTION_ROW_REVEAL_DISTANCE.toPx() }
@@ -546,6 +548,11 @@ private fun ConnectionRow(
     fun settleRow(revealed: Boolean) {
         val targetOffset = if (revealed) revealedOffsetPx else 0f
         settleJob?.cancel()
+        if (eInkEnabled) {
+            rowOffsetPx = targetOffset
+            settleJob = null
+            return
+        }
         settleJob = scope.launch {
             animate(
                 initialValue = rowOffsetPx,
@@ -667,7 +674,7 @@ private fun ConnectionRow(
                     },
                 ) {
                     if (isRefreshing) {
-                        CircularProgressIndicator(
+                        EInkCircularProgressIndicator(
                             modifier = Modifier.size(24.dp),
                             strokeWidth = 2.dp,
                         )

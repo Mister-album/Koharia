@@ -1,3 +1,5 @@
+import koharia.gradle.tasks.VerifyEInkMotionTask
+
 buildscript {
     dependencies {
         classpath(libs.kotlin.gradle)
@@ -26,5 +28,21 @@ tasks {
         named(task) {
             dependsOn(buildLogic.task(":$task"))
         }
+    }
+}
+
+val verifyEInkMotion = tasks.register<VerifyEInkMotionTask>("verifyEInkMotion") {
+    group = "verification"
+    description = "Rejects motion APIs that bypass the global E-Ink display policy."
+    sourceDirectories.from(
+        layout.projectDirectory.dir("app/src/main/java"),
+        layout.projectDirectory.dir("presentation-core/src/main/java"),
+        layout.projectDirectory.dir("presentation-widget/src/main/java"),
+    )
+}
+
+subprojects {
+    tasks.matching { it.name == "check" }.configureEach {
+        dependsOn(verifyEInkMotion)
     }
 }

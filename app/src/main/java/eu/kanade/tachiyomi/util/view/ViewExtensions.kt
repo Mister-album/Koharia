@@ -20,21 +20,29 @@ import androidx.compose.runtime.CompositionContext
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import eu.kanade.presentation.eink.EInkAppRefreshRoot
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
 import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.tachiyomi.R
 
 inline fun ComponentActivity.setComposeContent(
     parent: CompositionContext? = null,
+    enableAppRefresh: Boolean = true,
+    requestInitialRefresh: Boolean = true,
     crossinline content: @Composable () -> Unit,
 ) {
     setContent(parent) {
         TachiyomiTheme {
-            CompositionLocalProvider(
-                LocalTextStyle provides MaterialTheme.typography.bodySmall,
-                LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+            EInkAppRefreshRoot(
+                initialKey = this@setComposeContent::class.qualifiedName
+                    .takeIf { enableAppRefresh && requestInitialRefresh },
             ) {
-                content()
+                CompositionLocalProvider(
+                    LocalTextStyle provides MaterialTheme.typography.bodySmall,
+                    LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+                ) {
+                    content()
+                }
             }
         }
     }
@@ -46,7 +54,7 @@ inline fun ComponentActivity.setSafeComposeContent(
     crossinline content: @Composable () -> Unit,
 ) {
     setContent(parent) {
-        TachiyomiPreviewTheme {
+        TachiyomiPreviewTheme(eInkEnabled = true) {
             CompositionLocalProvider(
                 LocalTextStyle provides MaterialTheme.typography.bodySmall,
                 LocalContentColor provides MaterialTheme.colorScheme.onBackground,

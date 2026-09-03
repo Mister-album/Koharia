@@ -9,6 +9,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderEInkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -608,7 +609,7 @@ object SettingsReaderScreen : SearchableSettings {
         val flashColorPref = readerPreferences.flashColor
 
         return Preference.PreferenceGroup(
-            title = "E-Ink",
+            title = stringResource(MR.strings.pref_category_eink),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.SwitchPreference(
                     preference = readerPreferences.flashOnPageChange,
@@ -634,9 +635,9 @@ object SettingsReaderScreen : SearchableSettings {
                 Preference.PreferenceItem.ListPreference(
                     preference = flashColorPref,
                     entries = persistentMapOf(
-                        ReaderPreferences.FlashColor.BLACK to stringResource(MR.strings.pref_flash_style_black),
-                        ReaderPreferences.FlashColor.WHITE to stringResource(MR.strings.pref_flash_style_white),
-                        ReaderPreferences.FlashColor.WHITE_BLACK
+                        ReaderEInkPreferences.FlashColor.BLACK to stringResource(MR.strings.pref_flash_style_black),
+                        ReaderEInkPreferences.FlashColor.WHITE to stringResource(MR.strings.pref_flash_style_white),
+                        ReaderEInkPreferences.FlashColor.WHITE_BLACK
                             to stringResource(MR.strings.pref_flash_style_white_black),
                     ),
                     title = stringResource(MR.strings.pref_flash_with),

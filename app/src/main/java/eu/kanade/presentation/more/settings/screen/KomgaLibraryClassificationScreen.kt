@@ -11,7 +11,6 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +34,7 @@ import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.launch
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkLinearProgressIndicator
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -102,7 +102,7 @@ class KomgaLibraryClassificationScreen : Screen() {
             ScrollbarLazyColumn(contentPadding = contentPadding) {
                 if (isLoading) {
                     item {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        EInkLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
                 }
                 if (activeServerId == KomgaServerPreferences.NO_ACTIVE_SERVER) {

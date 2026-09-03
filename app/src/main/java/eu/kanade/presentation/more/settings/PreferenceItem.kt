@@ -1,6 +1,5 @@
 package eu.kanade.presentation.more.settings
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -28,6 +27,7 @@ import eu.kanade.presentation.more.settings.widget.TitleFontSize
 import eu.kanade.presentation.more.settings.widget.TrackingPreferenceWidget
 import kotlinx.coroutines.launch
 import tachiyomi.presentation.core.components.BaseSliderItem
+import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
 import tachiyomi.presentation.core.util.collectAsState
 
 val LocalPreferenceHighlighted = compositionLocalOf(structuralEqualityPolicy()) { false }
@@ -41,7 +41,7 @@ fun StatusWrapper(
 ) {
     val enabled = item.enabled
     val highlighted = item.title == highlightKey
-    AnimatedVisibility(
+    EInkAnimatedVisibility(
         visible = enabled,
         enter = expandVertically() + fadeIn(),
         exit = shrinkVertically() + fadeOut(),

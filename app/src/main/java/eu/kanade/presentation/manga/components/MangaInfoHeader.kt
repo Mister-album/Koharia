@@ -1,10 +1,8 @@
 package eu.kanade.presentation.manga.components
 
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.graphics.res.animatedVectorResource
-import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +33,8 @@ import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Done
 import androidx.compose.material.icons.outlined.DoneAll
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.Public
@@ -103,6 +103,10 @@ import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
 import tachiyomi.presentation.core.components.material.TextButton
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.LocalEInkDisplayPolicy
+import tachiyomi.presentation.core.motion.eInkAnimateContentSize
+import tachiyomi.presentation.core.motion.eInkAnimationSpec
+import tachiyomi.presentation.core.motion.rememberEInkAwareAnimatedVectorPainter
 import tachiyomi.presentation.core.util.clickableNoIndication
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 import uy.kohesive.injekt.Injekt
@@ -131,7 +135,7 @@ fun MangaInfoBox(
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(manga)
-                .crossfade(true)
+                .crossfade(!LocalEInkDisplayPolicy.current.enabled)
                 .build(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
@@ -270,7 +274,7 @@ fun ExpandableMangaDescription(
                 modifier = Modifier
                     .padding(top = 8.dp)
                     .padding(vertical = 12.dp)
-                    .animateContentSize(animationSpec = spring())
+                    .eInkAnimateContentSize(animationSpec = spring())
                     .fillMaxWidth(),
             ) {
                 var showMenu by remember { mutableStateOf(false) }
@@ -351,7 +355,7 @@ private fun MangaAndSourceTitlesLarge(
             modifier = Modifier.fillMaxWidth(0.65f),
             data = ImageRequest.Builder(LocalContext.current)
                 .data(manga)
-                .crossfade(true)
+                .crossfade(!LocalEInkDisplayPolicy.current.enabled)
                 .build(),
             contentDescription = stringResource(MR.strings.manga_cover),
             onClick = onCoverClick,
@@ -393,7 +397,7 @@ private fun MangaAndSourceTitlesSmall(
                 .align(Alignment.Top),
             data = ImageRequest.Builder(LocalContext.current)
                 .data(manga)
-                .crossfade(true)
+                .crossfade(!LocalEInkDisplayPolicy.current.enabled)
                 .build(),
             contentDescription = stringResource(MR.strings.manga_cover),
             onClick = onCoverClick,
@@ -664,6 +668,7 @@ private fun MangaSummary(
     val loadImages = remember { preferences.imagesInDescription.get() }
     val animProgress by animateFloatAsState(
         targetValue = if (expanded) 1f else 0f,
+        animationSpec = eInkAnimationSpec(spring()),
         label = "summary",
     )
     var infoHeight by remember { mutableIntStateOf(0) }
@@ -710,7 +715,11 @@ private fun MangaSummary(
                 ) {
                     val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_caret_down)
                     Icon(
-                        painter = rememberAnimatedVectorPainter(image, !expanded),
+                        painter = rememberEInkAwareAnimatedVectorPainter(
+                            image = image,
+                            atEnd = !expanded,
+                            staticImage = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                        ),
                         contentDescription = stringResource(
                             if (expanded) MR.strings.manga_info_collapse else MR.strings.manga_info_expand,
                         ),

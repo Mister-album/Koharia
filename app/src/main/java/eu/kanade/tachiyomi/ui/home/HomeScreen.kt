@@ -2,8 +2,6 @@ package eu.kanade.tachiyomi.ui.home
 
 import android.app.Activity
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
@@ -33,6 +31,8 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabNavigator
+import eu.kanade.presentation.eink.EInkRefreshReason
+import eu.kanade.presentation.eink.LocalEInkAppRefreshController
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
@@ -54,6 +54,8 @@ import soup.compose.material.motion.animation.materialFadeThroughOut
 import tachiyomi.presentation.core.components.material.NavigationBar
 import tachiyomi.presentation.core.components.material.NavigationRail
 import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.motion.EInkAnimatedContent
+import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -108,7 +110,7 @@ object HomeScreen : Screen() {
                             val bottomNavVisible by produceState(initialValue = true) {
                                 showBottomNavEvent.receiveAsFlow().collectLatest { value = it }
                             }
-                            AnimatedVisibility(
+                            EInkAnimatedVisibility(
                                 visible = bottomNavVisible,
                                 enter = expandVertically(),
                                 exit = shrinkVertically(),
@@ -128,7 +130,7 @@ object HomeScreen : Screen() {
                             .padding(contentPadding)
                             .consumeWindowInsets(contentPadding),
                     ) {
-                        AnimatedContent(
+                        EInkAnimatedContent(
                             targetState = tabNavigator.current,
                             transitionSpec = {
                                 materialFadeThroughIn(initialScale = 1f, durationMillis = TabFadeDuration) togetherWith
@@ -145,6 +147,10 @@ object HomeScreen : Screen() {
             }
 
             val goToLibraryTab = { tabNavigator.current = defaultLibraryTab }
+            val refreshController = LocalEInkAppRefreshController.current
+            LaunchedEffect(tabNavigator.current.key) {
+                refreshController?.request(EInkRefreshReason.TAB, tabNavigator.current.key)
+            }
 
             BackHandler(enabled = tabNavigator.current != defaultLibraryTab, onBack = goToLibraryTab)
             // Backgrounding, tab changes, and nested screens keep the browse session. Only a

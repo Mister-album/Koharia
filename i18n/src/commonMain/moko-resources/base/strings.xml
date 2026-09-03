@@ -541,6 +541,11 @@
     <string name="page_transition_none">None</string>
     <string name="pref_flash_page">Flash on page change</string>
     <string name="pref_flash_page_summ">Reduces ghosting on e-ink displays</string>
+    <string name="pref_category_eink">E-Ink</string>
+    <string name="pref_eink_mode">No-animation mode</string>
+    <string name="pref_eink_mode_summary">Removes nonessential motion throughout the app without changing saved reader settings</string>
+    <string name="pref_eink_app_refresh">Flash on major screen changes</string>
+    <string name="pref_eink_app_refresh_summary">Optionally refreshes the display after navigation to reduce ghosting</string>
     <string name="pref_flash_duration">Flash duration</string>
     <string name="pref_flash_duration_summary">%1$s ms</string>
     <string name="pref_flash_page_interval">Flash every</string>

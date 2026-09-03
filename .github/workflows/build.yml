@@ -50,6 +50,9 @@ jobs:
       - name: Check code format
         run: ./gradlew spotlessCheck
 
+      - name: Verify E-Ink motion policy
+        run: ./gradlew verifyEInkMotion
+
       - name: Run unit tests
         id: unit_tests
         run: ./gradlew testDebugUnitTest

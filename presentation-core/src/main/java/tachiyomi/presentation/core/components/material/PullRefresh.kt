@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import tachiyomi.presentation.core.motion.LocalEInkDisplayPolicy
 
 /**
  * @param refreshing Whether the layout is currently refreshing
@@ -29,6 +30,7 @@ fun PullRefresh(
     content: @Composable () -> Unit,
 ) {
     val state = rememberPullToRefreshState()
+    val eInkEnabled = LocalEInkDisplayPolicy.current.enabled
     Box(
         modifier = modifier
             .pullToRefresh(
@@ -44,7 +46,7 @@ fun PullRefresh(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(indicatorPadding),
-            isRefreshing = refreshing,
+            isRefreshing = refreshing && !eInkEnabled,
             state = state,
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

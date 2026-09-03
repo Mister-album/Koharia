@@ -4,6 +4,7 @@ import android.app.Application
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.core.security.PrivacyPreferences
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
@@ -131,6 +132,9 @@ class PreferenceModule(val app: Application) : InjektModule {
         }
         addSingletonFactory {
             UiPreferences(get<ScopedPreferenceStore>())
+        }
+        addSingletonFactory {
+            EInkPreferences(get<PreferenceStore>())
         }
         addSingletonFactory {
             BasePreferences(app, get<ScopedPreferenceStore>())
