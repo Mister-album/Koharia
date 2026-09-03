@@ -262,6 +262,7 @@ internal fun buildEpubDocumentPreparationScript(
     parentColorsInverted: Boolean,
     readerFontScale: Float,
     longWordWrappingEnabled: Boolean = true,
+    paginated: Boolean = false,
 ): String {
     val layoutPreparationScript = buildEpubLayoutPreparationScript(
         paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
@@ -278,7 +279,8 @@ internal fun buildEpubDocumentPreparationScript(
         readerFontScale = readerFontScale,
     )};
             ${buildEpubImageColorPolicyScript(preserveImageColors, parentColorsInverted)};
-            return 'prepared';
+            const standaloneImageLayout = ${buildEpubStandaloneImageLayoutScript(paginated)};
+            return standaloneImageLayout === 'pending' ? 'pending' : 'prepared';
         })()
     """.trimIndent()
 }

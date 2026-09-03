@@ -17,6 +17,7 @@ class EpubDocumentPreparationTest {
             preserveImageColors = true,
             parentColorsInverted = true,
             readerFontScale = 1.5f,
+            paginated = true,
         )
 
         assertTrue(script.contains(EPUB_PARAGRAPH_NO_INDENT_ATTRIBUTE))
@@ -29,7 +30,8 @@ class EpubDocumentPreparationTest {
         assertTrue(script.contains("setAttributeNS(epubNamespace, 'epub:type', updated)"))
         assertTrue(script.contains("font-size: 1.125rem !important"))
         assertTrue(script.contains("filter: invert(100%) !important"))
-        assertTrue(script.contains("return 'prepared'"))
+        assertTrue(script.contains("function fitStandaloneImage(state)"))
+        assertTrue(script.contains("standaloneImageLayout === 'pending' ? 'pending' : 'prepared'"))
     }
 
     @Test

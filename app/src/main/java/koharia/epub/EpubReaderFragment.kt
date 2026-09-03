@@ -112,6 +112,9 @@ class EpubReaderFragment : Fragment() {
     private var pageTransitionController: EpubPageTransitionController? = null
     private var pageTransitionOverlay: EpubPageTransitionOverlayView? = null
     private var pageTurnDragAccepted = false
+    private var pageTurnDragFallbackJob: Job? = null
+    private var pageTurnDragStartHref: String? = null
+    private var pageTurnDragStartPageIndex = -1
     private var currentTransitionPageIndex = -1
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
@@ -703,11 +706,13 @@ class EpubReaderFragment : Fragment() {
             parentColorsInverted = parentColorsInverted,
             readerFontScale = readerFontScale,
             longWordWrappingEnabled = !fontOverridesDisabled(),
+            paginated = shouldFitStandaloneImage(),
         )
         imageColorPolicyScript = """
             (function() {
-                $documentScript;
-                return ${fontPreparation.script};
+                const documentStatus = $documentScript;
+                const fontStatus = ${fontPreparation.script};
+                return documentStatus === 'pending' ? 'pending' : fontStatus;
             })()
         """.trimIndent()
         imageColorPolicyGeneration++
@@ -739,13 +744,21 @@ class EpubReaderFragment : Fragment() {
                 }
                 return when (event.type) {
                     DragEvent.Type.Start -> {
+                        pageTurnDragFallbackJob?.cancel()
+                        pageTurnDragFallbackJob = null
                         pageTurnDragAccepted = abs(event.offset.x) > abs(event.offset.y) * DRAG_AXIS_RATIO
+                        pageTurnDragStartHref = navigator.currentLocator.value.href.toString()
+                        pageTurnDragStartPageIndex = currentTransitionPageIndex
                         pageTurnDragAccepted
                     }
                     DragEvent.Type.Move -> pageTurnDragAccepted
                     DragEvent.Type.End -> {
                         val accepted = pageTurnDragAccepted
+                        val startHref = pageTurnDragStartHref
+                        val startPageIndex = pageTurnDragStartPageIndex
                         pageTurnDragAccepted = false
+                        pageTurnDragStartHref = null
+                        pageTurnDragStartPageIndex = -1
                         if (accepted && abs(event.offset.x) >= navigator.publicationView.width * DRAG_TURN_FRACTION) {
                             val towardLeft = event.offset.x < 0f
                             val forward = if (
@@ -761,7 +774,17 @@ class EpubReaderFragment : Fragment() {
                                 yFraction = event.start.y / navigator.publicationView.height,
                                 cause = PageTurnCause.GESTURE,
                             ).normalized()
-                            if (forward) goForward(origin) else goBackward(origin)
+                            pageTurnDragFallbackJob = viewLifecycleOwner.lifecycleScope.launch {
+                                delay(DRAG_NAVIGATION_FALLBACK_DELAY_MS)
+                                if (!isAdded || view == null || observedNavigator !== navigator) return@launch
+                                val currentHref = navigator.currentLocator.value.href.toString()
+                                val nativeNavigationCompleted = startHref == null ||
+                                    !currentHref.sameEpubResource(startHref) ||
+                                    currentTransitionPageIndex != startPageIndex
+                                if (!nativeNavigationCompleted) {
+                                    if (forward) goForward(origin) else goBackward(origin)
+                                }
+                            }
                         }
                         accepted
                     }
@@ -790,6 +813,10 @@ class EpubReaderFragment : Fragment() {
 
     private fun clearNavigatorInputListener() {
         pageTurnDragAccepted = false
+        pageTurnDragFallbackJob?.cancel()
+        pageTurnDragFallbackJob = null
+        pageTurnDragStartHref = null
+        pageTurnDragStartPageIndex = -1
         navigatorInputListener?.let { listener ->
             observedNavigator?.removeInputListener(listener)
         }
@@ -829,6 +856,7 @@ class EpubReaderFragment : Fragment() {
                         touchSlopCssPx = configuration.scaledTouchSlop / density,
                         preserveImageColors = preserveImageColors,
                         parentColorsInverted = parentColorsInverted,
+                        paginated = shouldFitStandaloneImage(),
                     ),
                 )
             } catch (error: CancellationException) {
@@ -909,6 +937,7 @@ class EpubReaderFragment : Fragment() {
                         if (pendingImageColorPolicies[webView] == policyKey) {
                             pendingImageColorPolicies.remove(webView)
                         }
+                        val documentReady = result != "\"pending\""
                         val fontReady = !expectedRequiresAsyncFontLoad ||
                             result == "\"ready\"" || result == "\"failed\""
                         if (result == "\"failed\"" && expectedRequiresAsyncFontLoad && wasVisible &&
@@ -920,7 +949,7 @@ class EpubReaderFragment : Fragment() {
                             } ?: EpubFontId.ORIGINAL.value
                             reportFontFailure(expectedFontKey, fallbackFontId)
                         }
-                        if (fontReady && imageColorPolicyGeneration == generation &&
+                        if (documentReady && fontReady && imageColorPolicyGeneration == generation &&
                             webView.url?.substringBefore('#') == url
                         ) {
                             installedImageColorPolicies[webView] = policyKey
@@ -1026,6 +1055,10 @@ class EpubReaderFragment : Fragment() {
         sessionRepository.get(chapterId)?.publication?.metadata?.layout ==
             org.readium.r2.shared.publication.Layout.FIXED
 
+    private fun shouldFitStandaloneImage(): Boolean =
+        epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
+            !fontOverridesDisabled()
+
     private fun scheduleContinuousScrollInstall(
         navigator: EpubNavigatorFragment?,
         locator: Locator? = navigator?.currentLocator?.value,
@@ -1070,6 +1103,7 @@ class EpubReaderFragment : Fragment() {
                                 (requireContext().resources.displayMetrics.density.takeIf { it > 0f } ?: 1f),
                             preserveImageColors = preserveImageColors,
                             parentColorsInverted = parentColorsInverted,
+                            paginated = false,
                         ),
                         contentPreparationScript = """
                             (function() {
@@ -1328,6 +1362,7 @@ class EpubReaderFragment : Fragment() {
         private const val IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS = 250L
         private const val DRAG_AXIS_RATIO = 1.25f
         private const val DRAG_TURN_FRACTION = 0.12f
+        private const val DRAG_NAVIGATION_FALLBACK_DELAY_MS = 400L
         private const val FONT_PREPARATION_DRAW_TIMEOUT_MS = 8_000L
         private const val FONT_PREPARATION_POLL_MS = 40L
         private const val FONT_BACKGROUND_WAIT_TIMEOUT_MS = 6_000L

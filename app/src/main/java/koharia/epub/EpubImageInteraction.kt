@@ -64,11 +64,115 @@ internal fun buildEpubImageColorPolicyScript(
     })()
     """.trimIndent()
 
+internal fun buildEpubStandaloneImageLayoutScript(paginated: Boolean): String =
+    """
+    (function() {
+        const stateKey = '__kohariaStandaloneImageLayout';
+
+        function restoreProperty(element, name, value, priority) {
+            if (!element) return;
+            if (value) {
+                element.style.setProperty(name, value, priority || '');
+            } else {
+                element.style.removeProperty(name);
+            }
+        }
+
+        function restoreState(state) {
+            if (!state) return;
+            if (state.loadListener && state.image) {
+                state.image.removeEventListener('load', state.loadListener);
+            }
+            restoreProperty(state.image, 'max-width', state.maxWidth, state.maxWidthPriority);
+            restoreProperty(state.image, 'max-height', state.maxHeight, state.maxHeightPriority);
+            restoreProperty(state.container, 'overflow-x', state.overflowX, state.overflowXPriority);
+            restoreProperty(state.container, 'visibility', state.visibility, state.visibilityPriority);
+        }
+
+        const previousState = window[stateKey];
+        restoreState(previousState);
+        delete window[stateKey];
+        if (!$paginated) return previousState ? 'removed' : 'ignored';
+
+        function standaloneImageContainer(image) {
+            const body = document.body;
+            if (!body || !image || body.textContent.trim() !== '') return null;
+            const images = body.querySelectorAll('img, svg image');
+            if (images.length !== 1 || images[0] !== image) return null;
+            let container = image;
+            while (container.parentElement && container.parentElement !== body) {
+                container = container.parentElement;
+            }
+            if (container.parentElement !== body) return null;
+            const contentChildren = Array.from(body.children).filter(function(child) {
+                const name = child.localName && child.localName.toLowerCase();
+                return name !== 'script' && name !== 'style';
+            });
+            return contentChildren.length === 1 && contentChildren[0] === container ? container : null;
+        }
+
+        function fitStandaloneImage(state) {
+            const container = state.container;
+            const image = state.image;
+            const imageRect = image.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            if (imageRect.width <= 0 || imageRect.height <= 0 ||
+                containerRect.width <= 0 || containerRect.height <= 0) return false;
+            const scale = Math.min(
+                containerRect.width / imageRect.width,
+                containerRect.height / imageRect.height,
+                1,
+            );
+            if (scale < 0.999) {
+                const computed = window.getComputedStyle(image);
+                const renderedWidth = Number.parseFloat(computed.width);
+                const renderedHeight = Number.parseFloat(computed.height);
+                if (!Number.isFinite(renderedWidth) || !Number.isFinite(renderedHeight)) return false;
+                image.style.setProperty('max-width', `${'$'}{renderedWidth * scale}px`, 'important');
+                image.style.setProperty('max-height', `${'$'}{renderedHeight * scale}px`, 'important');
+            }
+            container.style.setProperty('overflow-x', 'hidden', 'important');
+            restoreProperty(container, 'visibility', state.visibility, state.visibilityPriority);
+            state.loadListener = null;
+            return true;
+        }
+
+        const standaloneImage = document.querySelector('img, svg image');
+        const standaloneContainer = standaloneImageContainer(standaloneImage);
+        if (!standaloneContainer) return 'ignored';
+        const state = {
+            image: standaloneImage,
+            container: standaloneContainer,
+            maxWidth: standaloneImage.style.getPropertyValue('max-width'),
+            maxWidthPriority: standaloneImage.style.getPropertyPriority('max-width'),
+            maxHeight: standaloneImage.style.getPropertyValue('max-height'),
+            maxHeightPriority: standaloneImage.style.getPropertyPriority('max-height'),
+            overflowX: standaloneContainer.style.getPropertyValue('overflow-x'),
+            overflowXPriority: standaloneContainer.style.getPropertyPriority('overflow-x'),
+            visibility: standaloneContainer.style.getPropertyValue('visibility'),
+            visibilityPriority: standaloneContainer.style.getPropertyPriority('visibility'),
+            loadListener: null,
+        };
+        window[stateKey] = state;
+        // A transformed full-page image can create a small horizontal overflow. Readium
+        // mistakes that overflow for another column and never advances to the next resource.
+        if (fitStandaloneImage(state)) return 'applied';
+        standaloneContainer.style.setProperty('visibility', 'hidden', 'important');
+        state.loadListener = function() {
+            if (window[stateKey] !== state) return;
+            fitStandaloneImage(state);
+        };
+        standaloneImage.addEventListener('load', state.loadListener, { once: true });
+        return 'pending';
+    })()
+    """.trimIndent()
+
 internal fun buildEpubImageInteractionInstallScript(
     longPressTimeoutMs: Int,
     touchSlopCssPx: Float,
     preserveImageColors: Boolean,
     parentColorsInverted: Boolean,
+    paginated: Boolean,
 ): String =
     """
     (function() {
@@ -76,6 +180,7 @@ internal fun buildEpubImageInteractionInstallScript(
             ? window.__kohariaImageResourceIndex
             : -1;
         ${buildEpubImageColorPolicyScript(preserveImageColors, parentColorsInverted)};
+        ${buildEpubStandaloneImageLayoutScript(paginated)};
 
         const existing = window.__kohariaImageInteractions;
         if (existing) {

@@ -1,5 +1,6 @@
 package koharia.epub
 
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -10,6 +11,7 @@ class EpubImageInteractionTest {
         touchSlopCssPx = 8f,
         preserveImageColors = true,
         parentColorsInverted = false,
+        paginated = true,
     )
 
     @Test
@@ -47,6 +49,7 @@ class EpubImageInteractionTest {
             touchSlopCssPx = 8f,
             preserveImageColors = true,
             parentColorsInverted = true,
+            paginated = true,
         )
 
         assertTrue(invertedScript.contains("const parentColorsInverted = true"))
@@ -56,6 +59,22 @@ class EpubImageInteractionTest {
             invertedScript.contains("document.documentElement.namespaceURI === 'http://www.w3.org/2000/svg'"),
         )
         assertTrue(invertedScript.contains(":root svg svg"))
+    }
+
+    @Test
+    fun `paginated standalone images fit without disabling preview`() {
+        assertTrue(script.contains("function standaloneImageContainer(image)"))
+        assertTrue(script.contains("function fitStandaloneImage(state)"))
+        assertTrue(script.contains("containerRect.width / imageRect.width"))
+        assertTrue(script.contains("renderedWidth * scale"))
+        assertTrue(script.contains("renderedHeight * scale"))
+        assertTrue(script.contains("restoreState(previousState)"))
+        assertTrue(script.contains("return previousState ? 'removed' : 'ignored'"))
+        assertTrue(script.contains("standaloneContainer.style.setProperty('visibility', 'hidden', 'important')"))
+        assertTrue(script.contains("standaloneImage.addEventListener('load', state.loadListener, { once: true })"))
+        assertTrue(script.contains("container.style.setProperty('overflow-x', 'hidden', 'important')"))
+        assertFalse(script.contains("if (paginated && standaloneImageContainer(image)) return"))
+        assertTrue(script.contains("if (notify('preview', image))"))
     }
 
     @Test
