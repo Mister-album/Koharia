@@ -34,6 +34,7 @@ tasks {
 val verifyEInkMotion = tasks.register<VerifyEInkMotionTask>("verifyEInkMotion") {
     group = "verification"
     description = "Rejects motion APIs that bypass the global E-Ink display policy."
+    repositoryRoot.set(layout.projectDirectory)
     sourceDirectories.from(
         layout.projectDirectory.dir("app/src/main/java"),
         layout.projectDirectory.dir("presentation-core/src/main/java"),

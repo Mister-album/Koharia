@@ -2,7 +2,9 @@ package koharia.gradle.tasks
 
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
@@ -13,9 +15,12 @@ abstract class VerifyEInkMotionTask : DefaultTask() {
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val sourceDirectories: ConfigurableFileCollection
 
+    @get:Internal
+    abstract val repositoryRoot: DirectoryProperty
+
     @TaskAction
     fun verify() {
-        val root = project.rootProject.projectDir
+        val root = repositoryRoot.get().asFile
         val violations = mutableListOf<String>()
 
         sourceDirectories.asFileTree
