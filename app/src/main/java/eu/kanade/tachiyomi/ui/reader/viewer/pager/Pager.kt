@@ -1,11 +1,13 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.content.Context
+import android.os.Bundle
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.ViewConfiguration
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.viewpager.widget.DirectionalViewPager
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
 import kotlin.math.abs
@@ -35,6 +37,9 @@ open class Pager(
 
     /** Called after an intercepted horizontal swipe is released. */
     var pageTurnSwipeListener: ((Int, Float, Float) -> Unit)? = null
+
+    /** Called before the inherited accessibility delegate changes the current page. */
+    var accessibilityPageChangeListener: ((Int) -> Unit)? = null
 
     /**
      * Gesture listener that implements tap and long tap events.
@@ -274,6 +279,18 @@ open class Pager(
     override fun executeKeyEvent(event: KeyEvent): Boolean {
         // Disable viewpager's default key event handling
         return false
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+        val target = when (action) {
+            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> currentItem + 1
+            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> currentItem - 1
+            else -> null
+        }
+        if (target != null && target in 0 until (adapter?.count ?: 0)) {
+            accessibilityPageChangeListener?.invoke(target)
+        }
+        return super.performAccessibilityAction(action, arguments)
     }
 
     /**

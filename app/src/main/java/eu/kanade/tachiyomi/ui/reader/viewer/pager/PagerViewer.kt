@@ -101,6 +101,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private var awaitingSlotRebuildAnchor: ReaderPage? = null
 
+    private var userDragSelectionPending = false
+
     private var awaitingPreparedSlot: PendingPreparedSlot? = null
 
     private var pendingPageMove: PendingPageMove? = null
@@ -163,12 +165,25 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private val pagerListener = object : ViewPager.SimpleOnPageChangeListener() {
         override fun onPageSelected(position: Int) {
+            val pendingMove = pendingPageMove?.takeIf { it.position == position }
+            if (!PagerSelectionPolicy.shouldHandle(position, pendingMove?.position, userDragSelectionPending)) {
+                // DirectionalViewPager can emit an index derived from the old viewport while rotating.
+                stableSlotAnchor
+                    ?.let(adapter::positionOf)
+                    ?.takeIf { it >= 0 && it != pager.currentItem }
+                    ?.let { stablePosition ->
+                        pager.removeOnPageChangeListener(this)
+                        pager.setCurrentItem(stablePosition, false)
+                        pager.addOnPageChangeListener(this)
+                    }
+                return
+            }
+            userDragSelectionPending = false
             val suppressMenuHiding = suppressMenuHidingForNextSelection
             suppressMenuHidingForNextSelection = false
             if (!suppressMenuHiding && !activity.isScrollingThroughPages) {
                 activity.hideMenu()
             }
-            val pendingMove = pendingPageMove?.takeIf { it.position == position }
             if (pendingMove != null) {
                 pendingPageMove = null
             }
@@ -181,9 +196,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
         override fun onPageScrollStateChanged(state: Int) {
             if (state == ViewPager.SCROLL_STATE_DRAGGING) {
+                pendingPageMove = null
+                userDragSelectionPending = true
                 cancelPendingCoverTurn(reactivateCurrent = true)
             }
             isIdle = state == ViewPager.SCROLL_STATE_IDLE
+            if (isIdle) userDragSelectionPending = false
         }
     }
 
@@ -195,6 +213,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.id = R.id.reader_pager
         pager.adapter = adapter
         pager.addOnPageChangeListener(pagerListener)
+        pager.accessibilityPageChangeListener = ::markPendingUserNavigation
         pager.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
             config.onViewportChanged(right - left, bottom - top)
         }
@@ -250,7 +269,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             pendingProgressCommitAnchor = null
             val anchor = stableSlotAnchor ?: (currentSlot as? PagerSlot.Pages)?.progressPage
             if (!config.dualPageSplit && !config.automaticallySplitsWidePages) {
-                adapter.cleanupPageSplit()
+                adapter.removePageSplitItems()
             }
             requestSlotRebuild(anchor)
         }
@@ -628,6 +647,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         config.pageTransitionEffect != PageTransitionEffect.NONE && ValueAnimator.areAnimatorsEnabled()
 
     private fun setCurrentItemForPageTurn(target: Int) {
+        // Mark app-driven page turns so they are distinguishable from viewport resize callbacks.
+        markPendingUserNavigation(target)
         if (config.pageTransitionEffect == PageTransitionEffect.COVER &&
             ValueAnimator.areAnimatorsEnabled() &&
             prepareCoverPageTurn(target)
@@ -643,6 +664,16 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             }
         }
         pager.setCurrentItem(target, shouldAnimatePageTurn())
+    }
+
+    private fun markPendingUserNavigation(target: Int) {
+        if (target in adapter.slots.indices) {
+            pendingPageMove = PendingPageMove(
+                position = target,
+                anchor = (adapter.slots[target] as? PagerSlot.Pages)?.progressPage,
+                cause = PageChangeCause.USER_NAVIGATION,
+            )
+        }
     }
 
     private fun canInterceptCurlSwipe(delta: Int): Boolean {
@@ -910,7 +941,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun cleanupPageSplit() {
-        adapter.cleanupPageSplit()
+        adapter.removePageSplitItems()
     }
 
     internal fun requestSlotRebuild(anchor: ReaderPage?) {
@@ -978,7 +1009,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private data class PendingPageMove(
         val position: Int,
-        val anchor: ReaderPage,
+        val anchor: ReaderPage?,
         val cause: PageChangeCause,
     )
 

@@ -137,11 +137,9 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         rebuildSlots(currentPage)
     }
 
-    fun cleanupPageSplit() {
-        val changed = sourceItems.removeAll { it is SourceItem.Page && it.page is InsertPage } ||
-            preprocessed.isNotEmpty()
+    fun removePageSplitItems() {
+        sourceItems.removeAll { it is SourceItem.Page && it.page is InsertPage }
         preprocessed.clear()
-        if (changed) rebuildSlots()
     }
 
     fun refresh() {
