@@ -151,9 +151,9 @@ Join the [Komga Discord server](https://discord.gg/komga-678794935368941569) and
 
 Koharia is an independently maintained open-source project. Ongoing maintenance requires time for upstream changes, reader improvements, downloads and synchronization, Android compatibility, testing, and releases.
 
-If Koharia is useful to your reading workflow, you can support the project through Afdian. Your support helps keep the project updated and makes it possible to spend more time fixing issues and improving the comic and book reading experience.
+If Koharia is useful to your reading workflow, you can support the project through Patreon. Your support helps keep the project updated and makes it possible to spend more time fixing issues and improving the comic and book reading experience.
 
-- Afdian: [https://ifdian.net/a/album-Koharia](https://ifdian.net/a/album-Koharia)
+- Patreon: [https://www.patreon.com/c/ALBUM937](https://www.patreon.com/c/ALBUM937)
 
 ## Disclaimer
 
