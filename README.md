@@ -151,9 +151,10 @@ Koharia 建立在 Javier Tomas 最初完成的工作、Mihon 项目贡献者的�
 
 Koharia 是一个个人维护的开源项目。持续维护需要投入时间处理上游变更、阅读器体验、下载与同步、Android 版本兼容，以及日常测试和发布工作。
 
-如果 Koharia 对你的阅读流程有帮助，欢迎通过 Patreon 支持项目。你的支持会直接帮助项目保持更新，并让我能更稳定地投入到修复问题和打磨漫画、书籍阅读体验中。
+如果 Koharia 对你的阅读流程有帮助，欢迎通过 Patreon 或爱发电支持项目。你的支持会直接帮助项目保持更新，并让我能更稳定地投入到修复问题和打磨漫画、书籍阅读体验中。
 
 - Patreon：[https://www.patreon.com/c/ALBUM937](https://www.patreon.com/c/ALBUM937)
+- 爱发电：[https://ifdian.net/a/album-Koharia](https://ifdian.net/a/album-Koharia)
 
 ## 免责声明
 
