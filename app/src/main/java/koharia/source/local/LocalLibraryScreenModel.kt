@@ -3,6 +3,8 @@ package koharia.source.local
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.paging.LoadState
+import androidx.paging.LoadStates
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import cafe.adriel.voyager.core.model.StateScreenModel
@@ -21,6 +23,7 @@ import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.connection.ConnectionSeriesCoverAdapter
 import koharia.connection.LibraryContentScope
 import koharia.domain.epub.interactor.GetEpubProgress
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,16 +36,14 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
-import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import kotlin.math.roundToLong
 
-class LocalLibraryScreenModel(
+internal class LocalLibraryScreenModel(
     private val sourceId: Long,
     private val scope: LibraryContentScope,
     initialQuery: String?,
@@ -50,12 +51,12 @@ class LocalLibraryScreenModel(
     sourcePreferences: SourcePreferences,
     private val mangaRepository: MangaRepository,
     private val getChaptersByMangaId: GetChaptersByMangaId,
-    private val updateChapter: UpdateChapter,
     private val getEpubProgress: GetEpubProgress,
     private val libraryPreferences: LibraryPreferences,
     private val entryOpenManager: LocalLibraryEntryOpenManager,
     private val updateManga: UpdateManga,
     private val coverCache: CoverCache,
+    private val itemActions: LocalLibraryItemActions,
 ) : StateScreenModel<LocalLibraryScreenModel.State>(
     State(
         toolbarQuery = initialQuery,
@@ -92,11 +93,6 @@ class LocalLibraryScreenModel(
                 } else {
                     localReadProgress.value = emptyMap()
                 }
-            }
-        }
-        (source as? LocalFolderSource)?.let { localSource ->
-            screenModelScope.launchIO {
-                if (localSource.needsInitialScan()) refresh()
             }
         }
         (source as? ConnectionLibraryRefreshAdapter)?.let { refreshAdapter ->
@@ -156,19 +152,7 @@ class LocalLibraryScreenModel(
             val epubProgression = entry.chapters.firstOrNull()?.id?.let { chapterId ->
                 epubProgressByChapterId[chapterId]?.progression
             }
-            val documentPageCount = entry.chapters.firstOrNull()?.let { chapter ->
-                chapter.memo.let(ConnectionChapterMetadata::pagesCount)
-                    ?: chapter.lastPageRead.takeIf { it > 0L }
-                        ?.let { localSource.documentPageCount(chapter.url) }
-                        ?.also { pageCount ->
-                            updateChapter.await(
-                                ChapterUpdate(
-                                    id = chapter.id,
-                                    memo = ConnectionChapterMetadata.withPagesCount(chapter.memo, pageCount),
-                                ),
-                            )
-                        }
-            }
+            val documentPageCount = entry.chapters.firstOrNull()?.memo?.let(ConnectionChapterMetadata::pagesCount)
             buildLocalReadProgress(
                 indexedChapterCount = entry.indexedChapterCount,
                 chapters = entry.chapters,
@@ -207,8 +191,14 @@ class LocalLibraryScreenModel(
             ).orEmpty()
             PagingData.from(
                 filteredMangas.map { manga -> MutableStateFlow(manga) as StateFlow<Manga> },
+                sourceLoadStates = LoadStates(
+                    refresh = LoadState.NotLoading(false),
+                    prepend = LoadState.NotLoading(true),
+                    append = LoadState.NotLoading(true),
+                ),
             )
-        }.cachedIn(screenModelScope)
+        }
+        .cachedIn(screenModelScope)
 
     fun setToolbarQuery(query: String?) {
         mutableState.update { it.copy(toolbarQuery = query) }
@@ -237,24 +227,27 @@ class LocalLibraryScreenModel(
 
     fun refresh() {
         if (state.value.isRefreshing) return
+        mutableState.update { it.copy(isRefreshing = true) }
+        screenModelScope.launchIO { refreshLibrary() }
+    }
+
+    private suspend fun refreshLibrary() {
         val refreshAdapter = source as? ConnectionLibraryRefreshAdapter
         if (refreshAdapter == null) {
             refreshSignal.value += 1
+            mutableState.update { it.copy(isRefreshing = false) }
             return
         }
         mutableState.update { it.copy(isRefreshing = true, refreshError = null) }
-        screenModelScope.launchIO {
-            try {
-                val result = runCatching { refreshAdapter.refreshLibrary().getOrThrow() }
-                if (result.isFailure) {
-                    refreshSignal.value += 1
-                }
-                mutableState.update {
-                    it.copy(refreshError = result.exceptionOrNull())
-                }
-            } finally {
-                mutableState.update { it.copy(isRefreshing = false) }
-            }
+        try {
+            refreshAdapter.refreshLibrary().getOrThrow()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            refreshSignal.value += 1
+            mutableState.update { it.copy(refreshError = error) }
+        } finally {
+            mutableState.update { it.copy(isRefreshing = false) }
         }
     }
 
@@ -263,6 +256,7 @@ class LocalLibraryScreenModel(
     }
 
     fun dismissDialog() {
+        if (state.value.isBusy) return
         mutableState.update { it.copy(dialog = null) }
     }
 
@@ -272,27 +266,104 @@ class LocalLibraryScreenModel(
     }
 
     fun selectBookshelf(bookshelfId: String?) {
+        if (state.value.isBusy) return
+        clearSelection()
         selectedBookshelfId.value = bookshelfId
         mutableState.update { it.copy(selectedBookshelfId = bookshelfId) }
     }
 
-    fun openMoveToBookshelfDialog(manga: Manga) {
+    fun openMoveToBookshelfDialog(mangas: List<Manga>) {
         val adapter = source as? ConnectionLibraryShelfAdapter ?: return
+        if (mangas.isEmpty() || state.value.isBusy) return
+        mutableState.update { it.copy(dialog = null, isUpdatingItems = true) }
         screenModelScope.launchIO {
-            val currentShelfId = adapter.currentLibraryShelfId(manga.url) ?: return@launchIO
-            val shelves = adapter.compatibleLibraryShelves(manga.url)
-            mutableState.update {
-                it.copy(dialog = Dialog.MoveToBookshelf(manga, shelves, currentShelfId))
+            try {
+                val shelves = commonLocalLibraryShelves(adapter, mangas)
+                if (shelves.isEmpty()) {
+                    eventChannel.send(Event.NoCompatibleShelf)
+                    return@launchIO
+                }
+                val currentIds = mangas.map { adapter.currentLibraryShelfId(it.url) }.distinct()
+                mutableState.update {
+                    it.copy(dialog = Dialog.MoveToBookshelf(mangas, shelves, currentIds.singleOrNull().orEmpty()))
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                eventChannel.send(Event.ItemActionFailed)
+            } finally {
+                mutableState.update { it.copy(isUpdatingItems = false) }
             }
         }
     }
 
     fun openEntryActions(manga: Manga) {
-        val localSource = source as? LocalFolderSource
-        if (localSource?.isIndividualFileEntry(manga.url) == true) {
-            mutableState.update { it.copy(dialog = Dialog.EntryActions(manga)) }
-        } else {
-            openMoveToBookshelfDialog(manga)
+        if (state.value.isBusy) return
+        if (state.value.selectedMangas.isNotEmpty()) return toggleSelection(manga)
+        mutableState.update { it.copy(dialog = Dialog.EntryActions(manga)) }
+    }
+
+    fun toggleSelection(manga: Manga) {
+        if (state.value.isBusy) return
+        mutableState.update { state ->
+            val selected = state.selectedMangas
+            state.copy(
+                dialog = null,
+                selectedMangas = if (selected.any { it.id == manga.id }) {
+                    selected.filterNot { it.id == manga.id }
+                } else {
+                    selected + manga
+                },
+            )
+        }
+    }
+
+    fun selectAll(mangas: List<Manga>) {
+        if (state.value.isBusy) return
+        mutableState.update { it.copy(selectedMangas = mangas.distinctBy(Manga::id)) }
+    }
+
+    fun clearSelection() {
+        if (state.value.isBusy) return
+        mutableState.update { it.copy(selectedMangas = emptyList()) }
+    }
+
+    fun requestDeletion(mangas: List<Manga>) {
+        val localSource = source as? LocalFolderSource ?: return
+        if (mangas.isEmpty() || state.value.isBusy) return
+        mutableState.update { it.copy(dialog = null, isPreparingDeletion = true) }
+        screenModelScope.launchIO {
+            try {
+                val plan = localSource.prepareFileDeletion(mangas)
+                mutableState.update { it.copy(dialog = Dialog.DeleteFiles(plan)) }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                eventChannel.send(Event.DeleteFailed)
+            } finally {
+                mutableState.update { it.copy(isPreparingDeletion = false) }
+            }
+        }
+    }
+
+    fun confirmDeletion() {
+        val localSource = source as? LocalFolderSource ?: return
+        val dialog = state.value.dialog as? Dialog.DeleteFiles ?: return
+        if (state.value.isBusy) return
+        mutableState.update { it.copy(isDeleting = true) }
+        screenModelScope.launchIO {
+            try {
+                val result = localSource.deleteLocalFiles(dialog.plan)
+                mutableState.update { it.copy(selectedMangas = result.failed) }
+                eventChannel.send(Event.FilesDeleted(result.deleted.size, result.failed.size))
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                eventChannel.send(Event.DeleteFailed)
+            } finally {
+                refreshSignal.value += 1
+                mutableState.update { it.copy(isDeleting = false, dialog = null) }
+            }
         }
     }
 
@@ -327,13 +398,33 @@ class LocalLibraryScreenModel(
         return true
     }
 
-    fun moveToBookshelf(manga: Manga, bookshelfId: String) {
+    fun moveToBookshelf(mangas: List<Manga>, bookshelfId: String) {
         val adapter = source as? ConnectionLibraryShelfAdapter ?: return
+        updateItems(mangas) { adapter.moveMangaToLibraryShelf(it.url, bookshelfId).getOrThrow() }
+    }
+
+    fun markRead(mangas: List<Manga>, read: Boolean) {
+        val localSource = source as? LocalFolderSource ?: return
+        updateItems(mangas) { itemActions.markRead(localSource, it, read) }
+    }
+
+    private fun updateItems(mangas: List<Manga>, action: suspend (Manga) -> Unit) {
+        if (mangas.isEmpty() || state.value.isBusy) return
+        mutableState.update { it.copy(dialog = null, isUpdatingItems = true) }
         screenModelScope.launchIO {
-            if (adapter.moveMangaToLibraryShelf(manga.url, bookshelfId).isSuccess) {
+            try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    val failed = mangas.distinctBy(Manga::id).filter { manga ->
+                        runCatching { action(manga) }.isFailure
+                    }
+                    mutableState.update { it.copy(selectedMangas = failed) }
+                    eventChannel.send(Event.ItemsUpdated(mangas.distinctBy(Manga::id).size - failed.size, failed.size))
+                }
+            } finally {
                 refreshSignal.value += 1
+                refreshReadProgress()
+                mutableState.update { it.copy(isUpdatingItems = false) }
             }
-            mutableState.update { it.copy(dialog = null) }
         }
     }
 
@@ -347,16 +438,23 @@ class LocalLibraryScreenModel(
         val isRefreshing: Boolean = false,
         val refreshError: Throwable? = null,
         val dialog: Dialog? = null,
-    )
+        val selectedMangas: List<Manga> = emptyList(),
+        val isPreparingDeletion: Boolean = false,
+        val isDeleting: Boolean = false,
+        val isUpdatingItems: Boolean = false,
+    ) {
+        val isBusy: Boolean get() = isDeleting || isPreparingDeletion || isUpdatingItems
+    }
 
     sealed interface Dialog {
         data object Filter : Dialog
         data class MoveToBookshelf(
-            val manga: Manga,
+            val mangas: List<Manga>,
             val bookshelves: List<ConnectionLibraryShelf>,
             val currentBookshelfId: String,
         ) : Dialog
         data class EntryActions(val manga: Manga) : Dialog
+        data class DeleteFiles(val plan: LocalLibraryDeletionPlan) : Dialog
     }
 
     sealed interface Event {
@@ -364,6 +462,11 @@ class LocalLibraryScreenModel(
         data class OpenFailed(val error: Throwable) : Event
         data object CoverUpdated : Event
         data class CoverFailed(val error: Throwable) : Event
+        data object ItemActionFailed : Event
+        data object NoCompatibleShelf : Event
+        data class ItemsUpdated(val updated: Int, val failed: Int) : Event
+        data object DeleteFailed : Event
+        data class FilesDeleted(val deleted: Int, val failed: Int) : Event
     }
 
     private data class BrowseRequest(
@@ -411,10 +514,8 @@ internal fun buildLocalReadProgress(
                 totalChapterCount = 100,
                 display = MangaReadProgressDisplay.PERCENTAGE,
             )
-            // Do not expose a page number as a library progress label. Page counts are loaded
-            // for supported single-file formats before this function is called; if counting
-            // fails, omit the progress until the next refresh rather than showing a misleading
-            // value such as "Page 12".
+            // Unknown page counts stay unknown on the shelf; opening the reader can populate
+            // the cached count without parsing documents just to display a progress badge.
             chapter != null && chapter.lastPageRead > 0L -> null
             else -> MangaReadProgress(
                 readCount = 0,

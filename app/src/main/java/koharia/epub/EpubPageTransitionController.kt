@@ -147,9 +147,9 @@ internal class EpubPageTransitionController(
         if (pageIndex == turn.oldPageIndex && href.resourceKey() == turn.oldHref.resourceKey()) return
         turn.pageChanged = true
         turn.crossedResource = href.resourceKey() != turn.oldHref.resourceKey()
-        if (!turn.crossedResource || turn.resourceLoaded) {
-            handlePageReady(turn)
-        }
+        // A preloaded resource has already emitted onPageLoaded before this turn began.
+        // The layout/page callback is the readiness signal for both cached and newly loaded pages.
+        handlePageReady(turn)
     }
 
     fun onPageLoaded() {

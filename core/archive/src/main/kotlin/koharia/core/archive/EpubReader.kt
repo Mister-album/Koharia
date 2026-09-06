@@ -34,6 +34,19 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         return getImagesFromPages(pages, ref)
     }
 
+    /** Image paging must never discard visible XHTML text. */
+    fun isImageOnlyPublication(): Boolean {
+        if (getImagesFromPages().isEmpty()) return false
+        val packageHref = getPackageHref()
+        return getPagesFromDocument(getPackageDocument(packageHref)).all { page ->
+            if (page.mediaType.startsWith("image/", ignoreCase = true)) return@all true
+            val path = resolveZipPath(getParentDirectory(packageHref), decodePathHref(page.href))
+            val document = getInputStream(path)?.use { Jsoup.parse(it, null, "") } ?: return@all false
+            document.select("script,style").remove()
+            (document.body()?.text() ?: document.text()).isBlank()
+        }
+    }
+
     /** Returns the declared EPUB cover, or the first image encountered in reading order. */
     fun getCoverOrFirstImage(): String? {
         val packageHref = getPackageHref()

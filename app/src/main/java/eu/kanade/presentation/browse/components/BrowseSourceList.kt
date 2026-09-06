@@ -23,6 +23,7 @@ fun BrowseSourceList(
     modifier: Modifier = Modifier,
     mangaList: LazyPagingItems<StateFlow<Manga>>,
     contentPadding: PaddingValues,
+    selectedMangaIds: Set<Long> = emptySet(),
     showLibraryBadges: Boolean,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
     showPagingLoadingIndicator: Boolean = true,
@@ -43,6 +44,7 @@ fun BrowseSourceList(
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceListItem(
                 manga = manga,
+                isSelected = manga.id in selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress?.invoke(manga),
                 onClick = { onMangaClick(manga) },
@@ -64,6 +66,7 @@ fun BrowseSourceList(
 @Composable
 private fun BrowseSourceListItem(
     manga: Manga,
+    isSelected: Boolean,
     showLibraryBadges: Boolean,
     readProgress: MangaReadProgress?,
     onClick: () -> Unit = {},
@@ -80,6 +83,7 @@ private fun BrowseSourceListItem(
             url = manga.thumbnailUrl,
             lastModified = manga.coverLastModified,
         ),
+        isSelected = isSelected,
         coverAlpha = if (isLibraryManga) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         badge = {
             InLibraryBadge(enabled = isLibraryManga)

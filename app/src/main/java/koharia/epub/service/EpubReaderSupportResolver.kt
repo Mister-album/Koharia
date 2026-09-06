@@ -58,14 +58,17 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             )
         }
 
-        val localPublicationFile = (source as? ConnectionLocalFileAdapter)
-            ?.localChapterFile(chapter.url)
+        val localFile = (source as? ConnectionLocalFileAdapter)?.localChapterFile(chapter.url)
+        val localPublicationFile = localFile
             ?.takeIf { file -> !file.isDirectory && file.extension.equals("epub", ignoreCase = true) }
         val publicationAdapter = source as? ConnectionPublicationAdapter
         if (localPublicationFile == null && publicationAdapter == null) {
             return@withIOContext EpubReaderSupportResolution(
                 mangaId = manga.id,
                 chapterId = chapter.id,
+                sourceId = source.id,
+                bookFileName = localFile?.name,
+                bookSizeBytes = localFile?.length(),
                 mangaTitle = manga.title,
                 chapterTitle = chapter.name,
                 chapterRead = chapter.read,
@@ -161,6 +164,7 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
                 ?: downloadedFile?.length()?.takeIf { it > 0L }
                 ?: cachedBookFile?.length()?.takeIf { it > 0L }
                 ?: metadata.sizeBytes,
+            bookMediaType = metadata.mediaType,
             isManualDownload = downloadedFile != null,
             isCompleteCache = localPublicationFile == null && downloadedFile == null && cachedBookFile != null,
         )
@@ -198,6 +202,8 @@ data class EpubReaderSupportResolution(
     val bookSizeBytes: Long? = null,
     val isManualDownload: Boolean = false,
     val isCompleteCache: Boolean = false,
+    val pdfReflowRevision: String? = null,
+    val bookMediaType: String? = null,
 ) {
 
     val isNativeSupported: Boolean

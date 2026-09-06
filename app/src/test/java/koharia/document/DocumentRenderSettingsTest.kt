@@ -10,7 +10,7 @@ class DocumentRenderSettingsTest {
 
     @Test
     fun `document text uses a readable default base size`() {
-        assertEquals(24f, DocumentRenderSettings.DEFAULT_BASE_FONT_SIZE_SP)
+        assertEquals(16f, DocumentRenderSettings.DEFAULT_BASE_FONT_SIZE_SP)
     }
 
     @Test

@@ -46,6 +46,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
     private var containerId: Int = View.NO_ID
     private var scanIndex = 0
     private var scanStarted = false
+    private var advanceJob: Job? = null
     private var awaitingMeasuredCallback = false
     private var readinessJob: Job? = null
     private val fontPreparation: EpubFontPreparation
@@ -171,6 +172,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        advanceJob?.cancel()
         view?.removeCallbacks(beginScanRunnable)
         readinessJob?.cancel()
         readinessJob = null
@@ -186,7 +188,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
         if (nextLink == null) {
             reportProgress(isComplete = true)
         } else {
-            readyNavigatorFragment()?.go(nextLink)
+            goWhenReaderIdle(nextLink)
         }
     }
 
@@ -218,7 +220,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
         advancePastCachedResources()
         val nextLink = readingOrder().getOrNull(scanIndex)
         if (nextLink != null) {
-            readyNavigatorFragment()?.go(nextLink)
+            goWhenReaderIdle(nextLink)
         } else {
             reportProgress(isComplete = true)
         }
@@ -230,6 +232,14 @@ internal class EpubPaginationScannerFragment : Fragment() {
             val href = order[scanIndex].href.toString()
             if (pageCounts.keys.none { it.isSameResourceHref(href) }) break
             scanIndex += 1
+        }
+    }
+
+    private fun goWhenReaderIdle(link: org.readium.r2.shared.publication.Link) {
+        advanceJob?.cancel()
+        advanceJob = viewLifecycleOwner.lifecycleScope.launch {
+            (parentFragment as? EpubReaderFragment)?.awaitReadingIdle()
+            if (isAdded && view != null && scanStarted) readyNavigatorFragment()?.go(link)
         }
     }
 

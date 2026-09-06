@@ -73,6 +73,7 @@ fun ReaderAppBars(
     cropEnabled: Boolean,
     onClickCropBorder: () -> Unit,
     onClickSettings: () -> Unit,
+    onPdfReflow: (() -> Unit)? = null,
 ) {
     val backgroundColor = MaterialTheme.colorScheme
         .surfaceColorAtElevation(3.dp)
@@ -85,6 +86,7 @@ fun ReaderAppBars(
             exit = slideOutVertically(readerBarsSlideAnimationSpec) { -it } + fadeOut(readerBarsFadeAnimationSpec),
         ) {
             ReaderTopBar(
+                onPdfReflow = onPdfReflow,
                 modifier = Modifier
                     .background(backgroundColor)
                     .clickable(onClick = onClickTopAppBar),

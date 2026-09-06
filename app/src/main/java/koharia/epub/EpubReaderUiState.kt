@@ -31,6 +31,7 @@ data class EpubReaderUiState(
     val sessionToken: Long = 0,
     val isLoading: Boolean = false,
     val isReady: Boolean = false,
+    val isPreparingPdf: Boolean = false,
     val menuVisible: Boolean = true,
     val errorMessage: String? = null,
     val serverTimeOffsetMinutes: Long? = null,
@@ -53,4 +54,14 @@ data class EpubRemoteProgressConflict(
     val progressionPercent: Int?,
     val sectionTitle: String?,
     val modifiedAtMillis: Long,
+)
+
+internal fun EpubReaderUiState.withPdfPreparationFailure(message: String): EpubReaderUiState = copy(
+    isPreparingPdf = false,
+    errorMessage = message,
+    paginationPhase = EpubPaginationPhase.UNAVAILABLE,
+    currentVisualPage = null,
+    totalVisualPages = null,
+    isSearchable = false,
+    localEpubUri = null,
 )

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
 import android.content.Context
+import android.graphics.Matrix
 import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.drawable.Animatable
@@ -16,7 +17,6 @@ import androidx.annotation.AttrRes
 import androidx.annotation.CallSuper
 import androidx.annotation.StyleRes
 import androidx.appcompat.widget.AppCompatImageView
-import androidx.core.os.postDelayed
 import androidx.core.view.isVisible
 import coil3.BitmapImage
 import coil3.asDrawable
@@ -69,6 +69,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var pageView: View? = null
 
     private var config: Config? = null
+    private var pendingLandscapeZoom: Runnable? = null
+
+    private fun cancelLandscapeZoom() {
+        pendingLandscapeZoom?.let(::removeCallbacks)
+        pendingLandscapeZoom = null
+    }
+
+    override fun onDetachedFromWindow() {
+        cancelLandscapeZoom()
+        super.onDetachedFromWindow()
+    }
 
     var onImageLoaded: (() -> Unit)? = null
     var onImageLoadError: ((Throwable?) -> Unit)? = null
@@ -131,31 +142,39 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun SubsamplingScaleImageView.landscapeZoom(forward: Boolean) {
+        cancelLandscapeZoom()
+        val imageConfig = config ?: return
         if (
-            config != null &&
-            config!!.landscapeZoom &&
-            config!!.minimumScaleType == SCALE_TYPE_CENTER_INSIDE &&
+            imageConfig.landscapeZoom &&
+            imageConfig.minimumScaleType == SCALE_TYPE_CENTER_INSIDE &&
             sWidth > sHeight &&
             scale == minScale
         ) {
-            handler?.postDelayed(500) {
-                val point = when (config!!.zoomStartPosition) {
+            val zoom = Runnable {
+                pendingLandscapeZoom = null
+                if (pageView !== this || !isAttachedToWindow || !isReady || !isVisible || scale != minScale) {
+                    return@Runnable
+                }
+                val point = when (imageConfig.zoomStartPosition) {
                     ZoomStartPosition.LEFT -> if (forward) PointF(0F, 0F) else PointF(sWidth.toFloat(), 0F)
                     ZoomStartPosition.RIGHT -> if (forward) PointF(sWidth.toFloat(), 0F) else PointF(0F, 0F)
                     ZoomStartPosition.CENTER -> center
-                }
+                } ?: return@Runnable
 
                 val targetScale = height.toFloat() / sHeight.toFloat()
-                animateScaleAndCenter(targetScale, point)!!
-                    .withDuration(500)
-                    .withEasing(EASE_IN_OUT_QUAD)
-                    .withInterruptible(true)
-                    .start()
+                animateScaleAndCenter(targetScale, point)
+                    ?.withDuration(500)
+                    ?.withEasing(EASE_IN_OUT_QUAD)
+                    ?.withInterruptible(true)
+                    ?.start()
             }
+            pendingLandscapeZoom = zoom
+            this@ReaderPageImageView.postDelayed(zoom, 500)
         }
     }
 
     fun setImage(drawable: Drawable, config: Config) {
+        cancelLandscapeZoom()
         this.config = config
         if (drawable is Animatable) {
             prepareAnimatedImageView()
@@ -167,6 +186,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config) {
+        cancelLandscapeZoom()
         this.config = config
         if (isAnimated) {
             prepareAnimatedImageView()
@@ -183,17 +203,21 @@ open class ReaderPageImageView @JvmOverloads constructor(
         config: Config,
         decoderFactory: Decoder.Factory? = null,
     ) {
+        cancelLandscapeZoom()
         this.config = config
         prepareAnimatedImageView()
         setAnimatedImage(source, config, decoderFactory)
     }
 
-    fun recycle() = pageView?.let {
-        when (it) {
-            is SubsamplingScaleImageView -> it.recycle()
-            is AppCompatImageView -> it.dispose()
+    fun recycle() {
+        cancelLandscapeZoom()
+        pageView?.let {
+            when (it) {
+                is SubsamplingScaleImageView -> it.recycle()
+                is AppCompatImageView -> it.dispose()
+            }
+            it.isVisible = false
         }
-        it.isVisible = false
     }
 
     /** Returns the visible decoded-image bounds in this container, excluding its background. */
@@ -247,6 +271,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * @param fn a function that returns the direction to check for
      */
     private fun canPan(fn: (RectF) -> Float): Boolean {
+        (pageView as? PhotoView)?.let { view ->
+            val bounds = view.displayRect ?: return false
+            return fn(RectF(-bounds.left, -bounds.top, bounds.right - view.width, bounds.bottom - view.height)) > 1f
+        }
         (pageView as? SubsamplingScaleImageView)?.let { view ->
             RectF().let {
                 view.getPanRemaining(it)
@@ -260,6 +288,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * Pans the image to the left by a screen's width worth.
      */
     fun panLeft() {
+        if (panPhotoView(forward = false)) return
         pan { center, view -> center.also { it.x -= view.width / view.scale } }
     }
 
@@ -267,7 +296,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * Pans the image to the right by a screen's width worth.
      */
     fun panRight() {
+        if (panPhotoView(forward = true)) return
         pan { center, view -> center.also { it.x += view.width / view.scale } }
+    }
+
+    private fun panPhotoView(forward: Boolean): Boolean {
+        val view = pageView as? PhotoView ?: return false
+        val matrix = Matrix()
+        view.getSuppMatrix(matrix)
+        matrix.postTranslate(if (forward) -view.width.toFloat() else view.width.toFloat(), 0f)
+        view.setSuppMatrix(matrix)
+        return true
     }
 
     /**
@@ -418,7 +457,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
         pageView = if (isWebtoon) {
             AppCompatImageView(context)
         } else {
-            PhotoView(context)
+            object : PhotoView(context) {
+                override fun canScrollHorizontally(direction: Int): Boolean {
+                    val bounds = displayRect ?: return false
+                    return if (direction < 0) bounds.left < -1f else bounds.right > width + 1f
+                }
+
+                override fun canScrollVertically(direction: Int): Boolean {
+                    val bounds = displayRect ?: return false
+                    return if (direction < 0) bounds.top < -1f else bounds.bottom > height + 1f
+                }
+            }
         }.apply {
             adjustViewBounds = true
 

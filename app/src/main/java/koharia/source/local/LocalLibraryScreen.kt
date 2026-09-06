@@ -1,5 +1,6 @@
 package koharia.source.local
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -9,20 +10,24 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -55,6 +60,8 @@ import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
+import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.cache.CoverCache
@@ -67,10 +74,13 @@ import koharia.connection.ui.SeriesMetadataEditScreen
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.EpubReaderLauncher
 import koharia.importing.ExternalMediaImportScreen
+import koharia.importing.ImageComicScreen
+import koharia.media.LocalMediaFormats
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.data.source.NoResultsException
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -138,7 +148,6 @@ data class LocalLibraryScreen(
                 sourcePreferences = sourcePreferences,
                 mangaRepository = mangaRepository,
                 getChaptersByMangaId = Injekt.get(),
-                updateChapter = Injekt.get(),
                 getEpubProgress = getEpubProgress,
                 libraryPreferences = libraryPreferences,
                 entryOpenManager = LocalLibraryEntryOpenManager(
@@ -148,9 +157,19 @@ data class LocalLibraryScreen(
                 ),
                 updateManga = updateManga,
                 coverCache = coverCache,
+                itemActions = LocalLibraryItemActions(
+                    syncChaptersWithSource = syncChaptersWithSource,
+                    chapterRepository = chapterRepository,
+                    setReadStatus = Injekt.get(),
+                    epubProgressRepository = Injekt.get(),
+                ),
             )
         }
         val state by screenModel.state.collectAsState()
+        val selectedIds = state.selectedMangas.mapTo(mutableSetOf()) { it.id }
+        BackHandler(enabled = selectedIds.isNotEmpty() || state.isBusy) {
+            screenModel.clearSelection()
+        }
         val coverUpdatedMessage = stringResource(MR.strings.cover_updated)
         val showLibraryReadProgress by libraryPreferences.showLibraryReadProgress.collectAsState()
         val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
@@ -177,7 +196,15 @@ data class LocalLibraryScreen(
             )
         }
         val openImportPicker = {
-            importFiles.launch(arrayOf("*/*"))
+            importFiles.launch(LocalMediaFormats.documentImportMimeTypes.toTypedArray())
+        }
+
+        val mergeImages = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) {
+                navigator.push(
+                    ImageComicScreen(uris.map(android.net.Uri::toString), sourceId, state.selectedBookshelfId),
+                )
+            }
         }
 
         DisposableEffect(lifecycleOwner, screenModel, showLibraryReadProgress) {
@@ -221,23 +248,63 @@ data class LocalLibraryScreen(
                         .background(MaterialTheme.colorScheme.surface)
                         .pointerInput(Unit) {},
                 ) {
-                    LocalLibraryToolbar(
-                        searchQuery = state.toolbarQuery,
-                        onSearchQueryChange = screenModel::setToolbarQuery,
-                        displayMode = screenModel.displayMode,
-                        onDisplayModeChange = { screenModel.displayMode = it },
-                        connectionProfiles = connectionProfiles,
-                        activeConnectionId = sourceId,
-                        onConnectionSelect = connectionPreferences.activeConnectionId::set,
-                        hasActiveFilters = state.filters.isActive,
-                        onImportClick = openImportPicker,
-                        onFilterClick = screenModel::openFilterDialog,
-                        onRefreshClick = screenModel::refresh,
-                        onSettingsClick = openSettings,
-                        onSearch = screenModel::search,
-                        onClickCloseSearch = screenModel::exitSearch,
-                        navigateUp = navigateUp.takeIf { showNavigationUp },
-                    )
+                    if (selectedIds.isNotEmpty()) {
+                        AppBar(
+                            title = null,
+                            actionModeCounter = selectedIds.size,
+                            onCancelActionMode = screenModel::clearSelection,
+                            actionModeActions = {
+                                AppBarActions(
+                                    actions = persistentListOf(
+                                        AppBar.Action(
+                                            title = stringResource(MR.strings.action_select_all),
+                                            icon = Icons.Outlined.SelectAll,
+                                            onClick = {
+                                                screenModel.selectAll(mangaList.itemSnapshotList.items.map { it.value })
+                                            },
+                                        ),
+                                        AppBar.OverflowAction(
+                                            title = stringResource(MR.strings.local_library_move_to_bookshelf),
+                                            onClick = { screenModel.openMoveToBookshelfDialog(state.selectedMangas) },
+                                        ),
+                                        AppBar.OverflowAction(
+                                            title = stringResource(MR.strings.action_mark_as_read),
+                                            onClick = { screenModel.markRead(state.selectedMangas, read = true) },
+                                        ),
+                                        AppBar.OverflowAction(
+                                            title = stringResource(MR.strings.action_mark_as_unread),
+                                            onClick = { screenModel.markRead(state.selectedMangas, read = false) },
+                                        ),
+                                        AppBar.Action(
+                                            title = stringResource(MR.strings.local_library_delete_files),
+                                            icon = Icons.Outlined.Delete,
+                                            onClick = { screenModel.requestDeletion(state.selectedMangas) },
+                                        ),
+                                    ),
+                                )
+                            },
+                        )
+                    } else {
+                        LocalLibraryToolbar(
+                            searchQuery = state.toolbarQuery,
+                            onSearchQueryChange = screenModel::setToolbarQuery,
+                            displayMode = screenModel.displayMode,
+                            onDisplayModeChange = { screenModel.displayMode = it },
+                            connectionProfiles = connectionProfiles,
+                            activeConnectionId = sourceId,
+                            onConnectionSelect = connectionPreferences.activeConnectionId::set,
+                            hasActiveFilters = state.filters.isActive,
+                            onImportClick = openImportPicker,
+                            onMergeImagesClick = {
+                                mergeImages.launch(LocalMediaFormats.images.mimeTypes.toTypedArray())
+                            },
+                            onFilterClick = screenModel::openFilterDialog,
+                            onSettingsClick = openSettings,
+                            onSearch = screenModel::search,
+                            onClickCloseSearch = screenModel::exitSearch,
+                            navigateUp = navigateUp.takeIf { showNavigationUp },
+                        )
+                    }
 
                     Row(
                         modifier = Modifier
@@ -275,6 +342,7 @@ data class LocalLibraryScreen(
                     }
 
                     HorizontalDivider()
+                    if (state.isPreparingDeletion || state.isUpdatingItems) LinearProgressIndicator()
                 }
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -287,16 +355,16 @@ data class LocalLibraryScreen(
                 val refreshError = state.refreshError
                     ?: (mangaList.loadState.refresh as? LoadState.Error)?.error
                 when {
-                    mangaList.itemCount == 0 && state.isRefreshing -> {
+                    mangaList.itemCount == 0 &&
+                        (state.isRefreshing || mangaList.loadState.refresh is LoadState.Loading) -> {
                         LoadingScreen(Modifier.padding(paddingValues))
                     }
                     mangaList.itemCount == 0 && state.submittedQuery.isBlank() && !state.filters.isActive &&
                         (refreshError == null || refreshError is NoResultsException) -> {
                         EmptyScreen(
-                            stringRes = MR.strings.local_library_empty_import_hint,
+                            stringRes = MR.strings.local_library_empty_scan_cache,
                             modifier = Modifier.padding(paddingValues),
                             actions = localLibraryEmptyActions(
-                                onImport = openImportPicker,
                                 onRefresh = screenModel::refresh,
                                 onManageDirectories = openSettings,
                             ),
@@ -320,7 +388,6 @@ data class LocalLibraryScreen(
                             message = with(context) { refreshError.formattedMessage },
                             modifier = Modifier.padding(paddingValues),
                             actions = localLibraryEmptyActions(
-                                onImport = openImportPicker,
                                 onRefresh = screenModel::refresh,
                                 onManageDirectories = openSettings,
                             ),
@@ -335,6 +402,7 @@ data class LocalLibraryScreen(
                             snackbarHostState = snackbarHostState,
                             contentPadding = paddingValues,
                             showLibraryBadges = false,
+                            selectedMangaIds = selectedIds,
                             readProgress = if (showLibraryReadProgress) {
                                 { manga -> readProgressByUrl[manga.url.trimEnd('/')] }
                             } else {
@@ -344,7 +412,11 @@ data class LocalLibraryScreen(
                             onWebViewClick = {},
                             onHelpClick = {},
                             onMangaClick = {
-                                if (!screenModel.openLibraryEntry(it)) {
+                                if (state.isBusy) {
+                                    // Wait until the deletion snapshot or operation is complete.
+                                } else if (selectedIds.isNotEmpty()) {
+                                    screenModel.toggleSelection(it)
+                                } else if (!screenModel.openLibraryEntry(it)) {
                                     navigator.push(
                                         MangaScreen(
                                             mangaId = it.id,
@@ -385,7 +457,7 @@ data class LocalLibraryScreen(
                     shelves = dialog.bookshelves,
                     currentShelfId = dialog.currentBookshelfId,
                     onDismissRequest = screenModel::dismissDialog,
-                    onConfirm = { screenModel.moveToBookshelf(dialog.manga, it) },
+                    onConfirm = { screenModel.moveToBookshelf(dialog.mangas, it) },
                 )
             }
             is LocalLibraryScreenModel.Dialog.EntryActions -> {
@@ -400,7 +472,7 @@ data class LocalLibraryScreen(
                     },
                     title = { Text(text = dialog.manga.title) },
                     text = {
-                        Column {
+                        Column(Modifier.verticalScroll(rememberScrollState())) {
                             TextButton(
                                 onClick = {
                                     screenModel.dismissDialog()
@@ -415,11 +487,61 @@ data class LocalLibraryScreen(
                             TextButton(
                                 onClick = {
                                     screenModel.dismissDialog()
-                                    screenModel.openMoveToBookshelfDialog(dialog.manga)
+                                    screenModel.openMoveToBookshelfDialog(listOf(dialog.manga))
                                 },
                             ) {
                                 Text(text = stringResource(MR.strings.local_library_move_to_bookshelf))
                             }
+                            TextButton(onClick = { screenModel.markRead(listOf(dialog.manga), read = true) }) {
+                                Text(text = stringResource(MR.strings.action_mark_as_read))
+                            }
+                            TextButton(onClick = { screenModel.markRead(listOf(dialog.manga), read = false) }) {
+                                Text(text = stringResource(MR.strings.action_mark_as_unread))
+                            }
+                            TextButton(onClick = { screenModel.toggleSelection(dialog.manga) }) {
+                                Text(text = stringResource(MR.strings.local_library_select_items))
+                            }
+                            TextButton(onClick = { screenModel.requestDeletion(listOf(dialog.manga)) }) {
+                                Text(
+                                    text = stringResource(MR.strings.local_library_delete_files),
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    },
+                )
+            }
+            is LocalLibraryScreenModel.Dialog.DeleteFiles -> {
+                val dialog = state.dialog as LocalLibraryScreenModel.Dialog.DeleteFiles
+                AlertDialog(
+                    onDismissRequest = screenModel::dismissDialog,
+                    title = { Text(stringResource(MR.strings.local_library_delete_files)) },
+                    text = {
+                        Column {
+                            Text(
+                                stringResource(
+                                    MR.strings.local_library_delete_files_confirm,
+                                    dialog.plan.entries.size,
+                                    dialog.plan.entries.sumOf { it.deletion.fileCount },
+                                ),
+                            )
+                            Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+                                dialog.plan.entries.forEach { entry ->
+                                    Text("• ${entry.manga.title}")
+                                    Text(entry.item.relativePath, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            if (state.isDeleting) LinearProgressIndicator()
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = screenModel::confirmDeletion, enabled = !state.isDeleting) {
+                            Text(stringResource(MR.strings.action_delete), color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = screenModel::dismissDialog, enabled = !state.isDeleting) {
+                            Text(stringResource(MR.strings.action_cancel))
                         }
                     },
                 )
@@ -458,6 +580,43 @@ data class LocalLibraryScreen(
                     is LocalLibraryScreenModel.Event.CoverFailed -> {
                         snackbarHostState.showSnackbar(with(context) { event.error.formattedMessage })
                     }
+                    LocalLibraryScreenModel.Event.ItemActionFailed -> {
+                        snackbarHostState.showSnackbar(
+                            context.stringResource(MR.strings.local_library_item_action_failed),
+                        )
+                    }
+                    LocalLibraryScreenModel.Event.NoCompatibleShelf -> {
+                        snackbarHostState.showSnackbar(context.stringResource(MR.strings.local_library_no_common_shelf))
+                    }
+                    is LocalLibraryScreenModel.Event.ItemsUpdated -> {
+                        snackbarHostState.showSnackbar(
+                            if (event.failed == 0) {
+                                context.stringResource(MR.strings.local_library_items_updated, event.updated)
+                            } else {
+                                context.stringResource(
+                                    MR.strings.local_library_items_update_partial,
+                                    event.updated,
+                                    event.failed,
+                                )
+                            },
+                        )
+                    }
+                    LocalLibraryScreenModel.Event.DeleteFailed -> {
+                        snackbarHostState.showSnackbar(context.stringResource(MR.strings.local_library_delete_failed))
+                    }
+                    is LocalLibraryScreenModel.Event.FilesDeleted -> {
+                        snackbarHostState.showSnackbar(
+                            if (event.failed == 0) {
+                                context.stringResource(MR.strings.local_library_delete_success, event.deleted)
+                            } else {
+                                context.stringResource(
+                                    MR.strings.local_library_delete_result,
+                                    event.deleted,
+                                    event.failed,
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -482,22 +641,16 @@ data class LocalLibraryScreen(
 }
 
 private fun localLibraryEmptyActions(
-    onImport: () -> Unit,
     onRefresh: () -> Unit,
     onManageDirectories: () -> Unit,
 ) = persistentListOf(
-    EmptyScreenAction(
-        stringRes = MR.strings.local_library_import_files,
-        icon = Icons.Outlined.UploadFile,
-        onClick = onImport,
-    ),
     EmptyScreenAction(
         stringRes = MR.strings.action_webview_refresh,
         icon = Icons.Outlined.Refresh,
         onClick = onRefresh,
     ),
     EmptyScreenAction(
-        stringRes = MR.strings.local_library_directories,
+        stringRes = MR.strings.local_library_manage_bookshelves,
         icon = Icons.Outlined.Settings,
         onClick = onManageDirectories,
     ),

@@ -18,6 +18,9 @@ enum class EpubPaginationPhase {
     UNAVAILABLE,
 }
 
+internal val EpubPaginationPhase.hasAccuratePageCount: Boolean
+    get() = this == EpubPaginationPhase.CACHED || this == EpubPaginationPhase.READY
+
 internal data class EpubPaginationLayoutSnapshot(
     val readingMode: String,
     val pageDirection: String,

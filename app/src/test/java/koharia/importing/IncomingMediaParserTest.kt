@@ -1,9 +1,12 @@
 package koharia.importing
 
+import koharia.connection.ConnectionLibraryShelf
 import koharia.connection.ConnectionMediaImportDestination
 import koharia.connection.ConnectionMediaImportItem
 import koharia.connection.ConnectionMediaImportSeries
 import koharia.connection.ConnectionMediaType
+import koharia.connection.LibraryContentScope
+import koharia.media.LocalMediaFormats
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -11,6 +14,38 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class IncomingMediaParserTest {
+    @Test
+    fun `document imports exclude scattered images but reader image support remains`() {
+        for (extension in LocalMediaFormats.images.extensions) {
+            assertFalse(extension in LocalMediaFormats.documentImportExtensions)
+            assertFalse(extension in LocalMediaFormats.comicImportExtensions)
+            assertTrue(extension in LocalMediaFormats.comicExtensions)
+        }
+        assertTrue("cbz" in LocalMediaFormats.comicImportExtensions)
+        assertTrue("pdf" in LocalMediaFormats.documentImportExtensions)
+        assertTrue("image/vnd.djvu" in LocalMediaFormats.documentImportMimeTypes)
+        assertFalse("image/png" in LocalMediaFormats.documentImportMimeTypes)
+    }
+
+    @Test
+    fun `image signature overrides a renamed document extension`() {
+        assertEquals(
+            "jpg",
+            detectMediaExtension(
+                "photo.pdf",
+                "application/pdf",
+                byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte()),
+            ),
+        )
+    }
+
+    @Test
+    fun `image can still be opened but cannot enter the ordinary import flow`() {
+        val state = ExternalMediaImportScreenModel.State(items = listOf(importItem("photo.jpg")), openSourceId = 1)
+        assertTrue(state.canOpen)
+        assertFalse(state.canConfigureImport)
+        assertFalse(state.canImport)
+    }
 
     @Test
     fun `supported filename extension takes priority over generic mime`() {
@@ -172,7 +207,7 @@ class IncomingMediaParserTest {
                     id = 42L,
                     name = "Local",
                     destinations = listOf(destination),
-                    shelves = emptyList(),
+                    shelves = listOf(ConnectionLibraryShelf("favorites", "Favorites", LibraryContentScope.COMIC)),
                 ),
             ),
             selectedConnectionId = 42L,

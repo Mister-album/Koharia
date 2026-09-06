@@ -4,6 +4,7 @@ import android.app.Application
 import android.text.format.Formatter
 import eu.kanade.tachiyomi.source.Source
 import koharia.connection.ConnectionRawDownloadAdapter
+import koharia.connection.executeCancellable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -357,33 +358,6 @@ class EpubCacheManager(
                     },
                 )
                 .build()
-        }
-
-    private suspend fun <T> Call.executeCancellable(block: (Response) -> T): T =
-        suspendCancellableCoroutine { continuation ->
-            continuation.invokeOnCancellation { cancel() }
-            enqueue(
-                object : Callback {
-                    override fun onFailure(call: Call, e: IOException) {
-                        val token = continuation.tryResumeWithException(e) ?: return
-                        continuation.completeResume(token)
-                    }
-
-                    override fun onResponse(call: Call, response: Response) {
-                        val result = runCatching { response.use(block) }
-                        result.fold(
-                            onSuccess = { value ->
-                                val token = continuation.tryResume(value) ?: return@fold
-                                continuation.completeResume(token)
-                            },
-                            onFailure = { error ->
-                                val token = continuation.tryResumeWithException(error) ?: return@fold
-                                continuation.completeResume(token)
-                            },
-                        )
-                    }
-                },
-            )
         }
 
     private fun resourcePublicationDir(sourceId: Long, publicationKey: String): File =

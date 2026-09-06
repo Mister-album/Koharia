@@ -1,5 +1,6 @@
 package koharia.source.local
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,28 +31,21 @@ class LocalLibraryOrganizationModeGuideScreen : Screen() {
             },
         ) { contentPadding ->
             ScrollbarLazyColumn(contentPadding = contentPadding) {
-                item {
-                    PreferenceGroupHeader(title = stringResource(MR.strings.local_library_mode_series))
-                }
-                item {
-                    GuideText(stringResource(MR.strings.local_library_mode_series_guide))
-                }
-                item {
-                    PreferenceGroupHeader(title = stringResource(MR.strings.local_library_mode_individual))
-                }
-                item {
-                    GuideText(stringResource(MR.strings.local_library_mode_individual_guide))
-                }
-                item {
-                    PreferenceGroupHeader(
-                        title = stringResource(MR.strings.local_library_organization_note_title),
-                    )
-                }
-                item {
-                    GuideText(stringResource(MR.strings.local_library_organization_locked))
-                }
+                item { LocalLibraryOrganizationGuide() }
             }
         }
+    }
+}
+
+@Composable
+internal fun LocalLibraryOrganizationGuide() {
+    Column {
+        PreferenceGroupHeader(title = stringResource(MR.strings.local_library_mode_series))
+        GuideText(stringResource(MR.strings.local_library_mode_series_guide))
+        PreferenceGroupHeader(title = stringResource(MR.strings.local_library_mode_individual))
+        GuideText(stringResource(MR.strings.local_library_mode_individual_guide))
+        PreferenceGroupHeader(title = stringResource(MR.strings.local_library_organization_note_title))
+        GuideText(stringResource(MR.strings.local_library_organization_locked))
     }
 }
 

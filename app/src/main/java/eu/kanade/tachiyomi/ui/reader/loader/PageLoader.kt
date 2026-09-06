@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
 import androidx.annotation.CallSuper
+import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 
 /**
@@ -22,6 +23,8 @@ abstract class PageLoader {
 
     /** Total pages when this loader can provide a stable document progress denominator. */
     open val progressPageCount: Int? = null
+
+    open val pdfFile: UniFile? = null
 
     /**
      * Returns the list of pages of a chapter.

@@ -168,8 +168,10 @@ class MainActivity : BaseActivity() {
                 )
             }
 
+            val onboardingComplete by preferences.shownOnboardingFlow.collectAsState()
+            val initialScreens = remember { initialMainScreens(preferences.shownOnboardingFlow.get()) }
             Navigator(
-                screen = HomeScreen,
+                screens = initialScreens,
                 disposeBehavior = NavigatorDisposeBehavior(disposeNestedNavigators = false, disposeSteps = true),
             ) { navigator ->
                 LaunchedEffect(navigator) {
@@ -218,12 +220,16 @@ class MainActivity : BaseActivity() {
                     // Consume insets already used by app state banners
                     Box {
                         // Shows current screen
-                        DefaultNavigatorScreenTransition(
-                            navigator = navigator,
-                            modifier = Modifier
-                                .padding(contentPadding)
-                                .consumeWindowInsets(contentPadding),
-                        )
+                        if (needsInitialOnboarding(onboardingComplete, navigator.items)) {
+                            tachiyomi.presentation.core.screens.LoadingScreen(Modifier.padding(contentPadding))
+                        } else {
+                            DefaultNavigatorScreenTransition(
+                                navigator = navigator,
+                                modifier = Modifier
+                                    .padding(contentPadding)
+                                    .consumeWindowInsets(contentPadding),
+                            )
+                        }
 
                         // Draw navigation bar scrim when needed
                         if (remember { isNavigationBarNeedsScrim() }) {
@@ -257,8 +263,8 @@ class MainActivity : BaseActivity() {
 
                 HandleOnNewIntent(context = context, navigator = navigator)
 
-                CheckForUpdates()
-                ShowOnboarding()
+                if (onboardingComplete) CheckForUpdates()
+                ShowOnboarding(onboardingComplete)
             }
         }
 
@@ -327,11 +333,11 @@ class MainActivity : BaseActivity() {
     }
 
     @Composable
-    private fun ShowOnboarding() {
+    private fun ShowOnboarding(onboardingComplete: Boolean) {
         val navigator = LocalNavigator.currentOrThrow
 
-        LaunchedEffect(Unit) {
-            if (!preferences.shownOnboardingFlow.get() && navigator.lastItem !is OnboardingScreen) {
+        LaunchedEffect(onboardingComplete, navigator.items) {
+            if (needsInitialOnboarding(onboardingComplete, navigator.items)) {
                 navigator.push(OnboardingScreen())
             }
         }

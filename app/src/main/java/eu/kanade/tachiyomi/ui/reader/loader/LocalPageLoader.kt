@@ -31,6 +31,8 @@ internal class LocalPageLoader(
 
     override var isLocal: Boolean = true
 
+    override val pdfFile: UniFile? get() = pdfLoader?.pdfFile
+
     override val supportsRemoteProgress: Boolean
         get() = documentLoader?.supportsRemoteProgress ?: true
 

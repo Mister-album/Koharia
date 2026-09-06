@@ -1,5 +1,7 @@
 package koharia.epub.model
 
+import koharia.pdf.reflow.PdfReflowManifest
+
 data class RemotePublicationRef(
     val providerId: String,
     val resourceId: String,
@@ -16,6 +18,7 @@ data class EpubOpenRequest(
     val publisherStylesOverride: Boolean? = null,
     val publicationKey: String = "chapter:$chapterId",
     val persistCache: Boolean = true,
+    val pdfReflow: PdfReflowManifest? = null,
 ) {
     enum class OpenSource {
         LOCAL,

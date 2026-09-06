@@ -6,6 +6,7 @@ object ChapterSanitizer {
         return trim()
             .removePrefix(title)
             .trim(*CHAPTER_TRIM_CHARS)
+            .ifBlank { trim() }
     }
 
     private val CHAPTER_TRIM_CHARS = arrayOf(

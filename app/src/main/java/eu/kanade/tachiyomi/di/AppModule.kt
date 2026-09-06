@@ -40,6 +40,7 @@ import koharia.epub.service.KomgaReadiumHttpClient
 import koharia.epub.service.LocalEpubPublicationService
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.komga.api.KomgaActiveServerSseManager
+import koharia.pdf.cache.PdfReflowCacheManager
 import koharia.source.komga.KomgaConnectionMigration
 import koharia.source.komga.KomgaConnectionProvider
 import koharia.source.komga.KomgaLocalConfigManager
@@ -241,8 +242,9 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { CoverCache(app) }
         addSingletonFactory { EpubCachePreferences(get()) }
         addSingletonFactory { EpubCacheManager(app, get()) }
+        addSingletonFactory { PdfReflowCacheManager(app) }
         addSingletonFactory { EpubFontManager(app, get()) }
-        addSingletonFactory { LocalCacheCleaner(app, get(), get(), get(), get(), get()) }
+        addSingletonFactory { LocalCacheCleaner(app, get(), get(), get(), get(), get(), get()) }
 
         addSingletonFactory { NetworkHelper(app, get()) }
         addSingletonFactory { JavaScriptEngine(app) }

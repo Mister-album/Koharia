@@ -37,6 +37,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -100,16 +101,21 @@ import koharia.document.toDocumentRenderSettings
 import koharia.epub.DocumentBookInfoDialog
 import koharia.epub.EpubBottomPanel
 import koharia.epub.EpubDocumentMorePanel
+import koharia.epub.EpubReaderActivity
 import koharia.epub.EpubReaderBottomArea
 import koharia.epub.EpubReaderTopBar
 import koharia.epub.font.EpubFontManager
+import koharia.epub.model.EpubOpenRequest
+import koharia.epub.service.EpubReaderSupportResolution
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.epub.settings.EpubReaderSettingsSheet
 import koharia.importing.IncomingMediaNavigation
 import koharia.importing.IncomingMediaSessionLocator
+import koharia.pdf.cache.PdfReflowCacheManager
 import koharia.source.local.LocalLibraryLocator
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -139,6 +145,87 @@ import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
 
 class ReaderActivity : BaseActivity() {
+    private var pdfConversionProgress by mutableStateOf<Pair<Int, Int>?>(null)
+    private var pdfConversionJob: Job? = null
+
+    private fun openPdfReflow() = openPdfReflowAtPage(null)
+
+    private fun openPdfReflowAtPage(initialPage: Int?) {
+        if (pdfConversionJob?.isActive == true) return
+        val state = viewModel.state.value
+        val manga = state.manga ?: return
+        val chapter = state.currentChapter ?: return
+        val file = chapter.pageLoader?.pdfFile
+        val remote = currentRemotePdf()
+        if (file == null && remote == null) return
+        val page = initialPage ?: state.currentPage.takeIf { it > 0 }?.minus(1) ?: chapter.chapter.last_page_read
+        val handoff = koharia.pdf.reflow.PdfReflowHandoff(checkNotNull(chapter.chapter.id), page)
+        pdfConversionJob = lifecycleScope.launch {
+            try {
+                val artifact = Injekt.get<PdfReflowCacheManager>().prepare(
+                    manga.source,
+                    checkNotNull(chapter.chapter.id),
+                    file,
+                    chapter.chapter.name,
+                    ephemeral = scopedPreferenceStoreFactory.basePreferences(manga.source).incognitoMode.get(),
+                    remote = remote,
+                ) {
+                        current,
+                        total,
+                    ->
+                    runOnUiThread { pdfConversionProgress = current to total }
+                }
+                val targetPage = handoff.pageFor(viewModel.state.value.currentChapter?.chapter?.id, state.currentPage)
+                    ?: return@launch
+                if (!artifact.epub.isFile) return@launch
+                val resolution = EpubReaderSupportResolution(
+                    mangaId = manga.id, chapterId = checkNotNull(chapter.chapter.id), sourceId = manga.source,
+                    mangaTitle = manga.title, chapterTitle = chapter.chapter.name,
+                    localUri = artifact.epub.toURI().toString(), preferredOpenSource = EpubOpenRequest.OpenSource.LOCAL,
+                    publicationKey = "pdf-reflow:${artifact.manifest.revision}", bookFileName = file?.name,
+                    bookSizeBytes = file?.length(), pdfReflowRevision = artifact.manifest.revision,
+                )
+                startActivity(
+                    EpubReaderActivity.newIntent(
+                        this@ReaderActivity,
+                        manga.id,
+                        checkNotNull(chapter.chapter.id),
+                        manga.source,
+                        resolution,
+                    )
+                        .putExtra("pdf_reflow_initial_page", targetPage),
+                )
+                finish()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                logcat(LogPriority.ERROR, error) { "PDF reflow failed" }
+                toast(MR.strings.pdf_reflow_failed)
+            } finally {
+                pdfConversionProgress = null
+            }
+        }
+    }
+
+    private fun currentRemotePdf(): koharia.pdf.cache.PdfRemoteSource? {
+        val state = viewModel.state.value
+        val manga = state.manga ?: return null
+        val chapter = state.currentChapter?.chapter ?: return null
+        val memo = koharia.komga.download.KomgaChapterMemo
+        if (!memo.fileName(chapter.memo)?.substringAfterLast('.').equals("pdf", true) &&
+            !memo.mediaType(chapter.memo).equals("application/pdf", true)
+        ) {
+            return null
+        }
+        val source = Injekt.get<tachiyomi.domain.source.service.SourceManager>().get(manga.source)
+            as? koharia.connection.ConnectionRawDownloadAdapter ?: return null
+        val fingerprint = memo.readFingerprint(chapter.memo)
+        return koharia.pdf.cache.PdfRemoteSource(
+            source,
+            chapter.url,
+            fingerprint?.fileHash?.takeIf(String::isNotBlank)?.let { "$it:${fingerprint.sizeBytes}" },
+        )
+    }
 
     companion object {
         private const val EXTRA_USE_EPUB_SETTINGS = "use_epub_settings"
@@ -149,12 +236,19 @@ class ReaderActivity : BaseActivity() {
             chapterId: Long?,
             sourceId: Long? = null,
             useEpubSettings: Boolean = false,
+            pageIndex: Int? = null,
+            autoPdfReflow: Boolean = false,
         ): Intent {
+            if (autoPdfReflow) {
+                return EpubReaderActivity.newPdfReflowIntent(context, mangaId, chapterId, sourceId, pageIndex)
+            }
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
                 sourceId?.let { putExtra("source", it) }
                 putExtra(EXTRA_USE_EPUB_SETTINGS, useEpubSettings)
+                pageIndex?.let { putExtra("page_index", it) }
+                putExtra("auto_pdf_reflow", autoPdfReflow)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
@@ -239,6 +333,22 @@ class ReaderActivity : BaseActivity() {
         windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         super.onCreate(savedInstanceState)
+        if (intent.getBooleanExtra("auto_pdf_reflow", false)) {
+            startActivity(
+                IncomingMediaNavigation.inheritTemporaryMediaUri(
+                    from = intent,
+                    target = EpubReaderActivity.newPdfReflowIntent(
+                        this,
+                        intent.getLongExtra("manga", -1),
+                        intent.getLongExtra("chapter", -1),
+                        intent.getLongExtra("source", -1),
+                        intent.getIntExtra("page_index", 0),
+                    ),
+                ),
+            )
+            finish()
+            return
+        }
 
         binding = ReaderActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -393,6 +503,28 @@ class ReaderActivity : BaseActivity() {
             )
         }
 
+        pdfConversionProgress?.let { (current, total) ->
+            AlertDialog(
+                onDismissRequest = { pdfConversionJob?.cancel() },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pdfConversionJob?.cancel()
+                    }) { Text(stringResource(MR.strings.action_cancel)) }
+                },
+                title = { Text(stringResource(MR.strings.pdf_reflow_open)) },
+                text = {
+                    Text(
+                        if (total >
+                            0
+                        ) {
+                            stringResource(MR.strings.pdf_reflow_progress, current, total)
+                        } else {
+                            stringResource(MR.strings.pdf_reflow_preparing)
+                        },
+                    )
+                },
+            )
+        }
         val onDismissRequest = viewModel::closeDialog
         when (state.dialog) {
             is ReaderViewModel.Dialog.Loading -> {
@@ -695,6 +827,9 @@ class ReaderActivity : BaseActivity() {
         val verticalNavigatorOnLeft by readerPreferences.verticalNavigatorOnLeft.collectAsState()
 
         ReaderAppBars(
+            onPdfReflow = ::openPdfReflow.takeIf {
+                state.currentChapter?.pageLoader?.pdfFile != null || currentRemotePdf() != null
+            },
             visible = state.menuVisible,
 
             mangaTitle = state.manga?.title,
@@ -834,9 +969,13 @@ class ReaderActivity : BaseActivity() {
                 totalPositions = totalPages,
                 progression = progression,
                 currentVisualPage = currentPage
-                    .takeIf { currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED },
+                    .takeIf {
+                        currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED
+                    },
                 totalVisualPages = totalPages
-                    .takeIf { currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED },
+                    .takeIf {
+                        currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED
+                    },
                 enabledPreviousChapter = state.viewerChapters?.prevChapter != null,
                 enabledNextChapter = state.viewerChapters?.nextChapter != null,
                 onPositionChange = { index ->

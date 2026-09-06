@@ -343,6 +343,7 @@ internal fun EpubReadingProgressIndicator(
 
 @Composable
 internal fun EpubReaderMorePanel(
+    isPdfReflow: Boolean = false,
     state: EpubReaderUiState,
     onOpenAsPages: () -> Unit,
     onReload: () -> Unit,
@@ -373,7 +374,9 @@ internal fun EpubReaderMorePanel(
         if (state.canOpenAsPages) {
             MoreActionRow(
                 icon = Icons.AutoMirrored.Outlined.MenuBook,
-                title = stringResource(MR.strings.epub_reader_open_as_pages),
+                title = stringResource(
+                    if (isPdfReflow) MR.strings.pdf_original_open else MR.strings.epub_reader_open_as_pages,
+                ),
                 enabled = state.mangaId > 0 && state.chapterId > 0,
                 onClick = onOpenAsPages,
             )
@@ -551,7 +554,9 @@ internal fun EpubBookInfoDialog(
                     label = stringResource(MR.strings.epub_reader_book_info_reading_progress),
                     value = "$progressPercent%",
                 )
-                if (state.currentVisualPage != null && state.totalVisualPages != null) {
+                if (state.currentVisualPage != null && state.totalVisualPages != null &&
+                    state.paginationPhase.hasAccuratePageCount
+                ) {
                     BookInfoItem(
                         label = stringResource(MR.strings.epub_reader_book_info_pages),
                         value = "${state.currentVisualPage} / ${state.totalVisualPages}",

@@ -1,5 +1,6 @@
 package koharia.epub.session
 
+import koharia.pdf.reflow.PdfReflowManifest
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
@@ -13,12 +14,18 @@ data class EpubReaderSession(
     val initialLocator: Locator?,
     val positionsController: EpubPositionsController,
     val prefetchNextResource: suspend (Locator?) -> Unit = {},
+    val pdfReflow: PdfReflowManifest? = null,
+    val onClosed: () -> Unit = {},
 ) {
     private val closed = AtomicBoolean(false)
 
     fun close() {
         if (closed.compareAndSet(false, true)) {
-            publication.close()
+            try {
+                publication.close()
+            } finally {
+                onClosed()
+            }
         }
     }
 }

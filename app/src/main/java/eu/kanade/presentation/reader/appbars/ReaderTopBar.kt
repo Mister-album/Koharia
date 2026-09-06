@@ -25,6 +25,7 @@ fun ReaderTopBar(
     onShare: (() -> Unit)?,
     onImportTemporaryMedia: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    onPdfReflow: (() -> Unit)? = null,
 ) {
     AppBar(
         modifier = modifier,
@@ -36,6 +37,9 @@ fun ReaderTopBar(
             AppBarActions(
                 actions = persistentListOf<AppBar.AppBarAction>().builder()
                     .apply {
+                        onPdfReflow?.let {
+                            add(AppBar.OverflowAction(title = stringResource(MR.strings.pdf_reflow_open), onClick = it))
+                        }
                         onImportTemporaryMedia?.let {
                             add(
                                 AppBar.Action(

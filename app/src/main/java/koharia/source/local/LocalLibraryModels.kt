@@ -228,6 +228,24 @@ class LocalLibraryPreferences(
             ?: emptyMap()
     }
 
+    @Synchronized
+    internal fun removeDeletedItems(keys: Set<String>) {
+        val index = getIndex()
+        preferences.edit()
+            .putString(
+                KEY_INDEX,
+                json.encodeToString(
+                    index.copy(
+                        items = index.items.filterNot { it.itemKey in keys },
+                        pendingChapterRefreshItemKeys = index.pendingChapterRefreshItemKeys - keys,
+                    ),
+                ),
+            )
+            .putString(KEY_METADATA_OVERRIDES, json.encodeToString(getMetadataOverrides() - keys))
+            .putString(KEY_BOOKSHELF_ASSIGNMENTS, json.encodeToString(getBookshelfAssignments() - keys))
+            .apply()
+    }
+
     fun setMetadataOverride(itemKey: String, value: LocalMetadataOverride) {
         val values = getMetadataOverrides().toMutableMap()
         values[itemKey] = value
@@ -244,6 +262,18 @@ class LocalLibraryPreferences(
         val assignments = getBookshelfAssignments().toMutableMap()
         assignments[itemKey] = bookshelfId
         preferences.edit().putString(KEY_BOOKSHELF_ASSIGNMENTS, json.encodeToString(assignments)).apply()
+    }
+
+    @Synchronized
+    internal fun saveLibraryDraft(config: LocalLibraryConfig, assignments: Map<String, String>) {
+        val removedRoots = getConfig().roots.filter { old -> config.roots.none { it.id == old.id } }
+        val removedKeys = getIndex().items.filter { item -> removedRoots.any { it.id == item.rootId } }
+            .mapTo(mutableSetOf(), LocalLibraryItem::itemKey)
+        removedRoots.forEach { removeRoot(it.id) }
+        setConfig(config)
+        preferences.edit()
+            .putString(KEY_BOOKSHELF_ASSIGNMENTS, json.encodeToString(assignments - removedKeys))
+            .apply()
     }
 
     fun clearBookshelfAssignment(itemKey: String) {

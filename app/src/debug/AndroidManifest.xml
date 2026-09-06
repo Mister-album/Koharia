@@ -3,6 +3,9 @@
 
     <application>
         <activity
+            android:name="koharia.epub.EpubTransitionFixtureActivity"
+            android:exported="false" />
+        <activity
             android:name="eu.kanade.tachiyomi.ui.eink.EInkMotionFixtureActivity"
             android:exported="false" />
     </application>

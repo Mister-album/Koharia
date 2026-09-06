@@ -348,7 +348,7 @@ internal fun defaultBookshelfName(type: LocalLibraryContentType): String = strin
 )
 
 @Composable
-private fun bookshelfTypeTitle(type: LocalLibraryContentType): String = stringResource(
+internal fun bookshelfTypeTitle(type: LocalLibraryContentType): String = stringResource(
     when (type) {
         LocalLibraryContentType.COMICS -> MR.strings.local_library_comic_bookshelves
         LocalLibraryContentType.BOOKS -> MR.strings.local_library_book_bookshelves

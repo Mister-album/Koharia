@@ -63,6 +63,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -125,6 +126,7 @@ class LocalFolderSource(
     ConnectionMediaImportAdapter,
     ConnectionChapterThumbnailAdapter,
     ConnectionLocalFileAdapter,
+    koharia.connection.ConnectionReaderRoutingAdapter,
     ConnectionSeriesCoverAdapter,
     ConnectionMetadataGenerationAdapter,
     ConnectionMetadataAdapter {
@@ -209,6 +211,86 @@ class LocalFolderSource(
         if (indexedUrls.isEmpty()) return@withIOContext false
         val storedUrls = mangaRepository.getMangaBySourceId(id).mapTo(mutableSetOf(), Manga::url)
         !storedUrls.containsAll(indexedUrls)
+    }
+
+    internal suspend fun prepareFileDeletion(mangas: List<Manga>): LocalLibraryDeletionPlan = withIOContext {
+        refreshMutex.withLock {
+            val roots = preferences.getConfig().roots
+            val directories = roots.associateWith { preferences.resolveRoot(context, it) }
+            val protectedDirectories = directories.values.filterNotNull().map(::localDeletionIdentity).toSet()
+            val index = preferences.getIndex()
+            val entries = mangas.distinctBy(Manga::id).map { manga ->
+                require(manga.source == id)
+                val item = index.items.firstOrNull {
+                    it.kind != LocalLibraryItem.Kind.CHAPTER &&
+                        LocalLibraryLocator.entryUrl(id, it.rootId, it.relativePath) == manga.url
+                } ?: error("Local library entry is no longer available")
+                val root = roots.first { it.id == item.rootId }
+                LocalLibraryDeletionEntry(
+                    manga = manga,
+                    root = root,
+                    item = item,
+                    deletion = LocalFileDeletion.prepare(
+                        root = checkNotNull(directories[root]),
+                        path = item.relativePath,
+                        series = item.kind == LocalLibraryItem.Kind.SERIES,
+                        protectedDirectories = protectedDirectories,
+                    ),
+                )
+            }
+            require(entries.isNotEmpty())
+            LocalLibraryDeletionPlan(roots, entries)
+        }
+    }
+
+    internal suspend fun deleteLocalFiles(plan: LocalLibraryDeletionPlan): LocalLibraryDeletionResult = withIOContext {
+        // Once file deletion begins, finish reconciling the index even if the screen is closed.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+            refreshMutex.withLock {
+                check(preferences.getConfig().roots == plan.roots)
+                val deleted = mutableListOf<Manga>()
+                val failed = mutableListOf<Manga>()
+                val existingMangas = mangaRepository.getMangaBySourceId(id)
+                for (entry in plan.entries) {
+                    try {
+                        entry.deletion.delete()
+                        val removedItems = preferences.getIndex().items.filter { item ->
+                            item.rootId == entry.root.id && (
+                                item.itemKey == entry.item.itemKey ||
+                                    (
+                                        entry.item.kind == LocalLibraryItem.Kind.SERIES &&
+                                            item.relativePath.startsWith("${entry.item.relativePath}/")
+                                        )
+                                )
+                        }
+                        val urls = removedItems.mapTo(mutableSetOf()) {
+                            LocalLibraryLocator.entryUrl(id, it.rootId, it.relativePath)
+                        }
+                        existingMangas.filter { it.url in urls }.forEach { manga ->
+                            coverCache.deleteFromCache(manga, deleteCustomCover = true)
+                            mangaRepository.deleteMangaById(manga.id)
+                        }
+                        preferences.removeDeletedItems(removedItems.mapTo(mutableSetOf()) { it.itemKey })
+                        deleted += entry.manga
+                    } catch (error: Exception) {
+                        logcat(LogPriority.WARN, error) { "Unable to delete local library entry" }
+                        failed += entry.manga
+                    }
+                }
+                if (failed.isNotEmpty()) {
+                    runCatching { scanLibrary() }.onFailure { error ->
+                        logcat(LogPriority.WARN, error) { "Unable to refresh partially deleted local entries" }
+                    }
+                }
+                mutableLibraryRefreshes.emit(
+                    ConnectionLibraryRefreshResult(
+                        itemCount = preferences.getIndex().items.count { it.kind != LocalLibraryItem.Kind.CHAPTER },
+                        refreshedAt = System.currentTimeMillis(),
+                    ),
+                )
+                LocalLibraryDeletionResult(deleted, failed)
+            }
+        }
     }
 
     override suspend fun getPopularManga(page: Int): MangasPage = indexedMangaPage()
@@ -360,6 +442,19 @@ class LocalFolderSource(
         )
     }
 
+    override suspend fun readerContentScope(
+        manga: Manga,
+        chapter: tachiyomi.domain.chapter.model.Chapter,
+    ): LibraryContentScope {
+        val shelfId = currentLibraryShelfId(manga.url)
+        libraryShelves.first().firstOrNull { it.id == shelfId }?.let { return it.contentScope }
+        return when (resolveResource(chapter.url)?.root?.contentType) {
+            LocalLibraryContentType.COMICS -> LibraryContentScope.COMIC
+            LocalLibraryContentType.BOOKS -> LibraryContentScope.BOOK
+            else -> LibraryContentScope.ALL
+        }
+    }
+
     override suspend fun compatibleLibraryShelves(mangaUrl: String): List<ConnectionLibraryShelf> {
         val resource = resolveResource(mangaUrl) ?: return emptyList()
         val item = indexedLibraryItem(resource) ?: return emptyList()
@@ -386,11 +481,9 @@ class LocalFolderSource(
     override suspend fun mediaImportDestinations(): List<ConnectionMediaImportDestination> = withIOContext {
         val config = preferences.getConfig()
         config.roots.mapNotNull { root ->
-            val hasWritePermission = context.contentResolver.persistedUriPermissions.any { permission ->
-                permission.uri.toString() == root.treeUri && permission.isWritePermission
-            }
-            if (!hasWritePermission) return@mapNotNull null
-            preferences.resolveRoot(context, root) ?: return@mapNotNull null
+            val directory = preferences.resolveRoot(context, root) ?: return@mapNotNull null
+            // Let the provider resolve tree grants and document URIs instead of comparing URI strings.
+            if (!directory.canWrite()) return@mapNotNull null
             val organizationMode = config.organizationMode(root)
             val directoryName = root.displayPath.ifBlank { root.treeUri }
             val bookshelfName = config.bookshelf(
@@ -413,9 +506,9 @@ class LocalFolderSource(
                 ).joinToString(" · "),
                 mediaType = root.contentType.toConnectionMediaType(),
                 supportedExtensions = when (root.contentType) {
-                    LocalLibraryContentType.COMICS -> COMIC_IMPORT_EXTENSIONS
-                    LocalLibraryContentType.BOOKS -> BOOK_IMPORT_EXTENSIONS
-                    LocalLibraryContentType.MIXED -> SUPPORTED_FILE_EXTENSIONS
+                    LocalLibraryContentType.COMICS -> LocalMediaFormats.comicImportExtensions
+                    LocalLibraryContentType.BOOKS -> BOOK_LIBRARY_EXTENSIONS
+                    LocalLibraryContentType.MIXED -> LocalMediaFormats.documentImportExtensions
                 },
                 defaultShelfId = root.bookshelfId.ifBlank { config.defaultBookshelfId(root.contentType) }
                     .ifBlank { null },
@@ -471,9 +564,9 @@ class LocalFolderSource(
                     val destination = preferences.resolveRoot(context, root)
                         ?: error("Local import destination is unavailable")
                     val supportedExtensions = when (root.contentType) {
-                        LocalLibraryContentType.COMICS -> COMIC_IMPORT_EXTENSIONS
-                        LocalLibraryContentType.BOOKS -> BOOK_IMPORT_EXTENSIONS
-                        LocalLibraryContentType.MIXED -> SUPPORTED_FILE_EXTENSIONS
+                        LocalLibraryContentType.COMICS -> LocalMediaFormats.comicImportExtensions
+                        LocalLibraryContentType.BOOKS -> BOOK_LIBRARY_EXTENSIONS
+                        LocalLibraryContentType.MIXED -> LocalMediaFormats.documentImportExtensions
                     }
                     require(request.items.isNotEmpty()) { "No media selected for import" }
                     require(request.items.all { it.extension.lowercase() in supportedExtensions }) {
@@ -482,7 +575,7 @@ class LocalFolderSource(
                     val organizationMode = config.organizationMode(root)
                     val importContentType = when (root.contentType) {
                         LocalLibraryContentType.MIXED -> if (
-                            request.items.all { it.extension.lowercase() in BOOK_IMPORT_EXTENSIONS }
+                            request.items.all { it.extension.lowercase() in BOOK_LIBRARY_EXTENSIONS }
                         ) {
                             LocalLibraryContentType.BOOKS
                         } else {
@@ -924,6 +1017,7 @@ class LocalFolderSource(
         if (mangaUrls.isEmpty()) return emptyMap()
 
         val index = preferences.getIndex()
+        val rootsById = preferences.getConfig().roots.associateBy { it.id }
         val indexedItems = index.items
             .asSequence()
             .filter { it.kind == LocalLibraryItem.Kind.SERIES || it.kind == LocalLibraryItem.Kind.FILE_ENTRY }
@@ -943,9 +1037,11 @@ class LocalFolderSource(
             val location = LocalLibraryLocator.location(mangaUrl, id) ?: return@mapNotNull null
             val itemKey = location.rootId?.let { rootId ->
                 LocalLibraryLocator.itemKey(rootId, location.relativePath)
-            } ?: resolveResource(mangaUrl)?.let { resource ->
-                LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath)
-            } ?: return@mapNotNull null
+            } ?: indexedItems.values.singleOrNull { item ->
+                val root = rootsById[item.rootId] ?: return@singleOrNull false
+                location.relativePath == listOf(root.relativePath, item.relativePath)
+                    .filter(String::isNotBlank).joinToString("/")
+            }?.itemKey ?: return@mapNotNull null
             val item = indexedItems[itemKey] ?: return@mapNotNull null
             val progress = if (item.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
                 LocalReadProgressIndex(indexedChapterCount = 1, isIndividualFile = true)
@@ -1462,8 +1558,8 @@ class LocalFolderSource(
     }
 
     private fun supportedExtensions(contentType: LocalLibraryContentType): Set<String> = when (contentType) {
-        LocalLibraryContentType.COMICS -> COMIC_IMPORT_EXTENSIONS
-        LocalLibraryContentType.BOOKS -> BOOK_IMPORT_EXTENSIONS
+        LocalLibraryContentType.COMICS -> COMIC_LIBRARY_EXTENSIONS
+        LocalLibraryContentType.BOOKS -> BOOK_LIBRARY_EXTENSIONS
         LocalLibraryContentType.MIXED -> SUPPORTED_FILE_EXTENSIONS
     }
 
@@ -1828,8 +1924,8 @@ class LocalFolderSource(
             showSourceName = true,
             detailsRefreshIntervalMillis = null,
         )
-        private val COMIC_IMPORT_EXTENSIONS = LocalMediaFormats.comicExtensions
-        private val BOOK_IMPORT_EXTENSIONS = LocalMediaFormats.bookExtensions
+        private val COMIC_LIBRARY_EXTENSIONS = LocalMediaFormats.comicExtensions
+        private val BOOK_LIBRARY_EXTENSIONS = LocalMediaFormats.bookExtensions
         private val BOOK_FILE_EXTENSIONS = LocalMediaFormats.bookExtensions
         private val SUPPORTED_FILE_EXTENSIONS = LocalMediaFormats.allExtensions
         private val COMIC_FILE_EXTENSIONS = SUPPORTED_FILE_EXTENSIONS - BOOK_FILE_EXTENSIONS

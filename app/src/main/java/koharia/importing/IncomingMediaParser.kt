@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import koharia.connection.ConnectionMediaImportItem
 import koharia.media.LocalMediaFormats
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.ImageUtil
 import java.util.Locale
 
 internal object IncomingMediaParser {
@@ -23,7 +24,8 @@ internal object IncomingMediaParser {
                     }
                 }
             }.getOrNull() ?: byteArrayOf()
-            val extension = detectMediaExtension(metadata.displayName, mimeType, header)
+            val extension = ImageUtil.findImageType(header.inputStream())?.extension
+                ?: detectMediaExtension(metadata.displayName, mimeType, header)
                 ?: return@mapNotNull null
             val displayName = normalizedMediaDisplayName(metadata.displayName, extension)
             ConnectionMediaImportItem(
@@ -66,6 +68,7 @@ internal fun detectMediaExtension(
     mimeType: String?,
     header: ByteArray,
 ): String? {
+    detectMediaExtensionFromHeader(header)?.takeIf(LocalMediaFormats::isImage)?.let { return it }
     val extension = displayName
         ?.substringAfterLast('.', missingDelimiterValue = "")
         ?.lowercase(Locale.ROOT)

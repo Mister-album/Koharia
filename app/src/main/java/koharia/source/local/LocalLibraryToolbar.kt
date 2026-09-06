@@ -44,8 +44,8 @@ internal fun LocalLibraryToolbar(
     onConnectionSelect: (Long) -> Unit,
     hasActiveFilters: Boolean,
     onImportClick: () -> Unit,
+    onMergeImagesClick: () -> Unit,
     onFilterClick: () -> Unit,
-    onRefreshClick: () -> Unit,
     onSettingsClick: () -> Unit,
     navigateUp: (() -> Unit)?,
     onSearch: (String) -> Unit,
@@ -107,13 +107,13 @@ internal fun LocalLibraryToolbar(
                         )
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(MR.strings.action_webview_refresh),
-                                onClick = onRefreshClick,
+                                title = stringResource(MR.strings.image_comic_merge),
+                                onClick = onMergeImagesClick,
                             ),
                         )
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(MR.strings.local_library_directories),
+                                title = stringResource(MR.strings.local_library_manage_bookshelves),
                                 onClick = onSettingsClick,
                             ),
                         )

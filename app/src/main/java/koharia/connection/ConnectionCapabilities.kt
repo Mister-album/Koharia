@@ -57,6 +57,11 @@ interface ConnectionLocalFileAdapter {
     fun localChapterFile(chapterUrl: String): UniFile?
 }
 
+/** Reader defaults follow the owning library, independently of the currently selected UI tab. */
+interface ConnectionReaderRoutingAdapter {
+    suspend fun readerContentScope(manga: Manga, chapter: Chapter): LibraryContentScope
+}
+
 /** Supplies a provider-selected image that can be saved as the series custom cover. */
 interface ConnectionSeriesCoverAdapter {
     suspend fun loadSuggestedSeriesCover(mangaUrl: String): ByteArray?
@@ -367,6 +372,7 @@ data class ConnectionPublicationMetadata(
     val fileName: String?,
     val sizeBytes: Long?,
     val metadataError: Throwable? = null,
+    val mediaType: String? = null,
 )
 
 interface ConnectionViewerSettingsAdapter {

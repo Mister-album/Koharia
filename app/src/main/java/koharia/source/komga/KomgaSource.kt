@@ -95,6 +95,7 @@ class KomgaSource(
     ConnectionMangaBehaviorAdapter,
     ConnectionHealthAdapter,
     ConnectionRawDownloadAdapter,
+    koharia.connection.ConnectionReaderRoutingAdapter,
     ConnectionDownloadStorageAdapter,
     ConnectionPublicationAdapter,
     ConnectionViewerSettingsAdapter,
@@ -547,7 +548,11 @@ class KomgaSource(
             sizeBytes = memoFingerprint?.sizeBytes ?: 0L,
             fallback = "book:${chapter.id}:${chapter.url}",
         )
-        val shouldLookup = allowRemoteLookup && !KomgaChapterMemo.hasCompleteEpubClassification(chapter.memo)
+        val shouldLookup = allowRemoteLookup &&
+            (
+                !KomgaChapterMemo.hasCompleteEpubClassification(chapter.memo) ||
+                    KomgaChapterMemo.mediaType(chapter.memo) == null
+                )
         val remoteLookup = if (shouldLookup) runCatching { getBookDetails(chapter.url) } else Result.success(null)
         val remoteBook = remoteLookup.getOrNull()
         if (remoteBook != null) {
@@ -587,7 +592,22 @@ class KomgaSource(
             sizeBytes = remoteBook?.sizeBytes?.takeIf { it > 0L }
                 ?: memoFingerprint?.sizeBytes?.takeIf { it > 0L },
             metadataError = remoteLookup.exceptionOrNull(),
+            mediaType = remoteBook?.media?.mediaType ?: KomgaChapterMemo.mediaType(chapter.memo),
         )
+    }
+
+    override suspend fun readerContentScope(
+        manga: tachiyomi.domain.manga.model.Manga,
+        chapter: tachiyomi.domain.chapter.model.Chapter,
+    ): koharia.connection.LibraryContentScope {
+        val classification = Injekt.get<KomgaLibraryClassificationManager>()
+        if (!classification.enabled.get()) return koharia.connection.LibraryContentScope.ALL
+        val libraryId = KomgaChapterMemo.libraryId(chapter.memo) ?: getBookDetails(chapter.url)?.libraryId
+        return when (classification.getLibraries(id).firstOrNull { it.id == libraryId }?.kind) {
+            KomgaLibraryKind.COMIC -> koharia.connection.LibraryContentScope.COMIC
+            KomgaLibraryKind.BOOK -> koharia.connection.LibraryContentScope.BOOK
+            null -> koharia.connection.LibraryContentScope.ALL
+        }
     }
 
     override suspend fun getCachedEpubProgress(

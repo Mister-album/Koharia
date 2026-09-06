@@ -137,11 +137,24 @@ import kotlin.math.roundToInt
 class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     companion object {
+        const val EXTRA_PDF_REFLOW_REQUESTED = "pdf_reflow_requested"
         private const val READER_EDGE_PADDING_DP = 8
         private const val PAGINATION_SETTINGS_DEBOUNCE_MS = 250L
         private const val PAGINATION_VIEWPORT_DEBOUNCE_MS = 250L
         private const val PROGRESSION_SEEK_DEBOUNCE_MS = 100L
         private const val FOOTNOTE_TOUCH_POSITION_MAX_AGE_MS = 10_000L
+
+        fun newPdfReflowIntent(
+            context: Context,
+            mangaId: Long?,
+            chapterId: Long?,
+            sourceId: Long?,
+            initialPage: Int? = null,
+            resolution: EpubReaderSupportResolution? = null,
+        ): Intent = newIntent(context, mangaId, chapterId, sourceId, resolution).apply {
+            putExtra(EXTRA_PDF_REFLOW_REQUESTED, true)
+            initialPage?.let { putExtra("pdf_reflow_initial_page", it) }
+        }
 
         fun newIntent(
             context: Context,
@@ -166,6 +179,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     putExtra("epub_resolution_manual_download", it.isManualDownload)
                     putExtra("epub_resolution_complete_cache", it.isCompleteCache)
                     putExtra("epub_resolution_divina", it.isDivinaCompatible)
+                    putExtra("pdf_reflow_revision", it.pdfReflowRevision)
                 }
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
@@ -410,7 +424,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             Box(modifier = Modifier.fillMaxSize()) {
                 ModalNavigationDrawer(
                     drawerState = drawerState,
-                    gesturesEnabled = state.menuVisible && !state.isSearchActive,
+                    gesturesEnabled = drawerState.isOpen && !state.isSearchActive,
                     drawerContent = {
                         ModalDrawerSheet(
                             modifier = Modifier
@@ -484,9 +498,15 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                 totalPositions = state.totalPositions,
                                 progression = state.progression,
                                 currentVisualPage = state.currentVisualPage
-                                    ?.takeIf { currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED },
+                                    ?.takeIf {
+                                        currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED &&
+                                            state.paginationPhase.hasAccuratePageCount
+                                    },
                                 totalVisualPages = state.totalVisualPages
-                                    ?.takeIf { currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED },
+                                    ?.takeIf {
+                                        currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED &&
+                                            state.paginationPhase.hasAccuratePageCount
+                                    },
                                 enabledPreviousChapter = adjacentTocEntries.first != null ||
                                     state.previousBookChapterId != null,
                                 enabledNextChapter = adjacentTocEntries.second != null ||
@@ -558,20 +578,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                 morePanel = {
                                     EpubReaderMorePanel(
                                         state = state,
+                                        isPdfReflow = intent.getStringExtra("pdf_reflow_revision") != null ||
+                                            intent.getBooleanExtra(EXTRA_PDF_REFLOW_REQUESTED, false),
                                         onOpenAsPages = {
                                             activePanel = EpubBottomPanel.NONE
-                                            startActivity(
-                                                IncomingMediaNavigation.inheritTemporaryMediaUri(
-                                                    from = intent,
-                                                    target = ReaderActivity.newIntent(
-                                                        this@EpubReaderActivity,
-                                                        state.mangaId,
-                                                        state.chapterId,
-                                                        sourceId,
-                                                    ),
-                                                ),
-                                            )
-                                            finish()
+                                            openAsOriginalPages()
                                         },
                                         onReload = {
                                             activePanel = EpubBottomPanel.NONE
@@ -706,18 +717,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                             }
                                         },
                                         onOpenAsPages = {
-                                            startActivity(
-                                                IncomingMediaNavigation.inheritTemporaryMediaUri(
-                                                    from = intent,
-                                                    target = ReaderActivity.newIntent(
-                                                        this@EpubReaderActivity,
-                                                        state.mangaId,
-                                                        state.chapterId,
-                                                        sourceId,
-                                                    ),
-                                                ),
-                                            )
-                                            finish()
+                                            openAsOriginalPages()
                                         }.takeIf { state.canOpenAsPages && state.mangaId > 0 && state.chapterId > 0 },
                                     )
                                 }
@@ -1000,10 +1000,41 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         viewModel.updateLocator(locator)
     }
 
+    override fun onPdfSourceAnchorChanged(id: String, href: String) {
+        viewModel.onPdfSourceAnchorChanged(id, href)
+    }
+
+    override fun preferredPdfSourceAnchor(): String? = viewModel.preferredPdfSourceAnchor
+
+    private fun openAsOriginalPages() {
+        lifecycleScope.launch {
+            epubReaderFragment()?.capturePdfSourceAnchor()
+            viewModel.saveCurrentProgress()
+            val state = viewModel.state.value
+            startActivity(
+                IncomingMediaNavigation.inheritTemporaryMediaUri(
+                    from = intent,
+                    target = ReaderActivity.newIntent(
+                        this@EpubReaderActivity,
+                        state.mangaId,
+                        state.chapterId,
+                        sourceId,
+                        pageIndex = viewModel.currentOriginalPdfPage(),
+                    ),
+                ),
+            )
+            finish()
+        }
+    }
+
     override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
         viewModel.onFirstContentDisplayed()
         viewModel.updateVisualPage(pageIndex, totalPages, locator)
         displayRefreshHost.flash()
+        lifecycleScope.launch {
+            epubReaderFragment()?.currentTocHref(viewModel.tableOfContents().map { it.link })
+                ?.let(viewModel::updateCurrentTocHref)
+        }
     }
 
     override fun onBookPaginationChanged(
@@ -1094,6 +1125,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        viewModel.onReadingInteraction()
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             val decorView = window.decorView
             if (decorView.width > 0 && decorView.height > 0) {
@@ -1106,6 +1138,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        viewModel.onReadingInteraction()
         val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
             event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
         val isSpenPageKey = event.metaState.and(KeyEvent.META_CTRL_ON) > 0 &&
@@ -1388,6 +1421,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     private fun navigateAdjacentChapter(forward: Boolean) {
+        lifecycleScope.launch {
+            epubReaderFragment()?.currentTocHref(viewModel.tableOfContents().map { it.link })
+                ?.let(viewModel::updateCurrentTocHref)
+            navigateResolvedAdjacentChapter(forward)
+        }
+    }
+
+    private fun navigateResolvedAdjacentChapter(forward: Boolean) {
         val state = viewModel.state.value
         val adjacentSections = viewModel.adjacentTocEntries(
             entries = viewModel.tableOfContents(),

@@ -33,6 +33,7 @@ object KomgaChapterMemo {
     const val ISBN = "isbn"
     const val IS_EPUB = "isEpub"
     const val MEDIA_PROFILE = "mediaProfile"
+    const val MEDIA_TYPE = "mediaType"
     const val EPUB_DIVINA_COMPATIBLE = "epubDivinaCompatible"
     const val EPUB_PAGE_PROGRESS_MIGRATED = "epubPageProgressMigrated"
     const val FILE_LAST_MODIFIED = "fileLastModified"
@@ -67,6 +68,7 @@ object KomgaChapterMemo {
             embeddedFileSize?.takeIf(String::isNotBlank)?.let { put(EMBEDDED_FILE_SIZE, it) }
             put(IS_EPUB, book.isEpub)
             put(MEDIA_PROFILE, book.media.mediaProfile)
+            if (book.media.mediaType.isNotBlank()) put(MEDIA_TYPE, book.media.mediaType)
             put(EPUB_DIVINA_COMPATIBLE, book.media.epubDivinaCompatible)
             if (book.fileLastModified.isNotBlank()) put(FILE_LAST_MODIFIED, book.fileLastModified)
             if (book.name.isNotBlank()) put(FILE_NAME, book.name)
@@ -167,6 +169,7 @@ object KomgaChapterMemo {
     fun isEpub(memo: JsonObject): Boolean? = memo[IS_EPUB]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
 
     fun mediaProfile(memo: JsonObject): String? = memo[MEDIA_PROFILE]?.jsonPrimitive?.content
+    fun mediaType(memo: JsonObject): String? = memo.string(MEDIA_TYPE)
 
     fun isEpubDivinaCompatible(memo: JsonObject): Boolean? =
         memo[EPUB_DIVINA_COMPATIBLE]?.jsonPrimitive?.content?.toBooleanStrictOrNull()

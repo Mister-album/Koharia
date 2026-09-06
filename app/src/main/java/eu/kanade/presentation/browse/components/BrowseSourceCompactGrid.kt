@@ -31,6 +31,7 @@ fun BrowseSourceCompactGrid(
     columns: GridCells,
     contentPadding: PaddingValues,
     showTitle: Boolean = true,
+    selectedMangaIds: Set<Long> = emptySet(),
     showLibraryBadges: Boolean,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
     showPagingLoadingIndicator: Boolean = true,
@@ -55,6 +56,7 @@ fun BrowseSourceCompactGrid(
             BrowseSourceCompactGridItem(
                 manga = manga,
                 showTitle = showTitle,
+                isSelected = manga.id in selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress?.invoke(manga),
                 onClick = { onMangaClick(manga) },
@@ -76,6 +78,7 @@ fun BrowseSourceCompactGrid(
 @Composable
 private fun BrowseSourceCompactGridItem(
     manga: Manga,
+    isSelected: Boolean,
     showTitle: Boolean,
     showLibraryBadges: Boolean,
     readProgress: MangaReadProgress?,
@@ -94,6 +97,7 @@ private fun BrowseSourceCompactGridItem(
             url = manga.thumbnailUrl,
             lastModified = manga.coverLastModified,
         ),
+        isSelected = isSelected,
         coverAlpha = if (isLibraryManga) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         coverBadgeStart = {
             InLibraryBadge(enabled = isLibraryManga)

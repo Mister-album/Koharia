@@ -5,6 +5,7 @@ import android.net.Uri
 import koharia.epub.model.EpubOpenRequest
 import koharia.epub.session.EpubPositionsController
 import koharia.epub.session.EpubReaderSession
+import koharia.pdf.cache.PdfReflowCacheManager
 import logcat.LogPriority
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.shared.publication.Locator
@@ -21,48 +22,64 @@ import uy.kohesive.injekt.api.get
 
 class LocalEpubPublicationService(
     private val application: Application = Injekt.get(),
+    private val pdfCacheManager: PdfReflowCacheManager = Injekt.get(),
 ) {
 
     suspend fun open(
         request: EpubOpenRequest,
         initialLocator: Locator?,
     ): EpubReaderSession {
-        val url = requireNotNull(Uri.parse(requireNotNull(request.localUri)).toAbsoluteUrl()) {
-            "Invalid local EPUB URL"
+        val pdfCache = request.pdfReflow?.let { pdfCacheManager }
+        val artifact = request.pdfReflow?.let {
+            checkNotNull(pdfCache?.get(request.sourceId, request.chapterId, it.revision))
         }
-        logcat(LogPriority.DEBUG) {
-            "EPUB local open start chapterId=${request.chapterId} url=$url"
-        }
-        val httpClient = DefaultHttpClient()
-        val assetRetriever = AssetRetriever(application.contentResolver, httpClient)
-        val publicationOpener = PublicationOpener(
-            DefaultPublicationParser(application, httpClient, assetRetriever, null),
-        )
-
-        val asset = assetRetriever.retrieve(url, MediaType.EPUB)
-            .getOrElse { throw IllegalStateException(it.message) }
-        val openedPublication = publicationOpener.open(
-            asset,
-            allowUserInteraction = false,
-            onCreatePublication = { installEpubXhtmlCompatibility() },
-        )
-            .getOrElse {
-                asset.close()
-                throw IllegalStateException(it.message)
+        artifact?.let { pdfCache?.acquire(it) }
+        var transferred = false
+        try {
+            val url = requireNotNull(Uri.parse(requireNotNull(request.localUri)).toAbsoluteUrl()) {
+                "Invalid local EPUB URL"
             }
-        val publicationWithPositions = openedPublication.withEpubPositionsController()
-        val publication = publicationWithPositions.publication
-        logcat(LogPriority.DEBUG) {
-            "EPUB local open success chapterId=${request.chapterId} readingOrder=${publication.readingOrder.size} toc=${publication.tableOfContents.size}"
-        }
+            logcat(LogPriority.DEBUG) {
+                "EPUB local open start chapterId=${request.chapterId} url=$url"
+            }
+            val httpClient = DefaultHttpClient()
+            val assetRetriever = AssetRetriever(application.contentResolver, httpClient)
+            val publicationOpener = PublicationOpener(
+                DefaultPublicationParser(application, httpClient, assetRetriever, null),
+            )
 
-        return EpubReaderSession(
-            chapterId = request.chapterId,
-            title = request.title,
-            publication = publication,
-            navigatorFactory = EpubNavigatorFactory(publication),
-            initialLocator = initialLocator,
-            positionsController = publicationWithPositions.controller,
-        )
+            val asset = assetRetriever.retrieve(url, MediaType.EPUB)
+                .getOrElse { throw IllegalStateException(it.message) }
+            val openedPublication = publicationOpener.open(
+                asset,
+                allowUserInteraction = false,
+                onCreatePublication = {
+                    artifact?.progressive?.let { installProgressivePdf(it) }
+                    installEpubXhtmlCompatibility()
+                },
+            )
+                .getOrElse {
+                    asset.close()
+                    throw IllegalStateException(it.message)
+                }
+            val publicationWithPositions = openedPublication.withEpubPositionsController()
+            val publication = publicationWithPositions.publication
+            logcat(LogPriority.DEBUG) {
+                "EPUB local open success chapterId=${request.chapterId} readingOrder=${publication.readingOrder.size} toc=${publication.tableOfContents.size}"
+            }
+
+            return EpubReaderSession(
+                chapterId = request.chapterId,
+                title = request.title,
+                publication = publication,
+                navigatorFactory = EpubNavigatorFactory(publication),
+                initialLocator = initialLocator,
+                positionsController = publicationWithPositions.controller,
+                pdfReflow = request.pdfReflow,
+                onClosed = { artifact?.let { pdfCache?.release(it) } },
+            ).also { transferred = true }
+        } finally {
+            if (!transferred) artifact?.let { pdfCache?.release(it) }
+        }
     }
 }

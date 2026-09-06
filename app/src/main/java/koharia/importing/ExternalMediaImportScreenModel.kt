@@ -42,6 +42,7 @@ class ExternalMediaImportScreenModel(
     private val restrictedConnectionId: Long? = null,
     private val preferredShelfId: String? = null,
     initialStep: Step = Step.ACTIONS,
+    private val generatedComicPath: String? = null,
 ) : StateScreenModel<ExternalMediaImportScreenModel.State>(State(step = initialStep)) {
 
     private val eventChannel = Channel<Event>(capacity = Channel.BUFFERED)
@@ -49,6 +50,11 @@ class ExternalMediaImportScreenModel(
 
     init {
         reload()
+    }
+
+    override fun onDispose() {
+        generatedComicPath?.let { ImageComicArchive.deleteTemporary(context, java.io.File(it)) }
+        super.onDispose()
     }
 
     fun reload() {
@@ -68,19 +74,31 @@ class ExternalMediaImportScreenModel(
                 it.copy(
                     isLoading = false,
                     items = items,
-                    connections = connections,
+                    connections = connections.map { connection ->
+                        if (connection.id == selectedConnection?.id) {
+                            connection.copy(shelves = connection.shelves.sortedBy { it.id != initialTarget.shelfId })
+                        } else {
+                            connection
+                        }
+                    },
                     selectedConnectionId = selectedConnection?.id,
-                    selectedDestinationId = initialTarget.destination?.id,
-                    selectedShelfId = initialTarget.shelfId,
+                    selectedDestinationId = null,
+                    selectedShelfId = null,
                     openSourceId = openSourceId,
                     seriesName = it.seriesName.ifBlank { suggestedSeriesName(items) },
                     loadFailure = when {
+                        it.step == Step.IMPORT_CONFIGURATION &&
+                            items.any { item ->
+                                LocalMediaFormats.isImage(item.extension)
+                            } -> LoadFailure.SCATTERED_IMAGES
+                        items.size != uriValues.distinct().size -> LoadFailure.NO_SUPPORTED_MEDIA
                         items.isEmpty() -> LoadFailure.NO_SUPPORTED_MEDIA
                         connections.isEmpty() && openSourceId == null -> LoadFailure.NO_DESTINATION
                         else -> null
                     },
                 )
             }
+            if (state.value.loadFailure != null) return@launchIO
             if (state.value.step == Step.IMPORT_CONFIGURATION) {
                 startMetadataScan(items)
             } else if (state.value.step == Step.OPENING) {
@@ -128,6 +146,7 @@ class ExternalMediaImportScreenModel(
     }
 
     fun selectNewSeries() {
+        if (state.value.isImporting) return
         mutableState.update {
             it.copy(
                 seriesTargetMode = SeriesTargetMode.NEW,
@@ -141,15 +160,13 @@ class ExternalMediaImportScreenModel(
     }
 
     fun selectExistingSeries(seriesId: String) {
-        val series = state.value.existingSeries.firstOrNull { it.id == seriesId } ?: return
+        if (state.value.isImporting) return
+        val series = state.value.filteredExistingSeries.firstOrNull { it.id == seriesId } ?: return
         mutableState.update {
             it.copy(
                 step = Step.IMPORT_CONFIGURATION,
                 seriesTargetMode = SeriesTargetMode.EXISTING,
                 selectedExistingSeriesId = series.id,
-                selectedShelfId = series.shelfId
-                    ?.takeIf { shelfId -> it.availableShelves.any { shelf -> shelf.id == shelfId } }
-                    ?: it.selectedShelfId,
                 existingSeriesSearchQuery = null,
             )
         }
@@ -161,55 +178,29 @@ class ExternalMediaImportScreenModel(
     }
 
     fun selectConnection(connectionId: Long) {
-        val connection = state.value.connections.firstOrNull { it.id == connectionId } ?: return
-        val destination = connection.destinations.firstOrNull()
+        if (state.value.isImporting) return
+        if (state.value.connections.none { it.id == connectionId }) return
         mutableState.update {
-            it.copy(
-                selectedConnectionId = connection.id,
-                selectedDestinationId = destination?.id,
-                selectedShelfId = defaultShelfId(connection, destination, it.items),
-                seriesTargetMode = SeriesTargetMode.NEW,
-                selectedExistingSeriesId = null,
-                existingSeries = emptyList(),
-                loadedSeriesDestinationKey = null,
-                isLoadingExistingSeries = false,
-            )
+            it.copy(selectedConnectionId = connectionId).withImportSelection(null, null)
         }
     }
 
     fun selectDestination(destinationId: String) {
-        val snapshot = state.value
-        val connection = snapshot.selectedConnection ?: return
-        val destination = connection.destinations.firstOrNull { it.id == destinationId } ?: return
-        mutableState.update {
-            it.copy(
-                selectedDestinationId = destination.id,
-                selectedShelfId = defaultShelfId(connection, destination, it.items),
-                seriesTargetMode = SeriesTargetMode.NEW,
-                selectedExistingSeriesId = null,
-                existingSeries = emptyList(),
-                loadedSeriesDestinationKey = null,
-                isLoadingExistingSeries = false,
-            )
-        }
+        if (state.value.isImporting) return
+        mutableState.update { it.selectImportDirectory(destinationId) }
     }
 
     fun selectShelf(shelfId: String?) {
-        val snapshot = state.value
-        val destination = shelfId
-            ?.let(snapshot::destinationForShelf)
-            ?: snapshot.selectedDestination
-        if (shelfId != null && destination == null) return
-        mutableState.update {
-            it.copy(
-                selectedDestinationId = destination?.id,
-                selectedShelfId = shelfId,
-                seriesTargetMode = SeriesTargetMode.NEW,
-                selectedExistingSeriesId = null,
-                existingSeries = emptyList(),
-                loadedSeriesDestinationKey = null,
-                isLoadingExistingSeries = false,
-            )
+        if (state.value.isImporting) return
+        mutableState.update { it.selectImportShelf(shelfId) }
+    }
+
+    fun selectSeriesMode(mode: SeriesTargetMode) {
+        if (state.value.isImporting || state.value.selectedDestination == null) return
+        if (mode == SeriesTargetMode.NEW) {
+            selectNewSeries()
+        } else {
+            mutableState.update { it.copy(seriesTargetMode = mode) }
         }
     }
 
@@ -287,7 +278,7 @@ class ExternalMediaImportScreenModel(
     }
 
     private suspend fun loadConnections(items: List<ConnectionMediaImportItem>): List<ImportConnection> {
-        if (items.isEmpty()) return emptyList()
+        if (items.isEmpty() || items.any { LocalMediaFormats.isImage(it.extension) }) return emptyList()
         return connectionPreferences.getProfiles()
             .filter { restrictedConnectionId == null || it.id == restrictedConnectionId }
             .mapNotNull { profile ->
@@ -432,8 +423,9 @@ class ExternalMediaImportScreenModel(
             get() {
                 val connection = selectedConnection ?: return emptyList()
                 val shelf = connection.shelves.firstOrNull { it.id == selectedShelfId }
-                    ?: return connection.destinations
+                    ?: return emptyList()
                 return connection.destinations.filter { destination -> destination.supportsShelf(shelf, items) }
+                    .sortedBy { it.defaultShelfId != shelf.id }
             }
 
         fun destinationForShelf(shelfId: String): ConnectionMediaImportDestination? {
@@ -447,13 +439,17 @@ class ExternalMediaImportScreenModel(
             get() = selectedDestination?.grouping == ConnectionMediaGrouping.INDIVIDUAL
 
         val selectedExistingSeries: ConnectionMediaImportSeries?
-            get() = existingSeries.firstOrNull { it.id == selectedExistingSeriesId }
+            get() = existingSeries.firstOrNull {
+                it.id == selectedExistingSeriesId && it.destinationId == selectedDestinationId &&
+                    (selectedShelfId == null || it.shelfId == selectedShelfId)
+            }
 
         val filteredExistingSeries: List<ConnectionMediaImportSeries>
             get() {
                 val query = existingSeriesSearchQuery.orEmpty().trim()
                 return existingSeries.filter { series ->
-                    (selectedShelfId == null || series.shelfId == selectedShelfId) &&
+                    series.destinationId == selectedDestinationId &&
+                        (selectedShelfId == null || series.shelfId == selectedShelfId) &&
                         (query.isBlank() || series.name.contains(query, ignoreCase = true))
                 }
             }
@@ -467,14 +463,18 @@ class ExternalMediaImportScreenModel(
         val canImport: Boolean
             get() = !isLoading && !isImporting && !isOpening &&
                 (seriesTargetMode == SeriesTargetMode.EXISTING || !isScanningMetadata) &&
-                items.isNotEmpty() && selectedConnection != null && selectedDestination != null &&
+                items.isNotEmpty() && items.none { LocalMediaFormats.isImage(it.extension) } &&
+                selectedConnection != null &&
+                selectedDestination != null &&
+                selectableDestinations.any { it.id == selectedDestinationId } &&
                 (isIndividualDestination || effectiveSeriesName.isNotBlank())
 
         val canOpen: Boolean
             get() = !isLoading && !isImporting && !isOpening && items.size == 1 && openSourceId != null
 
         val canConfigureImport: Boolean
-            get() = !isLoading && !isImporting && !isOpening && items.isNotEmpty()
+            get() = !isLoading && !isImporting && !isOpening && items.isNotEmpty() &&
+                items.none { LocalMediaFormats.isImage(it.extension) }
     }
 
     @Immutable
@@ -487,6 +487,7 @@ class ExternalMediaImportScreenModel(
 
     enum class LoadFailure {
         NO_SUPPORTED_MEDIA,
+        SCATTERED_IMAGES,
         NO_DESTINATION,
     }
 
@@ -512,6 +513,36 @@ class ExternalMediaImportScreenModel(
         data class Opened(val intent: Intent) : Event
         data class OpenFailed(val error: Throwable?) : Event
     }
+}
+
+internal fun ExternalMediaImportScreenModel.State.withImportSelection(
+    shelfId: String?,
+    destinationId: String?,
+): ExternalMediaImportScreenModel.State = copy(
+    selectedShelfId = shelfId,
+    selectedDestinationId = destinationId,
+    seriesTargetMode = ExternalMediaImportScreenModel.SeriesTargetMode.NEW,
+    selectedExistingSeriesId = null,
+    existingSeries = emptyList(),
+    existingSeriesSearchQuery = null,
+    loadedSeriesDestinationKey = null,
+    isLoadingExistingSeries = false,
+)
+
+internal fun ExternalMediaImportScreenModel.State.selectImportShelf(
+    shelfId: String?,
+): ExternalMediaImportScreenModel.State {
+    if (shelfId != null && selectableShelves.none { it.id == shelfId }) return this
+    if (shelfId == selectedShelfId) return this
+    return withImportSelection(shelfId, null)
+}
+
+internal fun ExternalMediaImportScreenModel.State.selectImportDirectory(
+    destinationId: String,
+): ExternalMediaImportScreenModel.State {
+    if (selectableDestinations.none { it.id == destinationId }) return this
+    if (destinationId == selectedDestinationId) return this
+    return withImportSelection(selectedShelfId, destinationId)
 }
 
 private fun defaultShelfId(

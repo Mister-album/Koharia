@@ -14,6 +14,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
+import kotlin.math.roundToInt
+
+internal fun readerPageIndicatorText(
+    currentPage: Int,
+    totalPages: Int,
+    visiblePageStart: Int,
+    percentageOnly: Boolean,
+): String? {
+    if (currentPage <= 0 || totalPages <= 0) return null
+    if (percentageOnly) {
+        val progress = if (totalPages <= 1) 0.0 else (currentPage - 1).toDouble() / (totalPages - 1)
+        return "${(progress * 100).roundToInt().coerceIn(0, 100)}%"
+    }
+    val current = if (visiblePageStart in 1 until currentPage) "$visiblePageStart\u2013$currentPage" else "$currentPage"
+    return "$current / $totalPages"
+}
 
 @Composable
 fun ReaderPageIndicator(
@@ -21,15 +37,9 @@ fun ReaderPageIndicator(
     totalPages: Int,
     visiblePageStart: Int = currentPage,
     modifier: Modifier = Modifier,
+    percentageOnly: Boolean = false,
 ) {
-    if (currentPage <= 0 || totalPages <= 0) return
-
-    val currentText = if (visiblePageStart in 1 until currentPage) {
-        "$visiblePageStart\u2013$currentPage"
-    } else {
-        currentPage.toString()
-    }
-    val text = "$currentText / $totalPages"
+    val text = readerPageIndicatorText(currentPage, totalPages, visiblePageStart, percentageOnly) ?: return
 
     val style = TextStyle(
         color = Color(235, 235, 235),

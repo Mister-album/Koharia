@@ -249,6 +249,9 @@ open class Pager(
      * views manipulate [requestDisallowInterceptTouchEvent].
      */
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        // PhotoView can release interception before ScaleGestureDetector crosses its span slop.
+        // Let the image keep the complete multi-pointer gesture instead of starting a page drag.
+        if (ev.pointerCount > 1) return false
         return try {
             super.onInterceptTouchEvent(ev)
         } catch (e: IllegalArgumentException) {

@@ -13,6 +13,8 @@ import android.text.SpannableString
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.LeadingMarginSpan
+import android.util.DisplayMetrics
+import android.util.TypedValue
 import com.hippo.unifile.UniFile
 import koharia.media.LocalMediaFormats
 import kotlinx.coroutines.currentCoroutineContext
@@ -31,7 +33,7 @@ data class DocumentRenderSettings(
     val backgroundColor: Int = Color.WHITE,
     val textColor: Int = Color.BLACK,
     val fontSizeScale: Float = 1f,
-    /** Document pages use a readable bitmap-rendering base independent of EPUB's CSS default. */
+    /** Base size before reader and system font scaling. */
     val baseFontSizeSp: Float = DEFAULT_BASE_FONT_SIZE_SP,
     val lineHeight: Float = 1.7f,
     val paragraphSpacing: Float = 0.05f,
@@ -50,7 +52,7 @@ data class DocumentRenderSettings(
     }
 
     companion object {
-        const val DEFAULT_BASE_FONT_SIZE_SP = 24f
+        const val DEFAULT_BASE_FONT_SIZE_SP = 16f
         val DEFAULT: DocumentRenderSettings by lazy { DocumentRenderSettings() }
     }
 }
@@ -104,6 +106,16 @@ data class DocumentMetadata(
 )
 
 class DocumentEngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+internal fun DocumentRenderSettings.createTextPaint(displayMetrics: DisplayMetrics): TextPaint {
+    val fontSizeSp = baseFontSizeSp.coerceAtLeast(1f) * fontSizeScale.coerceIn(0.5f, 3f)
+    return TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = textColor
+        density = displayMetrics.density
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, fontSizeSp, displayMetrics)
+        typeface = this@createTextPaint.typeface
+    }
+}
 
 object DocumentEngines {
     private val engines = mutableListOf<DocumentEngine>(
@@ -216,9 +228,10 @@ private class TextDocumentContent(
     text: CharSequence,
     val metadata: DocumentMetadata,
 ) {
-    val density = context.resources.displayMetrics.density
-    val pageWidth = context.resources.displayMetrics.widthPixels.coerceAtLeast(320)
-    val pageHeight = context.resources.displayMetrics.heightPixels.coerceAtLeast(480)
+    val displayMetrics = DisplayMetrics().also { it.setTo(context.resources.displayMetrics) }
+    val density = displayMetrics.density
+    val pageWidth = displayMetrics.widthPixels.coerceAtLeast(320)
+    val pageHeight = displayMetrics.heightPixels.coerceAtLeast(480)
     private val publisherText = normalizeDocumentText(text)
     private val plainText = publisherText.toString()
 
@@ -296,12 +309,7 @@ private class TextDocumentSession(
     private val verticalPadding = dp(28f * settings.verticalMargins.coerceIn(0f, 4f))
     private val textWidth = (pageWidth - horizontalPadding * 2).coerceAtLeast(1)
     private val textHeight = (pageHeight - verticalPadding * 2).coerceAtLeast(1)
-    private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = settings.textColor
-        textSize = settings.baseFontSizeSp.coerceAtLeast(1f) *
-            settings.fontSizeScale.coerceIn(0.5f, 3f) * density
-        typeface = settings.typeface
-    }
+    private val textPaint = settings.createTextPaint(content.displayMetrics)
     override val pageCount: Int = pages.size
 
     override fun page(index: Int): DocumentPage {
@@ -463,14 +471,24 @@ private fun normalizeDocumentText(text: CharSequence): CharSequence {
     return text.toString().replace("\r\n", "\n").replace('\r', '\n')
 }
 
-private data class ParsedMobi(
+internal data class ParsedMobi(
     val text: CharSequence,
     val title: String?,
     val author: String?,
 )
 
-private object MobiParser {
+internal object MobiParser {
     fun parse(bytes: ByteArray): ParsedMobi {
+        val decodedText = decodeText(bytes)
+        val metadata = exthMetadata(bytes, u32(bytes, 78).toInt() + 16)
+        return ParsedMobi(
+            text = parseMarkup(decodedText),
+            title = metadata.title ?: palmTitle(bytes),
+            author = metadata.author,
+        )
+    }
+
+    internal fun decodeText(bytes: ByteArray): String {
         require(bytes.size >= 78) { "Invalid Palm database" }
         val recordCount = u16(bytes, 76)
         require(recordCount > 1) { "MOBI contains no text records" }
@@ -479,13 +497,23 @@ private object MobiParser {
         val firstRecord = offsets.first()
         require(firstRecord in 78 until bytes.size) { "Invalid MOBI record offset" }
         val compression = u16(bytes, firstRecord)
-        val textLength = u32(bytes, firstRecord + 4).toInt().coerceAtMost(bytes.size)
+        val declaredTextLength = u32(bytes, firstRecord + 4)
+        require(declaredTextLength <= MAX_MOBI_TEXT_BYTES) { "MOBI decoded text exceeds the supported size limit" }
+        val textLength = declaredTextLength.toInt()
         val textRecordCount = u16(bytes, firstRecord + 8).coerceAtMost(recordCount - 1)
         val encryption = u16(bytes, firstRecord + 12)
         require(encryption == 0) { "DRM-protected MOBI files are not supported" }
 
         val mobiOffset = firstRecord + 16
-        val encoding = if (mobiOffset + 16 <= bytes.size && ascii(bytes, mobiOffset, 4) == "MOBI") {
+        val hasMobiHeader = mobiOffset + 16 <= bytes.size && ascii(bytes, mobiOffset, 4) == "MOBI"
+        val extraDataFlags = if (hasMobiHeader && u32(bytes, mobiOffset + 4) >= 0xe4 &&
+            firstRecord + 0xf4 <= offsets[1]
+        ) {
+            u16(bytes, firstRecord + 0xf2)
+        } else {
+            0
+        }
+        val encoding = if (hasMobiHeader) {
             when (u32(bytes, mobiOffset + 12)) {
                 65001L -> StandardCharsets.UTF_8
                 else -> Charset.forName("windows-1252")
@@ -494,13 +522,14 @@ private object MobiParser {
             Charset.forName("windows-1252")
         }
 
-        val output = ByteArrayOutputStream(textLength.coerceAtLeast(1024))
+        val output = ByteArrayOutputStream(textLength.coerceIn(1024, 8192))
         repeat(textRecordCount) { index ->
             val recordIndex = index + 1
             val start = offsets.getOrNull(recordIndex) ?: return@repeat
             val end = offsets.getOrNull(recordIndex + 1)?.coerceAtMost(bytes.size) ?: bytes.size
             if (start !in 0 until end || end > bytes.size) return@repeat
-            val record = bytes.copyOfRange(start, end)
+            val recordWithTrailer = bytes.copyOfRange(start, end)
+            val record = recordWithTrailer.copyOf(mobiTextRecordLength(recordWithTrailer, extraDataFlags))
             val decoded = when (compression) {
                 1 -> record
                 2 -> decompressPalmDocRecord(record)
@@ -514,18 +543,35 @@ private object MobiParser {
 
         val decodedBytes = output.toByteArray()
         val expectedTextLength = textLength.takeIf { it > 0 } ?: decodedBytes.size
-        val rawText = decodedBytes.copyOf(expectedTextLength.coerceAtMost(decodedBytes.size))
+        var rawText = decodedBytes.copyOf(expectedTextLength.coerceAtMost(decodedBytes.size))
+        if (hasMobiHeader && u32(bytes, mobiOffset + 4) >= 0xb8 &&
+            firstRecord + 0xc8 <= offsets[1] && u32(bytes, firstRecord + 0x24) == 8L &&
+            u32(bytes, firstRecord + 0xc4) > 1
+        ) {
+            val flowRecord = u32(bytes, firstRecord + 0xc0)
+            require(flowRecord in 1L until recordCount.toLong()) { "Invalid KF8 flow record" }
+            val flowOffset = offsets[flowRecord.toInt()]
+            val flowEnd = offsets.getOrNull(flowRecord.toInt() + 1) ?: bytes.size
+            require(flowOffset >= 0 && flowEnd <= bytes.size && flowEnd - flowOffset >= 28) { "Invalid KF8 flow table" }
+            require(ascii(bytes, flowOffset, 4) == "FDST") { "Invalid KF8 flow table" }
+            val headerLength = u32(bytes, flowOffset + 4)
+            val flowCount = u32(bytes, flowOffset + 8)
+            require(
+                headerLength >= 12 && flowCount >= 2 &&
+                    headerLength + flowCount * 8 <= flowEnd - flowOffset,
+            ) { "Invalid KF8 flow table size" }
+            val firstFlow = flowOffset + headerLength.toInt()
+            val start = u32(bytes, firstFlow)
+            val end = u32(bytes, firstFlow + 4)
+            require(start < end && end <= rawText.size) { "Invalid KF8 text flow range" }
+            // Other KF8 flows contain stylesheets and resources, not reader-visible text.
+            rawText = rawText.copyOfRange(start.toInt(), end.toInt())
+        }
         val decodedText = encoding.decode(ByteBuffer.wrap(rawText)).toString()
             .replace('\u0000', ' ')
             .trim()
         require(decodedText.isNotBlank()) { "MOBI contains no readable text" }
-        val text = parseMarkup(decodedText)
-        val metadata = exthMetadata(bytes, mobiOffset)
-        return ParsedMobi(
-            text = text,
-            title = metadata.title ?: palmTitle(bytes),
-            author = metadata.author,
-        )
+        return decodedText
     }
 
     private fun parseMarkup(value: String): CharSequence {
@@ -592,6 +638,30 @@ private object MobiParser {
     private fun ascii(bytes: ByteArray, offset: Int, length: Int): String {
         return bytes.copyOfRange(offset, offset + length).toString(Charsets.US_ASCII)
     }
+}
+
+internal fun mobiTextRecordLength(record: ByteArray, extraDataFlags: Int): Int {
+    var end = record.size
+    for (flag in 1..15) {
+        if (extraDataFlags and (1 shl flag) == 0) continue
+        var trailerLength = 0
+        var lengthBytes = 0
+        do {
+            require(lengthBytes < end) { "Invalid MOBI trailing data length" }
+            val value = record[end - lengthBytes - 1].toInt() and 0xff
+            trailerLength = trailerLength or ((value and 0x7f) shl (lengthBytes * 7))
+            lengthBytes++
+        } while (value and 0x80 == 0 && lengthBytes < 4)
+        require(trailerLength in lengthBytes..end) { "Invalid MOBI trailing data length" }
+        end -= trailerLength
+    }
+    if (extraDataFlags and 1 != 0) {
+        require(end > 0) { "Missing MOBI multibyte overlap length" }
+        val overlapLength = (record[end - 1].toInt() and 3) + 1
+        require(overlapLength <= end) { "Invalid MOBI multibyte overlap length" }
+        end -= overlapLength
+    }
+    return end
 }
 
 internal fun decompressPalmDocRecord(record: ByteArray): ByteArray {

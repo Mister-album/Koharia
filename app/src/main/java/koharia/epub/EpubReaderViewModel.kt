@@ -47,6 +47,10 @@ import koharia.epub.service.EpubPublicationResolver
 import koharia.epub.session.EpubReaderSession
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubReaderPreferences
+import koharia.pdf.cache.PdfPreparationOutcome
+import koharia.pdf.cache.PdfReflowArtifact
+import koharia.pdf.cache.PdfReflowCacheManager
+import koharia.pdf.reflow.PdfProgressMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +65,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -212,6 +217,42 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var positionsRefreshStarted = false
     private var lastPrefetchedHref: String? = null
     private var remoteProgressChecked = false
+    private var pdfReflowArtifact: PdfReflowArtifact? = null
+    private var pdfCompletionJob: Job? = null
+    private var visiblePdfBlockId: String? = null
+    var preferredPdfSourceAnchor: String? = null
+        private set
+
+    fun onPdfSourceAnchorChanged(id: String, href: String) {
+        val artifact = pdfReflowArtifact ?: return
+        if (latestLocator?.href?.toString()?.isSameResourceHref(href) != true) return
+        if (artifact.manifest.blocks.any { it.id == id }) {
+            visiblePdfBlockId = id
+            updatePdfPercentage()
+        }
+    }
+
+    private fun updatePdfPercentage() {
+        val manifest = pdfReflowArtifact?.manifest ?: return
+        if (manifest.chunkSize == 0) return
+        val page = currentOriginalPdfPage() ?: return
+        val progress = page.toDouble() / (manifest.pageCount - 1).coerceAtLeast(1)
+        mutableState.update { it.copy(progression = progress, progressionPercent = (progress * 100).roundToInt()) }
+    }
+
+    private fun exportableLocalUri(localUri: String?): String? {
+        val artifact = pdfReflowArtifact ?: return localUri
+        if (!artifact.manifest.isComplete) return null
+        return artifact.epub.toURI().toString()
+    }
+
+    internal fun onReadingInteraction() {
+        pdfReflowArtifact?.progressive?.onReadingInteraction()
+    }
+
+    fun currentOriginalPdfPage(): Int? = pdfReflowArtifact?.manifest?.let { manifest ->
+        latestLocator?.let { PdfProgressMapper.block(manifest, it, visiblePdfBlockId)?.source?.page }
+    }
     private var remoteProgressWriteAllowed = false
     private var remoteProgressWriteBaseline: Locator? = null
     private var localProgressUpdatedAtSessionOpen: Long? = null
@@ -265,6 +306,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
         chapterId: Long,
         preserveLocalProgressAfterLayoutChange: Boolean = false,
     ): Result<Unit> {
+        pdfCompletionJob?.cancel()
+        pdfCompletionJob = null
         completeCacheJob?.cancel()
         completeCacheJob = null
         paginationPersistJob?.cancel()
@@ -293,7 +336,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 bookSizeBytes = null,
                 localEpubUri = null,
                 isUsingLocalFile = false,
-                canOpenAsPages = false,
+                canOpenAsPages = savedState.get<String>("pdf_reflow_revision") != null ||
+                    savedState.get<Boolean>(EpubReaderActivity.EXTRA_PDF_REFLOW_REQUESTED) == true,
                 isLoading = true,
                 isReady = false,
                 errorMessage = null,
@@ -307,12 +351,40 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 currentChapter = chapter
                 val source = sourceManager.get(manga.source) as? ConnectionSource
                     ?: error(application.stringResource(MR.strings.source_unsupported))
-                val publicationAdapter = source as? ConnectionPublicationAdapter
-
                 savedState["source_id"] = source.id
                 currentSourceId = source.id
                 currentProviderId = source.providerId
-                currentEpubProgressAdapter = source as? ConnectionEpubProgressAdapter
+                currentChapterUrl = chapter.url
+                val pdfRequested = savedState.get<Boolean>(EpubReaderActivity.EXTRA_PDF_REFLOW_REQUESTED) == true
+                val pdfRevision = savedState.get<String>("pdf_reflow_revision")
+                pdfReflowArtifact =
+                    pdfRevision?.let { Injekt.get<PdfReflowCacheManager>().get(source.id, chapter.id, it) }
+                if (pdfReflowArtifact == null && pdfRequested) {
+                    mutableState.update {
+                        it.copy(
+                            mangaTitle = manga.title,
+                            chapterTitle = chapter.name,
+                            currentVisualPage = null,
+                            totalVisualPages = null,
+                            paginationPhase = EpubPaginationPhase.CALCULATING,
+                        )
+                    }
+                    pdfReflowArtifact = koharia.epub.service.PdfReflowPublicationService().prepare(
+                        source,
+                        manga,
+                        chapter,
+                        scopedPreferenceStoreFactory.basePreferences(source.id).incognitoMode.get(),
+                        savedState.get<Int>("pdf_reflow_initial_page") ?: chapter.lastPageRead.toInt(),
+                    )
+                    savedState["pdf_reflow_revision"] = checkNotNull(pdfReflowArtifact).manifest.revision
+                } else if (pdfRevision != null && pdfReflowArtifact == null) {
+                    error(application.stringResource(MR.strings.pdf_reflow_cache_missing))
+                }
+                visiblePdfBlockId = null
+                val publicationAdapter = source as? ConnectionPublicationAdapter
+
+                currentEpubProgressAdapter =
+                    (source as? ConnectionEpubProgressAdapter).takeIf { pdfReflowArtifact == null }
                 epubReaderPreferences = scopedPreferenceStoreFactory.epubReaderPreferences(source.id)
                 basePreferences = scopedPreferenceStoreFactory.basePreferences(source.id)
                 incognitoSession = basePreferences.incognitoMode.get()
@@ -358,6 +430,13 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     ?.toString()
 
                 val publicationMetadata = when {
+                    pdfReflowArtifact != null -> ConnectionPublicationMetadata(
+                        remoteResourceId = null,
+                        publicationKey = "pdf-reflow:${checkNotNull(pdfReflowArtifact).manifest.revision}",
+                        isPageCompatible = false,
+                        fileName = chapter.name,
+                        sizeBytes = checkNotNull(pdfReflowArtifact).epub.length(),
+                    )
                     publicationAdapter != null -> publicationAdapter.resolvePublication(
                         chapter = chapter,
                         allowRemoteLookup = !hasLauncherResolution,
@@ -371,16 +450,27 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     )
                     else -> error(application.stringResource(MR.strings.source_unsupported))
                 }
-                val cachedBookFile = epubCacheManager.completeBookFile(source.id, publicationMetadata.publicationKey)
+                val cachedBookFile = if (pdfReflowArtifact ==
+                    null
+                ) {
+                    epubCacheManager.completeBookFile(source.id, publicationMetadata.publicationKey)
+                } else {
+                    null
+                }
                 val cachedBookUri = cachedBookFile?.toURI()?.toString()
                 val reusableResolvedLocalUri = resolvedLocalUri
                     .takeUnless { resolvedCompleteCache && cachedBookFile == null }
-                val preferredLocalUri = reusableResolvedLocalUri ?: downloadedUri ?: cachedBookUri
+                val preferredLocalUri =
+                    pdfReflowArtifact?.epub?.toURI()?.toString() ?: reusableResolvedLocalUri ?: downloadedUri
+                        ?: cachedBookUri
                 val remoteBookUrl = when {
+                    pdfReflowArtifact != null -> null
                     hasLauncherResolution -> resolvedRemoteBookUrl
                     else -> publicationMetadata.remoteResourceId
                 }
-                val canOpenAsPages = if (hasLauncherResolution) {
+                val canOpenAsPages = if (pdfReflowArtifact != null) {
+                    true
+                } else if (hasLauncherResolution) {
                     savedState.get<Boolean>("epub_resolution_divina") == true
                 } else {
                     publicationMetadata.isPageCompatible
@@ -419,7 +509,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         chapterTitle = chapter.name,
                         bookFileName = bookFileName,
                         bookSizeBytes = bookSizeBytes,
-                        localEpubUri = localUri,
+                        localEpubUri = exportableLocalUri(localUri),
                         isUsingLocalFile = primarySource == EpubOpenRequest.OpenSource.LOCAL,
                         canOpenAsPages = canOpenAsPages,
                     )
@@ -439,8 +529,10 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         "local:$localUri"
                     else -> publicationMetadata.publicationKey
                 }
-                epubCacheManager.acquirePublication(source.id, checkNotNull(currentPublicationKey))
-                leasedPublicationKey = currentPublicationKey
+                if (pdfReflowArtifact == null) {
+                    epubCacheManager.acquirePublication(source.id, checkNotNull(currentPublicationKey))
+                    leasedPublicationKey = currentPublicationKey
+                }
                 cachedBookFile?.takeIf {
                     primarySource == EpubOpenRequest.OpenSource.LOCAL && localUri == cachedBookUri
                 }?.let {
@@ -492,12 +584,24 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         persistedLocator != null &&
                         remoteProgress != null
                 val initialRemoteProgress = remoteProgress.takeUnless { deferCachedRemoteSelection }
-                val initialLocator = savedStateLocator
-                    ?: if (preserveLocalProgressAfterLayoutChange) {
-                        persistedLocator
+                val initialLocator = if (pdfReflowArtifact != null) {
+                    if (preserveLocalProgressAfterLayoutChange) {
+                        latestLocator
                     } else {
-                        chooseMoreRecentLocator(localProgress, initialRemoteProgress)
+                        PdfProgressMapper.initial(
+                            checkNotNull(pdfReflowArtifact).manifest,
+                            localProgress?.locatorJson,
+                            savedState.remove<Int>("pdf_reflow_initial_page") ?: chapter.lastPageRead.toInt(),
+                        )
                     }
+                } else {
+                    savedStateLocator
+                        ?: if (preserveLocalProgressAfterLayoutChange) {
+                            persistedLocator
+                        } else {
+                            chooseMoreRecentLocator(localProgress, initialRemoteProgress)
+                        }
+                }
                 val acceptedRemoteInitially = savedStateLocator == null &&
                     !preserveLocalProgressAfterLayoutChange &&
                     initialRemoteProgress != null &&
@@ -541,8 +645,18 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         publisherStylesOverride = publisherStylesOverride,
                         publicationKey = checkNotNull(currentPublicationKey),
                         persistCache = !incognito,
+                        pdfReflow = pdfReflowArtifact?.manifest,
                     ),
-                    initialLocator = initialLocator,
+                    initialLocator = initialLocator.also {
+                        if (pdfReflowArtifact != null && !preserveLocalProgressAfterLayoutChange) {
+                            preferredPdfSourceAnchor = PdfProgressMapper.preferredAnchor(
+                                checkNotNull(pdfReflowArtifact).manifest,
+                                it,
+                                localProgress?.locatorJson,
+                            )
+                            visiblePdfBlockId = preferredPdfSourceAnchor
+                        }
+                    },
                 )
                 sessionRepository.put(session)
                 applyPublicationPositions(session.positionsController.currentPositions())
@@ -575,7 +689,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         chapterTitle = chapter.name,
                         bookFileName = bookFileName,
                         bookSizeBytes = bookSizeBytes,
-                        localEpubUri = localUri,
+                        localEpubUri = exportableLocalUri(localUri),
                         isUsingLocalFile = primarySource == EpubOpenRequest.OpenSource.LOCAL,
                         canOpenAsPages = canOpenAsPages,
                         previousBookChapterId = previousBookChapterId,
@@ -598,7 +712,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         isIncognito = incognito,
                         bookmarks = bookmarks,
                         currentBookmarkId = findBookmarkForLocator(bookmarks, initialLocator)?.id,
-                        isSearchable = session.publication.isSearchable,
+                        isSearchable =
+                        session.publication.isSearchable && pdfReflowArtifact?.manifest?.isComplete != false,
+                        isPreparingPdf = pdfReflowArtifact?.manifest?.isComplete == false,
                         searchResults = emptyList(),
                         isSearchLoading = false,
                         searchErrorMessage = null,
@@ -621,6 +737,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 }
             }
                 .onFailure { error ->
+                    if (error is CancellationException) throw error
                     logcat(LogPriority.ERROR, error) {
                         "EPUB init failed chapterId=$chapterId mangaId=$mangaId"
                     }
@@ -982,6 +1099,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         if (!isIncognito()) {
             locatorUpdates.tryEmit(persistentLocator)
         }
+        updatePdfPercentage()
     }
 
     fun updateVisualPage(pageIndex: Int, totalPages: Int, locator: Locator) {
@@ -1023,6 +1141,32 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     fun onFirstContentDisplayed() {
+        val preparation = pdfReflowArtifact?.progressive
+        if (preparation != null && pdfCompletionJob == null && mutableState.value.isPreparingPdf) {
+            preparation.onReadingInteraction()
+            preparation.startBackground()
+            val session = sessionRepository.get(chapterId)
+            pdfCompletionJob = viewModelScope.launch {
+                val outcome = preparation.outcome.first { it != null }
+                if (session !== sessionRepository.get(chapterId)) return@launch
+                if (outcome is PdfPreparationOutcome.Failed) {
+                    mutableState.update {
+                        it.withPdfPreparationFailure(application.stringResource(MR.strings.pdf_reflow_failed))
+                    }
+                    return@launch
+                }
+                mutableState.update {
+                    it.copy(
+                        isPreparingPdf = false,
+                        localEpubUri = preparation.artifact.epub.toURI().toString(),
+                        bookSizeBytes = preparation.artifact.epub.length(),
+                        isSearchable = session?.publication?.isSearchable == true,
+                        paginationSourceVersion = it.paginationSourceVersion + 1,
+                    )
+                }
+                refreshPositionsAfterDisplay()
+            }
+        }
         refreshRemoteProgressAfterDisplay()
         refreshPositionsAfterDisplay()
         prefetchNextResourceIfNeeded()
@@ -1107,6 +1251,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     private fun refreshPositionsAfterDisplay() {
+        if (pdfReflowArtifact?.manifest?.isComplete == false) return
         if (positionsRefreshStarted) return
         val session = sessionRepository.get(chapterId) ?: return
         positionsRefreshStarted = true
@@ -1362,6 +1507,17 @@ class EpubReaderViewModel @JvmOverloads constructor(
         val publication = sessionRepository.getForPagination(chapterId)?.publication
         val hasLocalPaginationSource = mutableState.value.isUsingLocalFile ||
             sessionRepository.hasDedicatedPaginationSession(chapterId)
+        if (pdfReflowArtifact?.manifest?.isComplete == false) {
+            bookVisualPageCounts = emptyMap()
+            mutableState.update {
+                it.copy(
+                    currentVisualPage = null,
+                    totalVisualPages = null,
+                    paginationPhase = EpubPaginationPhase.CALCULATING,
+                )
+            }
+            return EpubPaginationRequest(generation, publicationKey, snapshot.key, snapshot.json, emptyMap(), false)
+        }
         if (publication?.metadata?.layout == Layout.FIXED) {
             val fixedCounts = publication.readingOrder.associate { link ->
                 link.href.toString().normalizedResourceHref() to 1
@@ -1626,6 +1782,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     suspend fun locatorAtProgression(progression: Double): Locator? {
         val target = progression.coerceIn(0.0, 1.0)
+        pdfReflowArtifact?.manifest?.takeIf { it.chunkSize > 0 }?.let { manifest ->
+            return PdfProgressMapper.initial(manifest, null, (target * (manifest.pageCount - 1)).roundToInt())
+        }
         sessionRepository.get(chapterId)
             ?.publication
             ?.locateProgression(target)
@@ -1774,6 +1933,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
         return positionedEntries.getOrNull(currentIndex - 1)?.first to
             positionedEntries.getOrNull(currentIndex + 1)?.first
+    }
+
+    fun updateCurrentTocHref(href: String) {
+        mutableState.update { state ->
+            if (state.currentHref?.isSameResourceHref(href) == true) state.copy(currentHref = href) else state
+        }
     }
 
     fun locatorFromBookmark(bookmark: EpubBookmark): Locator? {
@@ -1946,6 +2111,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     }
 
     override fun onCleared() {
+        pdfCompletionJob?.cancel()
         completeCacheJob?.cancel()
         paginationPersistJob?.cancel()
         imageLoadJob?.cancel()
@@ -2116,8 +2282,20 @@ class EpubReaderViewModel @JvmOverloads constructor(
             updatedAt = progressUpdatedAt,
             lastSyncedAt = previousProgress?.lastSyncedAt,
         )
-        upsertEpubProgress.await(progress)
-        currentProgress = progress
+        val pdfManifest = pdfReflowArtifact?.manifest
+        val pdfBlock = pdfManifest?.let { PdfProgressMapper.block(it, locator, visiblePdfBlockId) }
+        val persistedProgress = if (pdfManifest != null && pdfBlock != null) {
+            updateChapter.await(ChapterUpdate(id = chapterId, lastPageRead = pdfBlock.source.page.toLong()))
+            progress.copy(
+                locatorJson = PdfProgressMapper.serialize(pdfManifest, locator, pdfBlock),
+                bookUrl = null,
+                progression = pdfBlock.source.page.toDouble() / (pdfManifest.pageCount - 1).coerceAtLeast(1),
+            )
+        } else {
+            progress
+        }
+        upsertEpubProgress.await(persistedProgress)
+        currentProgress = persistedProgress
         persistPaginationCache(
             isComplete = mutableState.value.paginationPhase in setOf(
                 EpubPaginationPhase.CACHED,
@@ -2154,9 +2332,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private suspend fun markChapterCompletedIfNeeded(locator: Locator) {
         if (completionMarkedThisSession || currentChapterRead) return
 
-        val totalProgression = (locator.locations.totalProgression as? Number)?.toDouble() ?: return
-        val threshold = epubReaderPreferences.completionThresholdPercent.get().coerceIn(0, 100) / 100.0
-        if (totalProgression < threshold) return
+        val pdf = pdfReflowArtifact?.manifest
+        if (pdf != null) {
+            if (currentOriginalPdfPage() != pdf.pageCount - 1) return
+        } else {
+            val totalProgression = (locator.locations.totalProgression as? Number)?.toDouble() ?: return
+            val threshold = epubReaderPreferences.completionThresholdPercent.get().coerceIn(0, 100) / 100.0
+            if (totalProgression < threshold) return
+        }
 
         updateChapter.await(
             ChapterUpdate(

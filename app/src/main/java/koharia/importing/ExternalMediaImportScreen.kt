@@ -20,6 +20,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,6 +58,8 @@ import koharia.connection.ConnectionMediaImportDestination
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.epub.EpubReaderLauncher
+import koharia.importing.ExternalMediaImportScreenModel.SeriesTargetMode
+import koharia.media.LocalMediaFormats
 import koharia.source.local.LocalFolderSettingsScreen
 import koharia.source.local.LocalFolderSource
 import koharia.source.local.LocalLibraryEntryOpenManager
@@ -78,6 +83,7 @@ data class ExternalMediaImportScreen(
     private val restrictedConnectionId: Long? = null,
     private val preferredShelfId: String? = null,
     private val returnToCallerAfterImport: Boolean = false,
+    private val generatedComicPath: String? = null,
 ) : Screen() {
 
     @Composable
@@ -94,6 +100,7 @@ data class ExternalMediaImportScreen(
                 restrictedConnectionId,
                 preferredShelfId,
                 returnToCallerAfterImport,
+                generatedComicPath,
             ).joinToString("|"),
         ) {
             ExternalMediaImportScreenModel(
@@ -115,6 +122,7 @@ data class ExternalMediaImportScreen(
                 ),
                 restrictedConnectionId = restrictedConnectionId,
                 preferredShelfId = preferredShelfId,
+                generatedComicPath = generatedComicPath,
                 initialStep = when {
                     openImmediately -> ExternalMediaImportScreenModel.Step.OPENING
                     startAtImportConfiguration -> ExternalMediaImportScreenModel.Step.IMPORT_CONFIGURATION
@@ -357,7 +365,13 @@ data class ExternalMediaImportScreen(
                             item {
                                 TextPreferenceWidget(
                                     title = stringResource(MR.strings.external_media_action_import),
-                                    subtitle = stringResource(MR.strings.external_media_action_import_summary),
+                                    subtitle = stringResource(
+                                        if (state.items.any { LocalMediaFormats.isImage(it.extension) }) {
+                                            MR.strings.external_media_images_use_merge
+                                        } else {
+                                            MR.strings.external_media_action_import_summary
+                                        },
+                                    ),
                                     enabled = state.canConfigureImport,
                                     onPreferenceClick = screenModel::showImportConfiguration,
                                 )
@@ -381,67 +395,81 @@ data class ExternalMediaImportScreen(
                                     title = stringResource(MR.strings.external_media_destination_group),
                                 )
                             }
-                            item {
-                                TextPreferenceWidget(
-                                    title = stringResource(MR.strings.external_media_connection),
-                                    subtitle = state.selectedConnection?.name,
-                                    onPreferenceClick = { dialog = SelectionDialog.Connection },
-                                )
-                            }
-                            if (state.selectableShelves.isNotEmpty()) {
+                            if (state.connections.size > 1) {
                                 item {
-                                    TextPreferenceWidget(
-                                        title = stringResource(MR.strings.local_library_bookshelves),
-                                        subtitle = state.selectableShelves
-                                            .firstOrNull { it.id == state.selectedShelfId }
-                                            ?.name,
-                                        onPreferenceClick = { dialog = SelectionDialog.Shelf },
+                                    ImportSelectionField(
+                                        label = stringResource(MR.strings.external_media_connection),
+                                        value = state.selectedConnection?.name,
+                                        placeholder = stringResource(MR.strings.import_choose_connection),
+                                        enabled = !state.isImporting,
+                                        onClick = { dialog = SelectionDialog.Connection },
                                     )
                                 }
                             }
                             item {
-                                TextPreferenceWidget(
-                                    title = stringResource(MR.strings.local_library_directories),
-                                    subtitle = state.selectedDestination?.name,
-                                    onPreferenceClick = { dialog = SelectionDialog.Destination },
+                                ImportSelectionField(
+                                    label = stringResource(MR.strings.import_step_shelf),
+                                    value = state.selectableShelves.firstOrNull {
+                                        it.id == state.selectedShelfId
+                                    }?.name,
+                                    placeholder = stringResource(MR.strings.import_choose_shelf),
+                                    enabled = !state.isImporting && state.selectableShelves.isNotEmpty(),
+                                    onClick = { dialog = SelectionDialog.Shelf },
                                 )
                             }
-                            if (!state.isIndividualDestination) {
+                            if (state.selectedShelfId != null) {
+                                item {
+                                    ImportSelectionField(
+                                        label = stringResource(MR.strings.import_step_directory),
+                                        value = state.selectedDestination?.name,
+                                        placeholder = stringResource(MR.strings.import_choose_directory),
+                                        enabled = !state.isImporting && state.selectableDestinations.isNotEmpty(),
+                                        onClick = { dialog = SelectionDialog.Destination },
+                                    )
+                                }
+                            }
+                            if (state.selectedDestination != null && !state.isIndividualDestination) {
                                 item {
                                     PreferenceGroupHeader(
                                         title = stringResource(MR.strings.external_media_series_group),
                                     )
                                 }
                                 item {
-                                    TextPreferenceWidget(
-                                        title = stringResource(MR.strings.external_media_create_new_series),
-                                        subtitle = stringResource(MR.strings.external_media_create_new_series_summary),
-                                        widget = {
-                                            RadioButton(
-                                                selected = state.seriesTargetMode ==
-                                                    ExternalMediaImportScreenModel.SeriesTargetMode.NEW,
-                                                onClick = null,
-                                            )
-                                        },
-                                        onPreferenceClick = screenModel::selectNewSeries,
-                                    )
+                                    SingleChoiceSegmentedButtonRow(
+                                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                    ) {
+                                        SeriesTargetMode.entries.forEachIndexed { index, mode ->
+                                            SegmentedButton(
+                                                selected = state.seriesTargetMode == mode,
+                                                enabled = !state.isImporting,
+                                                onClick = { screenModel.selectSeriesMode(mode) },
+                                                shape = SegmentedButtonDefaults.itemShape(index, 2),
+                                            ) {
+                                                Text(
+                                                    stringResource(
+                                                        if (mode == SeriesTargetMode.NEW) {
+                                                            MR.strings.import_series_new
+                                                        } else {
+                                                            MR.strings.import_series_existing
+                                                        },
+                                                    ),
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                                item {
-                                    TextPreferenceWidget(
-                                        title = stringResource(MR.strings.external_media_choose_existing_series),
-                                        subtitle = state.selectedExistingSeries?.name
-                                            ?: stringResource(MR.strings.external_media_choose_existing_series_summary),
-                                        widget = {
-                                            RadioButton(
-                                                selected = state.seriesTargetMode ==
-                                                    ExternalMediaImportScreenModel.SeriesTargetMode.EXISTING,
-                                                onClick = null,
-                                            )
-                                        },
-                                        onPreferenceClick = screenModel::showExistingSeries,
-                                    )
+                                if (state.seriesTargetMode == SeriesTargetMode.EXISTING) {
+                                    item {
+                                        ImportSelectionField(
+                                            label = stringResource(MR.strings.external_media_choose_existing_series),
+                                            value = state.selectedExistingSeries?.name,
+                                            placeholder = stringResource(MR.strings.import_choose_series),
+                                            enabled = !state.isImporting,
+                                            onClick = screenModel::showExistingSeries,
+                                        )
+                                    }
                                 }
-                                if (state.seriesTargetMode == ExternalMediaImportScreenModel.SeriesTargetMode.NEW) {
+                                if (state.seriesTargetMode == SeriesTargetMode.NEW) {
                                     item {
                                         Column(
                                             modifier = Modifier
@@ -474,13 +502,15 @@ data class ExternalMediaImportScreen(
                                     }
                                 }
                             }
-                            item {
-                                SwitchPreferenceWidget(
-                                    title = stringResource(MR.strings.external_media_open_after_import),
-                                    checked = state.openAfterImport,
-                                    enabled = !state.isImporting,
-                                    onCheckedChanged = screenModel::setOpenAfterImport,
-                                )
+                            if (state.selectedDestination != null) {
+                                item {
+                                    SwitchPreferenceWidget(
+                                        title = stringResource(MR.strings.external_media_open_after_import),
+                                        checked = state.openAfterImport,
+                                        enabled = !state.isImporting,
+                                        onCheckedChanged = screenModel::setOpenAfterImport,
+                                    )
+                                }
                             }
                         }
                     }
@@ -620,6 +650,8 @@ private fun ImportFailureContent(
                         MR.strings.external_media_unsupported
                     ExternalMediaImportScreenModel.LoadFailure.NO_DESTINATION ->
                         MR.strings.external_media_no_destination
+                    ExternalMediaImportScreenModel.LoadFailure.SCATTERED_IMAGES ->
+                        MR.strings.external_media_images_use_merge
                 },
             ),
             style = MaterialTheme.typography.bodyLarge,

@@ -60,8 +60,8 @@ android {
     defaultConfig {
         applicationId = "app.koharia"
 
-        versionCode = 9
-        versionName = "0.4.2"
+        versionCode = 10
+        versionName = "0.4.5"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getLatestCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getLatestCommitSha()}\"")
@@ -70,6 +70,12 @@ android {
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    externalNativeBuild {
+        ndkBuild {
+            path = file("src/main/cpp/pdf/Android.mk")
+        }
     }
 
     buildTypes {
@@ -208,6 +214,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(libs.pdfium.core)
     implementation(projects.i18n)
     implementation(projects.core.archive)
     implementation(projects.core.common)

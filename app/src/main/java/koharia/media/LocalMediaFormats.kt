@@ -113,6 +113,10 @@ object LocalMediaFormats {
     val reflowableBookExtensions: Set<String> = (setOf(epub, text, mobi))
         .flatMapTo(linkedSetOf()) { it.extensions }
     val comicExtensions: Set<String> = (allExtensions - bookExtensions) + pdf.extensions
+    val documentImportExtensions: Set<String> = allExtensions - images.extensions
+    val comicImportExtensions: Set<String> = comicExtensions - images.extensions
+    val documentImportMimeTypes: Set<String> = available.filter { it.kind != LocalMediaKind.IMAGE }
+        .flatMapTo(linkedSetOf()) { it.mimeTypes } + "application/octet-stream"
     val allMimeTypes: Set<String> = available.flatMapTo(linkedSetOf()) { it.mimeTypes }
 
     fun find(extension: String?): LocalMediaFormat? {

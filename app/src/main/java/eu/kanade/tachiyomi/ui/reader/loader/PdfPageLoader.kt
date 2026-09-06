@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.loader
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.SystemClock
 import com.hippo.unifile.UniFile
@@ -25,7 +26,7 @@ import kotlin.math.sqrt
 /** Loader used to render pages from a PDF file without an encoded-image round trip. */
 internal class PdfPageLoader(
     context: Context,
-    file: UniFile,
+    private val file: UniFile,
 ) : PageLoader() {
 
     private val renderLock = Any()
@@ -58,6 +59,8 @@ internal class PdfPageLoader(
     }
 
     override var isLocal: Boolean = true
+
+    override val pdfFile: UniFile get() = file
 
     override suspend fun getPages(): List<ReaderPage> {
         val loadedPages = List(renderer.pageCount) { index ->
@@ -201,6 +204,7 @@ internal class PdfPageLoader(
                 viewportHeight = viewportHeight,
             )
             val bitmap = Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(Color.WHITE)
             val startedAt = SystemClock.elapsedRealtime()
             try {
                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)

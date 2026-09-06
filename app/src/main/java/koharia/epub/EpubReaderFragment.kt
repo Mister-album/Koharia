@@ -65,6 +65,9 @@ class EpubReaderFragment : Fragment() {
 
         fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator)
 
+        fun onPdfSourceAnchorChanged(id: String, href: String) {}
+        fun preferredPdfSourceAnchor(): String? = null
+
         fun onBookPaginationChanged(
             generation: Long,
             pageCounts: Map<String, Int>,
@@ -111,11 +114,11 @@ class EpubReaderFragment : Fragment() {
     private var navigatorInputListener: InputListener? = null
     private var pageTransitionController: EpubPageTransitionController? = null
     private var pageTransitionOverlay: EpubPageTransitionOverlayView? = null
-    private var pageTurnDragAccepted = false
-    private var pageTurnDragFallbackJob: Job? = null
-    private var pageTurnDragStartHref: String? = null
-    private var pageTurnDragStartPageIndex = -1
     private var currentTransitionPageIndex = -1
+    private var currentTransitionPageCount = 0
+    private var currentTransitionHref: String? = null
+    private var pdfAnchorCaptureJob: Job? = null
+    private var lastReadingInteraction = SystemClock.uptimeMillis()
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
     private var readerFontScale = 1f
@@ -182,7 +185,16 @@ class EpubReaderFragment : Fragment() {
         override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
             pageTransitionController?.onPageChanged(pageIndex, locator.href.toString())
             currentTransitionPageIndex = pageIndex
+            currentTransitionPageCount = totalPages
+            currentTransitionHref = locator.href.toString()
             host?.onPageChanged(pageIndex, totalPages, locator)
+            if (sessionRepository.get(chapterId)?.pdfReflow != null) {
+                pdfAnchorCaptureJob?.cancel()
+                pdfAnchorCaptureJob = viewLifecycleOwner.lifecycleScope.launch {
+                    delay(100)
+                    capturePdfSourceAnchor()
+                }
+            }
             scheduleImageInteractionsInstall()
         }
 
@@ -356,6 +368,8 @@ class EpubReaderFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        pdfAnchorCaptureJob?.cancel()
+        pdfAnchorCaptureJob = null
         pageTransitionController?.cancel()
         pageTransitionController = null
         pageTransitionOverlay = null
@@ -383,6 +397,53 @@ class EpubReaderFragment : Fragment() {
         return navigator.go(link)
     }
 
+    suspend fun capturePdfSourceAnchor() {
+        if (sessionRepository.get(chapterId)?.pdfReflow == null) return
+        val navigator = readyNavigatorFragment() ?: return
+        val before = navigator.currentLocator.value
+        val preferred = org.json.JSONObject.quote(host?.preferredPdfSourceAnchor().orEmpty())
+        val raw = withTimeoutOrNull(1_000) {
+            navigator.evaluateJavascript(
+                """
+            (function(){
+                const width = document.documentElement.clientWidth;
+                const height = document.documentElement.clientHeight;
+                const visible = element => element && Array.from(element.getClientRects()).some(
+                    r => r.right > 1 && r.left < width - 1 && r.bottom > 1 && r.top < height - 1
+                );
+                const preferred = document.getElementById($preferred);
+                if (visible(preferred)) {
+                    const anchor = preferred.matches('[data-pdf-anchor]') ? preferred
+                        : preferred.querySelector('[data-pdf-anchor]');
+                    if (visible(anchor)) return anchor.getAttribute('data-pdf-anchor');
+                }
+                for (const element of document.querySelectorAll('[data-pdf-anchor]')) {
+                    for (const r of element.getClientRects()) {
+                        if (r.right > 1 && r.left < width - 1 && r.bottom > 1 && r.top < height - 1)
+                            return element.getAttribute('data-pdf-anchor');
+                    }
+                }
+                return null;
+            })();
+                """.trimIndent(),
+            )
+        } ?: return
+        if (before != navigator.currentLocator.value) return
+        val id = runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull() ?: return
+        host?.onPdfSourceAnchorChanged(id, before.href.toString())
+    }
+
+    suspend fun currentTocHref(links: List<Link>): String? {
+        val navigator = readyNavigatorFragment() ?: return null
+        val location = navigator.currentLocator.value
+        val candidates = links.filter { it.href.toString().sameEpubResource(location.href.toString()) }
+        if (candidates.size <= 1) return candidates.firstOrNull()?.href?.toString()
+        val script = currentEpubTocIndexScript(candidates.map { it.href.toString().substringAfter('#', "") })
+        val index = withTimeoutOrNull(1_000) { navigator.evaluateJavascript(script)?.toIntOrNull() }
+        if (navigator.currentLocator.value != location) return null
+        return index?.let(candidates::getOrNull)?.href?.toString()
+    }
+
     fun goTo(locator: Locator): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
         pageTransitionController?.cancel()
@@ -392,8 +453,10 @@ class EpubReaderFragment : Fragment() {
     }
 
     fun goForward(origin: PageTurnOrigin? = null): Boolean {
+        lastReadingInteraction = SystemClock.uptimeMillis()
         val navigator = readyNavigatorFragment() ?: return false
         navigateContinuousScroll(forward = true)?.let { return it }
+        if (!canTurnPage(navigator, true)) return true
         return pageTransitionController?.turnPage(
             forward = true,
             currentHref = navigator.currentLocator.value.href.toString(),
@@ -404,8 +467,10 @@ class EpubReaderFragment : Fragment() {
     }
 
     fun goBackward(origin: PageTurnOrigin? = null): Boolean {
+        lastReadingInteraction = SystemClock.uptimeMillis()
         val navigator = readyNavigatorFragment() ?: return false
         navigateContinuousScroll(forward = false)?.let { return it }
+        if (!canTurnPage(navigator, false)) return true
         return pageTransitionController?.turnPage(
             forward = false,
             currentHref = navigator.currentLocator.value.href.toString(),
@@ -413,6 +478,31 @@ class EpubReaderFragment : Fragment() {
             origin = origin ?: PageTurnOrigin.center(PageTurnCause.PROGRAMMATIC),
         )
             ?: navigator.goBackward()
+    }
+
+    private fun canTurnPage(navigator: EpubNavigatorFragment, forward: Boolean): Boolean {
+        val href = navigator.currentLocator.value.href.toString()
+        val publication = sessionRepository.get(chapterId)?.publication ?: return false
+        if (publication.metadata.layout == org.readium.r2.shared.publication.Layout.FIXED) return true
+        if (currentTransitionHref?.sameEpubResource(href) != true || currentTransitionPageCount <= 0) return false
+        val order = publication.readingOrder
+        val index = order.indexOfFirst { it.href.toString().sameEpubResource(href) }
+        val page = if (navigator.settings.value.readingProgression ==
+            org.readium.r2.navigator.preferences.ReadingProgression.RTL
+        ) {
+            currentTransitionPageCount - 1 - currentTransitionPageIndex
+        } else {
+            currentTransitionPageIndex
+        }
+        return canTurnEpubPage(forward, index, order.size, page, currentTransitionPageCount)
+    }
+
+    internal suspend fun awaitReadingIdle() {
+        while (true) {
+            val remaining = 900L - (SystemClock.uptimeMillis() - lastReadingInteraction)
+            if (remaining <= 0) return
+            delay(remaining)
+        }
     }
 
     fun cancelPageTransition() {
@@ -610,6 +700,8 @@ class EpubReaderFragment : Fragment() {
             }
             if (!isAdded || view == null || pendingPaginationRequest?.generation != request.generation) return@launch
             pendingPaginationRequest = null
+            awaitReadingIdle()
+            if (!isAdded || view == null) return@launch
             launchPaginationScanner(request)
         }
     }
@@ -729,6 +821,7 @@ class EpubReaderFragment : Fragment() {
         clearNavigatorInputListener()
         val inputListener = object : InputListener {
             override fun onTap(event: TapEvent): Boolean {
+                lastReadingInteraction = SystemClock.uptimeMillis()
                 val width = navigator.publicationView.width.toFloat().takeIf { it > 0f } ?: return false
                 val height = navigator.publicationView.height.toFloat().takeIf { it > 0f } ?: return false
                 return host?.onTap(
@@ -738,57 +831,10 @@ class EpubReaderFragment : Fragment() {
             }
 
             override fun onDrag(event: DragEvent): Boolean {
-                if (epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.PAGINATED) {
-                    pageTurnDragAccepted = false
-                    return false
-                }
-                return when (event.type) {
-                    DragEvent.Type.Start -> {
-                        pageTurnDragFallbackJob?.cancel()
-                        pageTurnDragFallbackJob = null
-                        pageTurnDragAccepted = abs(event.offset.x) > abs(event.offset.y) * DRAG_AXIS_RATIO
-                        pageTurnDragStartHref = navigator.currentLocator.value.href.toString()
-                        pageTurnDragStartPageIndex = currentTransitionPageIndex
-                        pageTurnDragAccepted
-                    }
-                    DragEvent.Type.Move -> pageTurnDragAccepted
-                    DragEvent.Type.End -> {
-                        val accepted = pageTurnDragAccepted
-                        val startHref = pageTurnDragStartHref
-                        val startPageIndex = pageTurnDragStartPageIndex
-                        pageTurnDragAccepted = false
-                        pageTurnDragStartHref = null
-                        pageTurnDragStartPageIndex = -1
-                        if (accepted && abs(event.offset.x) >= navigator.publicationView.width * DRAG_TURN_FRACTION) {
-                            val towardLeft = event.offset.x < 0f
-                            val forward = if (
-                                epubLayoutPreferences.pageDirection.get() ==
-                                EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
-                            ) {
-                                !towardLeft
-                            } else {
-                                towardLeft
-                            }
-                            val origin = PageTurnOrigin(
-                                xFraction = event.start.x / navigator.publicationView.width,
-                                yFraction = event.start.y / navigator.publicationView.height,
-                                cause = PageTurnCause.GESTURE,
-                            ).normalized()
-                            pageTurnDragFallbackJob = viewLifecycleOwner.lifecycleScope.launch {
-                                delay(DRAG_NAVIGATION_FALLBACK_DELAY_MS)
-                                if (!isAdded || view == null || observedNavigator !== navigator) return@launch
-                                val currentHref = navigator.currentLocator.value.href.toString()
-                                val nativeNavigationCompleted = startHref == null ||
-                                    !currentHref.sameEpubResource(startHref) ||
-                                    currentTransitionPageIndex != startPageIndex
-                                if (!nativeNavigationCompleted) {
-                                    if (forward) goForward(origin) else goBackward(origin)
-                                }
-                            }
-                        }
-                        accepted
-                    }
-                }
+                lastReadingInteraction = SystemClock.uptimeMillis()
+                if (event.type == DragEvent.Type.Start) pageTransitionController?.cancel()
+                // R2WebView owns the complete drag and settling animation, including resource boundaries.
+                return false
             }
         }
         observedNavigator = navigator
@@ -812,11 +858,6 @@ class EpubReaderFragment : Fragment() {
     }
 
     private fun clearNavigatorInputListener() {
-        pageTurnDragAccepted = false
-        pageTurnDragFallbackJob?.cancel()
-        pageTurnDragFallbackJob = null
-        pageTurnDragStartHref = null
-        pageTurnDragStartPageIndex = -1
         navigatorInputListener?.let { listener ->
             observedNavigator?.removeInputListener(listener)
         }
@@ -857,7 +898,7 @@ class EpubReaderFragment : Fragment() {
                         preserveImageColors = preserveImageColors,
                         parentColorsInverted = parentColorsInverted,
                         paginated = shouldFitStandaloneImage(),
-                    ),
+                    ) + EPUB_WARM_NEARBY_IMAGES_SCRIPT,
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -916,7 +957,7 @@ class EpubReaderFragment : Fragment() {
             val policyKey = "$generation:$url"
             val isVisible = webView.isVisiblyDrawn()
             if (visibleFontPolicyPending && !isVisible) return@forEachWebView
-            if (webView.progress < 100) {
+            if (webView.progress < 100 && fontPreparation.requiresAsyncLoad) {
                 installedImageColorPolicies.remove(webView)
                 if (isVisible && shouldBlockImageColorPolicyDraw(root, webView, policyKey)) {
                     visiblePolicyPending = true
@@ -953,6 +994,7 @@ class EpubReaderFragment : Fragment() {
                             webView.url?.substringBefore('#') == url
                         ) {
                             installedImageColorPolicies[webView] = policyKey
+                            webView.evaluateJavascript(EPUB_WARM_NEARBY_IMAGES_SCRIPT, null)
                             imageColorPolicyDrawWaits.remove(webView)
                         }
                         root.postInvalidateOnAnimation()
@@ -1360,9 +1402,6 @@ class EpubReaderFragment : Fragment() {
         private const val CONTINUOUS_SCROLL_INSTALL_DELAY_MS = 180L
         private const val IMAGE_INTERACTION_INSTALL_DELAY_MS = 80L
         private const val IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS = 250L
-        private const val DRAG_AXIS_RATIO = 1.25f
-        private const val DRAG_TURN_FRACTION = 0.12f
-        private const val DRAG_NAVIGATION_FALLBACK_DELAY_MS = 400L
         private const val FONT_PREPARATION_DRAW_TIMEOUT_MS = 8_000L
         private const val FONT_PREPARATION_POLL_MS = 40L
         private const val FONT_BACKGROUND_WAIT_TIMEOUT_MS = 6_000L
