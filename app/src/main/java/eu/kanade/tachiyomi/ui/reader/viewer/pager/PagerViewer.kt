@@ -30,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
@@ -132,6 +133,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private var awaitingIdleViewerChapters: ViewerChapters? = null
 
+    private val pendingPageSplits = linkedMapOf<ReaderPage, InsertPage>()
+
     /**
      * Whether the view pager is currently in idle mode. It sets the awaiting chapters if setting
      * this field to true.
@@ -159,6 +162,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                         adapter.nextTransition?.to?.let(activity::requestPreloadChapter)
                     }
                 }
+                val splits = pendingPageSplits.toMap()
+                pendingPageSplits.clear()
+                splits.forEach { (page, secondHalf) -> adapter.onPageSplit(page, secondHalf) }
                 drainPendingCoverTurn()
             }
         }
@@ -269,6 +275,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             pendingProgressCommitAnchor = null
             val anchor = stableSlotAnchor ?: (currentSlot as? PagerSlot.Pages)?.progressPage
             if (!config.dualPageSplit && !config.automaticallySplitsWidePages) {
+                pendingPageSplits.clear()
                 adapter.removePageSplitItems()
             }
             requestSlotRebuild(anchor)
@@ -299,6 +306,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     override fun destroy() {
+        pendingPageSplits.clear()
         cancelPendingCoverTurn(reactivateCurrent = false)
         pageFlipController.cancel()
         super.destroy()
@@ -934,13 +942,18 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     fun onPageSplit(currentPage: ReaderPage, newPage: InsertPage) {
         activity.runOnUiThread {
+            if (!scope.isActive) return@runOnUiThread
             if (!config.dualPageSplit && !config.automaticallySplitsWidePages) return@runOnUiThread
-            // Need to insert on UI thread else images will go blank
-            adapter.onPageSplit(currentPage, newPage)
+            if (isIdle) {
+                adapter.onPageSplit(currentPage, newPage)
+            } else {
+                pendingPageSplits.putIfAbsent(currentPage, newPage)
+            }
         }
     }
 
     private fun cleanupPageSplit() {
+        pendingPageSplits.clear()
         adapter.removePageSplitItems()
     }
 

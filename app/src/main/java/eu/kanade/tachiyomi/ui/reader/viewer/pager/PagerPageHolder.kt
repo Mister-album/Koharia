@@ -10,6 +10,7 @@ import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.core.view.isVisible
+import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.SCALE_TYPE_CENTER_INSIDE
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
@@ -321,7 +322,13 @@ class PagerPageHolder(
                     view = this@PagerPageHolder,
                     content = processed,
                     isAnimated = isAnimated,
-                    config = imageConfig(landscapeZoom = viewer.config.landscapeZoom),
+                    config = imageConfig(landscapeZoom = viewer.config.landscapeZoom).let { config ->
+                        if (processed.isSplit) {
+                            config.copy(minimumScaleType = SCALE_TYPE_CENTER_INSIDE, landscapeZoom = false)
+                        } else {
+                            config
+                        }
+                    },
                 )
                 if (!isAnimated) pageBackground = background
                 removeErrorLayout()
@@ -449,32 +456,37 @@ class PagerPageHolder(
 
     private fun process(physicalPage: ReaderPage, content: PageContent): PageContent {
         return when (content) {
-            is PageContent.Encoded -> PageContent.Encoded(process(physicalPage, content.source))
-            is PageContent.Rendered -> PageContent.Rendered(process(physicalPage, content.take()))
+            is PageContent.Encoded -> process(physicalPage, content.source)
+            is PageContent.Rendered -> process(physicalPage, content.take())
         }
     }
 
-    private fun process(physicalPage: ReaderPage, source: Bitmap): Bitmap {
+    private fun process(physicalPage: ReaderPage, source: Bitmap): PageContent.Rendered {
         var ownedBitmap = source
+        var isSplit = false
+        fun split(): Bitmap {
+            isSplit = true
+            return ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+        }
         try {
             val processed = when {
                 viewer.config.automaticallySplitsWidePages && physicalPage is InsertPage -> {
-                    ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+                    split()
                 }
                 viewer.config.automaticallySplitsWidePages && ownedBitmap.width > ownedBitmap.height -> {
                     onPageSplit(physicalPage)
-                    ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+                    split()
                 }
                 viewer.config.dualPageRotateToFit && ownedBitmap.width > ownedBitmap.height -> {
                     val rotation = if (viewer.config.dualPageRotateToFitInvert) -90f else 90f
                     ImageUtil.rotateImage(ownedBitmap, rotation)
                 }
                 viewer.config.dualPageSplit && physicalPage is InsertPage -> {
-                    ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+                    split()
                 }
                 viewer.config.dualPageSplit && ownedBitmap.width > ownedBitmap.height -> {
                     onPageSplit(physicalPage)
-                    ImageUtil.splitInHalf(ownedBitmap, splitSide(physicalPage))
+                    split()
                 }
                 else -> ownedBitmap
             }
@@ -482,24 +494,26 @@ class PagerPageHolder(
                 ownedBitmap.recycle()
                 ownedBitmap = processed
             }
-            return ownedBitmap
+            return PageContent.Rendered(ownedBitmap, isSplit)
         } catch (error: Throwable) {
             ownedBitmap.recycle()
             throw error
         }
     }
 
-    private fun process(physicalPage: ReaderPage, imageSource: BufferedSource): BufferedSource {
+    private fun process(physicalPage: ReaderPage, imageSource: BufferedSource): PageContent.Encoded {
         if (viewer.config.automaticallySplitsWidePages) {
             if (physicalPage is InsertPage) return splitInHalf(physicalPage, imageSource)
-            if (ImageUtil.isAnimated(imageSource) || !ImageUtil.isWideImage(imageSource)) return imageSource
+            if (ImageUtil.isAnimated(imageSource) || !ImageUtil.isWideImage(imageSource)) {
+                return PageContent.Encoded(imageSource)
+            }
             onPageSplit(physicalPage)
             return splitInHalf(physicalPage, imageSource)
         }
-        if (viewer.config.dualPageRotateToFit) return rotateDualPage(imageSource)
-        if (!viewer.config.dualPageSplit) return imageSource
+        if (viewer.config.dualPageRotateToFit) return PageContent.Encoded(rotateDualPage(imageSource))
+        if (!viewer.config.dualPageSplit) return PageContent.Encoded(imageSource)
         if (physicalPage is InsertPage) return splitInHalf(physicalPage, imageSource)
-        if (!ImageUtil.isWideImage(imageSource)) return imageSource
+        if (!ImageUtil.isWideImage(imageSource)) return PageContent.Encoded(imageSource)
         onPageSplit(physicalPage)
         return splitInHalf(physicalPage, imageSource)
     }
@@ -510,8 +524,8 @@ class PagerPageHolder(
         return ImageUtil.rotateImage(imageSource, rotation)
     }
 
-    private fun splitInHalf(physicalPage: ReaderPage, imageSource: BufferedSource): BufferedSource {
-        return ImageUtil.splitInHalf(imageSource, splitSide(physicalPage))
+    private fun splitInHalf(physicalPage: ReaderPage, imageSource: BufferedSource): PageContent.Encoded {
+        return PageContent.Encoded(ImageUtil.splitInHalf(imageSource, splitSide(physicalPage)), isSplit = true)
     }
 
     private fun splitSide(physicalPage: ReaderPage): ImageUtil.Side {
@@ -597,13 +611,15 @@ class PagerPageHolder(
     }
 
     private sealed interface PageContent {
+        val isSplit: Boolean
+
         fun recycle()
 
-        class Encoded(val source: BufferedSource) : PageContent {
+        class Encoded(val source: BufferedSource, override val isSplit: Boolean = false) : PageContent {
             override fun recycle() = Unit
         }
 
-        class Rendered(bitmap: Bitmap) : PageContent {
+        class Rendered(bitmap: Bitmap, override val isSplit: Boolean = false) : PageContent {
             private var bitmap: Bitmap? = bitmap
 
             fun peek(): Bitmap = checkNotNull(bitmap)

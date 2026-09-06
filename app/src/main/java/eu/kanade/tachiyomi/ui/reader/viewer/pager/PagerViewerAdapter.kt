@@ -18,7 +18,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         private set
 
     private var sourceItems: MutableList<SourceItem> = mutableListOf()
-    private var preprocessed: MutableMap<Int, InsertPage> = mutableMapOf()
+    private val splitPages = mutableMapOf<ReaderPage, InsertPage>()
 
     var nextTransition: ChapterTransition.Next? = null
         private set
@@ -33,25 +33,27 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         anchor: ReaderPage?,
     ) {
         val newItems = mutableListOf<SourceItem>()
+        val activePages = listOfNotNull(chapters.prevChapter, chapters.currChapter, chapters.nextChapter)
+            .flatMap { it.pages.orEmpty() }
+            .toSet()
+        splitPages.keys.retainAll(activePages)
+
+        fun appendPages(chapter: ReaderChapter?) {
+            chapter?.pages?.forEach { page ->
+                newItems.add(SourceItem.Page(page))
+                splitPages[page]?.let { newItems.add(SourceItem.Page(it)) }
+            }
+        }
 
         val prevHasMissingChapters = calculateChapterGap(chapters.currChapter, chapters.prevChapter) > 0
         val nextHasMissingChapters = calculateChapterGap(chapters.nextChapter, chapters.currChapter) > 0
 
-        chapters.prevChapter?.pages?.mapTo(newItems) { SourceItem.Page(it) }
+        appendPages(chapters.prevChapter)
         if (prevHasMissingChapters || forceTransition || chapters.prevChapter?.state !is ReaderChapter.State.Loaded) {
             newItems.add(SourceItem.Transition(ChapterTransition.Prev(chapters.currChapter, chapters.prevChapter)))
         }
 
-        var insertPageLastPage: InsertPage? = null
-        chapters.currChapter.pages?.let { chapterPages ->
-            val pages = chapterPages.toMutableList()
-            val lastPage = pages.lastOrNull()
-            preprocessed.keys.sortedDescending().forEach { key ->
-                if (lastPage?.index == key) insertPageLastPage = preprocessed[key]
-                preprocessed[key]?.let { pages.add(key + 1, it) }
-            }
-            pages.mapTo(newItems) { SourceItem.Page(it) }
-        }
+        appendPages(chapters.currChapter)
 
         currentChapter = chapters.currChapter
         nextTransition = ChapterTransition.Next(chapters.currChapter, chapters.nextChapter).also { transition ->
@@ -61,13 +63,10 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
                 newItems.add(SourceItem.Transition(transition))
             }
         }
-        chapters.nextChapter?.pages?.mapTo(newItems) { SourceItem.Page(it) }
+        appendPages(chapters.nextChapter)
 
-        preprocessed = mutableMapOf()
         sourceItems = newItems
         rebuildSlots(anchor)
-
-        insertPageLastPage?.let(viewer::moveToPage)
     }
 
     override fun getCount(): Int = slots.size
@@ -124,22 +123,19 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
     }
 
     fun onPageSplit(currentPage: Any?, newPage: InsertPage) {
-        if (currentPage !is ReaderPage) return
-        if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {
-            preprocessed[newPage.index] = newPage
-            return
-        }
-
+        if (currentPage !is ReaderPage || currentPage is InsertPage || newPage.parent !== currentPage) return
         val currentIndex = sourceItems.indexOfFirst { it is SourceItem.Page && it.page === currentPage }
         if (currentIndex < 0) return
-        if ((sourceItems.getOrNull(currentIndex + 1) as? SourceItem.Page)?.page is InsertPage) return
+        if (currentPage in splitPages) return
+        splitPages[currentPage] = newPage
         sourceItems.add(currentIndex + 1, SourceItem.Page(newPage))
-        rebuildSlots(currentPage)
+        // Decoding may finish for a prefetched page; keep the visible half-page selected.
+        rebuildSlots()
     }
 
     fun removePageSplitItems() {
         sourceItems.removeAll { it is SourceItem.Page && it.page is InsertPage }
-        preprocessed.clear()
+        splitPages.clear()
     }
 
     fun refresh() {

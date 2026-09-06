@@ -5,6 +5,11 @@
 -keep,allowoptimization class mihon.**
 -keep,allowoptimization class koharia.**
 
+# Room 2.6 creates database implementations by reflection, including during WorkManager startup.
+-keep class * extends androidx.room.RoomDatabase {
+    public <init>();
+}
+
 # Keep common dependencies used in extensions
 -keep,allowoptimization class androidx.preference.** { public protected *; }
 -keep,allowoptimization class kotlin.** { public protected *; }
