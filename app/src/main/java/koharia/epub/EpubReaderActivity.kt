@@ -410,14 +410,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
             BackHandler(
                 enabled =
-                drawerState.isOpen || activePanel != EpubBottomPanel.NONE || state.isSearchActive ||
-                    state.menuVisible,
+                drawerState.isOpen || activePanel != EpubBottomPanel.NONE || state.isSearchActive,
             ) {
                 when {
                     drawerState.isOpen -> scope.launch { drawerState.close() }
                     activePanel != EpubBottomPanel.NONE -> activePanel = EpubBottomPanel.NONE
                     state.isSearchActive -> viewModel.closeSearch()
-                    state.menuVisible -> viewModel.showMenus(false)
                 }
             }
 
