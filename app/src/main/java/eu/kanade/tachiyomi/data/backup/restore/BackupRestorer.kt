@@ -12,12 +12,17 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceRestorer
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
+import koharia.connection.ConnectionBackupRestoreAdapter
+import koharia.connection.ConnectionRestoreState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -80,20 +85,33 @@ class BackupRestorer(
             restoreAmount += 1
         }
 
-        coroutineScope {
-            if (options.categories) {
-                restoreCategories(backup.backupCategories)
-            }
-            if (options.appSettings) {
-                restoreAppPreferences(backup.backupPreferences, backup.backupCategories.takeIf { options.categories })
-            }
-            if (options.connectionSettings) {
-                restoreSourcePreferences(backup.backupSourcePreferences)
-            }
+        ConnectionRestoreState.duringRestore {
             if (options.libraryEntries) {
-                restoreManga(backup.backupManga, if (options.categories) backup.backupCategories else emptyList())
+                val sourceManager = Injekt.get<SourceManager>()
+                val chaptersBySource = backup.backupManga.groupBy { it.source }
+                chaptersBySource.forEach { (sourceId, mangas) ->
+                    val adapter = sourceManager.get(sourceId) as? ConnectionBackupRestoreAdapter
+                    adapter?.prepareReadingStateRestore(mangas.flatMap { it.chapters }.map { it.url })
+                }
             }
-            // TODO: optionally trigger online library + tracker update
+            coroutineScope {
+                if (options.categories) {
+                    restoreCategories(backup.backupCategories)
+                }
+                if (options.appSettings) {
+                    restoreAppPreferences(
+                        backup.backupPreferences,
+                        backup.backupCategories.takeIf { options.categories },
+                    )
+                }
+                if (options.connectionSettings) {
+                    restoreSourcePreferences(backup.backupSourcePreferences)
+                }
+                if (options.libraryEntries) {
+                    restoreManga(backup.backupManga, if (options.categories) backup.backupCategories else emptyList())
+                }
+                // TODO: optionally trigger online library + tracker update
+            }
         }
     }
 

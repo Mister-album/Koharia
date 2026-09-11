@@ -17,6 +17,11 @@ interface ConnectionSource : Source {
         get() = connectionProfile.providerId
 }
 
+/** Background work belongs to sources installed in SourceManager, not temporary metadata instances. */
+interface ConnectionManagedLifecycle {
+    fun onRegistered()
+}
+
 interface ConnectionProvider {
     val id: String
     val displayName: String
@@ -27,6 +32,9 @@ interface ConnectionProvider {
 
     val configuresConnectionNameInSettings: Boolean
         get() = false
+
+    val deletionMessage: StringResource?
+        get() = null
 
     fun createSource(profile: LibraryConnectionProfile): ConnectionSource
 

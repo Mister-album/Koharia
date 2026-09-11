@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $targetPackage = "app.koharia.dev.einkfixture"
 $testPackage = "$targetPackage.test"
-$runner = "androidx.test.runner.AndroidJUnitRunner"
+$runner = "koharia.testing.KohariaDeviceTestRunner"
 $testClass = "eu.kanade.tachiyomi.ui.eink.EInkMotionDeviceTest"
 
 function Invoke-Checked {
@@ -41,19 +41,23 @@ try {
     } "Isolated test APK build"
 
     $appMetadata = Get-Content "app\build\outputs\apk\debug\output-metadata.json" | ConvertFrom-Json
+    if ($appMetadata.applicationId -ne $targetPackage) {
+        throw "Refusing to install an APK outside the isolated fixture package: $($appMetadata.applicationId)."
+    }
     $appElement = $appMetadata.elements | Where-Object { $_.filters.Count -eq 0 } | Select-Object -First 1
     if ($null -eq $appElement) { throw "Universal debug APK was not found." }
     $appApk = Join-Path "app\build\outputs\apk\debug" $appElement.outputFile
 
-    $testApk = Get-ChildItem "app\build\outputs\apk\androidTest\debug" -Filter "*.apk" |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if ($null -eq $testApk) { throw "Android test APK was not found." }
+    $testMetadata = Get-Content "app\build\outputs\apk\androidTest\debug\output-metadata.json" | ConvertFrom-Json
+    if ($testMetadata.applicationId -ne $testPackage) {
+        throw "Refusing to install an APK outside the isolated test package: $($testMetadata.applicationId)."
+    }
+    $testElement = $testMetadata.elements | Select-Object -First 1
+    if ($null -eq $testElement) { throw "Android test APK was not found." }
+    $testApk = Join-Path "app\build\outputs\apk\androidTest\debug" $testElement.outputFile
 
-    adb -s $Serial uninstall $testPackage 2>$null | Out-Null
-    adb -s $Serial uninstall $targetPackage 2>$null | Out-Null
-    Invoke-Checked { adb -s $Serial install -t $appApk } "Isolated debug APK install"
-    Invoke-Checked { adb -s $Serial install -t $testApk.FullName } "Isolated test APK install"
+    Invoke-Checked { adb -s $Serial install -r -t $appApk } "Isolated debug APK update (existing data is retained)"
+    Invoke-Checked { adb -s $Serial install -r -t $testApk } "Isolated test APK update (existing data is retained)"
 
     $instrumentation = adb -s $Serial shell am instrument -w -r -e class $testClass "$testPackage/$runner" 2>&1
     $instrumentationExitCode = $LASTEXITCODE
@@ -70,7 +74,5 @@ try {
     }
     throw
 } finally {
-    adb -s $Serial uninstall $testPackage 2>$null | Out-Null
-    adb -s $Serial uninstall $targetPackage 2>$null | Out-Null
     Pop-Location
 }

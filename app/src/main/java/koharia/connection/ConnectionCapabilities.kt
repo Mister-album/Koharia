@@ -33,6 +33,10 @@ interface ConnectionBrowseAdapter {
 interface ConnectionPageAdapter {
     val pageLoadConcurrency: Int
 
+    /** Server page numbers must also identify pages in downloaded copies. */
+    val preserveDownloadPageBoundaries: Boolean
+        get() = false
+
     suspend fun getConnectionPageList(chapter: SChapter, forceNetwork: Boolean): ConnectionPageList
 
     fun decoratePageImageUrls(pages: List<Page>, chapterMemo: JsonObject): List<Page> = pages
@@ -409,6 +413,17 @@ interface ConnectionPageProgressAdapter {
         chapterUrl: String,
         pageIndex: Int,
         totalPages: Int,
+    )
+}
+
+/** Persists confirmed local reading independently of network progress negotiation. */
+interface ConnectionLocalPageProgressAdapter {
+    suspend fun recordLocalPageProgress(
+        chapterUrl: String,
+        pageIndex: Int,
+        totalPages: Int,
+        readAt: Long,
+        initialPage: Boolean = false,
     )
 }
 

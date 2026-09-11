@@ -53,6 +53,7 @@ fun BrowseSourceContent(
     onHelpClick: () -> Unit,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
+    onRefresh: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -97,7 +98,7 @@ fun BrowseSourceContent(
                 EmptyScreenAction(
                     stringRes = MR.strings.action_retry,
                     icon = Icons.Outlined.Refresh,
-                    onClick = mangaList::refresh,
+                    onClick = onRefresh ?: mangaList::refresh,
                 ),
                 EmptyScreenAction(
                     stringRes = MR.strings.action_open_in_web_view,

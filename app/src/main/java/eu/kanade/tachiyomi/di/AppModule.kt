@@ -210,8 +210,16 @@ class AppModule(val app: Application) : InjektModule {
             )
         }
         addSingletonFactory { ConnectionProfileManager(get(), get(), get()) }
+        addSingletonFactory { koharia.lanraragi.LanraragiNetworkMonitor(app) }
+        addSingletonFactory { koharia.lanraragi.LanraragiCatalogSyncCoordinator() }
         addSingletonFactory {
-            ConnectionRegistry(listOf(KomgaConnectionProvider(), LocalFolderConnectionProvider(app)))
+            ConnectionRegistry(
+                listOf(
+                    KomgaConnectionProvider(),
+                    LocalFolderConnectionProvider(app),
+                    koharia.source.lanraragi.LanraragiConnectionProvider(app),
+                ),
+            )
         }
         addSingletonFactory { ConnectionContentScopeController(get(), get()) }
         addSingletonFactory {

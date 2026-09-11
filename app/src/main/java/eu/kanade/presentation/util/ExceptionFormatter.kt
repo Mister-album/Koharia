@@ -3,6 +3,8 @@ package eu.kanade.presentation.util
 import android.content.Context
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.util.system.isOnline
+import koharia.lanraragi.LanraragiException
+import koharia.lanraragi.ui.lanraragiError
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.data.source.NoResultsException
 import tachiyomi.domain.source.model.SourceNotInstalledException
@@ -13,6 +15,7 @@ context(context: Context)
 val Throwable.formattedMessage: String
     get() {
         when (this) {
+            is LanraragiException -> return context.lanraragiError(this)
             is HttpException -> return context.stringResource(MR.strings.exception_http, code)
             is UnknownHostException -> {
                 return if (!context.isOnline()) {

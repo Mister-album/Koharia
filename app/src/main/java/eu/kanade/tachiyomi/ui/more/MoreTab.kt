@@ -33,12 +33,18 @@ import koharia.connection.ConnectionConfigManager
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.feature.support.SupportUsScreen
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.motion.rememberEInkAwareAnimatedVectorPainter
@@ -96,7 +102,7 @@ data object MoreTab : Tab {
     }
 }
 
-private class MoreScreenModel(
+internal class MoreScreenModel(
     private val downloadManager: DownloadManager = Injekt.get(),
     preferences: BasePreferences = Injekt.get(),
 ) : ScreenModel {
@@ -110,6 +116,7 @@ private class MoreScreenModel(
     private val connectionPreferences: ConnectionPreferences = Injekt.get()
     private val localConfigManager: ConnectionConfigManager = Injekt.get()
     private val _user = MutableStateFlow<ConnectionAccount?>(null)
+    private var refreshUserJob: Job? = null
     val user: StateFlow<ConnectionAccount?> = _user.asStateFlow()
     var scopedSettingsEnabled by mutableStateOf(localConfigManager.canEditScopedPreferences())
 
@@ -145,12 +152,26 @@ private class MoreScreenModel(
         refreshUser()
     }
 
-    fun refreshUser() {
-        screenModelScope.launchIO {
-            val activeConnectionId = connectionPreferences.activeConnectionId.get()
+    fun refreshUser(): Job {
+        refreshUserJob?.cancel()
+        val activeConnectionId = connectionPreferences.activeConnectionId.get()
+        _user.value = null
+        return screenModelScope.launchIO {
             val accountAdapter = sourceManager.get(activeConnectionId) as? ConnectionAccountAdapter
-            _user.value = accountAdapter?.getAccount()
-        }
+            val account = loadConnectionAccount(accountAdapter)
+            currentCoroutineContext().ensureActive()
+            if (connectionPreferences.activeConnectionId.get() == activeConnectionId) _user.value = account
+        }.also { refreshUserJob = it }
+    }
+}
+
+internal suspend fun loadConnectionAccount(adapter: ConnectionAccountAdapter?): ConnectionAccount? {
+    return try {
+        if (adapter?.hasValidConnection() != true) null else adapter.getAccount()
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        MoreTab.logcat(LogPriority.WARN, error) { "Unable to refresh connection account" }
+        null
     }
 }
 

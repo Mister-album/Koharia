@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.source
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.online.HttpSource
+import koharia.connection.ConnectionManagedLifecycle
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionRegistry
 import koharia.connection.ConnectionSource
@@ -133,6 +134,7 @@ class AndroidSourceManager(
 
         sourcesMapFlow.value = ConcurrentHashMap(sources.associateBy(Source::id))
         sources.forEach { source ->
+            (source as? ConnectionManagedLifecycle)?.onRegistered()
             registerStubSource(StubSource.from(source))
         }
     }

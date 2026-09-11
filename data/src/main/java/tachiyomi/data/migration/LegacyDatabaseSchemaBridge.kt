@@ -618,6 +618,88 @@ class LegacyDatabaseSchemaBridge(
 
         val AUXILIARY_TABLE_SPECS = listOf(
             TableSpec(
+                name = "lanraragi_catalog",
+                columns = listOf(
+                    ColumnSpec("connection_id"),
+                    ColumnSpec("generation"),
+                    ColumnSpec("resource_id"),
+                    ColumnSpec("payload"),
+                ),
+                createSql = """
+                    CREATE TABLE IF NOT EXISTS lanraragi_catalog(
+                        connection_id INTEGER NOT NULL,
+                        generation INTEGER NOT NULL,
+                        resource_id TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        PRIMARY KEY(connection_id, generation, resource_id)
+                    )
+                """.trimIndent(),
+            ),
+            TableSpec(
+                name = "lanraragi_members",
+                columns = listOf(
+                    ColumnSpec("connection_id"),
+                    ColumnSpec("generation"),
+                    ColumnSpec("parent_id"),
+                    ColumnSpec("member_id"),
+                    ColumnSpec("position"),
+                ),
+                createSql = """
+                    CREATE TABLE IF NOT EXISTS lanraragi_members(
+                        connection_id INTEGER NOT NULL,
+                        generation INTEGER NOT NULL,
+                        parent_id TEXT NOT NULL,
+                        member_id TEXT NOT NULL,
+                        position INTEGER NOT NULL,
+                        PRIMARY KEY(connection_id, generation, parent_id, position)
+                    )
+                """.trimIndent(),
+            ),
+            TableSpec(
+                name = "lanraragi_sync",
+                columns = listOf(
+                    ColumnSpec("connection_id"),
+                    ColumnSpec("generation"),
+                    ColumnSpec("completed_at"),
+                ),
+                createSql = """
+                    CREATE TABLE IF NOT EXISTS lanraragi_sync(
+                        connection_id INTEGER NOT NULL,
+                        generation INTEGER NOT NULL,
+                        completed_at INTEGER NOT NULL,
+                        PRIMARY KEY(connection_id)
+                    )
+                """.trimIndent(),
+            ),
+            TableSpec(
+                name = "lanraragi_read_state",
+                columns = listOf(
+                    ColumnSpec("connection_id"),
+                    ColumnSpec("archive_id"),
+                    ColumnSpec("page_index"),
+                    ColumnSpec("total_pages"),
+                    ColumnSpec("read_at"),
+                    ColumnSpec("local_unread"),
+                    ColumnSpec("pending"),
+                    ColumnSpec("revision"),
+                    ColumnSpec("initial_page", "initial_page INTEGER NOT NULL DEFAULT 0", sinceVersion = 19),
+                ),
+                createSql = """
+                    CREATE TABLE IF NOT EXISTS lanraragi_read_state(
+                        connection_id INTEGER NOT NULL,
+                        archive_id TEXT NOT NULL,
+                        page_index INTEGER NOT NULL,
+                        total_pages INTEGER NOT NULL,
+                        read_at INTEGER NOT NULL,
+                        local_unread INTEGER NOT NULL,
+                        pending INTEGER NOT NULL,
+                        revision INTEGER NOT NULL DEFAULT 1,
+                        initial_page INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(connection_id, archive_id)
+                    )
+                """.trimIndent(),
+            ),
+            TableSpec(
                 name = "extension_repos",
                 columns = listOf(
                     ColumnSpec("base_url"),

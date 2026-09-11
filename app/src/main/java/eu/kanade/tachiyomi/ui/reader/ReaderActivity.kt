@@ -238,6 +238,7 @@ class ReaderActivity : BaseActivity() {
             useEpubSettings: Boolean = false,
             pageIndex: Int? = null,
             autoPdfReflow: Boolean = false,
+            explicitPageSelection: Boolean = false,
         ): Intent {
             if (autoPdfReflow) {
                 return EpubReaderActivity.newPdfReflowIntent(context, mangaId, chapterId, sourceId, pageIndex)
@@ -248,6 +249,7 @@ class ReaderActivity : BaseActivity() {
                 sourceId?.let { putExtra("source", it) }
                 putExtra(EXTRA_USE_EPUB_SETTINGS, useEpubSettings)
                 pageIndex?.let { putExtra("page_index", it) }
+                putExtra("explicit_page_selection", explicitPageSelection)
                 putExtra("auto_pdf_reflow", autoPdfReflow)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }

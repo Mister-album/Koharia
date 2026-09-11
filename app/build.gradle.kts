@@ -32,6 +32,18 @@ val hasReleaseKeystore = keystorePropertiesFile.exists().also { exists ->
 val useEInkDeviceFixture = providers.gradleProperty("einkDeviceFixture")
     .map(String::toBoolean)
     .getOrElse(false)
+val useDeviceTestFixture = providers.gradleProperty("deviceTestFixture")
+    .map(String::toBoolean)
+    .getOrElse(false)
+
+tasks.matching { it.name.startsWith("connected") && it.name.endsWith("AndroidTest") }.configureEach {
+    doFirst {
+        check(useDeviceTestFixture || useEInkDeviceFixture) {
+            "Device tests must use -PdeviceTestFixture=true (or -PeinkDeviceFixture=true). " +
+                "Refusing to test against the manually used app package."
+        }
+    }
+}
 
 fun requireKeystoreProperty(name: String): String {
     return keystoreProperties.getProperty(name)?.takeIf { it.isNotBlank() }
@@ -59,6 +71,7 @@ android {
 
     defaultConfig {
         applicationId = "app.koharia"
+        manifestPlaceholders["kohariaAppLabel"] = "@string/app_name"
 
         versionCode = 10
         versionName = "0.4.5"
@@ -69,7 +82,7 @@ android {
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "koharia.testing.KohariaDeviceTestRunner"
     }
 
     externalNativeBuild {
@@ -80,7 +93,15 @@ android {
 
     buildTypes {
         val debug = getByName("debug") {
-            applicationIdSuffix = if (useEInkDeviceFixture) ".dev.einkfixture" else ".dev"
+            applicationIdSuffix = when {
+                useEInkDeviceFixture -> ".dev.einkfixture"
+                useDeviceTestFixture -> ".dev.devicefixture"
+                else -> ".dev"
+            }
+            if (useEInkDeviceFixture || useDeviceTestFixture) {
+                manifestPlaceholders["kohariaAppLabel"] =
+                    if (useEInkDeviceFixture) "Koharia E-Ink Tests" else "Koharia Auto Tests"
+            }
             versionNameSuffix = "-${getLatestCommitCount()}"
             isPseudoLocalesEnabled = true
         }
@@ -335,6 +356,7 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.compose.uiTestJunit4)
     debugImplementation(libs.androidx.compose.uiTestManifest)
 

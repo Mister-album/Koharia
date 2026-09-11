@@ -107,6 +107,9 @@ import uy.kohesive.injekt.api.get
 class DomainModule : InjektModule {
 
     override fun InjektRegistrar.registerInjectables() {
+        addSingletonFactory<koharia.domain.lanraragi.LanraragiRepository> {
+            koharia.data.lanraragi.LanraragiRepositoryImpl(get(), get())
+        }
         addSingletonFactory<CategoryRepository> { CategoryRepositoryImpl(get()) }
         addFactory { GetCategories(get()) }
         addFactory { ResetCategoryFlags(get(), get()) }

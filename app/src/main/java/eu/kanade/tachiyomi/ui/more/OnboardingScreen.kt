@@ -13,7 +13,6 @@ import eu.kanade.presentation.more.settings.screen.SettingsDataScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import koharia.connection.ui.LibraryConnectionProfilesScreen
-import koharia.source.komga.KomgaConnectionProvider
 import koharia.source.local.LocalFolderConnectionProvider
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
@@ -46,7 +45,6 @@ class OnboardingScreen : Screen() {
                 navigator.push(
                     LibraryConnectionProfilesScreen(
                         openAddDialog = true,
-                        initialProviderId = KomgaConnectionProvider.ID,
                         completeOnboardingAfterAdd = true,
                     ),
                 )

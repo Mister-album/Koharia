@@ -838,7 +838,11 @@ class Downloader(
             }
 
             // When the page is ready, set page path, progress (just in case) and status
-            splitTallImageIfNeeded(page, tmpDir)
+            if ((download.source as? koharia.connection.ConnectionPageAdapter)?.preserveDownloadPageBoundaries !=
+                true
+            ) {
+                splitTallImageIfNeeded(page, tmpDir)
+            }
 
             page.uri = file.uri
             page.progress = 100

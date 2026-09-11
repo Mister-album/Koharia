@@ -7,6 +7,8 @@ Koharia is a Komga-focused Android reader forked from Mihon `0.19.9`. It uses Ko
 ### Preserve User Work And Secrets
 
 - Preserve unrelated user changes; keep edits narrowly scoped.
+- Device tests must retain installed app/test APKs and existing app data after success or failure. Do not automatically run `adb uninstall` or `pm clear`, or uninstall incompatible packages to retry installation, unless the user explicitly requests it. Clean up only data created by the current test; select the target device explicitly.
+- App instrumentation tests must use `-PdeviceTestFixture=true` (`app.koharia.dev.devicefixture`, launcher label `Koharia Auto Tests`) or the existing isolated E-Ink fixture. Never run tests against the user's `app.koharia.dev`, release, FOSS, or preview packages. Package retention alone does not isolate preferences, connection inventory, or library data.
 - Do not use destructive Git commands, force-push, commit, or push unless explicitly requested.
 - Treat `local.properties`, `keystore.properties`, `*.jks`, API keys, and tokens as secrets. Never print, log, or commit them.
 - Confirm the destination before pushing: `github` targets GitHub, while `origin` targets the self-hosted repository.
@@ -56,6 +58,7 @@ English release notes
 | `app/src/main/java/koharia/epub/` | Native EPUB/Readium reader, cache, pagination, settings, progress |
 | `app/src/main/java/koharia/source/komga/` | Built-in Komga source, server profiles, scoped configuration |
 | `app/src/main/java/koharia/komga/` | Komga API, repository, downloads, library UI |
+| `app/src/main/java/koharia/source/lanraragi/`, `app/src/main/java/koharia/lanraragi/` | LANraragi connections, API compatibility, offline catalogue, reader progress |
 | `app/src/main/java/eu/kanade/tachiyomi/ui/reader/` | Comic pager/webtoon reader |
 | `app/src/main/java/eu/kanade/tachiyomi/data/download/` | Download and page-cache pipeline |
 | `app/src/main/java/eu/kanade/tachiyomi/data/track/komga/` | Komga comic progress/history sync |
@@ -85,7 +88,8 @@ Dependency versions are defined in `gradle/libs.versions.toml`; SDK, NDK, and Ja
 ## Koharia-Specific Boundaries
 
 - Koharia is Komga-first; do not restore removed extension/browse ecosystems unless requested.
-- `KomgaSource` is the only built-in network source registered by `AndroidSourceManager`.
+- Built-in network sources are `KomgaSource` and `LanraragiSource`; `AndroidSourceManager` creates them through `ConnectionRegistry`.
+- LANraragi uses stable connection/archive identities, whole-archive chapters, and archive-level progress. Keep its catalogue generations and pending reading state separate from Komga caches and manual downloads.
 - Confirm the launch path before reader changes: EPUB/Readium is under `koharia/epub`; comic paging/webtoon is under `ui/reader`.
 - Manual downloads, EPUB book cache, and comic page cache are distinct. Cache state must not become download state, and clearing caches must not delete manual downloads.
 - Komga sync uses stable locator/progression data. EPUB visual page counts depend on device and layout, remain local, and must not replace cloud progress.

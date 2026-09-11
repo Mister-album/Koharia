@@ -196,6 +196,10 @@ class ReaderViewModel @JvmOverloads constructor(
     private var chapterToDownload: Download? = null
     private val currentChapterAutoCacheRequests = mutableSetOf<Long>()
     private val remoteProgressChecksStarted = mutableSetOf<Long>()
+    private val explicitOpeningChapterId = savedState.get<Long>("chapter")
+        ?.takeIf { savedState.get<Boolean>("explicit_page_selection") == true }
+    private val navigatedConnectionChapters = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+    private val confirmedConnectionPages = java.util.concurrent.ConcurrentHashMap<Long, Int>()
     private val remoteProgressWritesAllowed = mutableSetOf<Long>()
     private val remoteProgressVersionsHandled = mutableSetOf<String>()
     private val remoteProgressOpeningPages = mutableMapOf<Long, Int>()
@@ -719,11 +723,40 @@ class ReaderViewModel @JvmOverloads constructor(
         if (page.chapter.pageLoader?.supportsRemoteProgress == false) return
         if (incognitoMode) return
         val manga = manga ?: return
+        val localAdapter = sourceManager.get(manga.source) as? koharia.connection.ConnectionLocalPageProgressAdapter
+        val displayedChapterId = currentChapter.chapter.id ?: return
+        val previousDisplayed = confirmedConnectionPages.put(displayedChapterId, page.index)
+        if (previousDisplayed != null &&
+            previousDisplayed != page.index
+        ) {
+            navigatedConnectionChapters.add(displayedChapterId)
+        }
+        val localEventJob = if (localAdapter != null && previousDisplayed != page.index) {
+            val displayedAt = System.currentTimeMillis()
+            val chapterUrl = currentChapter.chapter.url
+            val pageCount = currentChapter.pages?.size ?: 0
+            viewModelScope.launchNonCancellable {
+                runCatching {
+                    localAdapter.recordLocalPageProgress(
+                        chapterUrl,
+                        page.index,
+                        pageCount,
+                        displayedAt,
+                        initialPage = previousDisplayed == null && displayedChapterId != explicitOpeningChapterId,
+                    )
+                }.onFailure { error ->
+                    logcat(LogPriority.WARN, error) { "Failed to persist confirmed connection reading" }
+                }
+            }
+        } else {
+            null
+        }
         val progressAdapter = sourceManager.get(manga.source) as? ConnectionPageProgressAdapter ?: return
         val currentChapterId = currentChapter.chapter.id ?: return
         if (!remoteProgressChecksStarted.add(currentChapterId)) return
 
         viewModelScope.launchIO {
+            localEventJob?.join()
             refreshConnectionBookProgress(progressAdapter, manga, currentChapter)
         }
     }
@@ -856,7 +889,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 localUpdatedAtMillis = null,
                 remoteUpdatedAtMillis = remoteUpdatedAtMillis,
                 sameLocation = remotePageIndex == localPageIndex,
-                localChangedDuringCheck = localPageIndex != openingLocalPageIndex,
+                localChangedDuringCheck =
+                localPageIndex != openingLocalPageIndex || chapterId == explicitOpeningChapterId,
             )
         ) {
             RemoteProgressDecision.SAME_LOCATION -> {
@@ -987,7 +1021,11 @@ class ReaderViewModel @JvmOverloads constructor(
             remoteProgressOpeningPages[conflict.chapterId] = localPageIndex
         }
         allowRemoteProgressWrites(conflict.chapterId)
-        viewModelScope.launchIO {
+        navigatedConnectionChapters.add(conflict.chapterId)
+        val selectedAt = System.currentTimeMillis()
+        viewModelScope.launchNonCancellable {
+            (connectionPageProgressAdapter() as? koharia.connection.ConnectionLocalPageProgressAdapter)
+                ?.recordLocalPageProgress(currentChapter.chapter.url, localPageIndex, pages.size, selectedAt)
             pushPageProgressIfAllowed(currentChapter, localPageIndex, pages.size)
         }
     }
@@ -1192,6 +1230,22 @@ class ReaderViewModel @JvmOverloads constructor(
             val sessionReadDuration = chapterReadStartTime?.let { endTime.time - it } ?: 0
 
             if (sessionReadDuration > 0) {
+                val confirmedPage = confirmedConnectionPages[chapterId]
+                if (confirmedPage != null && state.value.remoteProgressConflict == null) {
+                    runCatching {
+                        (connectionPageProgressAdapter() as? koharia.connection.ConnectionLocalPageProgressAdapter)
+                            ?.recordLocalPageProgress(
+                                readerChapter.chapter.url,
+                                confirmedPage,
+                                readerChapter.pages?.size ?: 0,
+                                endTime.time,
+                                initialPage =
+                                chapterId !in navigatedConnectionChapters && chapterId != explicitOpeningChapterId,
+                            )
+                    }.onFailure { error ->
+                        logcat(LogPriority.WARN, error) { "Failed to persist connection reading on exit" }
+                    }
+                }
                 pushPageProgressIfAllowed(
                     readerChapter = readerChapter,
                     pageIndex = readerChapter.chapter.last_page_read,

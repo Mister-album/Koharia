@@ -84,6 +84,10 @@ FROM chapters
 WHERE bookmark
 AND manga_id = :mangaId;
 
+getChaptersByUrlAndSourceId:
+SELECT C.* FROM chapters C JOIN mangas M ON C.manga_id = M._id
+WHERE C.url = :chapterUrl AND M.source = :sourceId;
+
 getChapterByUrl:
 SELECT *
 FROM chapters

@@ -1,0 +1,95 @@
+CREATE TABLE lanraragi_catalog (
+    connection_id INTEGER NOT NULL,
+    generation INTEGER NOT NULL,
+    resource_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (connection_id, generation, resource_id)
+);
+
+CREATE TABLE lanraragi_members (
+    connection_id INTEGER NOT NULL,
+    generation INTEGER NOT NULL,
+    parent_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (connection_id, generation, parent_id, position)
+);
+
+CREATE TABLE lanraragi_sync (
+    connection_id INTEGER NOT NULL PRIMARY KEY,
+    generation INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL
+);
+
+CREATE TABLE lanraragi_read_state (
+    connection_id INTEGER NOT NULL,
+    archive_id TEXT NOT NULL,
+    page_index INTEGER NOT NULL,
+    total_pages INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    local_unread INTEGER NOT NULL,
+    pending INTEGER NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    initial_page INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (connection_id, archive_id)
+);
+
+getEntries:
+SELECT C.payload FROM lanraragi_catalog C JOIN lanraragi_sync S
+ON C.connection_id = S.connection_id AND C.generation = S.generation
+WHERE C.connection_id = :connectionId;
+
+getSync:
+SELECT completed_at FROM lanraragi_sync WHERE connection_id = :connectionId;
+
+stageEntry:
+INSERT OR REPLACE INTO lanraragi_catalog VALUES (:connectionId, :generation, :resourceId, :payload);
+
+stageMember:
+INSERT OR REPLACE INTO lanraragi_members VALUES (:connectionId, :generation, :parentId, :memberId, :position);
+
+publish:
+INSERT OR REPLACE INTO lanraragi_sync VALUES (:connectionId, :generation, :completedAt);
+
+removeOtherEntries:
+DELETE FROM lanraragi_catalog WHERE connection_id = :connectionId AND generation != :generation;
+
+removeOtherMembers:
+DELETE FROM lanraragi_members WHERE connection_id = :connectionId AND generation != :generation;
+
+abortEntries:
+DELETE FROM lanraragi_catalog WHERE connection_id = :connectionId AND generation = :generation
+AND generation NOT IN (SELECT generation FROM lanraragi_sync WHERE connection_id = :connectionId);
+
+abortMembers:
+DELETE FROM lanraragi_members WHERE connection_id = :connectionId AND generation = :generation
+AND generation NOT IN (SELECT generation FROM lanraragi_sync WHERE connection_id = :connectionId);
+
+getReadStates:
+SELECT * FROM lanraragi_read_state WHERE connection_id = :connectionId;
+
+record:
+INSERT INTO lanraragi_read_state VALUES (:connectionId, :archiveId, :pageIndex, :totalPages, :readAt, :localUnread, :pending, 1, :initialPage)
+ON CONFLICT(connection_id, archive_id) DO UPDATE SET
+page_index = excluded.page_index, total_pages = excluded.total_pages, read_at = excluded.read_at,
+local_unread = excluded.local_unread, pending = excluded.pending, revision = revision + 1,
+initial_page = excluded.initial_page;
+
+acknowledge:
+UPDATE lanraragi_read_state SET pending = 0
+WHERE connection_id = :connectionId AND archive_id = :archiveId AND revision = :revision;
+
+removeCatalog:
+DELETE FROM lanraragi_catalog WHERE connection_id = :connectionId;
+
+removeMembers:
+DELETE FROM lanraragi_members WHERE connection_id = :connectionId;
+
+removeSync:
+DELETE FROM lanraragi_sync WHERE connection_id = :connectionId;
+
+removeReading:
+DELETE FROM lanraragi_read_state WHERE connection_id = :connectionId;
+
+removeRestoredReading:
+DELETE FROM lanraragi_read_state WHERE connection_id = :connectionId AND archive_id IN :archiveIds;

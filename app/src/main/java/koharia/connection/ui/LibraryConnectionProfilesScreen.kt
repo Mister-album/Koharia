@@ -385,6 +385,7 @@ class LibraryConnectionProfilesScreen(
         profileToDelete?.let { profile ->
             DeleteConnectionDialog(
                 connectionName = profile.name,
+                message = connectionRegistry.provider(profile.providerId)?.deletionMessage,
                 onDismissRequest = { profileToDelete = null },
                 onDelete = {
                     scope.launch {
@@ -788,6 +789,7 @@ private fun AddConnectionDialog(
 @Composable
 private fun DeleteConnectionDialog(
     connectionName: String,
+    message: dev.icerock.moko.resources.StringResource? = null,
     onDismissRequest: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -810,7 +812,15 @@ private fun DeleteConnectionDialog(
             Text(text = stringResource(MR.strings.delete_connection))
         },
         text = {
-            Text(text = stringResource(MR.strings.delete_connection_confirmation, connectionName))
+            Text(
+                text = if (message !=
+                    null
+                ) {
+                    stringResource(message, connectionName)
+                } else {
+                    stringResource(MR.strings.delete_connection_confirmation, connectionName)
+                },
+            )
         },
     )
 }

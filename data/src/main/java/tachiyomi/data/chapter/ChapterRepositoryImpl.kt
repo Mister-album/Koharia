@@ -137,6 +137,9 @@ class ChapterRepositoryImpl(
             .awaitAsOneOrNull()
     }
 
+    override suspend fun getChaptersByUrlAndSourceId(url: String, sourceId: Long): List<Chapter> =
+        database.chaptersQueries.getChaptersByUrlAndSourceId(url, sourceId, ::mapChapter).awaitAsList()
+
     @Suppress("UNUSED_PARAMETER")
     private fun mapChapter(
         id: Long,

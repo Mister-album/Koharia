@@ -256,6 +256,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 add(TachiyomiImageDecoder.Factory())
                 // Fetcher.Factory
                 add(BufferedSourceFetcher.Factory())
+                add(koharia.lanraragi.ui.LanraragiPreviewImageFetcher.Factory())
                 add(MangaCoverFetcher.MangaCoverFactory(callFactoryLazy))
                 add(MangaCoverFetcher.MangaFactory(callFactoryLazy))
                 // Keyer

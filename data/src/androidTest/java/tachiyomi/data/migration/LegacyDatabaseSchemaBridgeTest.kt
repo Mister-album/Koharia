@@ -317,6 +317,10 @@ class LegacyDatabaseSchemaBridgeTest {
 
     private companion object {
         val auxiliaryTables = listOf(
+            "lanraragi_catalog",
+            "lanraragi_members",
+            "lanraragi_sync",
+            "lanraragi_read_state",
             "extension_repos",
             "komga_shared_download_matches",
             "epub_progress",
