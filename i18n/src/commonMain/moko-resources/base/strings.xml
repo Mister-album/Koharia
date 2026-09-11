@@ -1735,4 +1735,6 @@
     <string name="lanraragi_connection_failed_title">Connection failed</string>
     <string name="lanraragi_save_connection_failed">Unable to connect to the server. Save this connection anyway?</string>
     <string name="lanraragi_save_anyway">Save anyway</string>
+    <string name="action_save_merged_page">Save merged page</string>
+    <string name="save_merged_page_insufficient_memory">Not enough memory to save these pages at full resolution. Close other apps and try again.</string>
 </resources>

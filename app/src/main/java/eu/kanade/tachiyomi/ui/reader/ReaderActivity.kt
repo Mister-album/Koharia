@@ -592,6 +592,13 @@ class ReaderActivity : BaseActivity() {
                     onSetAsCover = viewModel::setAsCover,
                     onShare = viewModel::shareImage,
                     onSave = viewModel::saveImage,
+                    onSaveMerged = if ((state.dialog as? ReaderViewModel.Dialog.PageActions)?.mergedPages !=
+                        null
+                    ) {
+                        viewModel::saveMergedImage
+                    } else {
+                        null
+                    },
                 )
             }
             null -> {}
@@ -1278,7 +1285,7 @@ class ReaderActivity : BaseActivity() {
      * actions to perform is shown.
      */
     fun onPageLongTap(page: ReaderPage) {
-        viewModel.openPageDialog(page)
+        viewModel.openPageDialog(page, (viewModel.state.value.viewer as? PagerViewer)?.mergedPagesFor(page))
     }
 
     /**

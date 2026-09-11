@@ -16,6 +16,7 @@ import androidx.core.view.isVisible
 import androidx.viewpager.widget.ViewPager
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
@@ -96,6 +97,17 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Currently active item. It can be a chapter page or a chapter transition.
      */
     private var currentSlot: PagerSlot? = null
+
+    fun mergedPagesFor(page: ReaderPage): List<ReaderPage>? {
+        val slot = currentSlot as? PagerSlot.Pages ?: return null
+        if (!slot.contains(page) || slot.second == null) return null
+        if (slot.pages.any { it.status != Page.State.Ready || it.stream == null }) return null
+        return if (DoublePagePlacement.firstPageOnLeft(this is R2LPagerViewer, config.invertDoublePages)) {
+            slot.pages
+        } else {
+            slot.pages.reversed()
+        }
+    }
 
     /** Physical page that must remain visible while the current spread is rebuilt. */
     private var stableSlotAnchor: ReaderPage? = null

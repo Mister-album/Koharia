@@ -1,6 +1,7 @@
 package eu.kanade.presentation.reader
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -18,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
@@ -32,6 +34,7 @@ fun ReaderPageActionsDialog(
     onSetAsCover: () -> Unit,
     onShare: (Boolean) -> Unit,
     onSave: () -> Unit,
+    onSaveMerged: (() -> Unit)? = null,
 ) {
     var showSetCoverDialog by remember { mutableStateOf(false) }
 
@@ -40,47 +43,59 @@ fun ReaderPageActionsDialog(
             containerColor = MaterialTheme.colorScheme.secondaryContainer,
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         )
-        Row(
-            modifier = Modifier.padding(vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-        ) {
-            ActionButton(
-                modifier = Modifier.weight(1f),
-                title = stringResource(MR.strings.set_as_series_cover),
-                icon = Icons.Outlined.Photo,
-                colors = actionColors,
-                onClick = { showSetCoverDialog = true },
-            )
-            ActionButton(
-                modifier = Modifier.weight(1f),
-                title = stringResource(MR.strings.action_copy),
-                icon = Icons.Outlined.ContentCopy,
-                colors = actionColors,
-                onClick = {
-                    onShare(true)
-                    onDismissRequest()
-                },
-            )
-            ActionButton(
-                modifier = Modifier.weight(1f),
-                title = stringResource(MR.strings.action_share),
-                icon = Icons.Outlined.Share,
-                colors = actionColors,
-                onClick = {
-                    onShare(false)
-                    onDismissRequest()
-                },
-            )
-            ActionButton(
-                modifier = Modifier.weight(1f),
-                title = stringResource(MR.strings.action_save),
-                icon = Icons.Outlined.Save,
-                colors = actionColors,
-                onClick = {
-                    onSave()
-                    onDismissRequest()
-                },
-            )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(
+                modifier = Modifier.padding(vertical = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+            ) {
+                ActionButton(
+                    modifier = Modifier.weight(1f),
+                    title = stringResource(MR.strings.set_as_series_cover),
+                    icon = Icons.Outlined.Photo,
+                    colors = actionColors,
+                    onClick = { showSetCoverDialog = true },
+                )
+                ActionButton(
+                    modifier = Modifier.weight(1f),
+                    title = stringResource(MR.strings.action_copy),
+                    icon = Icons.Outlined.ContentCopy,
+                    colors = actionColors,
+                    onClick = {
+                        onShare(true)
+                        onDismissRequest()
+                    },
+                )
+                ActionButton(
+                    modifier = Modifier.weight(1f),
+                    title = stringResource(MR.strings.action_share),
+                    icon = Icons.Outlined.Share,
+                    colors = actionColors,
+                    onClick = {
+                        onShare(false)
+                        onDismissRequest()
+                    },
+                )
+                ActionButton(
+                    modifier = Modifier.weight(1f),
+                    title = stringResource(MR.strings.action_save),
+                    icon = Icons.Outlined.Save,
+                    colors = actionColors,
+                    onClick = {
+                        onSave()
+                        onDismissRequest()
+                    },
+                )
+            }
+            if (onSaveMerged != null) {
+                TextButton(
+                    onClick = {
+                        onSaveMerged()
+                        onDismissRequest()
+                    },
+                ) {
+                    Text(stringResource(MR.strings.action_save_merged_page))
+                }
+            }
         }
     }
 

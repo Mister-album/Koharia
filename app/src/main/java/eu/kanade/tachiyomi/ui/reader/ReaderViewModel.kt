@@ -36,6 +36,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.DoublePageProgressPolicy
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.MergedPageImage
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
 import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
@@ -72,6 +73,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.ScopedPreferenceStore
 import tachiyomi.core.common.preference.SessionPreferenceStore
 import tachiyomi.core.common.preference.toggle
@@ -92,8 +94,10 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.File
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.Date
@@ -1407,9 +1411,10 @@ class ReaderViewModel @JvmOverloads constructor(
     private fun generateFilename(
         manga: Manga,
         page: ReaderPage,
+        extraSuffix: String = "",
     ): String {
         val chapter = page.chapter.chapter
-        val filenameSuffix = " - ${page.number}"
+        val filenameSuffix = " - ${page.number}$extraSuffix"
         return DiskUtil.buildValidFilename(
             "${manga.title} - ${chapter.name}",
             DiskUtil.MAX_FILE_NAME_BYTES - filenameSuffix.byteSize(),
@@ -1432,8 +1437,8 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(dialog = Dialog.OrientationModeSelect) }
     }
 
-    fun openPageDialog(page: ReaderPage) {
-        mutableState.update { it.copy(dialog = Dialog.PageActions(page)) }
+    fun openPageDialog(page: ReaderPage, mergedPages: List<ReaderPage>? = null) {
+        mutableState.update { it.copy(dialog = Dialog.PageActions(page, mergedPages)) }
     }
 
     fun openSettingsDialog() {
@@ -1452,7 +1457,18 @@ class ReaderViewModel @JvmOverloads constructor(
      * Saves the image of the selected page on the pictures directory and notifies the UI of the result.
      * There's also a notification to allow sharing the image somewhere else or deleting it.
      */
-    fun saveImage() {
+    fun saveImage() = savePageImage(merged = false)
+
+    fun saveMergedImage() = savePageImage(merged = true)
+
+    private fun savePageImage(merged: Boolean) {
+        val mergedPages = if (merged) {
+            (state.value.dialog as? Dialog.PageActions)?.mergedPages?.takeIf { pages ->
+                pages.size == 2 && pages.all { it.status == Page.State.Ready && it.stream != null }
+            } ?: return
+        } else {
+            null
+        }
         val page = (state.value.dialog as? Dialog.PageActions)?.page
         if (page?.status != Page.State.Ready) return
         val manga = manga ?: return
@@ -1461,7 +1477,11 @@ class ReaderViewModel @JvmOverloads constructor(
         val notifier = SaveImageNotifier(context)
         notifier.onClear()
 
-        val filename = generateFilename(manga, page)
+        val filename = if (mergedPages != null) {
+            generateFilename(manga, mergedPages.minBy { it.index }, "-${mergedPages.maxOf { it.number }}-merged")
+        } else {
+            generateFilename(manga, page)
+        }
 
         // Pictures directory.
         val relativePath = if (readerPreferences.folderPerManga.get()) {
@@ -1474,10 +1494,23 @@ class ReaderViewModel @JvmOverloads constructor(
 
         // Copy file in background.
         viewModelScope.launchNonCancellable {
+            var mergedFile: File? = null
             try {
+                val input = if (mergedPages != null) {
+                    File.createTempFile("merged-page-", ".png", context.cacheDir).also { file ->
+                        mergedFile = file
+                        MergedPageImage.write(
+                            checkNotNull(mergedPages[0].stream),
+                            checkNotNull(mergedPages[1].stream),
+                            file,
+                        )
+                    }.let { file -> { file.inputStream() } }
+                } else {
+                    checkNotNull(page.stream)
+                }
                 val uri = imageSaver.save(
                     image = Image.Page(
-                        inputStream = page.stream!!,
+                        inputStream = input,
                         name = filename,
                         location = Location.Pictures.create(relativePath),
                     ),
@@ -1487,8 +1520,24 @@ class ReaderViewModel @JvmOverloads constructor(
                     eventChannel.send(Event.SavedImage(SaveImageResult.Success(uri)))
                 }
             } catch (e: Throwable) {
-                notifier.onError(e.message)
-                eventChannel.send(Event.SavedImage(SaveImageResult.Error(e)))
+                val error = if (merged) {
+                    IllegalStateException(
+                        context.stringResource(
+                            if (e is MergedPageImage.InsufficientMemoryException) {
+                                MR.strings.save_merged_page_insufficient_memory
+                            } else {
+                                MR.strings.error_saving_picture
+                            },
+                        ),
+                        e,
+                    )
+                } else {
+                    e
+                }
+                notifier.onError(error.message)
+                eventChannel.send(Event.SavedImage(SaveImageResult.Error(error)))
+            } finally {
+                mergedFile?.delete()
             }
         }
     }
@@ -1632,7 +1681,7 @@ class ReaderViewModel @JvmOverloads constructor(
         data object Settings : Dialog
         data object ReadingModeSelect : Dialog
         data object OrientationModeSelect : Dialog
-        data class PageActions(val page: ReaderPage) : Dialog
+        data class PageActions(val page: ReaderPage, val mergedPages: List<ReaderPage>? = null) : Dialog
     }
 
     sealed interface Event {

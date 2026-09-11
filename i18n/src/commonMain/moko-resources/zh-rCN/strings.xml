@@ -1596,4 +1596,6 @@
     <string name="lanraragi_connection_failed_title">连接失败</string>
     <string name="lanraragi_save_connection_failed">无法连接到服务器，是否仍要保存此连接？</string>
     <string name="lanraragi_save_anyway">继续保存</string>
+    <string name="action_save_merged_page">保存合并页</string>
+    <string name="save_merged_page_insufficient_memory">内存不足，无法按原始分辨率保存合并页。请关闭其他应用后重试。</string>
 </resources>

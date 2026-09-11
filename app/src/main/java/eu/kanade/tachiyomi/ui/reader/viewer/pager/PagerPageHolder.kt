@@ -132,28 +132,28 @@ class PagerPageHolder(
     fun canNavigatePanLeft(): Boolean = if (pairViews.isEmpty()) {
         canPanLeft()
     } else {
-        pairViews.any(ReaderPageImageView::canPanLeft)
+        pairContainer?.canPanLeft() == true
     }
 
     fun canNavigatePanRight(): Boolean = if (pairViews.isEmpty()) {
         canPanRight()
     } else {
-        pairViews.any(ReaderPageImageView::canPanRight)
+        pairContainer?.canPanRight() == true
     }
 
     fun navigatePanLeft() {
-        if (pairViews.isEmpty()) panLeft() else pairViews.filter { it.canPanLeft() }.forEach { it.panLeft() }
+        if (pairViews.isEmpty()) panLeft() else pairContainer?.panLeft()
     }
 
     fun navigatePanRight() {
-        if (pairViews.isEmpty()) panRight() else pairViews.filter { it.canPanRight() }.forEach { it.panRight() }
+        if (pairViews.isEmpty()) panRight() else pairContainer?.panRight()
     }
 
     override fun onPageSelected(forward: Boolean) {
         if (pairViews.isEmpty()) {
             super.onPageSelected(forward)
         } else {
-            pairViews.forEach { it.onPageSelected(forward) }
+            pairContainer?.updateViewport()
         }
     }
 
@@ -371,6 +371,7 @@ class PagerPageHolder(
                 firstPage = pageSizes[0],
                 secondPage = pageSizes[1],
                 onSplitFractionChanged = { physicalSplitFraction = it },
+                onZoom = { viewer.activity.hideMenu() },
             )
             val children = mutableListOf<ReaderPageImageView>()
             try {
@@ -380,6 +381,7 @@ class PagerPageHolder(
                         basePreferences = viewer.activity.basePreferences,
                     ).apply {
                         onImageLoaded = {
+                            container.updateViewport()
                             displayedPairViews++
                             if (displayedPairViews == physicalPages.size && !spreadDisplayed) {
                                 spreadDisplayed = true

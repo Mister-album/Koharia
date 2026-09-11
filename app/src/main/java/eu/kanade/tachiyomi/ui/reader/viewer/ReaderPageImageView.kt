@@ -248,6 +248,26 @@ open class ReaderPageImageView @JvmOverloads constructor(
         return imageBounds
     }
 
+    internal fun spreadImageSize(): Pair<Int, Int>? {
+        val view = pageView as? SubsamplingScaleImageView ?: return null
+        return if (view.isReady && view.sWidth > 0 && view.sHeight > 0) view.sWidth to view.sHeight else null
+    }
+
+    internal fun setSpreadViewport(bounds: RectF, minimumHeight: Float) {
+        val view = pageView as? SubsamplingScaleImageView ?: return
+        if (!view.isReady || view.sHeight <= 0) return
+        val base = minimumHeight / view.sHeight
+        view.setMinimumScaleType(SubsamplingScaleImageView.SCALE_TYPE_CUSTOM)
+        view.minScale = base
+        view.maxScale = base * 5f
+        view.setPanLimit(SubsamplingScaleImageView.PAN_LIMIT_OUTSIDE)
+        val scale = bounds.height() / view.sHeight
+        view.setScaleAndCenter(
+            scale,
+            PointF((width / 2f - bounds.left) / scale, (height / 2f - bounds.top) / scale),
+        )
+    }
+
     /** Maps a point in this container to its horizontal position in the decoded image. */
     fun sourceXFractionAt(x: Float, y: Float): Float? {
         val view = pageView as? SubsamplingScaleImageView ?: return null
