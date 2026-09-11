@@ -23,11 +23,9 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -74,6 +72,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
+import tachiyomi.presentation.core.components.EInkLinearProgressIndicator
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.motion.eInkAnimationSpec
@@ -207,7 +207,7 @@ class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourc
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Column(Modifier.padding(horizontal = 16.dp)) {
                         Text(stringResource(MR.strings.lanraragi_page_previews, state.pages.size))
-                        if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (state.loading) EInkLinearProgressIndicator(Modifier.fillMaxWidth())
                         state.error?.let {
                             Text(context.lanraragiError(it))
                             TextButton(onClick = { model.refresh() }) { Text(stringResource(MR.strings.action_retry)) }
@@ -248,7 +248,7 @@ private fun PreviewTile(image: LanraragiPreviewImage, onClick: () -> Unit) {
             contentDescription = label,
             modifier = Modifier.fillMaxWidth().aspectRatio(0.7f),
             contentScale = ContentScale.Fit,
-            loading = { Box(contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
+            loading = { Box(contentAlignment = Alignment.Center) { EInkCircularProgressIndicator() } },
             error = {
                 val imagePainter = painter
                 Box(contentAlignment = Alignment.Center) {

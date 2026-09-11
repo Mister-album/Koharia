@@ -27,7 +27,6 @@ import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -88,6 +87,7 @@ import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkLinearProgressIndicator
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -342,7 +342,7 @@ data class LocalLibraryScreen(
                     }
 
                     HorizontalDivider()
-                    if (state.isPreparingDeletion || state.isUpdatingItems) LinearProgressIndicator()
+                    if (state.isPreparingDeletion || state.isUpdatingItems) EInkLinearProgressIndicator()
                 }
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -531,7 +531,7 @@ data class LocalLibraryScreen(
                                     Text(entry.item.relativePath, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
-                            if (state.isDeleting) LinearProgressIndicator()
+                            if (state.isDeleting) EInkLinearProgressIndicator()
                         }
                     },
                     confirmButton = {
