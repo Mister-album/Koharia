@@ -1,5 +1,6 @@
 package koharia.epub
 
+import android.Manifest
 import android.app.assist.AssistContent
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -61,6 +62,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.app.ActivityCompat
+import androidx.core.content.PermissionChecker
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -93,6 +96,8 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.connection.SharedAppPreferences
+import koharia.epub.control.TtsControlPanel
+import koharia.epub.control.TtsPanelState
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
 import koharia.epub.service.EpubReaderSupportResolution
@@ -101,6 +106,7 @@ import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.importing.IncomingMediaNavigation
+import koharia.tts.progress.TtsProgressNotifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -144,6 +150,18 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         private const val PAGINATION_VIEWPORT_DEBOUNCE_MS = 250L
         private const val PROGRESSION_SEEK_DEBOUNCE_MS = 100L
         private const val FOOTNOTE_TOUCH_POSITION_MAX_AGE_MS = 10_000L
+
+        // Phase 3 step 1 修复:Android 13+ POST_NOTIFICATIONS 运行时权限请求码。
+        // 在 onToggleTts 启动 TTS 前请求;用户拒绝也不影响音频播放,只丢通知栏视觉入口。
+        private const val REQ_CODE_POST_NOTIFICATIONS = 8421
+
+        // Phase 3 自动续播:导航下一章后等待其落定、再提取文本起播的超时兜底。
+        // onLocatorChanged 命中目标 href 时会提前触发;同一资源内的锚点跳转不会改变
+        // href,只能靠这个超时兜底。
+        private const val TTS_AUTO_ADVANCE_FALLBACK_MS = 900L
+
+        // 续播前让导航/排版落定的稳定延迟。
+        private const val TTS_AUTO_ADVANCE_SETTLE_MS = 250L
 
         fun newPdfReflowIntent(
             context: Context,
@@ -226,6 +244,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private var currentPublisherStyles: Boolean? = null
     private var readerFragment: EpubReaderFragment? = null
     private var capturedVisibleFontRequirements: Pair<Long, String>? = null
+
+    // ===== Phase 3 自动续播 =====
+    // 目标章节 href（等待导航落定后起播）；null 表示当前没有待续播任务。
+    private var pendingTtsAdvanceTargetHref: String? = null
+
+    // true 时靠 onLocatorChanged 命中目标 href 提前触发；false（同一资源内锚点）只能靠超时兜底。
+    private var pendingTtsAdvanceMatchByHref = false
+    private var pendingTtsAdvanceFallbackJob: Job? = null
     private var imagePreviewVisible = false
     private var lastTouchXFraction: Float? = null
     private var lastTouchYFraction: Float? = null
@@ -417,6 +443,60 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 }
             }
 
+            // Phase 2.5a：TTS 当前句高亮。章节匹配守卫：notifier.chapterHref == state.currentHref
+            // 句子 / 阅读器 ready / 章节切换 都会触发；失败时降级为清空高亮（不抛异常）。
+            val currentTtsSentence = remember(state.ttsProgress, state.currentHref) {
+                val progress = state.ttsProgress
+                val href = state.currentHref
+                if (progress == null) {
+                    logcat(LogPriority.INFO) { "[EpubReaderActivity] tts-hl: progress=null (TTS 还没 bind?)" }
+                    return@remember null
+                }
+                if (progress.chapterHref != href) {
+                    logcat(LogPriority.WARN) {
+                        "[EpubReaderActivity] tts-hl: href mismatch progress='${progress.chapterHref}' state='$href'"
+                    }
+                    return@remember null
+                }
+                if (progress.currentIndex < 0) {
+                    logcat(LogPriority.INFO) { "[EpubReaderActivity] tts-hl: currentIndex<0" }
+                    return@remember null
+                }
+                val s = progress.sentences.getOrNull(progress.currentIndex)
+                if (s == null) {
+                    logcat(LogPriority.WARN) {
+                        "[EpubReaderActivity] tts-hl: sentences[${progress.currentIndex}]=null (size=${progress.sentences.size})"
+                    }
+                }
+                s
+            }
+            LaunchedEffect(currentTtsSentence?.index, state.isReady, state.chapterId) {
+                logcat(LogPriority.INFO) {
+                    "[EpubReaderActivity] tts-hl LaunchedEffect fired: " +
+                        "idx=${currentTtsSentence?.index} isReady=${state.isReady} " +
+                        "chapterId=${state.chapterId} sentence=$currentTtsSentence"
+                }
+                if (!state.isReady || state.chapterId <= 0) {
+                    return@LaunchedEffect
+                }
+                val sentence = currentTtsSentence
+                if (sentence == null) {
+                    runCatching { epubReaderFragment()?.clearSentenceHighlight() }
+                    return@LaunchedEffect
+                }
+                runCatching { epubReaderFragment()?.applySentenceHighlight(sentence, scrollIntoView = true) }
+            }
+
+            // Phase 3 自动续播：TTS 章节自然播完 → 导航并续播下一章。
+            LaunchedEffect(Unit) {
+                viewModel.ttsChapterCompleted.collect {
+                    logcat(LogPriority.INFO) {
+                        "[EpubReaderActivity] tts chapter completed -> auto-advance"
+                    }
+                    handleTtsChapterCompleted()
+                }
+            }
+
             BackHandler(
                 enabled =
                 drawerState.isOpen || activePanel != EpubBottomPanel.NONE || state.isSearchActive,
@@ -578,7 +658,36 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                     activePanel = EpubBottomPanel.SETTINGS
                                 },
                                 onSearch = viewModel::openSearch,
-                                onToggleTts = null,
+                                onToggleTts = {
+                                    // Phase 3 step 1 修复(2)：用 notifier 派生的 state.ttsActive 判断，
+                                    // **不能**用 Activity 本地布尔。章节自然播完后 TtsService 会
+                                    // progressNotifier.clear() + stopSelf() 自我销毁，本地布尔不会复位，
+                                    // 于是下一次点击走进 stop 分支 = 真机"按播放没反应"（日志证据：
+                                    // 章节播完后再按，服务 started 后立即收到 STOP，偶发才会真正 start）。
+                                    // state.ttsActive 直接来自 TtsProgressNotifier.progress（source of truth）：
+                                    // 播放/暂停时 true；播完/停止 clear() 后 false。
+                                    if (state.ttsActive) {
+                                        koharia.tts.TtsService.stop(this@EpubReaderActivity)
+                                    } else {
+                                        // Phase 3 step 1 修复:Android 13+ 必须运行时授予 POST_NOTIFICATIONS,
+                                        // 否则 TtsService 的前台通知 + MediaSession 锁屏卡片会被系统静默丢弃
+                                        // (测试观察:`dumpsys notification` 显示 app.koharia.dev importance=NONE,
+                                        // 通知已 post 但用户看不到)。媒体按钮/蓝牙按键仍可用 —— 通知只是少了视觉入口。
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                            PermissionChecker.checkSelfPermission(
+                                                this@EpubReaderActivity,
+                                                Manifest.permission.POST_NOTIFICATIONS,
+                                            ) != PermissionChecker.PERMISSION_GRANTED
+                                        ) {
+                                            ActivityCompat.requestPermissions(
+                                                this@EpubReaderActivity,
+                                                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                                                REQ_CODE_POST_NOTIFICATIONS,
+                                            )
+                                        }
+                                        startTtsFromCurrentViewport()
+                                    }
+                                },
                                 onToggleOrientation = {
                                     val orientations = ReaderOrientation.entries
                                     val current = ReaderOrientation.fromPreference(
@@ -710,6 +819,21 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                         showClock = showReaderClock,
                                         showBattery = showReaderBattery,
                                         position = readerStatusPosition,
+                                    )
+                                }
+
+                                // Phase 3.3: 阅读器内朗读控制 pill —— 上一句 / 播放-暂停 / 下一句
+                                if (state.ttsActive) {
+                                    TtsControlPanel(
+                                        panelState = TtsPanelState(
+                                            active = state.ttsActive,
+                                            playbackState = state.ttsPlaybackState,
+                                        ),
+                                        onAction = viewModel::onTtsAction,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .navigationBarsPadding()
+                                            .padding(bottom = 16.dp),
                                     )
                                 }
 
@@ -1062,6 +1186,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     override fun onLocatorChanged(locator: Locator) {
         viewModel.updateLocator(locator)
+        maybeFirePendingTtsAdvance(locator)
     }
 
     override fun onPdfSourceAnchorChanged(id: String, href: String) {
@@ -1482,6 +1607,125 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         } else {
             epubReaderFragment()?.goBackward()
         }
+    }
+
+    // ===== Phase 3 自动续播 =====
+
+    /**
+     * 收到 [EpubReaderViewModel.ttsChapterCompleted] 后调用：计算下一章节并导航过去。
+     *
+     * reader-driven：导航落定后由 [startTtsFromCurrentViewport] 重新起播 ——
+     * 起播文本仍由 WebView [EpubReaderFragment.extractTtsTextModel] 提取，
+     * 与高亮 JS tree walker 同源，避免 Service 侧 Jsoup 文本偏移漂移。
+     */
+    private fun handleTtsChapterCompleted() {
+        val state = viewModel.state.value
+        // 守卫：只续播"刚播完的那一章"的下一章。若用户在播放期间滚动/跳到了别的章节，
+        // 播放章节 != 当前显示章节，此时续播会错位 —— 直接跳过。
+        val playedHref = state.ttsProgress?.chapterHref.orEmpty()
+        if (playedHref.isNotBlank() && !sameResourceHref(playedHref, state.currentHref.orEmpty())) {
+            logcat(LogPriority.WARN) {
+                "[EpubReaderActivity] tts auto-advance skipped: played '$playedHref' " +
+                    "!= current '${state.currentHref}'"
+            }
+            return
+        }
+        // 用 readingOrder 的下一格，而不是 TOC：这个 EPUB 是 ~198 个很小的资源，
+        // 目录只覆盖少数带 fragment 的锚点位置，用 adjacentTocEntries 会选错（真机 ch007→ch003#b）。
+        val next = viewModel.nextReadingOrderLink(state.currentHref)
+        if (next == null) {
+            logcat(LogPriority.INFO) {
+                "[EpubReaderActivity] tts auto-advance: no next resource (chapterId=${state.chapterId})"
+            }
+            return
+        }
+        val target = next.href.toString()
+        val current = state.currentHref.orEmpty()
+        logcat(LogPriority.INFO) {
+            "[EpubReaderActivity] tts auto-advance -> '$target' (from '$current')"
+        }
+        pendingTtsAdvanceTargetHref = target
+        // 同一资源内的锚点跳转不会改变 href，只能靠超时兜底。
+        pendingTtsAdvanceMatchByHref = !sameResourceHref(target, current)
+        epubReaderFragment()?.goTo(next)
+        pendingTtsAdvanceFallbackJob?.cancel()
+        pendingTtsAdvanceFallbackJob = lifecycleScope.launch {
+            delay(TTS_AUTO_ADVANCE_FALLBACK_MS)
+            firePendingTtsAdvance()
+        }
+    }
+
+    /** onLocatorChanged 命中待续播目标 href 时提前触发（避免固定等待超时）。 */
+    private fun maybeFirePendingTtsAdvance(locator: Locator) {
+        val target = pendingTtsAdvanceTargetHref ?: return
+        if (!pendingTtsAdvanceMatchByHref) return
+        if (!sameResourceHref(locator.href.toString(), target)) return
+        firePendingTtsAdvance()
+    }
+
+    /**
+     * 触发待续播：先核对当前 href 确实已到达目标，再 [startTtsFromCurrentViewport]。
+     *
+     * 核对可防止 goTo 失败时把**旧章节**重新起播，从而形成"播完→续播判定失败→重播旧章"死循环。
+     */
+    private fun firePendingTtsAdvance() {
+        val target = pendingTtsAdvanceTargetHref ?: return
+        pendingTtsAdvanceTargetHref = null
+        pendingTtsAdvanceFallbackJob?.cancel()
+        pendingTtsAdvanceFallbackJob = null
+        val current = viewModel.state.value.currentHref.orEmpty()
+        if (!sameResourceHref(current, target)) {
+            logcat(LogPriority.WARN) {
+                "[EpubReaderActivity] tts auto-advance aborted: current '$current' != target '$target'"
+            }
+            return
+        }
+        lifecycleScope.launch {
+            delay(TTS_AUTO_ADVANCE_SETTLE_MS)
+            startTtsFromCurrentViewport()
+        }
+    }
+
+    /** 从当前视口起播 TTS（手动播放按钮 / 自动续播共用）。 */
+    private fun startTtsFromCurrentViewport() {
+        val state = viewModel.state.value
+        val ttsChapterId = state.chapterId
+        val ttsMangaId = state.mangaId
+        val ttsHref = state.currentHref.orEmpty()
+        val ttsProgression = viewModel.ttsStartProgression()
+        val ttsAnchor = viewModel.ttsStartAnchor()
+        lifecycleScope.launch {
+            val fragment = epubReaderFragment()
+            // Phase 2.5a fast-path：一次 JS 调用拿到章节文本 + 视口顶部字符偏移。
+            // 文本与高亮 JS tree walker 同源 → 高亮不偏移；
+            // 偏移与句子同空间 → 起播精确（不依赖可能滞后的 progression）。
+            // 拿不到再降级给 TtsService 内部 ChapterTextExtractor + 进度。
+            val model = fragment?.extractTtsTextModel()
+            logcat(LogPriority.INFO) {
+                "[EpubReaderActivity] tts text model " +
+                    "len=${model?.text?.length ?: -1} " +
+                    "nodes=${model?.nodeCount ?: -1} " +
+                    "startOffset=${model?.startOffset ?: -1} " +
+                    "snippet='${model?.snippet?.take(60) ?: ""}'"
+            }
+            koharia.tts.TtsService.start(
+                context = this@EpubReaderActivity,
+                chapterId = ttsChapterId,
+                mangaId = ttsMangaId,
+                href = ttsHref,
+                progression = ttsProgression,
+                textAnchor = model?.snippet?.takeIf { it.isNotBlank() } ?: ttsAnchor?.first,
+                anchorIsBefore = model == null && (ttsAnchor?.second ?: false),
+                startOffset = model?.startOffset ?: -1,
+                extractedText = model?.text,
+            )
+        }
+    }
+
+    /** href 归一化：去 fragment/query、去前导斜杠后比较（与 ChapterTextExtractor 口径一致）。 */
+    private fun sameResourceHref(a: String, b: String): Boolean {
+        fun key(value: String): String = value.substringBefore('#').substringBefore('?').trimStart('/')
+        return key(a) == key(b)
     }
 
     private fun navigateAdjacentChapter(forward: Boolean) {

@@ -27,6 +27,7 @@ import eu.kanade.tachiyomi.util.CrashLogUtil
 import eu.kanade.tachiyomi.util.system.GLUtil
 import eu.kanade.tachiyomi.util.system.powerManager
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.tts.ui.settings.TtsSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.launch
@@ -81,6 +82,11 @@ object SettingsAdvancedScreen : SearchableSettings {
                         }
                         context.startActivity(intent)
                     },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.tts_engine_settings_title),
+                    subtitle = stringResource(MR.strings.tts_engine_open_settings),
+                    onClick = { navigator.push(TtsSettingsScreen) },
                 ),
             ),
         )

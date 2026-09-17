@@ -30,12 +30,16 @@ import koharia.epub.locator.toNavigatorLocator
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
+import koharia.tts.progress.TtsProgressNotifier
+import koharia.tts.reader.TtsTextModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
+import org.json.JSONObject
+import org.json.JSONTokener
 import org.readium.r2.navigator.HyperlinkNavigator
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.epub.EpubPreferences
@@ -1446,11 +1450,240 @@ class EpubReaderFragment : Fragment() {
     private fun readyNavigatorFragment(): EpubNavigatorFragment? =
         navigatorFragment()?.takeIf { it.view != null }
 
+    /**
+     * 抽取 TTS 文本模型：章节纯文本 + 视口顶部文字在该文本中的字符偏移。
+     *
+     * 与 [ChapterTextExtractor] 对比：
+     * - **快**：直接读已渲染 DOM，毫秒级；ChapterTextExtractor 走"读字节→Jsoup 解析"，
+     *   在远程 Komga / 大章节上经常卡 10+ 秒，期间 TTS 听不到声音。
+     * - **对齐**：`text` 与高亮 JS tree walker 使用**同一顺序拼接文本节点**，
+     *   因此 [koharia.tts.Sentence] 的字符偏移天然与高亮一致，不会漂移。
+     * - **精确起播**：`startOffset` 是视口顶部文字在该文本中的偏移，
+     *   比 Readium `locations.progression` 更可靠（后者在页面切换前可能仍是 0）。
+     *
+     * 返回 null 表示 WebView 不可用（初始化中 / 已销毁 / JS 报错），调用方应降级。
+     */
+    suspend fun extractTtsTextModel(): TtsTextModel? {
+        val navigator = readyNavigatorFragment() ?: return null
+        val raw = runCatching {
+            navigator.evaluateJavascript("(" + epubTtsTextModelBody.trimIndent() + ")();")
+        }.getOrNull() ?: return null
+        return runCatching {
+            val payload = (JSONTokener(raw).nextValue() as? String) ?: raw
+            val obj = JSONObject(payload)
+            if (!obj.optBoolean("ok", false)) return@runCatching null
+            val text = obj.optString("text", "")
+            if (text.isBlank()) return@runCatching null
+            TtsTextModel(
+                text = text,
+                startOffset = obj.optInt("startOffset", -1),
+                snippet = obj.optString("snippet", "").trim(),
+                nodeCount = obj.optInt("nodeCount", -1),
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * 把 TTS 当前句高亮在 EPUB 资源 DOM 中。
+     * 用 [SentenceRef.startOffset]/[SentenceRef.endOffset]（章节纯文本内字符偏移）定位 text node 范围，
+     * 包裹 `<mark class="tts-active-sentence">` 并视需要滚动到视口中心。
+     * 失败返回 false，调用方应降级为无高亮，不影响朗读本身。
+     */
+    suspend fun applySentenceHighlight(
+        sentenceRef: TtsProgressNotifier.SentenceRef,
+        scrollIntoView: Boolean = true,
+    ): Boolean {
+        val navigator = readyNavigatorFragment()
+        if (navigator == null) {
+            logcat(LogPriority.WARN) {
+                "[EpubReaderFragment] applySentenceHighlight: navigator unavailable; skip idx=${sentenceRef.index}"
+            }
+            return false
+        }
+        val start = sentenceRef.startOffset
+        val end = sentenceRef.endOffset
+        if (start < 0 || end <= start) {
+            logcat(LogPriority.WARN) {
+                "[EpubReaderFragment] applySentenceHighlight rejected: bad range [$start,$end)"
+            }
+            return false
+        }
+        // 直接传对象字面量：JS 端读 window.__ttsHighlightArgs.start / .end / .scroll，
+        // 不能 JSON.stringify（那样变成字符串，args.start === undefined，|0 = 0 → 触发 bad-range）。
+        // start / end 是 Int（来自 SentenceRef），scroll 是布尔字面量,无注入风险。
+        val argsLiteral = "{start:" + start + ",end:" + end + ",scroll:" +
+            (if (scrollIntoView) "true" else "false") + "}"
+        val script = "window.__ttsHighlightArgs = " + argsLiteral + "; " +
+            "(" + EPUB_APPLY_SENTENCE_HIGHLIGHT_BODY.trimIndent() + ")();"
+        val raw = runCatching { navigator.evaluateJavascript(script) }.getOrNull() ?: run {
+            logcat(LogPriority.WARN) {
+                "[EpubReaderFragment] applySentenceHighlight evaluateJavascript returned null"
+            }
+            return false
+        }
+        val ok = runCatching {
+            val payload = (JSONTokener(raw).nextValue() as? String) ?: raw
+            JSONObject(payload).optBoolean("ok", false)
+        }.onFailure {
+            logcat(LogPriority.WARN, it) {
+                "[EpubReaderFragment] applySentenceHighlight parse error raw=$raw"
+            }
+        }.getOrDefault(false)
+        if (!ok) {
+            // raw 是 JSON 字符串（如 "{\"ok\":false,\"reason\":\"range-not-found\"}"），
+            // WebView evaluateJavascript 会再包裹一层 JSON 字符串。先 unwrap 再取 reason。
+            val reason = runCatching {
+                val unwrapped = (JSONTokener(raw).nextValue() as? String) ?: raw
+                JSONObject(unwrapped).optString("reason", "no-reason-field")
+            }.getOrElse { "parse-error: ${it.message}" }
+            logcat(LogPriority.WARN) {
+                "[EpubReaderFragment] applySentenceHighlight FAILED reason=$reason range=[$start,$end) raw=$raw"
+            }
+        } else {
+            val info = runCatching {
+                val unwrapped = (JSONTokener(raw).nextValue() as? String) ?: raw
+                val o = JSONObject(unwrapped)
+                "marks=${o.optInt("marks", -1)} markLen=${o.optInt("markLen", -1)} " +
+                    "walkerTotal=${o.optInt("walkerTotal", -1)} dom='${o.optString("snippet", "")}' " +
+                    "scroll=${o.optJSONObject("scroll")}"
+            }.getOrDefault("")
+            logcat(LogPriority.INFO) {
+                "[EpubReaderFragment] applySentenceHighlight OK idx=${sentenceRef.index} " +
+                    "range=[$start,$end) $info"
+            }
+        }
+        return ok
+    }
+
+    /**
+     * 清除当前 TTS 句子的高亮（删除所有 `mark.tts-active-sentence` 并合并文本节点）。
+     * 失败返回 false（不影响主流程）。
+     */
+    suspend fun clearSentenceHighlight(): Boolean {
+        val navigator = readyNavigatorFragment() ?: return false
+        val raw = runCatching {
+            navigator.evaluateJavascript("(" + EPUB_CLEAR_SENTENCE_HIGHLIGHT_BODY.trimIndent() + ")();")
+        }.getOrNull() ?: return false
+        val ok = runCatching {
+            val payload = (JSONTokener(raw).nextValue() as? String) ?: raw
+            JSONObject(payload).optBoolean("ok", false)
+        }.getOrDefault(false)
+        if (!ok) {
+            // raw 是 JSON 包裹字符串，先 unwrap 再解析 reason
+            val reason = runCatching {
+                val unwrapped = (JSONTokener(raw).nextValue() as? String) ?: raw
+                JSONObject(unwrapped).optString("reason", "no-reason-field")
+            }.getOrElse { "parse-error: ${it.message}" }
+            logcat(LogPriority.WARN) {
+                "[EpubReaderFragment] clearSentenceHighlight FAILED reason=$reason raw=$raw"
+            }
+        }
+        return ok
+    }
     private fun paginationScannerFragment(): EpubPaginationScannerFragment? {
         if (!isAdded) return null
         return childFragmentManager.findFragmentByTag(PAGINATION_SCANNER_TAG) as? EpubPaginationScannerFragment
     }
 
+    /**
+     * 通过 JS 构建 TTS 文本模型，返回 `{ok, text, startOffset, snippet, nodeCount}`。
+     *
+     * - `text`：遍历文本节点（跳过 script/style/nav/[hidden]/display:none 等），
+     *   按顺序拼接原始 `nodeValue`，**不加任何分隔符**。
+     * - `startOffset`：从视口顶部逐行扫描，第一个命中文字的位置换算为该文本中的字符偏移。
+     * - `snippet`：自 `startOffset` 起 80 字符（仅日志 / 降级锚用）。
+     *
+     * ⚠️ 这里的 `isSkippableEl` 与 [EPUB_APPLY_SENTENCE_HIGHLIGHT_BODY] 内的同名函数是
+     * 两份拷贝。修改过滤规则时必须同步更新两处，否则 `text` 偏移与高亮 walker 不再对齐。
+     */
+    private val epubTtsTextModelBody =
+        """
+        function() {
+            try {
+                var body = document.body;
+                if (!body) return JSON.stringify({ ok: false, reason: 'no-body' });
+
+                function isSkippableEl(el) {
+                    if (!el || el.nodeType !== 1) return false;
+                    var tag = el.tagName ? el.tagName.toUpperCase() : '';
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return true;
+                    if (el.hasAttribute && el.hasAttribute('hidden')) return true;
+                    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return true;
+                    var epubType = el.getAttribute && el.getAttribute('epub:type');
+                    if (epubType === 'toc' || epubType === 'landmarks' || epubType === 'page-list') return true;
+                    if (tag === 'NAV') return true;
+                    try {
+                        var cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+                        if (cs) {
+                            if (cs.display === 'none') return true;
+                            if (cs.visibility === 'hidden') return true;
+                        }
+                    } catch (e) {}
+                    return false;
+                }
+
+                function makeTextWalker() {
+                    var root = body;
+                    return document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                        acceptNode: function(node) {
+                            var p = node.parentNode;
+                            while (p && p !== root) {
+                                if (isSkippableEl(p)) return NodeFilter.FILTER_REJECT;
+                                p = p.parentNode;
+                            }
+                            return NodeFilter.FILTER_ACCEPT;
+                        }
+                    });
+                }
+
+                var walker = makeTextWalker();
+                var nodeStart = new Map();
+                var pieces = [];
+                var position = 0;
+                var nodeCount = 0;
+                var node;
+                while ((node = walker.nextNode())) {
+                    var value = String(node.nodeValue || '');
+                    nodeStart.set(node, position);
+                    pieces.push(value);
+                    position += value.length;
+                    nodeCount += 1;
+                }
+                var text = pieces.join('');
+
+                var w = window.innerWidth, h = window.innerHeight;
+                var xs = [Math.max(8, Math.min(40, Math.floor(w * 0.08))), Math.floor(w / 2)];
+                var startOffset = -1;
+                var snippet = '';
+                for (var y = 4; y < h && startOffset < 0; y += 6) {
+                    for (var i = 0; i < xs.length; i++) {
+                        var range = null;
+                        try { range = document.caretRangeFromPoint(xs[i], y); } catch (e) { range = null; }
+                        if (!range) continue;
+                        var container = range.startContainer;
+                        if (!container || container.nodeType !== 3) continue;
+                        if (!nodeStart.has(container)) continue;
+                        var within = range.startOffset | 0;
+                        var len = String(container.nodeValue || '').length;
+                        if (within > len) within = len;
+                        startOffset = nodeStart.get(container) + within;
+                        snippet = text.slice(startOffset, startOffset + 80);
+                        break;
+                    }
+                }
+
+                return JSON.stringify({
+                    ok: true,
+                    text: text,
+                    startOffset: startOffset,
+                    snippet: snippet,
+                    nodeCount: nodeCount
+                });
+            } catch (e) {
+                return JSON.stringify({ ok: false, reason: String(e) });
+            }
+        }
+        """.trimIndent()
     companion object {
         private const val ARG_CHAPTER_ID = "chapter_id"
         private const val ARG_SOURCE_ID = "source_id"
@@ -1467,6 +1700,289 @@ class EpubReaderFragment : Fragment() {
         private const val FONT_BACKGROUND_WAIT_TIMEOUT_MS = 6_000L
         private const val FONT_BACKGROUND_POLL_MS = 75L
         private val READIUM_PACKAGE_BASE_URL = AbsoluteUrl("https://readium_package/")!!
+
+        /** TTS 当前句高亮 JS 函数体（IIFE）。读取 window.__ttsHighlightArgs={start,end,scroll}。 */
+        private val EPUB_APPLY_SENTENCE_HIGHLIGHT_BODY =
+            """
+            function() {
+                var args = window.__ttsHighlightArgs;
+                if (!args) return JSON.stringify({ ok: false, reason: 'no-args' });
+                var start = args.start | 0;
+                var end = args.end | 0;
+                var scroll = !!args.scroll;
+                if (start < 0 || end <= start) return JSON.stringify({ ok: false, reason: 'bad-range' });
+
+                function clearExistingMarks() {
+                    var marks = document.querySelectorAll('mark.tts-active-sentence');
+                    for (var i = 0; i < marks.length; i++) {
+                        var m = marks[i];
+                        while (m.firstChild) m.parentNode.insertBefore(m.firstChild, m);
+                        m.parentNode.removeChild(m);
+                    }
+                    document.body.normalize();
+                }
+
+                function isSkippableEl(el) {
+                    if (!el || el.nodeType !== 1) return false;
+                    var tag = el.tagName ? el.tagName.toUpperCase() : '';
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return true;
+                    // [hidden] 属性 / aria-hidden — 与 ChapterTextExtractor.NON_RENDERED_SELECTOR 对齐
+                    if (el.hasAttribute && el.hasAttribute('hidden')) return true;
+                    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return true;
+                    // 已知 Readium 不渲染的导航元素
+                    var epubType = el.getAttribute && el.getAttribute('epub:type');
+                    if (epubType === 'toc' || epubType === 'landmarks' || epubType === 'page-list') return true;
+                    if (tag === 'NAV') return true;
+                    // 计算样式：display:none / visibility:hidden 同样跳过
+                    // 拿不到 computedStyle 时（head 等）忽略，不影响正文
+                    try {
+                        var cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+                        if (cs) {
+                            if (cs.display === 'none') return true;
+                            if (cs.visibility === 'hidden') return true;
+                        }
+                    } catch (e) {}
+                    return false;
+                }
+
+                function makeTextWalker() {
+                    var root = document.body;
+                    return document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                        acceptNode: function(node) {
+                            var p = node.parentNode;
+                            while (p && p !== root) {
+                                if (isSkippableEl(p)) return NodeFilter.FILTER_REJECT;
+                                p = p.parentNode;
+                            }
+                            return NodeFilter.FILTER_ACCEPT;
+                        }
+                    });
+                }
+
+                function findRangeNodes(startOff, endOff) {
+                    var walker = makeTextWalker();
+                    var offset = 0;
+                    var startNode = null, startNodeOffset = 0;
+                    var endNode = null, endNodeOffset = 0;
+                    var node;
+                    while ((node = walker.nextNode())) {
+                        var text = String(node.nodeValue || '');
+                        var ns = offset;
+                        var nend = offset + text.length;
+                        if (startNode === null && startOff >= ns && startOff <= nend) {
+                            startNode = node;
+                            startNodeOffset = startOff - ns;
+                        }
+                        if (endNode === null && endOff >= ns && endOff <= nend) {
+                            endNode = node;
+                            endNodeOffset = endOff - ns;
+                        }
+                        offset = nend;
+                    }
+                    return {
+                        startNode: startNode,
+                        startNodeOffset: startNodeOffset,
+                        endNode: endNode,
+                        endNodeOffset: endNodeOffset,
+                        total: offset
+                    };
+                }
+
+                function styleMark(mark) {
+                    // 不依赖外部 CSS —— Readium 的分页样式可能覆盖 mark 的默认样式。
+                    // 直接内联样式保证任何阅读主题/背景色下都可见。
+                    mark.style.backgroundColor = 'rgba(255, 200, 0, 0.45)';
+                    mark.style.borderRadius = '3px';
+                    mark.style.boxShadow = '0 0 0 1px rgba(255, 160, 0, 0.6)';
+                    return mark;
+                }
+
+                function wrapTextNodeWithMark(node) {
+                    var mark = styleMark(document.createElement('mark'));
+                    mark.className = 'tts-active-sentence';
+                    if (node.parentNode) {
+                        node.parentNode.insertBefore(mark, node);
+                        mark.appendChild(node);
+                    }
+                    return mark;
+                }
+
+                function scrollMarkIntoView(mark) {
+                    if (!scroll || !mark || !mark.getBoundingClientRect) return null;
+                    var scroller = document.scrollingElement || document.documentElement;
+                    if (!scroller) return null;
+                    var vw = Math.max(1, window.innerWidth || scroller.clientWidth || 1);
+                    var vh = Math.max(1, window.innerHeight || scroller.clientHeight || 1);
+                    var rect = mark.getBoundingClientRect();
+                    var hRange = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+                    var vRange = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+                    var info = {
+                        vw: vw, vh: vh,
+                        hRange: Math.round(hRange), vRange: Math.round(vRange),
+                        fromX: Math.round(scroller.scrollLeft), fromY: Math.round(scroller.scrollTop),
+                        rl: Math.round(rect.left), rt: Math.round(rect.top),
+                        rw: Math.round(rect.width), rh: Math.round(rect.height)
+                    };
+                    // 不能用 scrollIntoView：
+                    //  - 分页（多栏横向）下它按 inline:'nearest' 只滚"刚好露出"的最小距离，
+                    //    会停在一栏中间 → 页面看起来"翻不到位"；
+                    //  - block:'center' 又把文字纵向推上去，分页下导致最后一行被切。
+                    // Readium 分页的翻页本质就是 WebView 的 scrollX，这里直接按整栏对齐。
+                    if (hRange > 1) {
+                        var dir = 'ltr';
+                        try { dir = String(window.getComputedStyle(scroller).direction || 'ltr'); } catch (e) {}
+                        // 用"相对当前视口的栏偏移"而非绝对栏号：RTL 下 scrollLeft 为负值也能成立
+                        var anchor = dir === 'rtl' ? rect.right : rect.left;
+                        var delta = dir === 'rtl' ? (Math.ceil(anchor / vw) - 1) : Math.floor(anchor / vw);
+                        // 一次最多翻一页（防被强行拽回），且不回翻——
+                        // 当句子起点落在上一栏时回翻一页、下一句起点又落在后一栏，
+                        // 会出现"回翻 → 再前翻"的抖动；直接钳为 0 只前进。
+                        if (delta > 1) delta = 1;
+                        if (delta < 0) delta = 0;
+                        if (delta !== 0) scroller.scrollLeft = scroller.scrollLeft + delta * vw;
+                        // 归零纵向残留，否则分页下底部会一直缺一行
+                        if (vRange > 1 && scroller.scrollTop !== 0) scroller.scrollTop = 0;
+                        info.mode = 'paged';
+                        info.dir = dir;
+                        info.delta = delta;
+                    } else if (vRange > 1) {
+                        // 连续滚动：把整句放到视口垂直中心
+                        var target = scroller.scrollTop + rect.top - (vh - rect.height) / 2;
+                        if (target < 0) target = 0;
+                        if (target > vRange) target = vRange;
+                        scroller.scrollTop = target;
+                        info.mode = 'scroll';
+                    } else {
+                        info.mode = 'static';
+                    }
+                    info.toX = Math.round(scroller.scrollLeft);
+                    info.toY = Math.round(scroller.scrollTop);
+                    return info;
+                }
+
+                // 1) 先清掉之前的 mark + normalize
+                clearExistingMarks();
+
+                // 2) 找到 start/end text node
+                var r = findRangeNodes(start, end);
+                if (!r.startNode || !r.endNode) {
+                    return JSON.stringify({ ok: false, reason: 'range-not-found' });
+                }
+
+                // 3) 构造覆盖完整文本节点的 range。
+                var range = document.createRange();
+                if (r.startNode === r.endNode) {
+                    // 特判：整句落在**同一个文本节点**内。
+                    // 之前的实现先 split startNode 再 split endNode，但 split 后
+                    // r.startNode 已经指向新节点，r.endNode 仍指向旧节点 → range 反转 →
+                    // surroundContents 产出空 mark（用户看到一条竖线光标）。
+                    // 正确做法：先按 a 切出后半段 [a,end)，再在这段上按 (b-a) 切出 [a,b)。
+                    var node = r.startNode;
+                    var a = r.startNodeOffset;
+                    var b = r.endNodeOffset;
+                    if (a > 0) {
+                        node = node.splitText(a);
+                        b = b - a;
+                    }
+                    if (b < node.nodeValue.length) {
+                        node.splitText(b);
+                    }
+                    range.setStart(node, 0);
+                    range.setEnd(node, Math.min(b, node.nodeValue.length));
+                } else {
+                    // 跨文本节点：startNode 只留 [startOffset, ...)，
+                    // endNode 只留 [0, endNodeOffset)。
+                    if (r.startNodeOffset > 0 && r.startNodeOffset < r.startNode.nodeValue.length) {
+                        r.startNode = r.startNode.splitText(r.startNodeOffset);
+                    }
+                    if (r.endNodeOffset > 0 && r.endNodeOffset < r.endNode.nodeValue.length) {
+                        r.endNode.splitText(r.endNodeOffset);
+                    }
+                    range.setStart(r.startNode, 0);
+                    range.setEnd(r.endNode, r.endNode.nodeValue.length);
+                }
+
+                var marks = [];
+                var useSurround = (function() {
+                    try {
+                        var m = styleMark(document.createElement('mark'));
+                        m.className = 'tts-active-sentence';
+                        range.surroundContents(m);
+                        marks.push(m);
+                        return true;
+                    } catch (e) {
+                        return false;
+                    }
+                })();
+
+                if (!useSurround) {
+                    // 跨元素边界：surroundContents 失败。逐个 text node 包 mark。
+                    // comparePoint 返回 -1 (在 range 之前)、0 (在 range 内)、1 (在 range 之后)
+                    // n 与 range 相交的条件：n 起点不晚于 range 末点，且 n 末点不早于 range 起点
+                    var inner = document.createTreeWalker(
+                        range.commonAncestorContainer,
+                        NodeFilter.SHOW_TEXT,
+                        {
+                            acceptNode: function(n) {
+                                var len = (n.nodeValue || '').length;
+                                try {
+                                    var cmpStart = range.comparePoint(n, 0);
+                                    if (cmpStart === 1) return NodeFilter.FILTER_REJECT;
+                                    var cmpEnd = range.comparePoint(n, len);
+                                    if (cmpEnd === -1) return NodeFilter.FILTER_REJECT;
+                                    return NodeFilter.FILTER_ACCEPT;
+                                } catch (e) {
+                                    return NodeFilter.FILTER_SKIP;
+                                }
+                            }
+                        }
+                    );
+                    var collected = [];
+                    var tn;
+                    while ((tn = inner.nextNode())) collected.push(tn);
+                    for (var i = 0; i < collected.length; i++) {
+                        var t = collected[i];
+                        if (!t.parentNode || t.parentNode.nodeName === 'MARK') continue;
+                        marks.push(wrapTextNodeWithMark(t));
+                    }
+                }
+
+                if (marks.length === 0) {
+                    return JSON.stringify({ ok: false, reason: 'no-mark-created' });
+                }
+                var scrollInfo = scrollMarkIntoView(marks[0]);
+                // 诊断信息：命中的 DOM 文本 + 长度 + walker 全文字符总数 + 滚动结果。
+                // walkerTotal 应与文本模型 text.length 相等；不等说明两处文本模型不一致。
+                var markText = String(marks[0].textContent || '');
+                return JSON.stringify({
+                    ok: true,
+                    marks: marks.length,
+                    markLen: markText.length,
+                    walkerTotal: r.total,
+                    snippet: markText.slice(0, 60),
+                    scroll: scrollInfo
+                });
+            }
+            """
+
+        /** 清除当前 TTS 句子的高亮（删除所有 mark.tts-active-sentence 并合并文本节点）。 */
+        private val EPUB_CLEAR_SENTENCE_HIGHLIGHT_BODY =
+            """
+            function() {
+                try {
+                    var marks = document.querySelectorAll('mark.tts-active-sentence');
+                    for (var i = 0; i < marks.length; i++) {
+                        var m = marks[i];
+                        while (m.firstChild) m.parentNode.insertBefore(m.firstChild, m);
+                        m.parentNode.removeChild(m);
+                    }
+                    document.body.normalize();
+                    return JSON.stringify({ ok: true });
+                } catch (e) {
+                    return JSON.stringify({ ok: false, reason: String(e) });
+                }
+            }
+            """
         private val PARAGRAPH_INDENT_DEBUG_SCRIPT =
             """
             (function() {

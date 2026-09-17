@@ -57,6 +57,7 @@ import koharia.connection.LibraryContentScope
 import koharia.core.migration.Migrator
 import koharia.core.migration.migrations.migrations
 import koharia.telemetry.TelemetryConfig
+import koharia.tts.di.TtsModule
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -109,11 +110,14 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         val appModule = AppModule(this)
         Injekt.importModule(appModule)
         Injekt.importModule(DomainModule())
+        Injekt.importModule(TtsModule(application = this))
         Injekt.get<koharia.connection.SharedConfigMigration>().captureUpgradeSelection()
         Injekt.get<koharia.source.komga.KomgaConnectionMigration>().migrate()
         setupNotificationChannels()
         if (Injekt.get<koharia.connection.SharedConfigMigration>().initialize()) {
             initializeSharedConfiguration()
+        } else {
+            appModule.initializeInBackground()
         }
     }
 

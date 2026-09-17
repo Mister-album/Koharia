@@ -22,6 +22,7 @@ import koharia.source.komga.KomgaLocalConfigManager
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaServerProfileManager
 import koharia.source.komga.KomgaServerRemovalManager
+import koharia.tts.TtsPreferences
 import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.ScopedPreferenceStore
@@ -142,6 +143,9 @@ class PreferenceModule(val app: Application) : InjektModule {
         }
         addSingletonFactory {
             EntryOpenPreferences(get<PreferenceStore>())
+        }
+        addSingletonFactory {
+            TtsPreferences(get<PreferenceStore>())
         }
     }
 }

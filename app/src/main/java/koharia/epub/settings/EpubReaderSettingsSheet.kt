@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DensityLarge
 import androidx.compose.material.icons.outlined.DensityMedium
@@ -93,12 +94,17 @@ import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.epub.EpubBrightnessAwareDialogContent
 import koharia.epub.EpubReaderActivity
 import koharia.epub.calculateEpubBrightness
+import koharia.tts.TtsPreferences
+import koharia.tts.TtsVendor
+import koharia.tts.Voice
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.HeadingItem
 import tachiyomi.presentation.core.components.SliderItem
 import tachiyomi.presentation.core.i18n.stringResource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import kotlin.math.roundToInt
 import android.graphics.Color as AndroidColor
 
@@ -1925,6 +1931,47 @@ private fun ColumnScope.EpubGeneralSettingsPage(
         label = stringResource(MR.strings.pref_keep_screen_on),
         pref = readerPreferences.keepScreenOn,
     )
+
+    // Phase 3 step 2：朗读语速（0.5x - 2.0x）。全局偏好，TtsService 会实时读取并作用到播放器。
+    val ttsPreferences = remember { Injekt.get<TtsPreferences>() }
+    val speedTenths by ttsPreferences.speedTenths.changes()
+        .collectAsState(ttsPreferences.speedTenths.get())
+    SliderItem(
+        value = speedTenths,
+        valueRange = TtsPreferences.MIN_SPEED_TENTHS..TtsPreferences.MAX_SPEED_TENTHS,
+        label = stringResource(MR.strings.tts_speed),
+        valueString = "${speedTenths / 10f}x",
+        onChange = { ttsPreferences.speedTenths.set(it) },
+    )
+
+    // Phase 3 step 3:朗读音色选择。改音色**仅影响下一段播放**(飞行中的
+    // SentencePrefetcher 不会重建;详见 TtsService.observeVoicePreference)。
+    // Phase 4 修复:「Edge 引擎音色选不了」—— 这里原来写死 MimoEngine.PRESET_VOICES,
+    // 于是 vendor=Edge 时列表里全是 MiMo 音色;用户点任意一行 → 写入的 id 在 Edge 下
+    // 非法 → TtsService.observeVoicePreference 把它静默回退成 Edge 默认音色,
+    // 表现为「点了没反应 / 选不动」。音色列表必须跟随当前 vendor。
+    HeadingItem(text = stringResource(MR.strings.tts_voice_section))
+    val vendorId by ttsPreferences.vendorId.changes()
+        .collectAsState(ttsPreferences.vendorId.get())
+    val currentVendor = TtsVendor.fromId(vendorId)
+    // v0.4.2-63:音色按 vendor 分槽存储,这里读写"当前 vendor 的槽位"
+    val voicePref = ttsPreferences.voiceIdFor(currentVendor.id)
+    val currentVoiceId by voicePref.changes().collectAsState(voicePref.get())
+    Text(
+        text = stringResource(MR.strings.tts_voice_engine_hint, currentVendor.displayName),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp),
+    )
+    val voices = currentVendor.presetVoices()
+    VoiceList(
+        voices = voices,
+        // 槽位里的 id 若对当前 vendor 非法(手改 prefs / 旧厂商被移除),高亮该 vendor
+        // 的默认音色 —— 与 TtsService 实际会使用的音色一致。
+        selectedVoiceId = currentVoiceId.takeIf { id -> voices.any { it.id == id } }
+            ?: currentVendor.defaultVoiceId(),
+        onVoiceSelected = { voicePref.set(it) },
+    )
 }
 
 @Composable
@@ -2197,3 +2244,122 @@ private const val ALPHA_MASK: Long = 0xFF000000
 private const val RED_MASK: Long = 0x00FF0000
 private const val GREEN_MASK: Long = 0x0000FF00
 private const val BLUE_MASK: Long = 0x000000FF
+
+/** 音色分组语言的展示顺序;未列出的语种排在最后(保持首次出现顺序)。 */
+private val VOICE_LANGUAGE_ORDER = listOf("zh", "en")
+
+/**
+ * Phase 3 step 3:朗读音色列表。**仅在 [EpubGeneralSettingsPage] 里实例化** —— 假设
+ * 已通过 `remember { Injekt.get<TtsPreferences>() }` 拿到偏好，UI 收到点击直接写 pref。
+ *
+ * [voices] 由调用方按**当前 TTS 厂商**取（[TtsVendor.presetVoices]），本函数不做厂商判断。
+ * 按 [Voice.language] 分组，语言顺序取 [VOICE_LANGUAGE_ORDER]（`zh` → `en`），未收录语种
+ * 排在最后；每组内保持传入列表的原始顺序。
+ */
+@Composable
+private fun ColumnScope.VoiceList(
+    voices: List<Voice>,
+    selectedVoiceId: String,
+    onVoiceSelected: (String) -> Unit,
+) {
+    val grouped = remember(voices) { voices.groupBy { it.language } }
+    // 语言分组从 voices 派生,而不是写死 listOf("zh", "en") —— 后者会在厂商新增
+    // 语种时把音色静默隐藏(与「Edge 音色选不了」同一类失败模式)。
+    val languages = remember(grouped) {
+        grouped.keys.sortedBy { lang ->
+            VOICE_LANGUAGE_ORDER.indexOf(lang).let { if (it >= 0) it else VOICE_LANGUAGE_ORDER.size }
+        }
+    }
+    Column(
+        // v0.4.2-53 真机回归:卡片之前贴左右边框 0 padding,加上 16dp 让卡片与
+        // section title 的 24dp 缩进呼应(差 8dp 让视觉有分组感)
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        languages.forEach { lang ->
+            val voicesByLang = grouped[lang].orEmpty()
+            if (voicesByLang.isEmpty()) return@forEach
+            Text(
+                text = when (lang) {
+                    "zh" -> stringResource(MR.strings.tts_voice_lang_zh)
+                    "en" -> stringResource(MR.strings.tts_voice_lang_en)
+                    // 未收录语种直接显示语言标签,不硬编码猜测译名
+                    else -> lang
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+            )
+            voicesByLang.forEach { voice ->
+                VoiceOption(
+                    selected = voice.id == selectedVoiceId,
+                    name = voice.name,
+                    description = voice.description.orEmpty(),
+                    onClick = { onVoiceSelected(voice.id) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Phase 3 step 3:单个音色行。`Surface(onClick=)` + `RadioButton` semantics + 选中态高亮，
+ * 复用 `ReadingModeOption` 的模式（见该函数注释）。
+ */
+@Composable
+private fun VoiceOption(
+    selected: Boolean,
+    name: String,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics {
+                role = Role.RadioButton
+                this.selected = selected
+            },
+        shape = MaterialTheme.shapes.large,
+        color = if (selected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        },
+        contentColor = if (selected) {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (description.isNotEmpty()) {
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Outlined.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}

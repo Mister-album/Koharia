@@ -71,6 +71,7 @@ import tachiyomi.data.History
 import tachiyomi.data.Mangas
 import tachiyomi.data.MemoColumnAdapter
 import tachiyomi.data.StringListColumnAdapter
+import tachiyomi.data.Tts_progress
 import tachiyomi.data.UpdateStrategyColumnAdapter
 import tachiyomi.data.migration.LegacyDatabaseSchemaBridge
 import tachiyomi.domain.source.service.SourceManager
@@ -185,6 +186,9 @@ class AppModule(val app: Application) : InjektModule {
                 ),
                 chaptersAdapter = Chapters.Adapter(
                     memoAdapter = MemoColumnAdapter,
+                ),
+                tts_progressAdapter = Tts_progress.Adapter(
+                    updated_atAdapter = DateColumnAdapter,
                 ),
             )
         }

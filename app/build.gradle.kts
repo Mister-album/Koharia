@@ -29,6 +29,7 @@ val hasReleaseKeystore = keystorePropertiesFile.exists().also { exists ->
         keystorePropertiesFile.inputStream().use(keystoreProperties::load)
     }
 }
+
 val useEInkDeviceFixture = providers.gradleProperty("einkDeviceFixture")
     .map(String::toBoolean)
     .getOrElse(false)
@@ -84,6 +85,18 @@ android {
         buildConfigField("boolean", "LANRARAGI_DIAGNOSTICS", "false")
 
         testInstrumentationRunner = "koharia.testing.KohariaDeviceTestRunner"
+    }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+            all {
+                it.systemProperty(
+                    "koharia.networkTests",
+                    (project.findProperty("kohariaNetworkTests") as? String) ?: "false",
+                )
+            }
+        }
     }
 
     externalNativeBuild {
@@ -289,6 +302,8 @@ dependencies {
     implementation(libs.androidx.recyclerView)
     implementation(libs.androidx.viewPager)
     implementation(libs.androidx.profileInstaller)
+    implementation(libs.androidx.media)
+    implementation(libs.androidx.security.crypto)
 
     implementation(libs.bundles.androidx.lifecycle)
 

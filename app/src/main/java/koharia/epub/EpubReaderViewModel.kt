@@ -51,6 +51,10 @@ import koharia.pdf.cache.PdfPreparationOutcome
 import koharia.pdf.cache.PdfReflowArtifact
 import koharia.pdf.cache.PdfReflowCacheManager
 import koharia.pdf.reflow.PdfProgressMapper
+import koharia.tts.TtsAction
+import koharia.tts.TtsPlaybackState
+import koharia.tts.TtsService
+import koharia.tts.progress.TtsProgressNotifier
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +64,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
@@ -138,6 +143,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     globalEpubReaderPreferences: EpubReaderPreferences = Injekt.get(),
     globalBasePreferences: BasePreferences = Injekt.get(),
     private val sharedAppPreferences: SharedAppPreferences = Injekt.get(),
+    private val ttsProgressNotifier: TtsProgressNotifier = Injekt.get(),
 ) : ViewModel() {
 
     private var epubReaderPreferences: EpubReaderPreferences =
@@ -156,6 +162,10 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
     private val mutableState = MutableStateFlow(EpubReaderUiState())
     val state = mutableState.asStateFlow()
+
+    // Phase 3: TTS 章节自然播完事件（转发自 TtsProgressNotifier）。
+    val ttsChapterCompleted: SharedFlow<Unit> = ttsProgressNotifier.chapterCompleted
+
     private val mutableImageState = MutableStateFlow(EpubImageUiState())
     internal val imageState = mutableImageState.asStateFlow()
     private val mutableFootnoteState = MutableStateFlow<EpubFootnoteUiState?>(null)
@@ -203,6 +213,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var lastVisualHref: String? = null
     private var lastVisualPageIndex: Int? = null
     private var lastVisualTotalPages: Int? = null
+    private var lastVisualLocator: Locator? = null
     private var bookVisualPageCounts: Map<String, Int> = emptyMap()
     private var paginationGeneration = 0L
     private var paginationLayoutKey: String? = null
@@ -281,6 +292,38 @@ class EpubReaderViewModel @JvmOverloads constructor(
             searchUpdates
                 .collectLatest(::performSearch)
         }
+        // Phase 2.5a: TTS 句子进度广播 → UiState (source of truth 是 notifier 的 StateFlow)
+        viewModelScope.launch {
+            ttsProgressNotifier.progress.collect { progress ->
+                logcat(LogPriority.INFO) {
+                    "[EpubReaderViewModel] ttsProgress emit chapterHref='${progress.chapterHref}' " +
+                        "currentIndex=${progress.currentIndex} size=${progress.sentences.size}"
+                }
+                mutableState.update {
+                    it.copy(
+                        ttsProgress = progress,
+                        ttsActive = progress.toTtsHighlightBinding().active,
+                    )
+                }
+            }
+        }
+        // Phase 3.3: TTS 播放 UI 状态（来自 TtsService companion 的进程级 StateFlow）
+        // → UiState.ttsPlaybackState（驱动 TtsControlPanel 的 play/pause 图标与按下动作）
+        viewModelScope.launch {
+            TtsService.playbackState.collect { playback ->
+                mutableState.update { it.copy(ttsPlaybackState = playback) }
+            }
+        }
+    }
+
+    /**
+     * Phase 3.3：阅读器内 [TtsControlPanel] 派单入口。
+     *
+     * 把 [TtsAction] 派到 [TtsService.dispatch] —— VM 持有 `application`，
+     * Composable 只回调到 VM，不直接碰 [android.content.Context]。
+     */
+    fun onTtsAction(action: TtsAction) {
+        TtsService.dispatch(application, action)
     }
 
     fun needsInit(): Boolean = !state.value.isLoading && !state.value.isReady
@@ -1109,6 +1152,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         lastVisualHref = href
         lastVisualPageIndex = pageIndex
         lastVisualTotalPages = totalPages
+        lastVisualLocator = locator
 
         val readingOrder = paginationReadingOrder()
         val exactPage = exactVisualPage(href, pageIndex, readingOrder, bookVisualPageCounts)
@@ -1139,6 +1183,25 @@ class EpubReaderViewModel @JvmOverloads constructor(
             return
         }
     }
+
+    /** TTS 起点 locator：优先当前显示页（翻页回调上报），退化用最新导航 locator。 */
+    private fun ttsStartLocator(): Locator? = lastVisualLocator ?: latestLocator
+
+    /**
+     * TTS 起点锚：取**导航 locator** 的定位文本（页 locator 无文本）。
+     * second=true 表示该文本位于阅读位置之前（before），应从其下一句开始朗读。
+     */
+    fun ttsStartAnchor(): Pair<String, Boolean>? {
+        val text = latestLocator?.text ?: return null
+        text.highlight?.trim()?.takeIf { it.isNotEmpty() }?.let { return it to false }
+        text.after?.trim()?.takeIf { it.isNotEmpty() }?.let { return it to false }
+        text.before?.trim()?.takeIf { it.isNotEmpty() }?.let { return it to true }
+        return null
+    }
+
+    /** TTS 起点进度：当前显示页在章节内的偏移（0..1），不是全书总进度。 */
+    fun ttsStartProgression(): Double =
+        (ttsStartLocator()?.locations?.progression as? Number)?.toDouble()?.coerceIn(0.0, 1.0) ?: 0.0
 
     fun onFirstContentDisplayed() {
         val preparation = pdfReflowArtifact?.progressive
@@ -1941,6 +2004,30 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Phase 3 自动续播：返回 [currentHref] 之后的**下一个阅读顺序资源**（不做 TOC 映射）。
+     *
+     * 为什么不用 [adjacentTocEntries]：目录项可能只覆盖少数带 fragment 的锚点位置，
+     * 且同一资源可有多个目录项。当"当前资源不在目录里"时，[adjacentTocEntries] 的
+     * `exactCurrentIndex = -1` 回退分支（`currentSectionPosition`）会选错 —— 真机表现为
+     * "ch007 播完却续播到 ch003#b"（倒退到前面的章节）。自动续播只需沿
+     * `publication.readingOrder` 前进一格，这是最自然、最稳的"下一章"。
+     */
+    fun nextReadingOrderLink(currentHref: String?): Link? {
+        val session = sessionRepository.get(chapterId) ?: return null
+        val order = session.publication.readingOrder
+        if (order.isEmpty()) return null
+        val key = currentHref?.normalizedResourceHref().orEmpty()
+        if (key.isBlank()) return null
+        val index = order.indexOfFirst { candidate ->
+            val candidateKey = candidate.href.toString().normalizedResourceHref()
+            candidateKey.isNotEmpty() &&
+                (candidateKey == key || candidateKey.endsWith("/$key") || key.endsWith("/$candidateKey"))
+        }
+        if (index < 0 || index + 1 >= order.size) return null
+        return order[index + 1]
+    }
+
     fun locatorFromBookmark(bookmark: EpubBookmark): Locator? {
         return bookmark.toLocatorOrNull()
     }
@@ -2558,3 +2645,21 @@ class EpubReaderViewModel @JvmOverloads constructor(
         return abs(this - other) < 0.0001
     }
 }
+
+/**
+ * TTS 进度 → 阅读器 UiState 映射结果（Phase 2.5a）。
+ * 纯函数，便于单测；ViewModel 在 init 中把 [TtsProgressNotifier.Progress] 映射到此结构后写入 UiState。
+ *
+ * @param active 章节是否已绑定句子列表（与 notifier.isBound 对齐）
+ * @param sentence 当前朗读句的引用；未开始（currentIndex < 0）或越界时为 null
+ */
+internal data class TtsHighlightBinding(
+    val active: Boolean,
+    val sentence: TtsProgressNotifier.SentenceRef?,
+)
+
+/** 把 [TtsProgressNotifier.Progress] 映射为阅读器可消费的 [TtsHighlightBinding]。 */
+internal fun TtsProgressNotifier.Progress.toTtsHighlightBinding(): TtsHighlightBinding = TtsHighlightBinding(
+    active = sentences.isNotEmpty(),
+    sentence = sentences.getOrNull(currentIndex),
+)

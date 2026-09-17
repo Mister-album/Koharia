@@ -20,6 +20,7 @@ keystore.properties
 
 # AI files
 .codex-work
+.omo
 /.tmp-*
 
 # Local test logs, screenshots, fixtures, and diagnostic scratch files

@@ -3,6 +3,8 @@ package koharia.epub
 import androidx.compose.runtime.Immutable
 import koharia.domain.epub.model.EpubBookmark
 import koharia.epub.model.EpubSearchResult
+import koharia.tts.TtsPlaybackState
+import koharia.tts.progress.TtsProgressNotifier
 
 @Immutable
 data class EpubReaderUiState(
@@ -46,6 +48,9 @@ data class EpubReaderUiState(
     val isSearchLoading: Boolean = false,
     val searchErrorMessage: String? = null,
     val remoteProgressConflict: EpubRemoteProgressConflict? = null,
+    val ttsProgress: TtsProgressNotifier.Progress? = null,
+    val ttsActive: Boolean = false,
+    val ttsPlaybackState: TtsPlaybackState = TtsPlaybackState.STOPPED,
 )
 
 @Immutable

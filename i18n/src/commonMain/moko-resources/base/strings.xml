@@ -23,6 +23,33 @@
     <!-- Screen titles -->
     <string name="label_more">More</string>
     <string name="label_settings">Settings</string>
+    <string name="tts_listen">Listen</string>
+    <string name="tts_stop">Stop</string>
+    <string name="tts_playing">Playing…</string>
+    <string name="tts_channel_name">TTS playback</string>
+    <string name="tts_channel_description">EPUB read-aloud playback</string>
+    <string name="tts_speed">Reading speed</string>
+    <string name="tts_action_prev">Previous sentence</string>
+    <string name="tts_action_play">Play</string>
+    <string name="tts_action_pause">Pause</string>
+    <string name="tts_action_next">Next sentence</string>
+    <string name="tts_voice_section">Reading voice</string>
+    <string name="tts_voice_lang_zh">Chinese</string>
+    <string name="tts_voice_lang_en">English</string>
+    <string name="tts_voice_engine_hint">Engine: %1$s</string>
+
+    <string name="tts_engine_settings_title">TTS engine</string>
+    <string name="tts_engine_section">Vendor</string>
+    <string name="tts_engine_vendor_requires_key">Requires API key</string>
+    <string name="tts_engine_vendor_free">No API key required</string>
+    <string name="tts_engine_api_key_label">API key</string>
+    <string name="tts_engine_api_key_hint">Encrypted on this device</string>
+    <string name="tts_engine_status_ok">Configured</string>
+    <string name="tts_engine_status_missing">Not configured — TTS won\'t work</string>
+    <string name="tts_engine_get_api_key">Get key</string>
+    <string name="tts_engine_voice_section">Voice</string>
+    <string name="tts_engine_voice_summary">Configure voices in Reading settings</string>
+    <string name="tts_engine_open_settings">TTS engine settings</string>
     <string name="label_download_queue">Download queue</string>
     <string name="komga_label_offline_cache_queue">Offline cache queue</string>
     <string name="label_library">Library</string>

@@ -1,0 +1,33 @@
+import java.util.Date;
+
+CREATE TABLE tts_progress(
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    sentence_index INTEGER NOT NULL,
+    updated_at INTEGER AS Date NOT NULL,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX tts_progress_manga_id_index ON tts_progress(manga_id);
+
+getByChapterId:
+SELECT chapter_id, manga_id, sentence_index, updated_at
+FROM tts_progress
+WHERE chapter_id = :chapterId;
+
+upsert:
+INSERT INTO tts_progress(chapter_id, manga_id, sentence_index, updated_at)
+VALUES (:chapterId, :mangaId, :sentenceIndex, :updatedAt)
+ON CONFLICT(chapter_id)
+DO UPDATE
+SET manga_id = :mangaId,
+    sentence_index = :sentenceIndex,
+    updated_at = :updatedAt
+WHERE chapter_id = :chapterId;
+
+deleteByChapterId:
+DELETE FROM tts_progress
+WHERE chapter_id = :chapterId;

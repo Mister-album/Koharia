@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS tts_progress(
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    sentence_index INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id) ON DELETE CASCADE,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS tts_progress_manga_id_index
+ON tts_progress(manga_id);
