@@ -407,16 +407,21 @@ class EpubReaderFragment : Fragment() {
         val publication = sessionRepository.get(chapterId)?.publication ?: return false
         pageTransitionController?.cancel()
         clearContinuousScrollState()
-        // 修复:Readium 3.3.0 的 Url(string) + locatorFromLink 不解码 URL-encoded fragment
-        // (%23 而不是 #),对 Koharia-main 同源 EPUB(章节标题含中文)的 TOC link 永远返回 null。
-        // 退而求其次:URL-decode 后去掉 fragment(章节内小节锚点),只跳到章节文件首页。
-        // 这样跳得可能不是用户点的那个小节,但保证 TOC 点击 100% 能跳。
+        // 修复:Readium 3.3.0 的 Url(string) 只接受可打印 ASCII,而 Koharia-main 同源 EPUB 的
+        // TOC href 把片段分隔符写成了 %23(如 ch003.xhtml%23简单...),locatorFromLink 因此
+        // 永远返回 null、goTo(link) 静默失败。这里自行 URL-decode 并把片段拆出来。
+        //
+        // 关键:片段必须放进 Locator.locations.fragments,而不是 href。这是 Readium 自身的约定
+        // (见 Manifest.locatorFromLink):href 一旦带上非 ASCII 片段,Url(string) / normalizeLocator
+        // 就会把它丢掉;放进 fragments 则完全绕过 ASCII 校验,由 Readium 交给
+        // readium.scrollToId() 做 DOM 锚点定位(locations.fragments -> htmlId -> getElementById)。
         val rawHref = link.href.toString()
         val decodedHref = runCatching { java.net.URLDecoder.decode(rawHref, "UTF-8") }.getOrNull() ?: run {
             logcat(LogPriority.WARN) { "[EpubReaderFragment.goTo link] invalid href=$rawHref" }
             return false
         }
         val baseHref = decodedHref.substringBefore('#')
+        val anchor = decodedHref.substringAfter('#', missingDelimiterValue = "").takeUnless { it.isBlank() }
         val hrefUrl = Url.fromDecodedPath(baseHref) ?: run {
             logcat(LogPriority.WARN) {
                 "[EpubReaderFragment.goTo link] cannot build Url from baseHref=$baseHref (raw=$rawHref)"
@@ -426,9 +431,10 @@ class EpubReaderFragment : Fragment() {
         val locator = Locator(
             href = hrefUrl,
             mediaType = MediaType("text/html") ?: MediaType.XHTML,
+            locations = Locator.Locations(fragments = listOfNotNull(anchor)),
         )
         logcat(LogPriority.INFO) {
-            "[EpubReaderFragment.goTo link] rawHref=$rawHref baseHref=$baseHref hrefUrl=$hrefUrl"
+            "[EpubReaderFragment.goTo link] rawHref=$rawHref baseHref=$baseHref anchor=$anchor"
         }
         return navigator.go(publication.toNavigatorLocator(locator))
     }
