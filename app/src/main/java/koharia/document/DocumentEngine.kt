@@ -122,6 +122,7 @@ object DocumentEngines {
         TextDocumentEngine,
         MobiDocumentEngine,
         DjvuDocumentEngine,
+        MarkdownDocumentEngine,
     )
 
     @Synchronized
@@ -223,7 +224,7 @@ object DjvuDocumentEngine : DocumentEngine {
     }
 }
 
-private class TextDocumentContent(
+internal class TextDocumentContent(
     context: Context,
     text: CharSequence,
     val metadata: DocumentMetadata,
@@ -296,7 +297,7 @@ internal data class DocumentPaginationLayoutSnapshot(
     )
 }
 
-private class TextDocumentSession(
+internal class TextDocumentSession(
     private val content: TextDocumentContent,
     private val settings: DocumentRenderSettings,
     private val pages: List<CharSequence>,
@@ -756,7 +757,7 @@ private data class MobiMetadata(
     val author: String? = null,
 )
 
-private fun decodeText(bytes: ByteArray): String {
+internal fun decodeText(bytes: ByteArray): String {
     if (bytes.startsWith(byteArrayOf(0xef.toByte(), 0xbb.toByte(), 0xbf.toByte()))) {
         return bytes.copyOfRange(3, bytes.size).toString(StandardCharsets.UTF_8)
     }
@@ -783,7 +784,7 @@ private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
     return size >= prefix.size && prefix.indices.all { index -> this[index] == prefix[index] }
 }
 
-private fun java.io.InputStream.readAtMost(limit: Int): ByteArray {
+internal fun java.io.InputStream.readAtMost(limit: Int): ByteArray {
     val output = ByteArrayOutputStream(limit.coerceAtMost(8192))
     val buffer = ByteArray(8192)
     var remaining = limit

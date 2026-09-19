@@ -1375,6 +1375,7 @@ class LocalFolderSource(
             }
             extension == "pdf" -> renderFirstPdfPage(file)
             extension in LocalMediaFormats.text.extensions ||
+                extension in LocalMediaFormats.markdown.extensions ||
                 extension in LocalMediaFormats.mobi.extensions ||
                 extension in LocalMediaFormats.djvu.extensions -> {
                 renderFirstDocumentPage(file)

@@ -15,7 +15,7 @@
 
 ## 项目简介
 
-Koharia 是一款面向 [Komga](https://komga.org/)、[LANraragi](https://github.com/Difegue/LANraragi) 服务器与本地媒体库的第三方 Android 客户端和阅读器。它为漫画、扫描图像内容、PDF 以及 EPUB、TXT、MOBI 等可重排书籍提供对应的阅读体验，并将内容浏览、作品详情、阅读进度、离线访问与阅读设置整合在同一个应用中。
+Koharia 是一款面向 [Komga](https://komga.org/)、[LANraragi](https://github.com/Difegue/LANraragi) 服务器与本地媒体库的第三方 Android 客户端和阅读器。它为漫画、扫描图像内容、PDF 以及 EPUB、TXT、MOBI、Markdown 等可重排书籍提供对应的阅读体验，并将内容浏览、作品详情、阅读进度、离线访问与阅读设置整合在同一个应用中。
 
 项目基于 [Mihon](https://github.com/mihonapp/mihon) 的成熟 Android 阅读基础持续开发。Koharia 不提供或托管内容，你能浏览的作品取决于所连接的服务器、账号权限以及主动授权给应用的本地目录。
 
@@ -88,6 +88,7 @@ Koharia 专注于个人媒体库阅读，不提供公共在线内容源，也不
 | EPUB | `EPUB` | 使用原生可重排阅读器，支持目录、书签、搜索与排版设置 |
 | PDF | `PDF` | 按页原生渲染，使用漫画分页或连续滚动阅读流程 |
 | 纯文本 | `TXT` | 自动识别 UTF-8、UTF-16、GB18030 等常见编码，支持分页和书籍排版设置；单文件上限为 64 MiB |
+| Markdown | `MD`、`MARKDOWN`、`MDOWN`、`MKD`、`MKDN` | 使用可重排分页渲染标题、加粗、斜体、列表、引用、代码块等富文本；支持分页和书籍排版设置；不渲染内嵌图片，表格按文本降级显示；单文件上限为 64 MiB |
 | Mobipocket / Kindle | `MOBI`、`PRC`、`AZW`、`AZW3` | 实验性支持 PalmDOC / KF8 文本和基础元数据，使用可重排分页；暂不支持 DRM、复杂布局与内嵌图片，单文件上限为 256 MiB |
 | DjVu | `DJVU`、`DJV` | 通过 MIT 许可的 `djvu-rs` WASM 解码 JB2 / IW44 页面并使用漫画阅读器显示；运行依赖 Android WebView 的 WebAssembly 能力 |
 

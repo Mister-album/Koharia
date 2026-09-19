@@ -1669,7 +1669,7 @@
     <string name="external_media_open_after_import">Open after import</string>
     <string name="external_media_action_import">Import</string>
     <string name="external_media_action_import_summary">Choose a target connection, destination, library, and series information</string>
-    <string name="external_media_unsupported">No supported comic or book files were found. Koharia supports common images, CBZ, ZIP, CBR, RAR, 7Z, TAR, EPUB, PDF, TXT, MOBI, PRC, AZW, AZW3, DJVU, and DJV.</string>
+    <string name="external_media_unsupported">No supported comic or book files were found. Koharia supports common images, CBZ, ZIP, CBR, RAR, 7Z, TAR, EPUB, PDF, TXT, MD, MARKDOWN, MOBI, PRC, AZW, AZW3, DJVU, and DJV.</string>
     <string name="external_media_no_destination">No writable destination accepts all selected files. Configure a local library, then try again.</string>
     <string name="external_media_import_success">Import completed</string>
     <string name="external_media_import_failed">Couldn’t import the selected files.</string>

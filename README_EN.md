@@ -15,7 +15,7 @@ An Android comic and book reader for Komga, LANraragi, and local media libraries
 
 ## Overview
 
-Koharia is a third-party Android client and reader for [Komga](https://komga.org/) and [LANraragi](https://github.com/Difegue/LANraragi) servers, as well as local media libraries. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, and MOBI. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app.
+Koharia is a third-party Android client and reader for [Komga](https://komga.org/) and [LANraragi](https://github.com/Difegue/LANraragi) servers, as well as local media libraries. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, MOBI, and Markdown. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app.
 
 The project is built on the mature Android reading foundation of [Mihon](https://github.com/mihonapp/mihon). Koharia does not provide or host any content. What you can browse depends on the servers you connect to, your account permissions, and the local directories you explicitly grant the app access to.
 
@@ -88,6 +88,7 @@ Koharia focuses on reading from personal media libraries. It does not provide pu
 | EPUB | `EPUB` | Native reflowable reader with table of contents, bookmarks, search, and typography controls |
 | PDF | `PDF` | Native page rendering through the paged or continuous comic reading flow |
 | Plain text | `TXT` | Detects common encodings including UTF-8, UTF-16, and GB18030; supports pagination and book typography controls; 64 MiB file limit |
+| Markdown | `MD`, `MARKDOWN`, `MDOWN`, `MKD`, `MKDN` | Reflowable pagination with rich text for headings, bold, italic, lists, blockquotes, and code blocks; supports pagination and book typography controls; embedded images are not rendered and tables degrade to plain text; 64 MiB file limit |
 | Mobipocket / Kindle | `MOBI`, `PRC`, `AZW`, `AZW3` | Experimental PalmDOC / KF8 text and basic metadata support with reflowable pagination; DRM, complex layouts, and embedded images are not supported; 256 MiB file limit |
 | DjVu | `DJVU`, `DJV` | Uses the MIT-licensed `djvu-rs` WASM decoder for JB2 / IW44 pages and displays them in the comic reader; requires WebAssembly support in Android WebView |
 
