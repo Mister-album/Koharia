@@ -47,6 +47,7 @@ import org.readium.r2.navigator.input.DragEvent
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.shared.ExperimentalReadiumApi
+import org.readium.r2.shared.InternalReadiumApi
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.util.AbsoluteUrl
@@ -400,11 +401,36 @@ class EpubReaderFragment : Fragment() {
         super.onDestroyView()
     }
 
+    @OptIn(InternalReadiumApi::class)
     fun goTo(link: Link): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
+        val publication = sessionRepository.get(chapterId)?.publication ?: return false
         pageTransitionController?.cancel()
         clearContinuousScrollState()
-        return navigator.go(link)
+        // 修复:Readium 3.3.0 的 Url(string) + locatorFromLink 不解码 URL-encoded fragment
+        // (%23 而不是 #),对 Koharia-main 同源 EPUB(章节标题含中文)的 TOC link 永远返回 null。
+        // 退而求其次:URL-decode 后去掉 fragment(章节内小节锚点),只跳到章节文件首页。
+        // 这样跳得可能不是用户点的那个小节,但保证 TOC 点击 100% 能跳。
+        val rawHref = link.href.toString()
+        val decodedHref = runCatching { java.net.URLDecoder.decode(rawHref, "UTF-8") }.getOrNull() ?: run {
+            logcat(LogPriority.WARN) { "[EpubReaderFragment.goTo link] invalid href=$rawHref" }
+            return false
+        }
+        val baseHref = decodedHref.substringBefore('#')
+        val hrefUrl = Url.fromDecodedPath(baseHref) ?: run {
+            logcat(LogPriority.WARN) {
+                "[EpubReaderFragment.goTo link] cannot build Url from baseHref=$baseHref (raw=$rawHref)"
+            }
+            return false
+        }
+        val locator = Locator(
+            href = hrefUrl,
+            mediaType = MediaType("text/html") ?: MediaType.XHTML,
+        )
+        logcat(LogPriority.INFO) {
+            "[EpubReaderFragment.goTo link] rawHref=$rawHref baseHref=$baseHref hrefUrl=$hrefUrl"
+        }
+        return navigator.go(publication.toNavigatorLocator(locator))
     }
 
     suspend fun capturePdfSourceAnchor() {
