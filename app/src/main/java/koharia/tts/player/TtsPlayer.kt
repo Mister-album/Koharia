@@ -57,9 +57,11 @@ class TtsPlayer(
      * 有界队列（[QUEUE_CAPACITY]）会让入队领先实际发声最多 8 句，若用入队驱动力
      * 高亮，用户会看到高亮跑到音频前面好几句。
      *
+     * 回调第二个参数是该 clip **入队时快照的会话代次**。实现方应校验它是否仍等于自己
+     * 当前的会话代次 —— 见 [onClipAudioProduced] 的说明（review ocr finding D）。
      * 回调在播放器工作线程上执行，实现方需自行保证线程安全。
      */
-    private val onClipStarted: (Int) -> Unit = {},
+    private val onClipStarted: (Int, Int) -> Unit = { _, _ -> },
     /**
      * 某句音频**确实写出了非空 PCM**（=真的会有声音）时回调其句下标。
      *
@@ -72,9 +74,15 @@ class TtsPlayer(
      * 若用 [onClipStarted] 统计"真正发声的句数"，上述零声音的章节会被判成播完，
      * 阅读器于是在完全没有声音的情况下连续跳章 —— 正是 review P1 要消除的故障类别。
      *
+     * 回调第二个参数是该 clip 入队时快照的会话代次（review ocr finding D）。仅靠本类内部的
+     * `generation.isValid()` 检查**不足以**拒绝迟到的回调：worker 可能在通过检查后被抢占，
+     * 等主线程完成 `startNewSession()` + 计数归零之后才真正执行回调，于是一次旧会话的
+     * "已发声"会把新会话的计数抬高、并把旧下标写进新章节的持久化进度。
+     * 因此把代次一并交给实现方，由 Service 侧对照自己记录的会话代次再拦一次。
+     *
      * 回调在播放器工作线程上执行，实现方需自行保证线程安全。
      */
-    private val onClipAudioProduced: (Int) -> Unit = {},
+    private val onClipAudioProduced: (Int, Int) -> Unit = { _, _ -> },
     /**
      * 某句**合成成功但播放失败**（decoded to no PCM / 损坏 MP3 / 厂商返回非音频正文）时
      * 回调其句下标（review P1 round 3）。
@@ -82,13 +90,23 @@ class TtsPlayer(
      * 为什么必须回传：服务端原本只用 `prefetcher.await == null` 统计失败，覆盖不到
      * "合成返回非空、播放却零 PCM" 这一类；只要另有一句成功，章节就会被误判播完并跳章。
      * 本回调仅在会话仍有效时触发（skipTo/stop 抢占的丢弃不算失败）。
+     * 第二个参数为会话代次，语义同 [onClipAudioProduced]（review ocr finding D）。
      *
      * 回调在播放器工作线程上执行，实现方需自行保证线程安全。
      */
-    private val onClipFailed: (Int) -> Unit = {},
+    private val onClipFailed: (Int, Int) -> Unit = { _, _ -> },
 ) {
 
-    private class Clip(val mp3: ByteArray, val index: Int)
+    /**
+     * [generation] 是**入队时**快照的会话代次（review ocr finding B）。
+     *
+     * 不能在 `runLoop` 取到 clip 时再读 `generation.current`：`queue.take()` 返回后、读取代次前
+     * 的窗口内，若 `skipTo()`/`stop()` 与新一轮 `enqueue()` 连续发生，旧 clip 会被盖上**新**
+     * 会话的代次，从而通过所有 `isValid` 检查、把旧 PCM 写进刚 flush 的 AudioTrack，并让旧句
+     * 计入新会话的计数。入队时快照可彻底关闭该窗口，且不会重新引入 finding 1 的漏句回归
+     * （同一会话内所有 clip 快照到同一代次）。
+     */
+    private class Clip(val mp3: ByteArray, val index: Int, val generation: Int)
 
     /**
      * [awaitDrained] 用的 FIFO 栅栏：投递到有界队列尾部，worker 按顺序消费到它时
@@ -136,6 +154,19 @@ class TtsPlayer(
     private var volume: Float = 1.0f
 
     private val framesWritten = AtomicLong(0L)
+
+    /**
+     * [framesWritten] 的基准：最近一次会话边界（[resetForNewSession] / [stop] / 新 track）时的
+     * `playbackHeadPosition`。
+     *
+     * review ocr：`AudioTrack.flush()` **不重置** `playbackHeadPosition`，而 [framesWritten] 是
+     * 相对计数、每次会话边界归零。若直接比较二者，从第二章起 `head`（累计）恒 ≥ `written`
+     * （相对），[awaitDrained] 会在音频尚未播完时立即返回 —— `notifyChapterCompleted()` 提前
+     * 触发，紧接着的新会话 flush 会**截断本章尾部音频**。
+     * 改为比较 `head - headBaseline` 与 `written`，让两者同基准。
+     */
+    private val headBaseline = AtomicLong(0L)
+
     private val trackRef = AtomicReference<AudioTrack?>(null)
 
     @Volatile
@@ -167,14 +198,24 @@ class TtsPlayer(
     suspend fun enqueue(mp3: ByteArray, index: Int) {
         if (released) return
         ensureWorker()
-        // review P2 round 3:仅在"上一会话已停止"(stopped=true) 时才推进代次。
-        // 同一会话内连续 enqueue 不推进代次，否则解码中的句会被新一句误判为 stale。
-        generation.forEnqueue(wasStopped = stopped.get())
+        // review ocr finding B：在**入队时**快照会话代次并随 clip 携带，而不是等 runLoop
+        // 取到它再读 —— 后者存在"take 之后被 stop/skipTo+enqueue 抢占"的窗口。
+        // 快照不推进代次，因此同一会话内连续入队的 clip 共享同一代次（finding 1 不复发）。
+        val clipGeneration = generation.current
         stopped.set(false)
         // 可被协程取消：队列满时用 cancellable delay 轮询，避免 stop/skipTo 的
         // cancelAndJoin 在"暂停 + 满队列"下永远等不到本循环退出。
-        while (currentCoroutineContext().isActive && !released && !stopped.get()) {
-            if (runCatching { queue.offer(Clip(mp3, index)) }.getOrDefault(false)) return
+        //
+        // review ocr finding 3：每轮都重新校验快照代次。若在快照之后发生了会话边界
+        // （startNewSession / skipTo / stop：`stopped=true` + `invalidate()` + `queue.clear()`），
+        // 这个尚未投递的 clip 属于已死会话，绝不能注入刚清空的新会话队列。
+        while (
+            currentCoroutineContext().isActive &&
+            !released &&
+            !stopped.get() &&
+            generation.isValid(clipGeneration)
+        ) {
+            if (runCatching { queue.offer(Clip(mp3, index, clipGeneration)) }.getOrDefault(false)) return
             delay(ENQUEUE_POLL_MS)
         }
     }
@@ -189,11 +230,43 @@ class TtsPlayer(
         // 都会在下次 check 时放弃,避免后续 enqueue 重启时把已停的会话误当作同一会话。
         generation.invalidate()
         queue.clear()
-        framesWritten.set(0L)
+        resetFrameAccounting()
         trackRef.get()?.let { track ->
             runCatching { track.pause() }
             runCatching { track.flush() }
         }
+    }
+
+    /**
+     * 重置写入帧计数并记录当前播放头为基准（review ocr）。
+     *
+     * `AudioTrack.flush()` 不重置 `playbackHeadPosition`，所以归零 [framesWritten] 时必须同时
+     * 记录 [headBaseline]，否则 [awaitDrained] 的 `head >= written` 会在音频未播完时提前成立。
+     */
+    private fun resetFrameAccounting() {
+        val baseline = trackRef.get()
+            ?.let { track -> runCatching { track.playbackHeadPosition.toLong() }.getOrDefault(0L) }
+            ?: 0L
+        headBaseline.set(baseline)
+        framesWritten.set(0L)
+    }
+
+    /**
+     * 开始新的播放会话（换章 / 阅读器重新 start）。
+     *
+     * review ocr finding C：`TtsService.startPlayback` 只做 `playbackJob?.cancelAndJoin()`，
+     * **从不**调用 [stop]/[skipTo]，因此换章时 `stopped` 仍为 `false` —— 旧实现（代次只在
+     * enqueue 基于 stopped 推进）会认为旧在途 clip 仍有效，让它把 PCM 写进未 flush 的
+     * AudioTrack，并把旧句回调计入新会话的计数 / 持久化到新 `chapterId`。
+     *
+     * 本方法显式作废上一个会话：作废代次 + 清队列 + flush 残留 PCM（保持 track 播放状态，
+     * 让新会话 PCM 立即发声，见 [resetForNewSession]）。
+     */
+    fun startNewSession(): Int {
+        logcat(LogPriority.INFO) {
+            "[TtsPlayer] startNewSession (prev generation=${generation.current})"
+        }
+        return resetForNewSession()
     }
 
     /**
@@ -212,13 +285,27 @@ class TtsPlayer(
      *    让 NEW PCM 写入后立即发声
      */
     fun skipTo() {
+        resetForNewSession()
+    }
+
+    /**
+     * [skipTo] / [startNewSession] 共用的会话重置：
+     * 1. `stopped = true` → worker 丢弃当前 clip；
+     * 2. `generation.invalidate()` → 所有已入队/在途 clip 的代次立即失效，`writePcm` 循环
+     *    与回调据此放弃（review P2 round 3）；
+     * 3. `queue.clear()` / `framesWritten = 0` → 清掉旧残留；
+     * 4. `pause + flush + play` → 清 AudioTrack 里已缓冲的旧 PCM，但**保持播放状态**
+     *    （不能用 [stop]：它把 track 留在 PAUSED，导致新 PCM 写入后听不见）。
+     */
+    private fun resetForNewSession(): Int {
         stopped.set(true)
         paused.set(false)
-        // review P2 round 3:skipTo 显式开启新会话,推进代次 —— 旧 worker 在 writePcm
-        // 阻塞期间醒来检查 generation 不一致会主动放弃旧 PCM,不再回调 onClipAudioProduced。
-        generation.invalidate()
+        val newGeneration = generation.invalidate()
         queue.clear()
-        framesWritten.set(0L)
+        // 先记录 head 基准再重置相对写入计数，让 awaitDrained 的比较同基准（见 [headBaseline]）。
+        // 注意 `paused = false` 在[本函数]会把"换章窗口内用户按下的暂停"清掉 —— 这是刻意的：
+        // 新会话由用户显式发起播放，且此刻还没有 clip，暂停意图由后续 pause() 重新记录。
+        resetFrameAccounting()
         trackRef.get()?.let { track ->
             runCatching { track.pause() }
             runCatching { track.flush() }
@@ -226,6 +313,7 @@ class TtsPlayer(
             // Phase 3 step 2：pause→play 后重新套用语速（保持 time-stretch 生效）。
             applyPlaybackParams(track)
         }
+        return newGeneration
     }
 
     /**
@@ -233,12 +321,19 @@ class TtsPlayer(
      * [runLoop] 在下一次取元素前会卡在 pause 闸门，AudioTrack.pause() 让声卡输出立即停止。
      *
      * 多次调用幂等。与 [stop] 的区别：可恢复（[play]），队列不丢。
+     *
+     * review ocr finding E：**不能**因 `stopped` 提前返回。[startNewSession] 会把 `stopped`
+     * 置为 `true`，且它只在下一次成功 `enqueue`（即首句网络合成完成）后才被清掉；若此处
+     * 因 `stopped` 直接返回，用户在"换章后、首句合成完成前"按下的暂停会被静默丢弃 ——
+     * UI 显示已暂停，但首句一到达就外放，且 [play] 的 CAS 修不回（`paused` 从未置位）。
+     * 现在无论 `stopped` 与否都记录暂停意图并暂停已有 track；`runLoop` 的暂停闸门与
+     * `enqueue` 后的恢复流程会共同保证首句不会漏声。
      */
     fun pause() {
-        if (stopped.get() || released) return
+        if (released) return
         if (paused.compareAndSet(false, true)) {
             trackRef.get()?.let { runCatching { it.pause() } }
-            logcat(LogPriority.INFO) { "[TtsPlayer] paused" }
+            logcat(LogPriority.INFO) { "[TtsPlayer] paused (stopped=${stopped.get()})" }
         }
     }
 
@@ -247,9 +342,12 @@ class TtsPlayer(
      * 已被暂停的 AudioTrack 缓冲中的 PCM 会先被消费，再取队列里的下一句。
      *
      * 多次调用幂等；非 paused 状态下调用无副作用。
+     *
+     * review ocr finding E：同样不能因 `stopped` 提前返回 —— 见 [pause]。若在换章窗口内
+     * 先 pause 再 resume，`paused` 已置位，这里必须能 CAS 回 `false` 并恢复 track。
      */
     fun play() {
-        if (stopped.get() || released) return
+        if (released) return
         if (paused.compareAndSet(true, false)) {
             trackRef.get()?.let { track ->
                 runCatching { track.play() }
@@ -372,10 +470,14 @@ class TtsPlayer(
             }
             val track = trackRef.get() ?: return
             val written = framesWritten.get()
-            val head = track.playbackHeadPosition.toLong()
+            // review ocr：扣掉会话边界时的基准，才能与相对计数的 [framesWritten] 同基准比较
+            // （flush 不重置 playbackHeadPosition）。
+            val rawHead = track.playbackHeadPosition.toLong()
+            val head = (rawHead - headBaseline.get()).coerceAtLeast(0L)
             if (written == 0L || head >= written) {
                 logcat(LogPriority.DEBUG) {
-                    "[TtsPlayer] awaitDrained: done head=$head written=$written"
+                    "[TtsPlayer] awaitDrained: done head=$head (raw=$rawHead base=${headBaseline.get()}) " +
+                        "written=$written"
                 }
                 return
             }
@@ -469,11 +571,23 @@ class TtsPlayer(
                 is Clip -> {
                     if (stopped.get()) continue
                     // 详见函数上方"高亮推进时机"注释。
-                    val clipGeneration = generation.current
+                    // review ocr finding B：用 clip **入队时**快照的代次，而不是此刻的
+                    // `generation.current` —— 后者会在 take() 与这里之间被抢占时把旧 clip
+                    // 误认成新会话。
+                    val clipGeneration = item.generation
+                    // review ocr finding 4：与 produced/failed 回调对称地做代次校验。
+                    // 已失效的旧 clip 不应触发 onClipStarted（否则会把高亮/currentSentenceIndex
+                    // 拉回旧章节）。这里只是丢弃，不等待，不影响高亮时序。
+                    if (!generation.isValid(clipGeneration)) {
+                        logcat(LogPriority.DEBUG) {
+                            "[TtsPlayer] clip ${item.index} stale (gen=$clipGeneration), skipping"
+                        }
+                        continue
+                    }
                     logcat(LogPriority.DEBUG) {
                         "[TtsPlayer] clip start idx=${item.index} headMs=${playbackHeadMs()}"
                     }
-                    runCatching { onClipStarted(item.index) }
+                    runCatching { onClipStarted(item.index, clipGeneration) }
                     val produced = try {
                         pumpClip(item.mp3, item.index, clipGeneration)
                     } catch (error: Exception) {
@@ -485,12 +599,15 @@ class TtsPlayer(
                     //  - produced=true ⟹ 真的写出非空 PCM，计"已发声"；
                     //  - produced=false ⟹ 解码失败 / 无 PCM（损坏 MP3、厂商返回非音频正文）——
                     //    必须回传失败，否则服务端 failedSentenceCount 不会增长，章节会被误判播完。
+                    //
+                    // 注意：这里的 `isValid` 只是第一道闸；代次随回调一并交给实现方做第二道校验
+                    // （review ocr finding D：worker 可能在通过本检查后被抢占）。
                     val sessionValid = generation.isValid(clipGeneration) && !stopped.get() && !released
                     if (sessionValid) {
                         if (produced) {
-                            runCatching { onClipAudioProduced(item.index) }
+                            runCatching { onClipAudioProduced(item.index, clipGeneration) }
                         } else {
-                            runCatching { onClipFailed(item.index) }
+                            runCatching { onClipFailed(item.index, clipGeneration) }
                         }
                     }
                 }
@@ -772,7 +889,11 @@ class TtsPlayer(
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
             .also {
-                it.play()
+                // review ocr finding 6：新 track 必须**尊重已记录的暂停意图**。换章窗口里
+                // worker 可能已越过 `runLoop` 的暂停闸门并阻塞在 `queue.take()`，此刻
+                // `trackRef` 还是 null（`pause()` 无从作用），首句一到就建 track；若无条件
+                // `play()`，用户明明按了暂停但首句仍会外放。这里按 `paused` 决定初始状态。
+                if (paused.get()) it.pause() else it.play()
                 // 先把新 track 发布到 trackRef，**再**套用音量。反过来的话，并发的
                 // [setVolume]（duck）会落在旧的/空的 trackRef 上而什么都不做，
                 // 新 track 就停在 1.0，而字段已经是压低后的值 —— duck 丢失且无人再触发。
@@ -786,8 +907,11 @@ class TtsPlayer(
                 }
                 currentSampleRate = sampleRate
                 currentChannels = channels
+                // 新 track 的 playbackHeadPosition 从 0 开始：基准归零 + 写入计数归零。
+                headBaseline.set(0L)
                 framesWritten.set(0L)
                 // Phase 3 step 2：track 进入 PLAYING 后才能设 playback params（time-stretch）。
+                // pause 状态下 setPlaybackParams 可能失败（内部 runCatching），resume 时会重套。
                 applyPlaybackParams(it)
                 logcat(LogPriority.INFO) {
                     "[TtsPlayer] track ready rate=$sampleRate channels=$channels speed=${speed}x"
