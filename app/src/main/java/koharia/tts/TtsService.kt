@@ -136,6 +136,9 @@ class TtsService : Service(), CoroutineScope {
             onClipStarted = ::onSentencePlaybackStarted,
             // "真的发声了"：写出非空 PCM 才回调 —— 零声音判定只认这个（review P1）。
             onClipAudioProduced = ::onSentenceAudioProduced,
+            // "合成成功但播放失败"：损坏 MP3 / 无 PCM 时回调 —— 章节完成判据必须涵盖
+            // 这一类，否则只要另有一句成功就会误判整章播完并跳章（review P1 round 3）。
+            onClipFailed = ::onSentencePlaybackFailed,
         )
     }
 
@@ -802,8 +805,10 @@ class TtsService : Service(), CoroutineScope {
             }
             progressNotifier.setCurrent(startIndex)
             if (startIndex >= 0) {
+                // review P2 round 3:起播时不落盘 —— 此刻还没有任何音频被确认发声，
+                // 若首个合成请求在防抖窗口(750ms)内失败，会把未播放的起始句写进持久化。
+                // [currentSentenceIndex] 仍需记录，供 skipTo / MediaSession next/prev 作为基址。
                 currentSentenceIndex = startIndex
-                scheduleProgressSave()
             }
 
             val prefetcher = SentencePrefetcher(
@@ -852,23 +857,26 @@ class TtsService : Service(), CoroutineScope {
             // "零声音"分支会在新一轮已经接管时发出 playbackFailed + stopSelf()。
             if (!currentCoroutineContext().isActive) return
 
-            // review P1：一句都没真正发声（无效 key / 断网 / 限流 / 超长句全被跳过）时，
-            // **不能**当作"章节播完" —— 否则阅读器会在没有任何声音的情况下连续跳章。
-            // review P1:章节完成判据必须严格 —— **任何**合成失败都不能跳章。
-            // - 零声音（所有句都失败）：旧逻辑已正确处理。
-            // - 部分失败（第一句成功后续全部失败）：旧逻辑错误地走完成路径，
-            //   阅读器会跳到下一章，跳过未听内容。修复：仅当 [failedSentenceCount] == 0
-            //   且至少有一句发声，才视为完成。
-            if (playedSentenceCount == 0 || failedSentenceCount > 0) {
-                logcat(LogPriority.WARN) {
-                    "[TtsService] playback incomplete: " +
-                        "played=$playedSentenceCount failed=$failedSentenceCount " +
-                        "of ${sentences.size} sentences; not advancing chapter"
+            // review P1 round 2/3：章节完成判据必须严格 —— **任何**句失败都不能跳章。
+            // 失败来源有两类，都必须计入 [failedSentenceCount]：
+            //  - 合成返回 null（上面的 for 循环）；
+            //  - 合成成功但播放失败（损坏 MP3 / 无 PCM，由 [onSentencePlaybackFailed] 回传）。
+            // 判定抽到 [classifyTtsPlayback] 以便单测锁定（含"首句成功后续全失败"回归）。
+            when (classifyTtsPlayback(played = playedSentenceCount, failed = failedSentenceCount)) {
+                TtsPlaybackOutcome.COMPLETE -> Unit // 继续走下面的完成路径
+                TtsPlaybackOutcome.NO_AUDIO,
+                TtsPlaybackOutcome.PARTIAL_FAILURE,
+                -> {
+                    logcat(LogPriority.WARN) {
+                        "[TtsService] playback incomplete: " +
+                            "played=$playedSentenceCount failed=$failedSentenceCount " +
+                            "of ${sentences.size} sentences; not advancing chapter"
+                    }
+                    progressNotifier.notifyPlaybackFailed()
+                    updateTtsPlaybackState(TtsPlaybackState.STOPPED)
+                    stopSelf()
+                    return
                 }
-                progressNotifier.notifyPlaybackFailed()
-                updateTtsPlaybackState(TtsPlaybackState.STOPPED)
-                stopSelf()
-                return
             }
 
             logcat(LogPriority.INFO) {
@@ -1081,15 +1089,35 @@ class TtsService : Service(), CoroutineScope {
     }
 
     /**
+     * 播放器回调：某句**合成成功但播放失败**（写入 0 字节 PCM / 解码失败 / 无音轨）。
+     *
+     * [failedSentenceCount] 原本只统计 `prefetcher.await == null`；这类"有 mp3 但播不出声"
+     * 的失败覆盖不到，只要另有一句成功，`playedSentenceCount > 0 && failedSentenceCount == 0`
+     * 就成立，章节会被误判播完并跳章（review P1 round 3）。这里补齐该类失败。
+     *
+     * 运行在播放器工作线程；[failedSentenceCount] 已 `@Volatile`。
+     */
+    private fun onSentencePlaybackFailed(index: Int) {
+        failedSentenceCount++
+        logcat(LogPriority.WARN) {
+            "[TtsService] sentence $index produced no playable audio " +
+                "(failed=$failedSentenceCount played=$playedSentenceCount)"
+        }
+    }
+
+    /**
      * 调度一次延迟写入；同一窗口内的多次调用会被合并为最后一次（debounce）。
      * Service 作用域内 launch — Service 被销毁时 job 一起被取消，flush 由 stopPlayback 保证。
      */
     private fun scheduleProgressSave() {
-        if (currentChapterId <= 0 || currentSentenceIndex < 0) return
+        // review P2 round 3:防抖路径也必须用 [confirmedSentenceIndex]（已确认发声的下标），
+        // 否则起播时未确认音频就调度保存 —— 首个合成请求等待超过 750ms 后失败时，
+        // 仍未播放的起始句会被落盘，而后续 flush 因 confirmed=-1 直接 return，无法撤回。
+        if (currentChapterId <= 0 || confirmedSentenceIndex < 0) return
         progressSaveJob?.cancel()
         val chapterId = currentChapterId
         val mangaId = currentMangaId
-        val idx = currentSentenceIndex
+        val idx = confirmedSentenceIndex
         progressSaveJob = launch {
             try {
                 delay(PROGRESS_SAVE_DEBOUNCE_MS)

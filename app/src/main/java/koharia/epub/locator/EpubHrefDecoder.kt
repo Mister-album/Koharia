@@ -44,25 +44,26 @@ object EpubHrefDecoder {
 
     /** 返回（分隔符起始下标, 分隔符长度）；无分隔符返回 `null`。 */
     private fun findFragmentDelimiter(raw: String): Pair<Int, Int>? {
+        // RFC 3986：字面 `#` 在 URI 里必然开启 fragment，path 段不允许出现未编码的 `#`。
+        // 因此只要存在字面 `#`，它就是分隔符，**永远优先**于 `%23`。
+        //
+        // 反例（旧实现的 bug）：`Text%23Notes.xhtml#section1` —— 旧逻辑先看 `%23` 的尾部
+        // `Notes.xhtml#section1`，扩展名判定为 `xhtml#section1`（不在白名单）→ 误判 `%23`
+        // 为分隔符，输出 path=`Text` / fragment=`Notes.xhtml#section1`。正确结果是
+        // path=`Text#Notes.xhtml` / fragment=`section1`。
         val hashIndex = raw.indexOf('#')
+        if (hashIndex >= 0) return hashIndex to 1
+
+        // 没有字面 `#` 时，才考虑 `%23` 是否是遗留的编码分隔符（本仓库同源 EPUB 的 TOC href）。
         val encodedHashIndex = indexOfEncodedHash(raw)
-        val encodedCandidate = if (encodedHashIndex < 0) {
-            null
-        } else {
-            // %23 可能就是文件名里**字面 #** 的百分号编码（如 `Text%23Notes.xhtml`），
-            // 而不是片段分隔符。判别规则：%23 之后的部分若以**路径风格扩展名**结尾，
-            // 整条都应当作 path 解析 —— 因为 fragment 标识符里几乎不会出现 `.xhtml/.html` 等
-            // 文件扩展名（RFC 3986 fragment 允许 `.`，但 EPUB 资源锚点不会带文件类型）。
-            val tail = raw.substring(encodedHashIndex + ENCODED_HASH_LENGTH)
-            if (looksLikePathExtension(tail)) null else encodedHashIndex to ENCODED_HASH_LENGTH
-        }
-        return when {
-            hashIndex < 0 && encodedCandidate == null -> null
-            hashIndex < 0 -> encodedCandidate
-            encodedCandidate == null -> hashIndex to 1
-            hashIndex <= encodedCandidate.first -> hashIndex to 1
-            else -> encodedCandidate
-        }
+        if (encodedHashIndex < 0) return null
+
+        // 但 `%23` 也可能只是合法文件名里**字面 `#`** 的百分号编码（如 `Text%23Notes.xhtml`），
+        // 而非分隔符。判别规则：`%23` 之后的部分若以**路径风格扩展名**结尾，整条都当作 path ——
+        // fragment 标识符里几乎不会出现 `.xhtml/.html` 等文件扩展名。
+        val tail = raw.substring(encodedHashIndex + ENCODED_HASH_LENGTH)
+        if (looksLikePathExtension(tail)) return null
+        return encodedHashIndex to ENCODED_HASH_LENGTH
     }
 
     /**

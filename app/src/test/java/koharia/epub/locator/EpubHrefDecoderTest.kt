@@ -119,4 +119,24 @@ class EpubHrefDecoderTest {
         decoded.path shouldBe "cover#final.png"
         decoded.fragment.shouldBeNull()
     }
+
+    @Test
+    fun `literal hash wins over an earlier percent encoded hash in the same href`() {
+        // review P2 round 3 回归：`Text%23Notes.xhtml#section1` ——
+        // 旧实现让较早的 %23 胜过真实 #，输出 path="Text" / fragment="Notes.xhtml#section1"。
+        // 正确：字面 # 优先，path 是 `Text%23Notes.xhtml`（解码为 `Text#Notes.xhtml`），
+        // fragment 是 `section1`。
+        val decoded = EpubHrefDecoder.decode("Text%23Notes.xhtml#section1")
+
+        decoded.path shouldBe "Text#Notes.xhtml"
+        decoded.fragment shouldBe "section1"
+    }
+
+    @Test
+    fun `literal hash after an encoded hash in a non extension filename also wins`() {
+        val decoded = EpubHrefDecoder.decode("a%23b#frag")
+
+        decoded.path shouldBe "a#b"
+        decoded.fragment shouldBe "frag"
+    }
 }
