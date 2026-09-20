@@ -123,7 +123,18 @@ class TtsProgressNotifier {
         )
     }
 
-    /** 更新当前朗读的下标；超出范围或负数表示清空。 */
+    /**
+     * 更新当前朗读的下标；超出范围或负数表示清空。
+     *
+     * `@Synchronized` 与 [bind]/[clear] 共用同一把 monitor：这里的读-改-写（`snapshot.copy`）
+     * 必须相对它们原子，否则并发 [clear]（停止朗读 / 销毁 Service）落在读与写之间时，
+     * 会把已经清空的旧章节绑定**写回去** —— 表现就是停止朗读后阅读器仍显示陈旧的句子高亮。
+     * [TtsService] 的代次检查只挡住"旧会话的回调"，挡不住锁外并发执行的 [clear]。
+     *
+     * 加锁顺序安全：调用方要么不持 [TtsService] 的 `sessionLock`（`startPlayback` 路径），
+     * 要么是 `sessionLock` → 本 monitor（worker 回调路径），不存在反向获取。
+     */
+    @Synchronized
     fun setCurrent(index: Int) {
         val snapshot = _progress.value
         if (snapshot.sentences.isEmpty()) return
