@@ -5,11 +5,14 @@ import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.Collections
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * Tests for [SentencePrefetcher].
@@ -50,12 +53,35 @@ class SentencePrefetcherTest {
             callIndices += sentence.index
             started.send(sentence.index)
             blockOnGate?.let { gate ->
-                try {
-                    gate.await()
-                } finally {
-                    unwound.send(sentence.index)
+                suspendCancellableCoroutine<Unit> { cont ->
+                    // Cancellation of the surrounding coroutine (e.g. via
+                    // [SentencePrefetcher.cancelAll]) must always signal `unwound`
+                    // and resume with CancellationException, even if `gate` has
+                    // already completed by the time we observe it. Plain
+                    // `CompletableDeferred.await()` is racy here: its fast-path
+                    // returns the completed result without checking the outer
+                    // Job's cancellation state, so a synthesize job that "lost"
+                    // the cancel race would still fall through to `produce` and
+                    // write to the disk cache, defeating the test's intent.
+                    cont.invokeOnCancellation {
+                        // Channel.send is a suspend function, but
+                        // invokeOnCancellation runs the handler inline; with
+                        // Channel.UNLIMITED send never actually suspends, so
+                        // using runBlocking here would be wrong. Instead we
+                        // use a trySend — it returns failure rather than
+                        // blocking, which matches the "best effort" semantics
+                        // of a cancellation handler.
+                        unwound.trySend(sentence.index)
+                    }
+                    gate.invokeOnCompletion { cause ->
+                        if (cont.isCancelled) return@invokeOnCompletion
+                        if (cause != null) cont.resumeWithException(cause)
+                        else cont.resume(Unit)
+                    }
                 }
             }
+            // Normal path: signal unwound after the wait completes, then produce.
+            unwound.send(sentence.index)
             val audioData = produce(sentence)
             return SynthesisResult(
                 audioData = audioData,
