@@ -114,6 +114,16 @@ The DjVu decoder runs in the JavaScript / WebAssembly runtime provided by the sy
 - Table of contents, bookmarks, full-text search, chapter navigation, reading percentage, and visual page counts.
 - Recalculates the current and total visual pages after layout changes, and reuses pagination results for matching device and layout settings.
 
+#### Read-aloud (TTS)
+
+- Reads the current EPUB chapter sentence by sentence and continues into the next chapter automatically; sentence highlighting and reading progress stay in sync, and you can skip sentences, pause, and resume from the in-reader control bar or from the lock screen / Bluetooth media keys.
+- Two built-in engines: MiMo (bring your own API key) and Microsoft Edge online voices (free, no key required). Voices are stored separately per engine.
+- Adjustable reading speed; inter-sentence gaps and MP3 encoder delay/padding are trimmed automatically for smooth playback.
+- Read-aloud holds audio focus and coexists correctly with other players: playback resumes after a short interruption such as a phone call, and volume is lowered when ducking is requested.
+- Synthesized sentences are cached on device (256 MiB cap, least-recently-used eviction), so replaying a chapter does not re-synthesize it.
+- **Data disclosure**: speech is synthesized by the selected engine, so **the current chapter text is uploaded to that vendor** (MiMo or Microsoft). A one-time dialog confirms this before the first listen and the settings page keeps the notice permanently visible; use another reading mode if you would rather not share chapter text.
+- API keys are stored only on the device, encrypted with the Android keystore (AES-256-GCM); no plaintext key is present in build artifacts or backups.
+
 ### Progress, offline access, and data management
 
 - Komga and LANraragi shelves show local cache first. Missing cache, manual refresh, or server update events trigger data retrieval, keeping startup independent of network speed when cache is available.
