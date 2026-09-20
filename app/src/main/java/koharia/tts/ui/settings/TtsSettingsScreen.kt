@@ -150,6 +150,11 @@ object TtsSettingsScreen : Screen {
 
                 // ===== API key / 说明 =====
                 val currentVendor = TtsVendor.fromId(selectedVendorId)
+
+                // ===== 数据披露（常驻）=====
+                // review 修复：明确写出"章节正文会上传至哪个厂商"，并随上方厂商选择实时更新。
+                DataDisclosureCard(vendorDisplayName = currentVendor.displayName)
+
                 if (currentVendor.needsApiKey) {
                     ApiKeySection(
                         vendor = currentVendor,
@@ -253,6 +258,11 @@ object TtsSettingsScreen : Screen {
         var lastSaved by remember { mutableStateOf(apiKeyInput) }
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 旧版加密存储无法解密 ⟹ 明确告诉用户"要重填"，而不是让他对着"合成失败"猜。
+            if (apiKeyInput.isBlank() && securePrefs.needsLegacyKeyReentry(vendor.id)) {
+                LegacyKeyNotice()
+            }
+
             Text(
                 text = stringResource(MR.strings.tts_engine_api_key_label),
                 style = MaterialTheme.typography.titleSmall,
@@ -323,6 +333,39 @@ object TtsSettingsScreen : Screen {
         }
     }
 
+    /**
+     * 旧版加密 key 无法迁移时的常驻提示。
+     *
+     * 只打日志用户看不到 —— 表现为"key 明明填过却说未配置"，很容易被当成 bug。
+     * 用户重填后 [TtsSecurePreferences.needsLegacyKeyReentry] 立即变 false，提示自动消失。
+     */
+    @Composable
+    private fun LegacyKeyNotice() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+            ),
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = stringResource(MR.strings.tts_legacy_key_notice_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Text(
+                    text = stringResource(MR.strings.tts_legacy_key_notice_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+    }
+
     @Composable
     private fun FreeVendorSection() {
         Row(
@@ -341,6 +384,41 @@ object TtsSettingsScreen : Screen {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
+        }
+    }
+
+    /**
+     * 常驻数据披露卡片：写明当前所选厂商是章节正文的数据接收方，以及用途。
+     *
+     * 与首次启用的一次性 [koharia.epub.control.TtsDisclosureDialog] 互补 —— 这里保证用户
+     * 任何时候回到设置页都能看到披露，且切换厂商后接收方名称即时更新。
+     */
+    @Composable
+    private fun DataDisclosureCard(vendorDisplayName: String) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ),
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = stringResource(MR.strings.tts_data_disclosure_settings_card_title),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = stringResource(
+                        MR.strings.tts_data_disclosure_settings_card_body,
+                        vendorDisplayName,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

@@ -38,6 +38,15 @@ class TtsPreferences(preferenceStore: PreferenceStore) {
     val vendorId: Preference<String> = preferenceStore.getString(KEY_VENDOR_ID, DEFAULT_VENDOR_ID)
 
     /**
+     * 首次启用朗读前的一次性数据披露确认。
+     *
+     * 章节正文会上传至所选 TTS 厂商（MiMo / Microsoft Edge）用于合成语音，因此首次从阅读器
+     * 启动朗读前必须先让用户确认；确认后不再打扰。
+     */
+    val disclosureAcknowledged: Preference<Boolean> =
+        preferenceStore.getBoolean(KEY_DISCLOSURE_ACK, false)
+
+    /**
      * 每个 vendor 各自的音色偏好(key = `tts_voice_id_<vendorId>`)。
      *
      * **为什么 per-vendor**：`voiceId` 的语义依赖当前 vendor —— 同一个 id 在不同厂商下
@@ -129,6 +138,9 @@ class TtsPreferences(preferenceStore: PreferenceStore) {
         /** Phase 4: 首次安装默认 vendor(MiMo)。 */
         const val DEFAULT_VENDOR_ID = "mimo"
         private const val KEY_VENDOR_ID = "tts_vendor_id"
+
+        /** 首次启用朗读的数据披露确认标记。 */
+        private const val KEY_DISCLOSURE_ACK = "tts_data_disclosure_acknowledged"
 
         /**
          * MiMo 的默认音色(冰糖)。

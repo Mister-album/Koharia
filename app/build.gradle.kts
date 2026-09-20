@@ -303,7 +303,6 @@ dependencies {
     implementation(libs.androidx.viewPager)
     implementation(libs.androidx.profileInstaller)
     implementation(libs.androidx.media)
-    implementation(libs.androidx.security.crypto)
 
     implementation(libs.bundles.androidx.lifecycle)
 

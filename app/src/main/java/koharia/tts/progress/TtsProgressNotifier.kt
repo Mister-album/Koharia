@@ -91,6 +91,23 @@ class TtsProgressNotifier {
     }
 
     /**
+     * PR review P1：本次播放**一句都没能发声**（无效 API key / 断网 / 限流 / 超长句全被跳过）。
+     *
+     * 与 [chapterCompleted] 互斥：失败时**绝不**发 chapterCompleted，避免阅读器在没有任何
+     * 声音的情况下连续跳章。阅读器订阅后提示用户（具体文案由 UI 层从资源解析）。
+     */
+    private val _playbackFailed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** 播放失败（未产生任何音频）事件流。 */
+    val playbackFailed: SharedFlow<Unit> = _playbackFailed.asSharedFlow()
+
+    /** 发出"本章未产生任何音频"事件；无人订阅时静默丢弃。 */
+    fun notifyPlaybackFailed() {
+        logcat(LogPriority.WARN) { "[TtsProgressNotifier] notifyPlaybackFailed" }
+        _playbackFailed.tryEmit(Unit)
+    }
+
+    /**
      * 绑定一个新章节的句子列表。
      * 重置 currentIndex 为 0；TtsService 在确定真实起点后会调用 [setCurrent] 覆盖。
      */

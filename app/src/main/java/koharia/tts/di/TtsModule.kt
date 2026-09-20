@@ -3,6 +3,7 @@ package koharia.tts.di
 import android.app.Application
 import koharia.data.tts.TtsProgressRepositoryImpl
 import koharia.tts.TtsCache
+import koharia.tts.TtsChapterTextStore
 import koharia.tts.TtsSecurePreferences
 import koharia.tts.progress.TtsProgressNotifier
 import koharia.tts.progress.TtsProgressRepository
@@ -27,12 +28,12 @@ import uy.kohesive.injekt.api.get
  *   [koharia.tts.TtsVendor] + [TtsSecurePreferences] 在 `observeVendorPreference()`
  *   里动态构造。注入 [TtsSecurePreferences] 单例供引擎构造读取 API key。
  * Phase 4.1: 移除编译期 API key 注入 —— key 一律由用户在「设置 → TTS 引擎」
- *   配置,只存放于 [TtsSecurePreferences]（EncryptedSharedPreferences）,
+ *   配置,只存放于 [TtsSecurePreferences]（Android Keystore 加密）,
  *   构建产物内不含任何 key。
  */
 class TtsModule(
     /**
-     * Application context(用于构造 [TtsSecurePreferences] 的 EncryptedSharedPreferences 文件)。
+     * Application context(用于构造 [TtsSecurePreferences] 的加密 prefs 文件)。
      */
     private val application: Application,
 ) : InjektModule {
@@ -41,6 +42,10 @@ class TtsModule(
         // ===== 底层组件 =====
 
         addSingletonFactory { TtsCache(application.cacheDir.resolve("tts")) }
+
+        // PR review：章节正文经进程内 store 传递（Intent 里只放短 token），
+        // TtsService 与阅读器共享同一实例，避免大章节经 Binder 触发 TransactionTooLargeException。
+        addSingletonFactory { TtsChapterTextStore() }
 
         // ChapterTextExtractor reads the live EpubReaderSession's publication
         // (remote or local) and strips tags via Jsoup; its constructor

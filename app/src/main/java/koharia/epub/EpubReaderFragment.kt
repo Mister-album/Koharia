@@ -26,6 +26,7 @@ import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
 import koharia.connection.SharedAppPreferences
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
+import koharia.epub.locator.EpubHrefDecoder
 import koharia.epub.locator.toNavigatorLocator
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
@@ -416,12 +417,16 @@ class EpubReaderFragment : Fragment() {
         // 就会把它丢掉;放进 fragments 则完全绕过 ASCII 校验,由 Readium 交给
         // readium.scrollToId() 做 DOM 锚点定位(locations.fragments -> htmlId -> getElementById)。
         val rawHref = link.href.toString()
-        val decodedHref = runCatching { java.net.URLDecoder.decode(rawHref, "UTF-8") }.getOrNull() ?: run {
-            logcat(LogPriority.WARN) { "[EpubReaderFragment.goTo link] invalid href=$rawHref" }
+        // 先按 URI 规则拆分 path / fragment,再各自百分号解码([EpubHrefDecoder]):
+        // 整条 URLDecoder.decode 会把 `+` 变成空格、并提前解掉 `%2F`/`%3F` 等保留字符,
+        // 破坏合法资源路径。
+        val decoded = EpubHrefDecoder.decode(rawHref)
+        val baseHref = decoded.path
+        val anchor = decoded.fragment
+        if (baseHref.isBlank()) {
+            logcat(LogPriority.WARN) { "[EpubReaderFragment.goTo link] empty href path (raw=$rawHref)" }
             return false
         }
-        val baseHref = decodedHref.substringBefore('#')
-        val anchor = decodedHref.substringAfter('#', missingDelimiterValue = "").takeUnless { it.isBlank() }
         val hrefUrl = Url.fromDecodedPath(baseHref) ?: run {
             logcat(LogPriority.WARN) {
                 "[EpubReaderFragment.goTo link] cannot build Url from baseHref=$baseHref (raw=$rawHref)"

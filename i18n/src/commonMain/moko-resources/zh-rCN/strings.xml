@@ -502,6 +502,14 @@
     <string name="tts_engine_voice_section">音色</string>
     <string name="tts_engine_voice_summary">在朗读设置中切换音色</string>
     <string name="tts_engine_open_settings">TTS 引擎设置</string>
+    <string name="tts_error_synthesis_failed">朗读失败：未能生成任何音频。请检查网络或 TTS 引擎设置。</string>
+    <string name="tts_data_disclosure_title">开始朗读前请知悉</string>
+    <string name="tts_data_disclosure_body">为合成语音，当前章节正文会发送至 %1$s。你的阅读内容将离开本设备。如不希望如此，可在「TTS 引擎设置」中更换厂商。</string>
+    <string name="tts_data_disclosure_ack">我知道了</string>
+    <string name="tts_data_disclosure_settings_card_title">数据披露</string>
+    <string name="tts_data_disclosure_settings_card_body">章节正文会上传至 %1$s 以生成语音，其余内容不会发送。可在上方切换厂商以更改接收方。</string>
+    <string name="tts_legacy_key_notice_title">需要重新填写 API key</string>
+    <string name="tts_legacy_key_notice_body">密钥存储已升级为系统密钥库，旧版本保存的 key 无法解密，请重新粘贴一次。</string>
     <string name="action_sort_latest_chapter">作品更新时间</string>
     <string name="action_view_chapters">查看章节</string>
     <string name="action_cancel_all">全部取消</string>

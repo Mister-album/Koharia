@@ -50,6 +50,14 @@
     <string name="tts_engine_voice_section">Voice</string>
     <string name="tts_engine_voice_summary">Configure voices in Reading settings</string>
     <string name="tts_engine_open_settings">TTS engine settings</string>
+    <string name="tts_error_synthesis_failed">Read-aloud failed: no audio could be generated. Check your network or TTS engine settings.</string>
+    <string name="tts_data_disclosure_title">Before you start listening</string>
+    <string name="tts_data_disclosure_body">To synthesize speech, the current chapter text is sent to %1$s. Your reading content leaves this device. If you would rather not share it, choose a different engine in TTS engine settings.</string>
+    <string name="tts_data_disclosure_ack">Got it</string>
+    <string name="tts_data_disclosure_settings_card_title">Data sharing</string>
+    <string name="tts_data_disclosure_settings_card_body">Chapter text is uploaded to %1$s to generate speech. Nothing else is sent. Switch vendors above to change the recipient.</string>
+    <string name="tts_legacy_key_notice_title">API key must be re-entered</string>
+    <string name="tts_legacy_key_notice_body">Encrypted storage now uses the system keystore, so a key saved by an earlier build can no longer be decrypted. Please paste your key again.</string>
     <string name="label_download_queue">Download queue</string>
     <string name="komga_label_offline_cache_queue">Offline cache queue</string>
     <string name="label_library">Library</string>

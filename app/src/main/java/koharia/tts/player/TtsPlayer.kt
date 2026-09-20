@@ -60,6 +60,21 @@ class TtsPlayer(
      * 回调在播放器工作线程上执行，实现方需自行保证线程安全。
      */
     private val onClipStarted: (Int) -> Unit = {},
+    /**
+     * 某句音频**确实写出了非空 PCM**（=真的会有声音）时回调其句下标。
+     *
+     * 与 [onClipStarted] 的区别，以及为什么必须分开：
+     *  - [onClipStarted] 在 worker **刚取到 clip** 时就触发（此时还没解码）——这是高亮/进度
+     *    不滞后的前提，不能改到解码之后（否则高亮会整整慢一句）。
+     *  - 但"这一句到底有没有声音"只能在**写完 AudioTrack 之后**判断：厂商返回 HTTP 200、
+     *    正文却是错误 JSON/HTML，或 MP3 损坏时，clip 被取到、解码为空，一个字都没写。
+     *
+     * 若用 [onClipStarted] 统计"真正发声的句数"，上述零声音的章节会被判成播完，
+     * 阅读器于是在完全没有声音的情况下连续跳章 —— 正是 review P1 要消除的故障类别。
+     *
+     * 回调在播放器工作线程上执行，实现方需自行保证线程安全。
+     */
+    private val onClipAudioProduced: (Int) -> Unit = {},
 ) {
 
     private class Clip(val mp3: ByteArray, val index: Int)
@@ -90,6 +105,15 @@ class TtsPlayer(
      */
     @Volatile
     private var speed: Float = 1.0f
+
+    /**
+     * Phase 5 (PR review)：输出音量（0f..1f），默认 1.0。
+     *
+     * 供 Service 在音频焦点 duck（AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK）时压低。
+     * 跨句复用同一条 AudioTrack；新建 track 时在 [ensureTrack] 里重新套用。
+     */
+    @Volatile
+    private var volume: Float = 1.0f
 
     private val framesWritten = AtomicLong(0L)
     private val trackRef = AtomicReference<AudioTrack?>(null)
@@ -229,6 +253,21 @@ class TtsPlayer(
 
     /** 当前语速（1.0 = 正常）。 */
     fun currentSpeed(): Float = speed
+
+    /**
+     * Phase 5 (PR review)：设置输出音量（0f..1f）。服务层在音频焦点 duck / 恢复时调用。
+     *
+     * 幂等；作用于当前 [AudioTrack]，并记住以便 [ensureTrack] 重建 track 后继续生效。
+     */
+    fun setVolume(newVolume: Float) {
+        val clamped = newVolume.coerceIn(0f, 1f)
+        if (clamped == volume) return
+        volume = clamped
+        trackRef.get()?.let { track ->
+            runCatching { track.setVolume(clamped) }
+        }
+        logcat(LogPriority.INFO) { "[TtsPlayer] volume -> $clamped" }
+    }
 
     /** 把当前 [speed] 套用到 [track]（需 track 处于 PLAYING）。失败不致命，降级为不变速。 */
     private fun applyPlaybackParams(track: AudioTrack) {
@@ -403,10 +442,16 @@ class TtsPlayer(
                         "[TtsPlayer] clip start idx=${item.index} headMs=${playbackHeadMs()}"
                     }
                     runCatching { onClipStarted(item.index) }
-                    try {
+                    val produced = try {
                         pumpClip(item.mp3, item.index)
                     } catch (error: Exception) {
                         logcat(LogPriority.ERROR, error) { "[TtsPlayer] clip decode failed, skipping" }
+                        false
+                    }
+                    // 只有真的写出非空 PCM 才上报"这一句发声了"。
+                    // stopped/released 时不上报：播放已被新一轮接管，计数会污染新轮的零声音判定。
+                    if (produced && !stopped.get() && !released) {
+                        runCatching { onClipAudioProduced(item.index) }
                     }
                 }
                 // 队列 FIFO：处理到这里 ⟹ 之前的 clip 都已 pump 完
@@ -420,7 +465,7 @@ class TtsPlayer(
      * 一句 MP3：临时文件 → extractor 出权威格式 → 解码 → PCM 连续写入 AudioTrack。
      * decoder 每句新建（~10-30ms），AudioTrack 跨句复用保证流式无缝。
      */
-    private fun pumpClip(mp3: ByteArray, index: Int) {
+    private fun pumpClip(mp3: ByteArray, index: Int): Boolean {
         tempDir.mkdirs()
         val file = File(tempDir, "pump-${System.nanoTime()}.mp3")
         file.writeBytes(mp3)
@@ -441,21 +486,21 @@ class TtsPlayer(
             val clipFormat = sourceFormat
             if (sourceTrackIndex < 0 || clipFormat == null) {
                 logcat(LogPriority.WARN) { "[TtsPlayer] no audio track in clip, skipping" }
-                return
+                return false
             }
             extractor.selectTrack(sourceTrackIndex)
             val mime = clipFormat.getString(MediaFormat.KEY_MIME).orEmpty()
             val track = ensureTrack(clipFormat)
             if (track == null) {
                 logcat(LogPriority.ERROR) { "[TtsPlayer] audio track unavailable, skipping clip" }
-                return
+                return false
             }
             decoder = MediaCodec.createDecoderByType(mime).apply {
                 configure(clipFormat, null, null, 0)
                 start()
             }
             val rawPcm = decodeIntoBytes(decoder, extractor)
-            if (stopped.get() || released) return
+            if (stopped.get() || released) return false
             val trimmed = trimGaplessPcm(
                 pcm = rawPcm,
                 channels = currentChannels.coerceAtLeast(1),
@@ -467,13 +512,22 @@ class TtsPlayer(
                 "[TtsPlayer] clip $index decode done raw=${rawPcm.size}B trimmed=${trimmed.size}B " +
                     "headMs=${playbackHeadMs()}"
             }
-            if (trimmed.isNotEmpty()) writePcm(track, trimmed)
+            val writtenBytes = if (trimmed.isNotEmpty()) writePcm(track, trimmed) else 0
             logcat(LogPriority.DEBUG) {
-                "[TtsPlayer] clip $index pcm written, framesWritten=${framesWritten.get()} " +
+                "[TtsPlayer] clip $index pcm written=$writtenBytes/B framesWritten=${framesWritten.get()} " +
                     "headMs=${playbackHeadMs()}"
+            }
+            if (writtenBytes <= 0) {
+                // 解码成功但一个字节都没写进 AudioTrack（厂商返回 HTTP 200 正文却不是音频、
+                // MP3 损坏、track 不可用…）—— 这一句**没有声音**，不能算"已发声"。
+                logcat(LogPriority.WARN) {
+                    "[TtsPlayer] clip $index produced no PCM; not counted as played"
+                }
+                return false
             }
             if (!stopped.get() && !released) writeGap(track)
             logcat(LogPriority.DEBUG) { "[TtsPlayer] clip $index pumped fully" }
+            return true
         } finally {
             runCatching { decoder?.stop() }
             runCatching { decoder?.release() }
@@ -565,7 +619,7 @@ class TtsPlayer(
      *
      * 非阻塞轮询让这里能感知 [stopped]/[released] 并主动退出，不会把播放协程拖死。
      */
-    private fun writePcm(track: AudioTrack, bytes: ByteArray) {
+    private fun writePcm(track: AudioTrack, bytes: ByteArray): Int {
         var written = 0
         var idleRounds = 0
         while (written < bytes.size && !stopped.get() && !released) {
@@ -594,6 +648,7 @@ class TtsPlayer(
             written += result
         }
         framesWritten.addAndGet(written.toLong() / BYTES_PER_FRAME)
+        return written
     }
 
     /**
@@ -665,7 +720,17 @@ class TtsPlayer(
             .build()
             .also {
                 it.play()
+                // 先把新 track 发布到 trackRef，**再**套用音量。反过来的话，并发的
+                // [setVolume]（duck）会落在旧的/空的 trackRef 上而什么都不做，
+                // 新 track 就停在 1.0，而字段已经是压低后的值 —— duck 丢失且无人再触发。
                 trackRef.set(it)
+                // 循环到稳定：setVolume() 可能在"读字段 → 写 track"之间再次改变字段。
+                // 音量只在 duck/restore 之间跳变，最多几轮即收敛。
+                for (round in 0 until VOLUME_APPLY_ROUNDS) {
+                    val target = volume
+                    runCatching { it.setVolume(target) }
+                    if (volume == target) break
+                }
                 currentSampleRate = sampleRate
                 currentChannels = channels
                 framesWritten.set(0L)
@@ -715,6 +780,12 @@ class TtsPlayer(
 
         /** [awaitDrained] 第三阶段整体上限：500 × 40ms = 20s，兜底防止缓慢前进导致的超长等待。 */
         const val DRAIN_MAX_ROUNDS = 500
+
+        /**
+         * [ensureTrack] 里套用当前音量的最大轮数。
+         * 音量只在 duck / restore 之间跳变，几轮即收敛；这是防跑飞的兜底上限。
+         */
+        const val VOLUME_APPLY_ROUNDS = 4
         const val SAMPLE_BYTES_PER_CHANNEL = 2L
         const val DEFAULT_GAP_MS = 350L
         const val DEFAULT_ENCODER_DELAY_SAMPLES = 576

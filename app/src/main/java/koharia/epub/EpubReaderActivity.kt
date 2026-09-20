@@ -18,6 +18,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -97,6 +98,7 @@ import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.connection.SharedAppPreferences
 import koharia.epub.control.TtsControlPanel
+import koharia.epub.control.TtsDisclosureDialog
 import koharia.epub.control.TtsPanelState
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
@@ -106,6 +108,9 @@ import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubPreferencesBridge
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.importing.IncomingMediaNavigation
+import koharia.tts.TtsChapterTextStore
+import koharia.tts.TtsPreferences
+import koharia.tts.TtsVendor
 import koharia.tts.progress.TtsProgressNotifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -138,6 +143,7 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.util.UUID
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalReadiumApi::class)
@@ -233,6 +239,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private val displayRefreshHost by lazy { DisplayRefreshHost(readerPreferences) }
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val epubFontManager: EpubFontManager = Injekt.get()
+
+    // ===== Phase 5 (PR review): TTS 数据披露 / 正文 token 传递 / 失败提示 =====
+    private val ttsPreferences = Injekt.get<TtsPreferences>()
+    private val ttsChapterTextStore = Injekt.get<TtsChapterTextStore>()
+    private val ttsProgressNotifier = Injekt.get<TtsProgressNotifier>()
+
     private val epubReaderLauncher by lazy { EpubReaderLauncher() }
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
     private var isReaderResumed = false
@@ -289,6 +301,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             }
             .launchIn(lifecycleScope)
 
+        // PR review P1：本章一句都没能发声（key 无效 / 断网 / 限流 / 超长句）时提示用户，
+        // 而不是静默地当作"播完"去跳下一章。
+        ttsProgressNotifier.playbackFailed
+            .onEach { toast(MR.strings.tts_error_synthesis_failed, Toast.LENGTH_LONG) }
+            .launchIn(lifecycleScope)
+
         setComposeContent(enableAppRefresh = false) {
             val state by viewModel.state.collectAsState()
             val flashOnPageChange by readerPreferences.flashOnPageChange.changes()
@@ -305,6 +323,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             var activePanel by rememberSaveable { mutableStateOf(EpubBottomPanel.NONE) }
             var showBookInfoDialog by rememberSaveable { mutableStateOf(false) }
             var showFontPicker by rememberSaveable(state.chapterId) { mutableStateOf(false) }
+            var showTtsDisclosureDialog by rememberSaveable { mutableStateOf(false) }
             val currentTheme by epubLayoutPreferences.theme.changes().collectAsState(epubLayoutPreferences.theme.get())
             val currentCustomBackgroundColor by epubLayoutPreferences.customBackgroundColor.changes()
                 .collectAsState(epubLayoutPreferences.customBackgroundColor.get())
@@ -685,7 +704,13 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                                 REQ_CODE_POST_NOTIFICATIONS,
                                             )
                                         }
-                                        startTtsFromCurrentViewport()
+                                        // PR review P2：首次启用朗读前先做一次性数据披露
+                                        // （章节正文会上传至所选 TTS 厂商做语音合成）。
+                                        if (ttsPreferences.disclosureAcknowledged.get()) {
+                                            startTtsFromCurrentViewport()
+                                        } else {
+                                            showTtsDisclosureDialog = true
+                                        }
                                     }
                                 },
                                 onToggleOrientation = {
@@ -834,6 +859,22 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                             .align(Alignment.BottomCenter)
                                             .navigationBarsPadding()
                                             .padding(bottom = 16.dp),
+                                    )
+                                }
+
+                                // PR review P2：首次启用朗读前的一次性数据披露对话框。
+                                // 确认后记录标记并立即起播；取消则不播。
+                                if (showTtsDisclosureDialog) {
+                                    TtsDisclosureDialog(
+                                        vendorDisplayName = TtsVendor
+                                            .fromId(ttsPreferences.vendorId.get())
+                                            .displayName,
+                                        onAcknowledge = {
+                                            ttsPreferences.disclosureAcknowledged.set(true)
+                                            showTtsDisclosureDialog = false
+                                            startTtsFromCurrentViewport()
+                                        },
+                                        onDismissRequest = { showTtsDisclosureDialog = false },
                                     )
                                 }
 
@@ -1701,13 +1742,22 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             // 偏移与句子同空间 → 起播精确（不依赖可能滞后的 progression）。
             // 拿不到再降级给 TtsService 内部 ChapterTextExtractor + 进度。
             val model = fragment?.extractTtsTextModel()
+            // 只记录长度 / 节点数 / 偏移，不打印正文片段（release 最低日志级别为 INFO）。
             logcat(LogPriority.INFO) {
                 "[EpubReaderActivity] tts text model " +
                     "len=${model?.text?.length ?: -1} " +
                     "nodes=${model?.nodeCount ?: -1} " +
-                    "startOffset=${model?.startOffset ?: -1} " +
-                    "snippet='${model?.snippet?.take(60) ?: ""}'"
+                    "startOffset=${model?.startOffset ?: -1}"
             }
+            // PR review P1：正文经进程内 store 传递，Intent 里只放短 token，
+            // 避免大单文件 EPUB 的整章正文触发 Binder TransactionTooLargeException。
+            val textToken = model?.text
+                ?.takeIf { it.isNotBlank() }
+                ?.let { text ->
+                    UUID.randomUUID().toString().also { token ->
+                        ttsChapterTextStore.put(token, text)
+                    }
+                }
             koharia.tts.TtsService.start(
                 context = this@EpubReaderActivity,
                 chapterId = ttsChapterId,
@@ -1717,7 +1767,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 textAnchor = model?.snippet?.takeIf { it.isNotBlank() } ?: ttsAnchor?.first,
                 anchorIsBefore = model == null && (ttsAnchor?.second ?: false),
                 startOffset = model?.startOffset ?: -1,
-                extractedText = model?.text,
+                textToken = textToken,
             )
         }
     }

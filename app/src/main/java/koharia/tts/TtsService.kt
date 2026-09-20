@@ -7,6 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.support.v4.media.session.MediaSessionCompat
@@ -117,11 +121,21 @@ class TtsService : Service(), CoroutineScope {
     }
 
     private val cache: TtsCache by lazy { Injekt.get() }
+
+    /**
+     * 进程内章节正文暂存。调用方 `put(token, text)` 后**只把 token 放进 Intent**，
+     * 避免整章正文经 Binder 序列化（大单文件 EPUB 会 TransactionTooLargeException）。
+     */
+    private val chapterTextStore: TtsChapterTextStore by lazy { Injekt.get() }
+
     private val extractor: koharia.tts.reader.ChapterTextExtractor by lazy { Injekt.get() }
     private val player: TtsPlayer by lazy {
         TtsPlayer(
             tempDir = File(cacheDir, "tts_pump"),
+            // 高亮 / 进度：worker 取到 clip 就回调（保证不滞后）。
             onClipStarted = ::onSentencePlaybackStarted,
+            // "真的发声了"：写出非空 PCM 才回调 —— 零声音判定只认这个（review P1）。
+            onClipAudioProduced = ::onSentenceAudioProduced,
         )
     }
 
@@ -187,6 +201,40 @@ class TtsService : Service(), CoroutineScope {
     @Volatile
     private var currentSentenceIndex: Int = -1
     private var progressSaveJob: Job? = null
+
+    /**
+     * 本次播放**真正写出音频**过的句数。由 [onSentenceAudioProduced]（播放器工作线程）自增，
+     * 故 @Volatile；每轮 [startPlayback] 重置。
+     *
+     * ⚠️ 不能改用 [onSentencePlaybackStarted] 计数：那个回调在 clip **被取到**时就触发，
+     * 此时还没解码 —— 厂商返回 HTTP 200 但正文不是音频、或 MP3 损坏时，该句零声音却仍会被计上。
+     *
+     * 用途：区分"整章播完"与"每句合成都失败"（无效 API key / 断网 / 限流 / 超长句）。
+     * 后者若仍发 [TtsProgressNotifier.notifyChapterCompleted]，阅读器就会在**没有任何声音**
+     * 的情况下连续跳章（review P1）。
+     */
+    @Volatile
+    private var playedSentenceCount: Int = 0
+
+    /** 音频焦点（review P2）：与其他媒体互斥、正确响应电话等焦点变化。 */
+    private val audioManager: AudioManager by lazy {
+        getSystemService(AUDIO_SERVICE) as AudioManager
+    }
+
+    /**
+     * 当前持有的音频焦点请求。写在焦点回调线程 / IO 控制队列，读在主线程
+     * （[onDestroy] / [abandonAudioFocus]），故 @Volatile —— 否则 onDestroy 可能读到
+     * 陈旧的 null 而漏掉 `abandonAudioFocusRequest`，造成焦点泄漏。
+     */
+    @Volatile
+    private var audioFocusRequest: AudioFocusRequest? = null
+
+    /**
+     * TRANSIENT 失焦后是否需要在 GAIN 时自动恢复播放。
+     * 同样跨线程（焦点回调 ↔ 控制队列），故 @Volatile。
+     */
+    @Volatile
+    private var resumeOnAudioFocusGain: Boolean = false
 
     // ===== Phase 3 step 1：MediaSession + 状态机 =====
 
@@ -406,6 +454,97 @@ class TtsService : Service(), CoroutineScope {
         logcat(LogPriority.INFO) { "[TtsService] playbackUiState -> $newState" }
     }
 
+    // ===== Phase 5 (PR review): 音频焦点 =====
+
+    /**
+     * 失焦回调。所有会改播放状态的分支都经 [dispatchControl] 投递到串行控制队列，
+     * 保证 `playbackUiState` / 通知 / MediaSession 三者同步（与 [MediaSessionCallback] 同一模式）。
+     *
+     * - [AudioManager.AUDIOFOCUS_LOSS]：永久失焦 → 暂停且**不**自动恢复；
+     * - [AudioManager.AUDIOFOCUS_LOSS_TRANSIENT]：暂时失焦 → 暂停，GAIN 后自动恢复；
+     * - [AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK]：允许压低 → 降音量，不暂停；
+     * - [AudioManager.AUDIOFOCUS_GAIN]：恢复音量，必要时恢复播放。
+     */
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                logcat(LogPriority.INFO) { "[TtsService] audio focus LOSS" }
+                resumeOnAudioFocusGain = false
+                dispatchControl("focus-loss") { pauseIfPlaying() }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                logcat(LogPriority.INFO) { "[TtsService] audio focus LOSS_TRANSIENT" }
+                resumeOnAudioFocusGain = true
+                dispatchControl("focus-loss-transient") { pauseIfPlaying() }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                logcat(LogPriority.INFO) { "[TtsService] audio focus CAN_DUCK" }
+                player.setVolume(DUCK_VOLUME)
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                logcat(LogPriority.INFO) { "[TtsService] audio focus GAIN" }
+                player.setVolume(1.0f)
+                if (resumeOnAudioFocusGain) {
+                    resumeOnAudioFocusGain = false
+                    dispatchControl("focus-gain") { resume() }
+                }
+            }
+        }
+    }
+
+    /** 仅在 PLAYING 时暂停；跑在串行控制队列里（避免与其它控制操作竞态）。 */
+    private fun pauseIfPlaying() {
+        if (playbackUiState == TtsPlaybackState.PLAYING) {
+            pause()
+        }
+    }
+
+    /** 申请音频焦点（USAGE_MEDIA / CONTENT_TYPE_SPEECH，AUDIOFOCUS_GAIN）。 */
+    private fun requestAudioFocus() {
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            // 自己处理 duck，不交给系统直接暂停（否则恢复时机不可控）。
+            .setWillPauseWhenDucked(false)
+            .setOnAudioFocusChangeListener(audioFocusListener)
+            .build()
+        audioFocusRequest = request
+        val result = audioManager.requestAudioFocus(request)
+        logcat(LogPriority.INFO) { "[TtsService] requestAudioFocus result=$result" }
+    }
+
+    /** 释放音频焦点（停止 / 销毁时调用）。 */
+    private fun abandonAudioFocus() {
+        audioFocusRequest?.let { request ->
+            runCatching { audioManager.abandonAudioFocusRequest(request) }
+        }
+        audioFocusRequest = null
+        resumeOnAudioFocusGain = false
+    }
+
+    /**
+     * 启动前台服务。
+     *
+     * review P1：targetSdk 36 下必须用 [ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK]。
+     * 之前声明的 dataSync 会占用真正的数据同步额度，并受 Android 15+ 后台 6 小时配额限制。
+     * 三参 [startForeground] 重载自 API 29 起可用，故低版本回退到两参重载。
+     */
+    private fun startForegroundForPlayback(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         logcat(LogPriority.INFO) { "[TtsService] onStartCommand action=${intent?.action}" }
         when (intent?.action) {
@@ -434,7 +573,7 @@ class TtsService : Service(), CoroutineScope {
                 return START_NOT_STICKY
             }
             else -> {
-                startForeground(NOTIFICATION_ID, buildNotification())
+                startForegroundForPlayback(buildNotification())
                 val chapterId = intent?.getLongExtra(EXTRA_CHAPTER_ID, -1L) ?: -1L
                 val mangaId = intent?.getLongExtra(EXTRA_MANGA_ID, -1L) ?: -1L
                 val href = intent?.getStringExtra(EXTRA_HREF).orEmpty()
@@ -443,7 +582,9 @@ class TtsService : Service(), CoroutineScope {
                 val anchorIsBefore = intent?.getBooleanExtra(EXTRA_ANCHOR_BEFORE, false) ?: false
                 val startOffset = intent?.getIntExtra(EXTRA_START_OFFSET, -1) ?: -1
                 val persistedSentenceText = intent?.getStringExtra(EXTRA_PERSISTED_SENTENCE_TEXT)
-                val extractedText = intent?.getStringExtra(EXTRA_TEXT)
+                // 正文经进程内 [TtsChapterTextStore] 传递：Intent 里只放短 token，
+                // 这里用 token 一次性取回正文（取出即移除）。
+                val extractedText = intent?.getStringExtra(EXTRA_TEXT_TOKEN)?.let(chapterTextStore::take)
                 dispatchControl("start") {
                     startPlayback(
                         chapterId = chapterId,
@@ -478,8 +619,10 @@ class TtsService : Service(), CoroutineScope {
         extractedText: String? = null,
     ) {
         logcat(LogPriority.INFO) {
+            // 只记录标识 / 长度 / 偏移，绝不打印章节正文或正文片段：
+            // release 最低日志级别为 INFO，正文会因此进入系统日志。
             "[TtsService] startPlayback chapterId=$chapterId href='$href' " +
-                "prog=$progression startOffset=$startOffset anchor='$textAnchor' " +
+                "prog=$progression startOffset=$startOffset anchorPresent=${textAnchor != null} " +
                 "anchorBefore=$anchorIsBefore persisted=${persistedSentenceText != null} " +
                 "preExtracted=${extractedText != null}(len=${extractedText?.length ?: -1})"
         }
@@ -504,7 +647,10 @@ class TtsService : Service(), CoroutineScope {
         currentChapterId = chapterId
         currentMangaId = mangaId
         currentSentenceIndex = -1
+        playedSentenceCount = 0
         cancelProgressSave()
+        // 与其他媒体互斥：起播前申请音频焦点（在 stopPlayback / onDestroy 里释放）。
+        requestAudioFocus()
         logcat(LogPriority.INFO) { "[TtsService] about to launch playbackJob" }
         // 用 [playbackScope] 而不是 serviceScope：让播放循环独立于 Service 生命周期，
         // 避免后台锁屏时 Service 被系统回收导致 playbackJob 一同被取消。
@@ -579,7 +725,7 @@ class TtsService : Service(), CoroutineScope {
                 logcat(LogPriority.WARN) {
                     "[TtsService] chapter text extraction failed (chapterId=$chapterId, href=\"$href\") — falling back to test text"
                 }
-                startForeground(NOTIFICATION_ID, buildNotification(extractFailed = true))
+                startForegroundForPlayback(buildNotification(extractFailed = true))
             }
             val resolvedText = text ?: FALLBACK_TEXT
             logcat(LogPriority.INFO) { "[TtsService] extracted ${resolvedText.length} chars; sentence-segmenting..." }
@@ -649,17 +795,10 @@ class TtsService : Service(), CoroutineScope {
                 if (!currentCoroutineContext().isActive) break
                 // 诊断：把"要朗读的文本"和"文本模型在该偏移区间的内容"并排打印。
                 // 注意这是**入队**日志，不等于已经在发声；真正发声见 `now-playing`。
-                logcat(LogPriority.INFO) {
-                    val start = sentence.startOffset
-                    val end = sentence.endOffset
-                    val slice = if (start in 0..end && end <= resolvedText.length) {
-                        resolvedText.substring(start, end)
-                    } else {
-                        "<out-of-range len=${resolvedText.length}>"
-                    }
-                    "[TtsService] enqueued $index/${sentences.size} [$start,$end) " +
-                        "aligned=${slice == sentence.text} " +
-                        "spoken='${sentence.text.take(60)}' slice='${slice.take(60)}'"
+                logcat(LogPriority.DEBUG) {
+                    // 只记录下标 / 偏移 / 长度，正文内容不落日志。
+                    "[TtsService] enqueued $index/${sentences.size} " +
+                        "[${sentence.startOffset},${sentence.endOffset}) len=${sentence.text.length}"
                 }
                 val mp3 = prefetcher.await(index, sentence)
                 prefetcher.scheduleFrom(index + 1, sentences)
@@ -675,6 +814,23 @@ class TtsService : Service(), CoroutineScope {
             player.awaitDrained()
             if (!currentCoroutineContext().isActive) return
             flushProgress()
+            // flushProgress() 期间也可能被取消（skipTo / stop 在途）：再确认一次，否则下面的
+            // "零声音"分支会在新一轮已经接管时发出 playbackFailed + stopSelf()。
+            if (!currentCoroutineContext().isActive) return
+
+            // review P1：一句都没真正发声（无效 key / 断网 / 限流 / 超长句全被跳过）时，
+            // **不能**当作"章节播完" —— 否则阅读器会在没有任何声音的情况下连续跳章。
+            if (playedSentenceCount == 0) {
+                logcat(LogPriority.WARN) {
+                    "[TtsService] playback produced no audio " +
+                        "(0/${sentences.size} played); not advancing chapter"
+                }
+                progressNotifier.notifyPlaybackFailed()
+                updateTtsPlaybackState(TtsPlaybackState.STOPPED)
+                stopSelf()
+                return
+            }
+
             logcat(LogPriority.INFO) { "[TtsService] playback complete" }
             // Phase 3：通知阅读器"章节自然播完"，让它自动续播下一章。
             // 不自毁 —— 交给 [scheduleCompletionStop] 的兜底窗口，等阅读器用新 start 接管。
@@ -709,6 +865,7 @@ class TtsService : Service(), CoroutineScope {
         progressNotifier.clear()
         currentSentenceIndex = -1
         overrideStartIndex = -1
+        abandonAudioFocus()
         updateTtsPlaybackState(TtsPlaybackState.STOPPED)
     }
 
@@ -862,6 +1019,22 @@ class TtsService : Service(), CoroutineScope {
     }
 
     /**
+     * 播放器回调：某句**确实写出了非空 PCM**（=真的会发声）。
+     *
+     * 只有这里自增 [playedSentenceCount]。[onSentencePlaybackStarted] 在 clip 被取到时就触发
+     * （还没解码），用它计数会把"厂商返回错误正文 / MP3 损坏"的零声音章节判成播完，
+     * 进而触发连续跳章（review P1 的故障类别）。
+     *
+     * 运行在播放器工作线程；[playedSentenceCount] 已 `@Volatile`。
+     */
+    private fun onSentenceAudioProduced(index: Int) {
+        playedSentenceCount++
+        logcat(LogPriority.DEBUG) {
+            "[TtsService] audio produced $index (played=$playedSentenceCount)"
+        }
+    }
+
+    /**
      * 调度一次延迟写入；同一窗口内的多次调用会被合并为最后一次（debounce）。
      * Service 作用域内 launch — Service 被销毁时 job 一起被取消，flush 由 stopPlayback 保证。
      */
@@ -924,6 +1097,7 @@ class TtsService : Service(), CoroutineScope {
         player.stop()
         player.release()
         progressNotifier.clear()
+        abandonAudioFocus()
         // 关闭播放专用 scope,防协程泄漏（如果还有未结束的播放协程）
         playbackScope.cancel()
         // Phase 3 step 1：释放 MediaSession（detach callback + system token）
@@ -1046,6 +1220,9 @@ class TtsService : Service(), CoroutineScope {
     companion object {
         private const val CHANNEL_ID = "koharia.tts.playback"
         private const val NOTIFICATION_ID = 8421
+
+        /** 失焦 duck（AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK）时的输出音量。 */
+        private const val DUCK_VOLUME = 0.2f
         private const val ACTION_STOP = "koharia.tts.STOP"
         private const val ACTION_PLAY = "koharia.tts.PLAY"
         private const val ACTION_PAUSE = "koharia.tts.PAUSE"
@@ -1066,7 +1243,7 @@ class TtsService : Service(), CoroutineScope {
         const val EXTRA_ANCHOR_BEFORE = "anchorBefore"
 
         /**
-         * 可选：DOM 起始偏移 —— 视口顶部第一段可见文字在 [EXTRA_TEXT] 中的字符偏移。
+         * 可选：DOM 起始偏移 —— 视口顶部第一段可见文字在章节正文中的字符偏移。
          * 由阅读器 WebView 抽取（与句子/高亮同一文本偏移空间）。负值表示不可用。
          */
         const val EXTRA_START_OFFSET = "startOffset"
@@ -1079,16 +1256,18 @@ class TtsService : Service(), CoroutineScope {
         const val EXTRA_PERSISTED_SENTENCE_TEXT = "persistedSentenceText"
 
         /**
-         * 可选：调用方**预提取**的章节纯文本（来自阅读器 WebView 的文本模型）。
-         * **优先级高于** [ChapterTextExtractor]，因为：
+         * 可选：调用方**预提取**章节正文的短 token。正文本身走进程内 [TtsChapterTextStore]。
+         *
+         * 为什么不直接传正文：整章正文放进 Intent 会被 Binder 序列化，大单文件 EPUB
+         * 会抛 TransactionTooLargeException（review P1）。token→正文的映射只在本进程内，
+         * Service 用 token 一次性取回正文（取出即移除）。
+         *
+         * 预提取文本**优先级高于** [ChapterTextExtractor]，因为：
          * - 与高亮 JS tree walker 使用同一文本节点拼接顺序，TTS 句子高亮天然对齐；
          * - 已经在阅读器渲染时拿到了文本，毫秒级；ChapterTextExtractor 走
-         *   "读字节→Jsoup 解析"在远程 Komga / 大章节上经常 10+ 秒，期间
-         *   TTS 完全听不到声音，用户已经 stop。
-         * - 自动跳过 display:none / visibility:hidden（WebView CSS 引擎
-         *   才是单一事实来源），不需要我们维护 NON_RENDERED_SELECTOR。
+         *   "读字节→Jsoup 解析"在远程 Komga / 大章节上经常 10+ 秒。
          */
-        const val EXTRA_TEXT = "extractedText"
+        const val EXTRA_TEXT_TOKEN = "textToken"
         private const val DEFAULT_VOICE = "冰糖"
 
         /**
@@ -1138,7 +1317,7 @@ class TtsService : Service(), CoroutineScope {
             anchorIsBefore: Boolean,
             startOffset: Int,
             persistedSentenceText: String? = null,
-            extractedText: String? = null,
+            textToken: String? = null,
         ) {
             val intent = Intent(context, TtsService::class.java).apply {
                 putExtra(EXTRA_CHAPTER_ID, chapterId)
@@ -1151,8 +1330,8 @@ class TtsService : Service(), CoroutineScope {
                 if (persistedSentenceText != null) {
                     putExtra(EXTRA_PERSISTED_SENTENCE_TEXT, persistedSentenceText)
                 }
-                if (extractedText != null) {
-                    putExtra(EXTRA_TEXT, extractedText)
+                if (textToken != null) {
+                    putExtra(EXTRA_TEXT_TOKEN, textToken)
                 }
             }
             // Allow start without explicit foreground service type — Android 8+ requires it,
