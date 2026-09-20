@@ -142,6 +142,18 @@ class TtsService : Service(), CoroutineScope {
     @Volatile
     private var activeSessionGeneration: Int = -1
 
+    /**
+     * 串行化"会话切换"与"播放器回调里的会话校验 + 计数/进度写入"（review ocr finding 1）。
+     *
+     * 只有代次校验和它保护的那些写入处于同一临界区，`isCurrentSession()` 才不再是
+     * check-then-act：worker 通过校验后被抢占、控制协程完成整段切换、worker 再写入 ——
+     * 这种交错被排除了。
+     *
+     * 临界区只包含纯内存操作与 [TtsPlayer.startNewSession] / [TtsPlayer.stop]（后者只做 binder
+     * 调用，不会回调进本类），因此不会与持有本锁的路径互相等待。
+     */
+    private val sessionLock = Any()
+
     private val player: TtsPlayer by lazy {
         TtsPlayer(
             tempDir = File(cacheDir, "tts_pump"),
@@ -155,8 +167,18 @@ class TtsService : Service(), CoroutineScope {
         )
     }
 
-    /** 回调的会话代次是否仍是当前会话（迟到回调一律丢弃，review ocr finding D）。 */
-    private fun isCurrentSession(generation: Int): Boolean = generation == activeSessionGeneration
+    /**
+     * 在 [sessionLock] 内校验代次并执行 [body]；代次不匹配（或已无活动会话）时不执行。
+     *
+     * 校验与 [body] 处于同一临界区，才能排除 finding 1 的 TOCTOU（见 [sessionLock]）。
+     * 迟到回调一律丢弃（review ocr finding D）。
+     */
+    private fun runIfCurrentSession(generation: Int, body: () -> Unit) {
+        synchronized(sessionLock) {
+            if (generation != activeSessionGeneration) return
+            body()
+        }
+    }
 
     private var playbackJob: Job? = null
     private var prefetcher: SentencePrefetcher? = null
@@ -696,24 +718,28 @@ class TtsService : Service(), CoroutineScope {
         // startPlayback 只 cancelAndJoin 协程、从不调 player.stop()/skipTo()，所以此刻
         // TtsPlayer 的 `stopped` 仍为 false；若不显式作废，上一章仍在途的 clip 会被当作本
         // 会话有效，把 PCM 写进未 flush 的 AudioTrack，并把旧句回调计入本会话的计数、
-        // 甚至以旧下标对新 chapterId 落盘。放在 reset 计数之前，确保旧回调先失效。
-        // 记住返回的代次：回调会带同一代次回来，Service 侧做第二道迟到校验（finding D）。
+        // 甚至以旧下标对新 chapterId 落盘。
         //
-        // review ocr finding 1：**先**把 Service 侧守卫置为"无会话"，再让播放器开新会话。
-        // `startNewSession()` 内部先 `invalidate()` 再做若干 AudioTrack binder 调用才返回；
-        // 若不先置 -1，一个已通过播放器侧检查的旧 worker 仍会读到**旧**的
-        // `activeSessionGeneration` 从而通过 `isCurrentSession`。此时置 -1 不会误伤新会话回调 ——
-        // 新会话的 clip 只可能在下方 launch 的 playbackJob 里入队。
-        activeSessionGeneration = -1
-        val newSessionGeneration = player.startNewSession()
-        activeSessionGeneration = newSessionGeneration
-        // 新一轮播放：重置持久化状态
-        currentChapterId = chapterId
-        currentMangaId = mangaId
-        currentSentenceIndex = -1
-        confirmedSentenceIndex = -1
-        playedSentenceCount.set(0)
-        failedSentenceCount.set(0)
+        // review ocr finding 1：整个"切换会话 + 重置计数/进度"必须在 [sessionLock] 内完成。
+        // 单靠先置 -1 只是缩小窗口 —— 回调里的 `isCurrentSession()` 是 check-then-act，
+        // worker 可能在检查通过后被抢占，等控制协程完成整段切换后再执行自增，从而污染
+        // **新**章节的计数并把旧下标写进新 `currentChapterId`。加锁后，回调整体要么在切换
+        // **之前**完成（其写入随即被本次重置覆盖），要么在切换**之后**开始（代次不匹配直接
+        // 返回），不存在交错。
+        synchronized(sessionLock) {
+            // 先把 Service 侧守卫置为"无会话"，再让播放器开新会话：`startNewSession()` 内部
+            // 会先 invalidate 再做若干 AudioTrack binder 调用才返回。
+            activeSessionGeneration = -1
+            activeSessionGeneration = player.startNewSession()
+            // 新一轮播放：重置持久化状态
+            currentChapterId = chapterId
+            currentMangaId = mangaId
+            currentSentenceIndex = -1
+            confirmedSentenceIndex = -1
+            playedSentenceCount.set(0)
+            failedSentenceCount.set(0)
+        }
+        // 锁外取消：切换前由旧回调调度的防抖保存，在切换后一律作废。
         cancelProgressSave()
         // 与其他媒体互斥：起播前申请音频焦点（在 stopPlayback / onDestroy 里释放）。
         requestAudioFocus()
@@ -746,9 +772,12 @@ class TtsService : Service(), CoroutineScope {
             }
         }
         logcat(LogPriority.INFO) { "[TtsService] playbackJob LAUNCHED (coroutine, was raw Thread)" }
-        // 新一轮启动（无论 PLAYING/PAUSED 路径）—— 切到 PLAYING 状态;若 [pause]/[resume]
-        // 后续再切。这里假设 startPlayback 一律从 PLAYING 起，pause 由用户后续触发。
-        updateTtsPlaybackState(TtsPlaybackState.PLAYING)
+        // review ocr finding 5：按播放器的**真实**暂停意图同步 UI，而不是无条件 PLAYING。
+        // [TtsPlayer.startNewSession] 会保留已有暂停意图（自动续播不是用户发起；音频焦点丢失
+        // 触发的暂停也必须延续），若无条件切 PLAYING，通知/锁屏会显示"播放中"而音频其实静音。
+        updateTtsPlaybackState(
+            if (player.isPaused()) TtsPlaybackState.PAUSED else TtsPlaybackState.PLAYING,
+        )
     }
 
     /**
@@ -951,13 +980,15 @@ class TtsService : Service(), CoroutineScope {
         playbackJob = null
         prefetcher?.cancelAll()
         prefetcher = null
-        // review ocr finding 2：**先**作废 Service 侧会话再 `player.stop()`。`stop()` 内部会
-        // `invalidate()`；若在其后才置 -1，一个已通过播放器侧检查的旧 worker 会读到旧的
-        // `activeSessionGeneration` 并通过 `isCurrentSession`，把 `confirmedSentenceIndex` 写回
-        // 旧下标并 `scheduleProgressSave()` —— 本路径之后没有任何 `cancelProgressSave()`，
-        // 那条防抖写入会真的落盘到已停止的播放上。
-        activeSessionGeneration = -1
-        player.stop()
+        // review ocr finding 2：**先**作废 Service 侧会话再 `player.stop()`，且两者同处
+        // [sessionLock] —— `stop()` 内部会 `invalidate()`；若在其后才置 -1，一个已通过播放器侧
+        // 检查的旧 worker 会读到旧的 `activeSessionGeneration` 并通过 `isCurrentSession`，
+        // 把 `confirmedSentenceIndex` 写回旧下标并 `scheduleProgressSave()` —— 本路径之后没有
+        // 任何 `cancelProgressSave()`，那条防抖写入会真的落盘到已停止的播放上。
+        synchronized(sessionLock) {
+            activeSessionGeneration = -1
+            player.stop()
+        }
         progressNotifier.clear()
         currentSentenceIndex = -1
         confirmedSentenceIndex = -1
@@ -1042,8 +1073,15 @@ class TtsService : Service(), CoroutineScope {
         playbackJob = null
         prefetcher?.cancelAll()
         prefetcher = null
-        // skipTo() 不是 stop():保留 track.play() 状态,让 NEW PCM 立即发声
-        player.skipTo()
+        // review ocr finding 4：与 startPlayback/stopPlayback/onDestroy 对称，先作废 Service 侧
+        // 会话再动播放器。`player.skipTo()` 内部会 `invalidate()` + `queue.clear()`；若不同步
+        // 作废 Service 侧守卫，一个已通过播放器侧检查的旧 worker 仍能通过 `isCurrentSession`，
+        // 把高亮/`currentSentenceIndex` 拉回旧句、并调度一次过期的 `scheduleProgressSave()`。
+        synchronized(sessionLock) {
+            activeSessionGeneration = -1
+            // skipTo() 不是 stop():保留 track.play() 状态,让 NEW PCM 立即发声
+            player.skipTo()
+        }
         overrideStartIndex = safeIndex
         // 用同一章节参数重启,只换 overrideStartIndex
         startPlayback(
@@ -1112,12 +1150,13 @@ class TtsService : Service(), CoroutineScope {
      * 高亮/`currentSentenceIndex` 拉回旧位置。
      */
     private fun onSentencePlaybackStarted(index: Int, generation: Int) {
-        if (!isCurrentSession(generation)) return
-        logcat(LogPriority.INFO) { "[TtsService] now-playing $index (gen=$generation)" }
-        progressNotifier.setCurrent(index)
-        currentSentenceIndex = index
-        // review P2:此处不调度持久化 —— clip 刚被取到时还没解码，MP3 损坏/厂商返回错误正文
-        // 都会让该句零声音；持久化由 [onSentenceAudioProduced] 真正确认发声后驱动。
+        runIfCurrentSession(generation) {
+            logcat(LogPriority.INFO) { "[TtsService] now-playing $index (gen=$generation)" }
+            progressNotifier.setCurrent(index)
+            currentSentenceIndex = index
+            // review P2:此处不调度持久化 —— clip 刚被取到时还没解码，MP3 损坏/厂商返回错误正文
+            // 都会让该句零声音；持久化由 [onSentenceAudioProduced] 真正确认发声后驱动。
+        }
     }
 
     /**
@@ -1127,19 +1166,21 @@ class TtsService : Service(), CoroutineScope {
      * （还没解码），用它计数会把"厂商返回错误正文 / MP3 损坏"的零声音章节判成播完，
      * 进而触发连续跳章（review P1 的故障类别）。
      *
-     * [generation] 校验见 [isCurrentSession]：迟到的旧会话回调绝不能抬高新会话的计数、
+     * [generation] 校验见 [runIfCurrentSession]：迟到的旧会话回调绝不能抬高新会话的计数、
      * 更不能把旧下标写进新章节的持久化进度（review ocr finding D）。
      *
      * 运行在播放器工作线程；计数器为 [AtomicInteger]（与播放循环并发写）。
      */
     private fun onSentenceAudioProduced(index: Int, generation: Int) {
-        if (!isCurrentSession(generation)) return
-        val played = playedSentenceCount.incrementAndGet()
-        // review P2:这是唯一可信的"已发声下标"。decode 失败/无声的句子不会进入这里。
-        confirmedSentenceIndex = index
-        scheduleProgressSave()
-        logcat(LogPriority.DEBUG) {
-            "[TtsService] audio produced $index (played=$played gen=$generation)"
+        runIfCurrentSession(generation) {
+            val played = playedSentenceCount.incrementAndGet()
+            // review P2:这是唯一可信的"已发声下标"。decode 失败/无声的句子不会进入这里。
+            confirmedSentenceIndex = index
+            // 在同一临界区内调度，保证读到的 chapterId/confirmedIndex 是同一会话的快照。
+            scheduleProgressSave()
+            logcat(LogPriority.DEBUG) {
+                "[TtsService] audio produced $index (played=$played gen=$generation)"
+            }
         }
     }
 
@@ -1154,11 +1195,12 @@ class TtsService : Service(), CoroutineScope {
      * 运行在播放器工作线程；计数器为 [AtomicInteger]（与播放循环并发写）。
      */
     private fun onSentencePlaybackFailed(index: Int, generation: Int) {
-        if (!isCurrentSession(generation)) return
-        val failed = failedSentenceCount.incrementAndGet()
-        logcat(LogPriority.WARN) {
-            "[TtsService] sentence $index produced no playable audio " +
-                "(failed=$failed played=${playedSentenceCount.get()} gen=$generation)"
+        runIfCurrentSession(generation) {
+            val failed = failedSentenceCount.incrementAndGet()
+            logcat(LogPriority.WARN) {
+                "[TtsService] sentence $index produced no playable audio " +
+                    "(failed=$failed played=${playedSentenceCount.get()} gen=$generation)"
+            }
         }
     }
 
@@ -1227,13 +1269,15 @@ class TtsService : Service(), CoroutineScope {
         playbackJob?.cancel()
         prefetcher?.cancelAll()
         prefetcher = null
-        // review ocr finding 7：同 stopPlayback —— 先作废 Service 侧会话，再动播放器。
-        // 否则 `player.stop()/release()` 内部 invalidate 之后、本赋值之前通过
+        // review ocr finding 7：同 stopPlayback —— 先作废 Service 侧会话，再动播放器，且同处
+        // [sessionLock]。否则 `player.stop()/release()` 内部 invalidate 之后、本赋值之前通过
         // `isCurrentSession` 的迟到回调会在 `progressNotifier.clear()` 之后重新点亮高亮或
         // 调度一次保存。
-        activeSessionGeneration = -1
-        player.stop()
-        player.release()
+        synchronized(sessionLock) {
+            activeSessionGeneration = -1
+            player.stop()
+            player.release()
+        }
         progressNotifier.clear()
         abandonAudioFocus()
         // 关闭播放专用 scope,防协程泄漏（如果还有未结束的播放协程）
