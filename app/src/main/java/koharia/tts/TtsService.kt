@@ -1270,14 +1270,18 @@ class TtsService : Service(), CoroutineScope {
         prefetcher?.cancelAll()
         prefetcher = null
         // review ocr finding 7：同 stopPlayback —— 先作废 Service 侧会话，再动播放器，且同处
-        // [sessionLock]。否则 `player.stop()/release()` 内部 invalidate 之后、本赋值之前通过
+        // [sessionLock]。否则 `player.stop()` 内部 invalidate 之后、本赋值之前通过
         // `isCurrentSession` 的迟到回调会在 `progressNotifier.clear()` 之后重新点亮高亮或
         // 调度一次保存。
         synchronized(sessionLock) {
             activeSessionGeneration = -1
             player.stop()
-            player.release()
         }
+        // release() 会 `worker.join(WORKER_JOIN_MS)`，而 worker 此刻可能正阻塞在
+        // [runIfCurrentSession] 的 [sessionLock] 上 —— **必须在锁外**调用，否则会白等满 1 秒
+        // （`interrupt()` 无法打断 monitor 获取），而 onDestroy 跑在主线程。
+        // stop() 不 join worker，放在锁内仍能保证"先作废会话再放行旧回调"。
+        player.release()
         progressNotifier.clear()
         abandonAudioFocus()
         // 关闭播放专用 scope,防协程泄漏（如果还有未结束的播放协程）
