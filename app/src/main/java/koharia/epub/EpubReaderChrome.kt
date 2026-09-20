@@ -351,7 +351,7 @@ internal fun EpubReaderBottomArea(
                                 contentDescription = stringResource(MR.strings.tts_listen),
                             )
                         },
-                        onClick = onToggleTts,
+                        onClick = onToggleTts ?: {},
                     )
                     EpubActionButton(
                         icon = {

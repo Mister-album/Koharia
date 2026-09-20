@@ -91,4 +91,32 @@ class EpubHrefDecoderTest {
         decoded.path shouldBe ""
         decoded.fragment.shouldBeNull()
     }
+
+    @Test
+    fun `percent encoded hash inside a filename is decoded as a literal hash and not a fragment delimiter`() {
+        // review P2: 合法资源名 `Text#Notes.xhtml` 在 href 里会被编码成 `Text%23Notes.xhtml`。
+        // 之前会把 %23 当作片段分隔符 → path="Text" / fragment="Notes.xhtml"，资源解析失败。
+        // 修后：%23 之后是 `.xhtml` 这种 path-like 扩展名 → 视为字面 #，不拆。
+        val decoded = EpubHrefDecoder.decode("Text%23Notes.xhtml")
+
+        decoded.path shouldBe "Text#Notes.xhtml"
+        decoded.fragment.shouldBeNull()
+    }
+
+    @Test
+    fun `percent encoded hash followed by a non-extension tail is still treated as a fragment delimiter`() {
+        // 控制对照：%23 之后是 `simple` 这种没有扩展名的部分 → 仍是 fragment delimiter。
+        val decoded = EpubHrefDecoder.decode("chapter.xhtml%23simple")
+
+        decoded.path shouldBe "chapter.xhtml"
+        decoded.fragment shouldBe "simple"
+    }
+
+    @Test
+    fun `percent encoded hash before an image extension is also a literal hash`() {
+        val decoded = EpubHrefDecoder.decode("cover%23final.png")
+
+        decoded.path shouldBe "cover#final.png"
+        decoded.fragment.shouldBeNull()
+    }
 }

@@ -200,6 +200,19 @@ class TtsService : Service(), CoroutineScope {
     /** 当前**正在发声**的句下标。由 [onSentencePlaybackStarted]（播放器工作线程）写入，故 @Volatile。 */
     @Volatile
     private var currentSentenceIndex: Int = -1
+
+    /**
+     * 已**确认发声**（[onSentenceAudioProduced] 触发）的最大句下标。
+     *
+     * 与 [currentSentenceIndex] 分离的动机（review P2）：
+     *  - `onSentencePlaybackStarted` 在 clip 被取到时就触发（早于解码），用来驱动 UI 高亮是
+     *    必要的（不然高亮比音频晚整整一句）；但它**不能**作为"已持久化"的下标——解码失败的
+     *    句子（厂商返回错误正文 / MP3 损坏）会把持久化进度推进到无声音的位置。
+     *  - 因此进度持久化只信任真正"写出非空 PCM"后的 [onSentenceAudioProduced] 回调，写入
+     *    [confirmedSentenceIndex]；`flushProgress` 持久化这个值。
+     */
+    @Volatile
+    private var confirmedSentenceIndex: Int = -1
     private var progressSaveJob: Job? = null
 
     /**
@@ -215,6 +228,17 @@ class TtsService : Service(), CoroutineScope {
      */
     @Volatile
     private var playedSentenceCount: Int = 0
+
+    /**
+     * 本轮播放中**合成失败**（`prefetcher.await` 返回 null）的句数。
+     *
+     * review P1：第一句成功、后续全部失败（断网 / 限流 / 超长句）时，[playedSentenceCount] > 0
+     * 但章节实际上并未听完整 —— 旧逻辑只检查 "零声音"，会把"部分失败"也当成"播完"去跳章。
+     * 改用 `playedSentenceCount == expectedAttempted`（所有尝试过的句都成功发声）作为
+     * 完成判据。
+     */
+    @Volatile
+    private var failedSentenceCount: Int = 0
 
     /** 音频焦点（review P2）：与其他媒体互斥、正确响应电话等焦点变化。 */
     private val audioManager: AudioManager by lazy {
@@ -647,7 +671,9 @@ class TtsService : Service(), CoroutineScope {
         currentChapterId = chapterId
         currentMangaId = mangaId
         currentSentenceIndex = -1
+        confirmedSentenceIndex = -1
         playedSentenceCount = 0
+        failedSentenceCount = 0
         cancelProgressSave()
         // 与其他媒体互斥：起播前申请音频焦点（在 stopPlayback / onDestroy 里释放）。
         requestAudioFocus()
@@ -803,7 +829,15 @@ class TtsService : Service(), CoroutineScope {
                 val mp3 = prefetcher.await(index, sentence)
                 prefetcher.scheduleFrom(index + 1, sentences)
                 if (mp3 == null) {
-                    logcat(LogPriority.WARN) { "[TtsService] sentence $index synthesis failed, skipping" }
+                    // review P1:必须计入失败计数。仅当**所有**尝试过的句都成功发声
+                    // ([playedSentenceCount] == [failedSentenceCount] 反向：失败为 0)
+                    // 才视为章节完成。任意一句失败都不能跳章。
+                    failedSentenceCount++
+                    logcat(LogPriority.WARN) {
+                        "[TtsService] sentence $index synthesis failed " +
+                            "(failed=$failedSentenceCount played=$playedSentenceCount), " +
+                            "skipping playback but persisting progress at last confirmed index"
+                    }
                     continue
                 }
                 // 高亮/持久化**不在这里**推进——预取会让入队领先实际发声最多 8 句。
@@ -820,10 +854,16 @@ class TtsService : Service(), CoroutineScope {
 
             // review P1：一句都没真正发声（无效 key / 断网 / 限流 / 超长句全被跳过）时，
             // **不能**当作"章节播完" —— 否则阅读器会在没有任何声音的情况下连续跳章。
-            if (playedSentenceCount == 0) {
+            // review P1:章节完成判据必须严格 —— **任何**合成失败都不能跳章。
+            // - 零声音（所有句都失败）：旧逻辑已正确处理。
+            // - 部分失败（第一句成功后续全部失败）：旧逻辑错误地走完成路径，
+            //   阅读器会跳到下一章，跳过未听内容。修复：仅当 [failedSentenceCount] == 0
+            //   且至少有一句发声，才视为完成。
+            if (playedSentenceCount == 0 || failedSentenceCount > 0) {
                 logcat(LogPriority.WARN) {
-                    "[TtsService] playback produced no audio " +
-                        "(0/${sentences.size} played); not advancing chapter"
+                    "[TtsService] playback incomplete: " +
+                        "played=$playedSentenceCount failed=$failedSentenceCount " +
+                        "of ${sentences.size} sentences; not advancing chapter"
                 }
                 progressNotifier.notifyPlaybackFailed()
                 updateTtsPlaybackState(TtsPlaybackState.STOPPED)
@@ -831,7 +871,9 @@ class TtsService : Service(), CoroutineScope {
                 return
             }
 
-            logcat(LogPriority.INFO) { "[TtsService] playback complete" }
+            logcat(LogPriority.INFO) {
+                "[TtsService] playback complete (played=$playedSentenceCount/${sentences.size})"
+            }
             // Phase 3：通知阅读器"章节自然播完"，让它自动续播下一章。
             // 不自毁 —— 交给 [scheduleCompletionStop] 的兜底窗口，等阅读器用新 start 接管。
             progressNotifier.notifyChapterCompleted()
@@ -1015,7 +1057,8 @@ class TtsService : Service(), CoroutineScope {
         logcat(LogPriority.INFO) { "[TtsService] now-playing $index" }
         progressNotifier.setCurrent(index)
         currentSentenceIndex = index
-        scheduleProgressSave()
+        // review P2:此处不调度持久化 —— clip 刚被取到时还没解码，MP3 损坏/厂商返回错误正文
+        // 都会让该句零声音；持久化由 [onSentenceAudioProduced] 真正确认发声后驱动。
     }
 
     /**
@@ -1029,6 +1072,9 @@ class TtsService : Service(), CoroutineScope {
      */
     private fun onSentenceAudioProduced(index: Int) {
         playedSentenceCount++
+        // review P2:这是唯一可信的"已发声下标"。decode 失败/无声的句子不会进入这里。
+        confirmedSentenceIndex = index
+        scheduleProgressSave()
         logcat(LogPriority.DEBUG) {
             "[TtsService] audio produced $index (played=$playedSentenceCount)"
         }
@@ -1076,7 +1122,9 @@ class TtsService : Service(), CoroutineScope {
         cancelProgressSave()
         val chapterId = currentChapterId
         val mangaId = currentMangaId
-        val idx = currentSentenceIndex
+        // review P2:用 [confirmedSentenceIndex] 而非 [currentSentenceIndex]：持久化必须仅
+        // 反映"真正发过声的下标"，不能被解码失败/被 skipTo 抢占的句污染。
+        val idx = confirmedSentenceIndex
         if (chapterId <= 0 || idx < 0) return
         try {
             progressRepository.saveSentenceIndex(chapterId, mangaId, idx)

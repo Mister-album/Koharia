@@ -75,8 +75,11 @@ class SentencePrefetcherTest {
                     }
                     gate.invokeOnCompletion { cause ->
                         if (cont.isCancelled) return@invokeOnCompletion
-                        if (cause != null) cont.resumeWithException(cause)
-                        else cont.resume(Unit)
+                        if (cause != null) {
+                            cont.resumeWithException(cause)
+                        } else {
+                            cont.resume(Unit)
+                        }
                     }
                 }
             }

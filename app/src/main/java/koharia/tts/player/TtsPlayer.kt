@@ -89,6 +89,18 @@ class TtsPlayer(
     private val stopped = AtomicBoolean(false)
 
     /**
+     * 播放**代次**（review P2）：每次 [enqueue] 把代次 +1（新一轮接管），每次 [skipTo] 也 +1。
+     * 旧 worker 在 `pumpClip` 期间（解码 + writePcm 阻塞）被代次切换"out"：再次醒来后，
+     * 通过比对进入 `pumpClip` 时记录的代次，**主动放弃**已写入的部分 PCM、不再回调
+     * [onClipAudioProduced]，避免把旧句的"已发声"事件污染新轮的零声音判定。
+     *
+     * 仅靠 `stopped` 标志无法可靠隔离：旧 worker 在 `writePcm` 中 sleep，NEW `enqueue`
+     * 立刻把 `stopped` 改回 `false`，旧 worker 醒来看到 stopped=false 会**继续写入**。
+     */
+    @Volatile
+    private var generation: Int = 0
+
+    /**
      * Phase 3 step 1：暂停开关。`true` 时 worker 在 [runLoop] 的 pause 闸门阻塞，
      * 已入队但未消费的 clip 留在 [queue] 里；`pause()`/`play()` 同时切 AudioTrack 输出。
      *
@@ -148,6 +160,9 @@ class TtsPlayer(
         if (released) return
         ensureWorker()
         stopped.set(false)
+        // review P2:每个新 enqueue 开启一轮新代次 —— 旧 worker 在 writePcm 中被代次
+        // 切换 out 后，醒来检查 generation 不匹配会主动放弃，不污染 NEW 轮的计数。
+        generation++
         // 可被协程取消：队列满时用 cancellable delay 轮询，避免 stop/skipTo 的
         // cancelAndJoin 在"暂停 + 满队列"下永远等不到本循环退出。
         while (currentCoroutineContext().isActive && !released && !stopped.get()) {
@@ -188,6 +203,9 @@ class TtsPlayer(
     fun skipTo() {
         stopped.set(true)
         paused.set(false)
+        // review P2:与 enqueue 同样推进代次 —— 旧 worker 在 writePcm 阻塞期间
+        // 醒来检查 generation 不一致会主动放弃旧 PCM，不再回调 onClipAudioProduced。
+        generation++
         queue.clear()
         framesWritten.set(0L)
         trackRef.get()?.let { track ->
@@ -469,6 +487,9 @@ class TtsPlayer(
         tempDir.mkdirs()
         val file = File(tempDir, "pump-${System.nanoTime()}.mp3")
         file.writeBytes(mp3)
+        // review P2:记录进入 pumpClip 时的代次。解码/writePcm 阻塞期间被 enqueue / skipTo
+        // 切换代次后，下面的检查会让我们主动放弃，避免旧 PCM 写入 + 旧回调污染 NEW 轮。
+        val clipGeneration = generation
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
         try {
@@ -500,7 +521,7 @@ class TtsPlayer(
                 start()
             }
             val rawPcm = decodeIntoBytes(decoder, extractor)
-            if (stopped.get() || released) return false
+            if (generation != clipGeneration || stopped.get() || released) return false
             val trimmed = trimGaplessPcm(
                 pcm = rawPcm,
                 channels = currentChannels.coerceAtLeast(1),
@@ -516,6 +537,15 @@ class TtsPlayer(
             logcat(LogPriority.DEBUG) {
                 "[TtsPlayer] clip $index pcm written=$writtenBytes/B framesWritten=${framesWritten.get()} " +
                     "headMs=${playbackHeadMs()}"
+            }
+            // review P2:writePcm 退出后再核一次代次 —— 若在阻塞期间被 enqueue/skipTo 切换，
+            // 旧 worker 写入的 PCM 已属于上一轮，不能计入 NEW 轮的 playedSentenceCount。
+            if (generation != clipGeneration) {
+                logcat(LogPriority.INFO) {
+                    "[TtsPlayer] clip $index generation changed mid-write " +
+                        "($clipGeneration -> $generation); discarding stale write"
+                }
+                return false
             }
             if (writtenBytes <= 0) {
                 // 解码成功但一个字节都没写进 AudioTrack（厂商返回 HTTP 200 正文却不是音频、

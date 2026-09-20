@@ -46,14 +46,44 @@ object EpubHrefDecoder {
     private fun findFragmentDelimiter(raw: String): Pair<Int, Int>? {
         val hashIndex = raw.indexOf('#')
         val encodedHashIndex = indexOfEncodedHash(raw)
+        val encodedCandidate = if (encodedHashIndex < 0) {
+            null
+        } else {
+            // %23 可能就是文件名里**字面 #** 的百分号编码（如 `Text%23Notes.xhtml`），
+            // 而不是片段分隔符。判别规则：%23 之后的部分若以**路径风格扩展名**结尾，
+            // 整条都应当作 path 解析 —— 因为 fragment 标识符里几乎不会出现 `.xhtml/.html` 等
+            // 文件扩展名（RFC 3986 fragment 允许 `.`，但 EPUB 资源锚点不会带文件类型）。
+            val tail = raw.substring(encodedHashIndex + ENCODED_HASH_LENGTH)
+            if (looksLikePathExtension(tail)) null else encodedHashIndex to ENCODED_HASH_LENGTH
+        }
         return when {
-            hashIndex < 0 && encodedHashIndex < 0 -> null
-            hashIndex < 0 -> encodedHashIndex to ENCODED_HASH_LENGTH
-            encodedHashIndex < 0 -> hashIndex to 1
-            hashIndex <= encodedHashIndex -> hashIndex to 1
-            else -> encodedHashIndex to ENCODED_HASH_LENGTH
+            hashIndex < 0 && encodedCandidate == null -> null
+            hashIndex < 0 -> encodedCandidate
+            encodedCandidate == null -> hashIndex to 1
+            hashIndex <= encodedCandidate.first -> hashIndex to 1
+            else -> encodedCandidate
         }
     }
+
+    /**
+     * 简易的"路径扩展名"嗅探：检查非空字符串末尾的扩展名是否落在常见 web 资源列表里。
+     *
+     * 该集合针对 EPUB 资源（`.xhtml`、`.html`、图像、CSS 等）保守取交集 —— 真正的 EPUB
+     * 资源锚点（章节内小节 ID）几乎不带这些扩展名，因此能可靠区分字面 `#` 与分隔符。
+     */
+    private fun looksLikePathExtension(tail: String): Boolean {
+        val dot = tail.lastIndexOf('.')
+        if (dot < 0 || dot == tail.length - 1) return false
+        val ext = tail.substring(dot + 1).lowercase()
+        return ext in PATH_LIKE_EXTENSIONS
+    }
+
+    private val PATH_LIKE_EXTENSIONS = setOf(
+        "xhtml", "html", "htm", "epub", "xml",
+        "css", "js",
+        "png", "jpg", "jpeg", "gif", "svg", "webp",
+        "json", "txt", "opf", "ncx",
+    )
 
     /** 找到 `%23`（`#` 的百分号编码）首次出现的下标；找不到返回 -1。 */
     private fun indexOfEncodedHash(raw: String): Int {
