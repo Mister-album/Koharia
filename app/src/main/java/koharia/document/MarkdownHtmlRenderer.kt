@@ -18,7 +18,7 @@ internal object MarkdownHtmlRenderer {
         } catch (error: Exception) {
             // Catch Exception (not Throwable): a parser failure degrades to unrendered Markdown,
             // but Errors such as OutOfMemoryError on a near-limit file must propagate.
-            logcat(LogPriority.WARN) { "[MarkdownHtmlRenderer] markdown render failed, using raw text" }
+            logcat(LogPriority.WARN, error) { "[MarkdownHtmlRenderer] markdown render failed, using raw text" }
             markdown
         }
     }
@@ -98,7 +98,9 @@ internal object MarkdownHtmlRenderer {
         } else {
             reference.toIntOrNull()
         } ?: return "&#$reference;"
-        if (code < 0 || code > 0x10FFFF) return "&#$reference;"
+        // The pattern only matches unsigned decimal/hex digits, so `code` is never negative;
+        // the upper bound guards against out-of-range references such as &#1114112;.
+        if (code > 0x10FFFF) return "&#$reference;"
         return String(Character.toChars(code))
     }
 }

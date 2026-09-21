@@ -31,12 +31,13 @@ abstract class PageLoader {
     open val pdfFile: UniFile? = null
 
     /**
-     * Headings of the underlying text-format document, or null when this loader does not serve a
+     * Headings of the underlying text-format document; empty when this loader does not serve a
      * reflowable document (archive, EPUB, PDF, image). Declared on the base class so the reader can
      * read it uniformly regardless of which loader variant wrapped the [DocumentPageLoader]
-     * (local library vs. downloaded chapter).
+     * (local library vs. downloaded chapter). Empty list rather than null so "no table of contents"
+     * has a single representation.
      */
-    open val documentHeadings: List<DocumentHeading>? = null
+    open val documentHeadings: List<DocumentHeading> = emptyList()
 
     /**
      * Returns the list of pages of a chapter.

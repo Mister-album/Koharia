@@ -50,8 +50,8 @@ internal class DownloadPageLoader(
     override val progressPageCount: Int?
         get() = documentPageLoader?.progressPageCount
 
-    override val documentHeadings: List<DocumentHeading>?
-        get() = documentPageLoader?.documentHeadings
+    override val documentHeadings: List<DocumentHeading>
+        get() = documentPageLoader?.documentHeadings ?: emptyList()
 
     override suspend fun getPages(): List<ReaderPage> {
         val dbChapter = chapter.chapter

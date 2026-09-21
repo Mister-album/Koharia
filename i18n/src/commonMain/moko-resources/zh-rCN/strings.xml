@@ -710,6 +710,7 @@
     <string name="epub_reader_server_time_warning_title">服务器时间未同步</string>
     <string name="epub_reader_server_time_warning_message">Komga 服务器与当前设备的时间相差约 %d 分钟，可能导致阅读进度被覆盖或恢复到错误位置。请检查并同步双方的日期、时间与时区。</string>
     <string name="epub_reader_toc">目录</string>
+    <string name="document_reader_toc">目录</string>
     <string name="epub_reader_quick_night_mode">夜间</string>
     <string name="epub_reader_unsupported_book">这个 Komga 图书无法使用原生 EPUB 阅读器打开。</string>
     <string name="epub_reader_manga_not_found">未找到作品</string>

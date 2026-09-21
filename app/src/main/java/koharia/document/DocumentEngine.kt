@@ -75,8 +75,10 @@ interface DocumentSession : Closeable {
     /**
      * Document headings detected at open time, e.g. Markdown `# Heading` blocks or EPUB
      * navigation entries. Empty by default; engines that support headings override this.
-     * Resolution is O(P × H) (page count × heading count) and runs once at open, not on
-     * every reflow.
+     *
+     * Resolution is O(P × H) (page count × heading count) and is memoised per session. A reflow
+     * builds a new session, so the resolution is recomputed for it; callers on the UI thread
+     * should rely on the page loader warming the binding first.
      */
     val headings: List<DocumentHeading>
         get() = emptyList()
@@ -115,9 +117,11 @@ data class DocumentMetadata(
 )
 
 /**
- * A document heading extracted by an engine at open time. Resolution runs once per open, not on
- * every reflow — pagination caches the page indices so repeated reflows with the same layout
- * don't re-scan.
+ * A document heading extracted by an engine at open time and bound to a page after pagination.
+ *
+ * Binding is resolved once per [DocumentSession]: a reflow builds a new session, so the resolution
+ * is recomputed for it. The reader's page loader warms the binding on its IO coroutine, keeping the
+ * scan off the UI thread.
  *
  * @param level Markdown heading level (1–6); EPUB nav entries are also normalised to this range.
  * @param title Plain-text heading body used for display.

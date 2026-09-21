@@ -27,6 +27,15 @@ internal class DocumentPageLoader(
     private var session: DocumentSession = openSession()
     private var pages: List<ReaderPage> = emptyList()
 
+    /**
+     * Resolved headings, published after [warmHeadings] runs on the loader's IO coroutine.
+     * Kept as a plain field (not a lazy on the session) so the [documentHeadings] getter - which
+     * the UI thread reads from the toolbar click handler and the sheet composition - never has to
+     * take [lock] or run the O(pages × headings) scan once warm-up has completed.
+     */
+    @Volatile
+    private var headingsSnapshot: List<DocumentHeading>? = null
+
     override var isLocal: Boolean = true
 
     override val progressPageCount: Int
@@ -36,25 +45,35 @@ internal class DocumentPageLoader(
 
     /**
      * Document headings (level, title, pageIndex) detected at load time. Returns an empty
-     * list for engines that don't extract headings (plain text, plain mobi, etc.). The session's
-     * binding is triggered eagerly inside [getPages] and [refreshPages] so the O(P × H) scan runs
-     * on the loader's IO coroutine, not on the UI thread the first time a consumer reads this
-     * property.
+     * list for engines that don't extract headings (plain text, plain mobi, etc.). The binding is
+     * warmed eagerly by [getPages] and [refreshPages] on the loader's IO coroutine, so this is
+     * normally a field read; the lock-taking fallback only runs if a consumer reads before the
+     * warm-up completes.
      */
     override val documentHeadings: List<DocumentHeading>
-        get() = synchronized(lock) { session.headings }
+        get() = headingsSnapshot ?: synchronized(lock) { session.headings }
+
+    /**
+     * Forces the session's heading→page binding on the calling (IO) coroutine and publishes the
+     * result, so later UI-thread reads of [documentHeadings] are contention-free. Must be called
+     * OUTSIDE [lock]: the scan is O(pages × headings) and [documentHeadings] takes the same lock
+     * from the UI thread.
+     */
+    private fun warmHeadings(owner: DocumentSession): List<DocumentHeading> {
+        val resolved = owner.headings
+        headingsSnapshot = resolved
+        return resolved
+    }
 
     override suspend fun getPages(): List<ReaderPage> {
-        synchronized(lock) {
+        val currentSession = synchronized(lock) {
             if (pages.isEmpty()) {
                 pages = createPages(session)
             }
-            // Force the heading→page binding now, on the loader's IO coroutine, so the
-            // first read of [documentHeadings] from the UI thread (e.g. opening the
-            // HeadingListSheet) returns the cached list without scanning the pages.
-            session.headings
-            return pages
+            session
         }
+        warmHeadings(currentSession)
+        return synchronized(lock) { pages }
     }
 
     override suspend fun refreshPages(): List<ReaderPage>? {
@@ -79,7 +98,7 @@ internal class DocumentPageLoader(
         // UI thread (sheet open) after a typography/theme change. Forcing it while holding `lock`
         // would instead block the UI thread for the whole scan, since documentHeadings takes that
         // same lock. `refreshedSession` is a local, so warming it here is safe.
-        refreshedSession.headings
+        warmHeadings(refreshedSession)
         val previousSession = synchronized(lock) {
             if (isRecycled || generation != refreshGeneration.get()) {
                 refreshedSession.close()

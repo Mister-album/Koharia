@@ -1096,8 +1096,8 @@ class ReaderActivity : BaseActivity() {
                     // sheet that lets the user jump to a heading. Documents without
                     // detected headings fall back to the manga info screen, preserving
                     // the prior behaviour for EPUB / archive / image / TXT / MOBI.
-                    val headings = state.currentChapter?.pageLoader?.documentHeadings
-                    if (!headings.isNullOrEmpty()) {
+                    val headings = state.currentChapter?.pageLoader?.documentHeadings.orEmpty()
+                    if (headings.isNotEmpty()) {
                         headingsSheetVisible.value = true
                     } else {
                         openMangaScreen()

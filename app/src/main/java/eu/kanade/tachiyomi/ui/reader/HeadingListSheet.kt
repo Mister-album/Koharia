@@ -53,7 +53,7 @@ internal fun HeadingListSheet(
     AdaptiveSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
             Text(
-                text = stringResource(MR.strings.epub_reader_toc),
+                text = stringResource(MR.strings.document_reader_toc),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 8.dp),
             )

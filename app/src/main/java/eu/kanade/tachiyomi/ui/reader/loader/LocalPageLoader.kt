@@ -40,8 +40,8 @@ internal class LocalPageLoader(
     override val progressPageCount: Int?
         get() = documentLoader?.progressPageCount
 
-    override val documentHeadings: List<DocumentHeading>?
-        get() = documentLoader?.documentHeadings
+    override val documentHeadings: List<DocumentHeading>
+        get() = documentLoader?.documentHeadings ?: emptyList()
 
     override suspend fun getPages(): List<ReaderPage> {
         val file = fileAdapter.localChapterFile(chapter.chapter.url)
