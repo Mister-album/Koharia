@@ -47,7 +47,7 @@ internal class LocalPageLoader(
      * document is Markdown (or another reflowable format with detected headings).
      */
     val documentHeadings: List<DocumentHeading>?
-        get() = documentLoader?.documentHeadings()
+        get() = documentLoader?.documentHeadings
 
     override suspend fun getPages(): List<ReaderPage> {
         val file = fileAdapter.localChapterFile(chapter.chapter.url)

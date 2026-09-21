@@ -302,10 +302,6 @@ class ReaderActivity : BaseActivity() {
     var isScrollingThroughPages = false
         private set
 
-    /** Toggles the heading-list sheet for text-format documents (Markdown, etc.). */
-    var headingsSheetVisible = false
-        private set
-
     /**
      * Called when the activity is created. Initializes the presenter and configuration.
      */
@@ -1014,6 +1010,7 @@ class ReaderActivity : BaseActivity() {
             (currentPage - 1).toDouble() / (totalPages - 1).toDouble()
         }
         val showBookInfo = remember { mutableStateOf(false) }
+        val headingsSheetVisible = remember { mutableStateOf(false) }
         val chapter = state.currentChapter?.chapter
         val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
         val fileName = chapter?.let { currentChapter ->
@@ -1102,7 +1099,7 @@ class ReaderActivity : BaseActivity() {
                     // the prior behaviour for EPUB / archive / image / TXT / MOBI.
                     val headings = (state.currentChapter?.pageLoader as? LocalPageLoader)?.documentHeadings
                     if (!headings.isNullOrEmpty()) {
-                        headingsSheetVisible = true
+                        headingsSheetVisible.value = true
                     } else {
                         openMangaScreen()
                     }
@@ -1166,20 +1163,25 @@ class ReaderActivity : BaseActivity() {
                 )
             }
 
-            if (headingsSheetVisible) {
-                val headings = (state.currentChapter?.pageLoader as? LocalPageLoader)?.documentHeadings
-                if (!headings.isNullOrEmpty()) {
+            if (headingsSheetVisible.value) {
+                // Resolve headings outside the HeadingListSheet call so the lazy binding
+                // (O(P × H) scan) runs once when the sheet opens, not on every recomposition.
+                val loader = state.currentChapter?.pageLoader as? LocalPageLoader
+                val headings = remember(loader) { loader?.documentHeadings.orEmpty() }
+                if (headings.isNotEmpty()) {
                     HeadingListSheet(
                         headings = headings,
                         currentPageIndex = currentPage - 1,
-                        onDismiss = { headingsSheetVisible = false },
+                        onDismiss = { headingsSheetVisible.value = false },
                         onSelect = { heading ->
-                            headingsSheetVisible = false
+                            headingsSheetVisible.value = false
                             moveToPageIndex(heading.pageIndex)
                         },
                     )
                 } else {
-                    headingsSheetVisible = false
+                    // Drive the auto-dismiss via side effect to avoid writing snapshot state
+                    // from inside composition (Compose would emit a warning + inconsistent renders).
+                    LaunchedEffect(loader) { headingsSheetVisible.value = false }
                 }
             }
         }

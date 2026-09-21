@@ -100,6 +100,8 @@ class IncomingMediaParserTest {
         assertEquals("txt", detectMediaExtension("notes.txt", "text/plain", "hello".encodeToByteArray()))
         assertEquals("mobi", detectMediaExtension("download", "application/x-mobipocket-ebook", byteArrayOf()))
         assertEquals("djvu", detectMediaExtension("download", "image/vnd.djvu", byteArrayOf()))
+        assertEquals("md", detectMediaExtension("download", "text/markdown", byteArrayOf()))
+        assertEquals("md", detectMediaExtension("download", "text/x-markdown", byteArrayOf()))
         assertNull(detectMediaExtension("notes.bin", "application/octet-stream", "hello".encodeToByteArray()))
     }
 

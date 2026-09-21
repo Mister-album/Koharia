@@ -34,18 +34,24 @@ internal class DocumentPageLoader(
 
     override val supportsRemoteProgress: Boolean = false
 
-    /**
+/**
      * Document headings (level, title, pageIndex) detected at load time. Returns an empty
-     * list for engines that don't extract headings (plain text, plain mobi, etc.). Resolved
-     * lazily on the session's paginated pages and therefore cached after first read.
+     * list for engines that don't extract headings (plain text, plain mobi, etc.). The session's
+     * binding is triggered eagerly inside [getPages] so the O(P × H) scan runs on the loader's
+     * IO coroutine, not on the UI thread the first time a consumer reads this property.
      */
-    fun documentHeadings(): List<DocumentHeading> = synchronized(lock) { session.headings }
+    val documentHeadings: List<DocumentHeading>
+        get() = synchronized(lock) { session.headings }
 
     override suspend fun getPages(): List<ReaderPage> {
         synchronized(lock) {
             if (pages.isEmpty()) {
                 pages = createPages(session)
             }
+            // Force the heading→page binding now, on the loader's IO coroutine, so the
+            // first read of [documentHeadings] from the UI thread (e.g. opening the
+            // HeadingListSheet) returns the cached list without scanning the pages.
+            session.headings
             return pages
         }
     }

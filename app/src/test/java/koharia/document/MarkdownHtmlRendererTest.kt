@@ -72,7 +72,11 @@ class MarkdownHtmlRendererTest {
     fun `extractHeadings returns atx headings in document order`() {
         val html = MarkdownHtmlRenderer.render("# First\n\n## Second\n\n# First dup")
         assertEquals(
-            listOf(1 to "First", 2 to "Second", 1 to "First dup"),
+            listOf(
+                RawDocumentHeading(1, "First"),
+                RawDocumentHeading(2, "Second"),
+                RawDocumentHeading(1, "First dup"),
+            ),
             MarkdownHtmlRenderer.extractHeadings(html),
         )
     }
@@ -80,17 +84,26 @@ class MarkdownHtmlRendererTest {
     @Test
     fun `extractHeadings decodes common HTML entities and strips nested tags`() {
         val html = "<h1>A &amp; <em>B</em> &lt;tag&gt;</h1>"
-        assertEquals(listOf(1 to "A & B <tag>"), MarkdownHtmlRenderer.extractHeadings(html))
+        assertEquals(listOf(RawDocumentHeading(1, "A & B <tag>")), MarkdownHtmlRenderer.extractHeadings(html))
     }
 
     @Test
     fun `extractHeadings drops headings with empty body`() {
         val html = "<h1><img src=\"x.png\" alt=\"\"/></h1><h2>Real</h2>"
-        assertEquals(listOf(2 to "Real"), MarkdownHtmlRenderer.extractHeadings(html))
+        assertEquals(listOf(RawDocumentHeading(2, "Real")), MarkdownHtmlRenderer.extractHeadings(html))
     }
 
     @Test
     fun `extractHeadings returns empty list for blank input`() {
-        assertEquals(emptyList<Pair<Int, String>>(), MarkdownHtmlRenderer.extractHeadings(""))
+        assertEquals(emptyList<RawDocumentHeading>(), MarkdownHtmlRenderer.extractHeadings(""))
+    }
+
+    @Test
+    fun `extractHeadings decodes numeric character references`() {
+        val html = "<h2>Don&#39;t &amp; stop &#x4e2d;&#x6587;</h2>"
+        assertEquals(
+            listOf(RawDocumentHeading(2, "Don't & stop 中文")),
+            MarkdownHtmlRenderer.extractHeadings(html),
+        )
     }
 }

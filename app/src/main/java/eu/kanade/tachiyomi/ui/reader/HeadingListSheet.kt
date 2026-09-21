@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -50,13 +50,15 @@ internal fun HeadingListSheet(
                 modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 8.dp),
             )
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                items(headings, key = { it.pageIndex to it.title }) { heading ->
-                    val isActive = headings.indexOf(heading) == activeHeadingIndex
+                // itemsIndexed (not items) so we can use the iteration index for both the
+                // LazyColumn key (must be unique — duplicate titles would collide) and the
+                // active-row comparison (avoids an O(N) linear search per row).
+                itemsIndexed(headings, key = { index, _ -> index }) { index, heading ->
                     Text(
                         text = heading.title,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = if (heading.level <= 2) FontWeight.Medium else FontWeight.Normal,
-                        color = if (isActive) {
+                        color = if (index == activeHeadingIndex) {
                             MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.onSurface

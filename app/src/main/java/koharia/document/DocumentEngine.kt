@@ -129,7 +129,64 @@ data class DocumentHeading(
     val pageIndex: Int,
 )
 
+/**
+ * A heading descriptor as emitted by an engine, before pagination binds it to a page. Kept as a
+ * named value type (instead of a `Pair<Int, String>`) so call sites can't accidentally swap
+ * `level` and `title`.
+ */
+data class RawDocumentHeading(
+    val level: Int,
+    val title: String,
+)
+
 class DocumentEngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/**
+ * Binds a list of [RawDocumentHeading] emitted at open time to the pages that contain them.
+ *
+ * Uses a forward-moving cursor so:
+ * - duplicate titles bind to their *respective* occurrences (not all to the first);
+ * - the resulting `pageIndex` values are strictly non-decreasing, which `HeadingListSheet`
+ *   relies on for `indexOfLast { it.pageIndex <= currentPageIndex }`;
+ * - headings split across a page boundary are kept (still found on the page where the
+ *   first fragment of the title appears).
+ *
+ * Known limitation: matching is text-based, so a heading whose title also occurs as ordinary
+ * body text on an earlier page can still bind to that earlier page. Fixing that properly
+ * requires the heading's character offset in the document, which the HTML-regex extractor
+ * does not produce. In practice Markdown heading bodies are distinctive enough that this is
+ * rare, and the binding is still monotonic.
+ *
+ * Pure over `(raws, pages)` so it can be exercised by the plain-JVM test suite without an
+ * Android layout. O(raws × remaining pages), called once at first read.
+ */
+internal fun resolveHeadings(
+    raws: List<RawDocumentHeading>,
+    pages: List<CharSequence>,
+): List<DocumentHeading> {
+    if (raws.isEmpty() || pages.isEmpty()) return emptyList()
+    val out = ArrayList<DocumentHeading>(raws.size)
+    var searchFrom = 0
+    var lastTitle: String? = null
+    for (raw in raws) {
+        // Blank titles would match every page (`"x".contains("")` is true), so drop them here
+        // as a defensive measure even though the extractors already filter them out.
+        if (raw.title.isBlank()) continue
+        // A repeated title must bind to a *later* occurrence. Without advancing, the forward
+        // cursor would re-match the very page we just consumed and collapse the duplicates.
+        if (raw.title == lastTitle) {
+            searchFrom = (searchFrom + 1).coerceAtMost(pages.size)
+        }
+        if (searchFrom >= pages.size) break
+        val offset = pages.subList(searchFrom, pages.size).indexOfFirst { it.contains(raw.title) }
+        if (offset < 0) continue
+        val pageIndex = searchFrom + offset
+        out += DocumentHeading(level = raw.level, title = raw.title, pageIndex = pageIndex)
+        searchFrom = pageIndex
+        lastTitle = raw.title
+    }
+    return out
+}
 
 internal fun DocumentRenderSettings.createTextPaint(displayMetrics: DisplayMetrics): TextPaint {
     val fontSizeSp = baseFontSizeSp.coerceAtLeast(1f) * fontSizeScale.coerceIn(0.5f, 3f)
@@ -258,7 +315,7 @@ internal class TextDocumentContent(
      * after this class is constructed; [TextDocumentSession.headings] resolves each title to
      * the page that contains it via a single linear scan over the paginated pages.
      */
-    val headingTitles: List<Pair<Int, String>> = emptyList(),
+    val headingTitles: List<RawDocumentHeading> = emptyList(),
 ) {
     val displayMetrics = DisplayMetrics().also { it.setTo(context.resources.displayMetrics) }
     val density = displayMetrics.density
@@ -344,22 +401,14 @@ internal class TextDocumentSession(
     private val textPaint = settings.createTextPaint(content.displayMetrics)
     override val pageCount: Int = pages.size
 
-    /**
+/**
      * Headings resolved from [TextDocumentContent.headingTitles] to their target page.
-     * Resolution is a single linear scan over the already-paginated [pages]; the first page
-     * whose text contains the heading title wins. Headings that don't appear in any page
-     * (e.g. dropped by the markdown renderer or stripped during normalization) are omitted.
+     * Delegates to the pure helper [resolveHeadings] (which uses a forward-moving cursor so
+     * duplicates bind to their own pages and the result is monotonic). The lazy trigger runs
+     * once on first access; subsequent reads return the cached value.
      */
     override val headings: List<DocumentHeading> by lazy {
-        val titles = content.headingTitles
-        if (titles.isEmpty()) {
-            emptyList()
-        } else {
-            titles.mapNotNull { (level, title) ->
-                val pageIndex = pages.indexOfFirst { it.contains(title) }
-                if (pageIndex >= 0) DocumentHeading(level, title, pageIndex) else null
-            }
-        }
+        resolveHeadings(content.headingTitles, pages)
     }
 
     override fun page(index: Int): DocumentPage {

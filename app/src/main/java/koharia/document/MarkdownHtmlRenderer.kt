@@ -22,33 +22,56 @@ internal object MarkdownHtmlRenderer {
     )
 
     private val nestedTagPattern = Regex("""<[^>]+>""")
-    private val namedEntityPattern = Regex("""&(amp|lt|gt|quot|nbsp);""")
+
+    /** Named HTML entities used by markdown rendering (case-insensitive; "&AMP;" is also matched). */
+    private val namedEntityPattern = Regex("""&(amp|lt|gt|quot|apos|nbsp);""", RegexOption.IGNORE_CASE)
+
+    /** Numeric character references: `&#1234;` (decimal) or `&#xABCD;` (hex). */
+    private val numericEntityPattern = Regex("""&#(x[0-9A-Fa-f]+|\d+);""")
 
     /**
-     * Parses the rendered HTML for `<h1>`–`<h6>` tags and returns (level, plain text) pairs in
-     * document order. Nested HTML inside headings is stripped; common HTML entities are
-     * decoded. Used to build a synthetic table-of-contents for the in-reader navigation sheet
-     * when a Markdown file is opened as a reflowable document. Headings whose body is empty
-     * after stripping (e.g. image-only headings) are dropped.
+     * Parses the rendered HTML for `<h1>`–`<h6>` tags and returns [RawDocumentHeading]
+     * descriptors in document order. Nested HTML inside headings is stripped; named HTML
+     * entities and numeric character references are decoded. Used to build a synthetic
+     * table-of-contents for the in-reader navigation sheet when a Markdown file is opened
+     * as a reflowable document. Headings whose body is empty after stripping (e.g.
+     * image-only headings) are dropped.
      */
-    fun extractHeadings(html: String): List<Pair<Int, String>> {
+    fun extractHeadings(html: String): List<RawDocumentHeading> {
         if (html.isBlank()) return emptyList()
         return headingPattern.findAll(html).mapNotNull { match ->
             val level = match.groupValues[1].drop(1).toIntOrNull() ?: return@mapNotNull null
             val text = match.groupValues[2]
                 .replace(nestedTagPattern, "")
-                .replace(namedEntityPattern) { entity ->
-                    when (entity.groupValues[1].lowercase()) {
-                        "amp" -> "&"
-                        "lt" -> "<"
-                        "gt" -> ">"
-                        "quot" -> "\""
-                        "nbsp" -> " "
-                        else -> entity.value
-                    }
-                }
+                .replace(namedEntityPattern) { entity -> decodeNamedEntity(entity.groupValues[1]) }
+                .replace(numericEntityPattern) { entity -> decodeNumericEntity(entity.groupValues[1]) }
                 .trim()
-            if (text.isBlank()) null else level to text
+            if (text.isBlank()) null else RawDocumentHeading(level, text)
         }.toList()
+    }
+
+    /** Decodes a small set of named HTML entities used by the markdown renderer. */
+    private fun decodeNamedEntity(name: String): String = when (name.lowercase()) {
+        "amp" -> "&"
+        "lt" -> "<"
+        "gt" -> ">"
+        "quot" -> "\""
+        "apos" -> "'"
+        "nbsp" -> " "
+        else -> "&$name;"
+    }
+
+    /**
+     * Decodes a numeric character reference (decimal `&#1234;` or hex `&#xABCD;`) to its
+     * Unicode code point. Falls back to the original text for malformed references.
+     */
+    private fun decodeNumericEntity(reference: String): String {
+        val code = if (reference.startsWith("x") || reference.startsWith("X")) {
+            reference.substring(1).toIntOrNull(16)
+        } else {
+            reference.toIntOrNull()
+        } ?: return "&#$reference;"
+        if (code < 0 || code > 0x10FFFF) return "&#$reference;"
+        return String(Character.toChars(code))
     }
 }
