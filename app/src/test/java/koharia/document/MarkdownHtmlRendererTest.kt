@@ -106,4 +106,34 @@ class MarkdownHtmlRendererTest {
             MarkdownHtmlRenderer.extractHeadings(html),
         )
     }
+
+    @Test
+    fun `extractHeadings decodes uppercase-hex numeric references`() {
+        // HTML5 allows &#X...; and Html.fromHtml decodes it, so the extractor must match.
+        val html = "<h3>&#X4E2D;&#X6587;</h3>"
+        assertEquals(
+            listOf(RawDocumentHeading(3, "中文")),
+            MarkdownHtmlRenderer.extractHeadings(html),
+        )
+    }
+
+    @Test
+    fun `extractHeadings decodes nbsp to a non-breaking space`() {
+        // Must stay byte-identical to what Html.fromHtml renders, otherwise resolveHeadings'
+        // exact `contains` match fails and the heading silently disappears from the ToC.
+        val html = "<h1>A&nbsp;B</h1>"
+        assertEquals(
+            listOf(RawDocumentHeading(1, "A\u00A0B")),
+            MarkdownHtmlRenderer.extractHeadings(html),
+        )
+    }
+
+    @Test
+    fun `extractHeadings decodes named entities case-insensitively`() {
+        val html = "<h2>Tom &AMP; Jerry</h2>"
+        assertEquals(
+            listOf(RawDocumentHeading(2, "Tom & Jerry")),
+            MarkdownHtmlRenderer.extractHeadings(html),
+        )
+    }
 }

@@ -401,7 +401,7 @@ internal class TextDocumentSession(
     private val textPaint = settings.createTextPaint(content.displayMetrics)
     override val pageCount: Int = pages.size
 
-/**
+    /**
      * Headings resolved from [TextDocumentContent.headingTitles] to their target page.
      * Delegates to the pure helper [resolveHeadings] (which uses a forward-moving cursor so
      * duplicates bind to their own pages and the result is monotonic). The lazy trigger runs

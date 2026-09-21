@@ -34,11 +34,12 @@ internal class DocumentPageLoader(
 
     override val supportsRemoteProgress: Boolean = false
 
-/**
+    /**
      * Document headings (level, title, pageIndex) detected at load time. Returns an empty
      * list for engines that don't extract headings (plain text, plain mobi, etc.). The session's
-     * binding is triggered eagerly inside [getPages] so the O(P × H) scan runs on the loader's
-     * IO coroutine, not on the UI thread the first time a consumer reads this property.
+     * binding is triggered eagerly inside [getPages] and [refreshPages] so the O(P × H) scan runs
+     * on the loader's IO coroutine, not on the UI thread the first time a consumer reads this
+     * property.
      */
     val documentHeadings: List<DocumentHeading>
         get() = synchronized(lock) { session.headings }
@@ -81,6 +82,10 @@ internal class DocumentPageLoader(
             val previous = session
             session = refreshedSession
             pages = refreshedPages
+            // Warm the refreshed session's heading binding here too: a reflow creates a brand-new
+            // TextDocumentSession whose `headings` lazy would otherwise first resolve on the UI
+            // thread (sheet open) after a typography/theme change.
+            refreshedSession.headings
             previous
         }
         synchronized(renderLock) {

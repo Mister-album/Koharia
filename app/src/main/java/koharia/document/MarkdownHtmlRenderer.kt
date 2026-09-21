@@ -1,19 +1,26 @@
 package koharia.document
 
+import logcat.LogPriority
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.html.HtmlGenerator
 import org.intellij.markdown.parser.MarkdownParser
+import tachiyomi.core.common.util.system.logcat
 
-/** Converts Markdown (GFM) to HTML. Pure JVM — no Android dependencies, so it is unit-testable. */
+/** Converts Markdown (GFM) to HTML. Pure JVM apart from the [logcat] fallback diagnostic. */
 internal object MarkdownHtmlRenderer {
     private val flavour = GFMFlavourDescriptor()
 
     fun render(markdown: String): String {
         if (markdown.isBlank()) return ""
-        return runCatching {
+        return try {
             val tree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
             HtmlGenerator(markdown, tree, flavour).generateHtml()
-        }.getOrDefault(markdown)
+        } catch (error: Exception) {
+            // Catch Exception (not Throwable): a parser failure degrades to unrendered Markdown,
+            // but Errors such as OutOfMemoryError on a near-limit file must propagate.
+            logcat(LogPriority.WARN) { "[MarkdownHtmlRenderer] markdown render failed, using raw text" }
+            markdown
+        }
     }
 
     private val headingPattern = Regex(
@@ -26,8 +33,12 @@ internal object MarkdownHtmlRenderer {
     /** Named HTML entities used by markdown rendering (case-insensitive; "&AMP;" is also matched). */
     private val namedEntityPattern = Regex("""&(amp|lt|gt|quot|apos|nbsp);""", RegexOption.IGNORE_CASE)
 
-    /** Numeric character references: `&#1234;` (decimal) or `&#xABCD;` (hex). */
-    private val numericEntityPattern = Regex("""&#(x[0-9A-Fa-f]+|\d+);""")
+    /**
+     * Numeric character references: `&#1234;` (decimal) or `&#xABCD;` / `&#XABCD;` (hex).
+     * HTML5 accepts an uppercase `X`, and `Html.fromHtml` decodes it, so the extractor must too —
+     * otherwise such a heading never text-matches its rendered page and vanishes from the ToC.
+     */
+    private val numericEntityPattern = Regex("""&#(x[0-9A-Fa-f]+|\d+);""", RegexOption.IGNORE_CASE)
 
     /**
      * Parses the rendered HTML for `<h1>`–`<h6>` tags and returns [RawDocumentHeading]
@@ -50,14 +61,20 @@ internal object MarkdownHtmlRenderer {
         }.toList()
     }
 
-    /** Decodes a small set of named HTML entities used by the markdown renderer. */
+    /**
+     * Decodes a small set of named HTML entities used by the markdown renderer.
+     *
+     * `&nbsp;` maps to U+00A0 (not a plain space) so the extracted title is byte-identical to the
+     * text `Html.fromHtml` produces for the page; [resolveHeadings] matches with `contains`, which
+     * is exact, so a mismatch would silently drop the heading from the ToC.
+     */
     private fun decodeNamedEntity(name: String): String = when (name.lowercase()) {
         "amp" -> "&"
         "lt" -> "<"
         "gt" -> ">"
         "quot" -> "\""
         "apos" -> "'"
-        "nbsp" -> " "
+        "nbsp" -> "\u00A0"
         else -> "&$name;"
     }
 
