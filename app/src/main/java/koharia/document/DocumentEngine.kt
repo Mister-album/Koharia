@@ -72,6 +72,15 @@ interface DocumentSession : Closeable {
     val metadata: DocumentMetadata
     val pageCount: Int
 
+    /**
+     * Document headings detected at open time, e.g. Markdown `# Heading` blocks or EPUB
+     * navigation entries. Empty by default; engines that support headings override this.
+     * Resolution is O(P × H) (page count × heading count) and runs once at open, not on
+     * every reflow.
+     */
+    val headings: List<DocumentHeading>
+        get() = emptyList()
+
     fun page(index: Int): DocumentPage
 }
 
@@ -103,6 +112,21 @@ data class DocumentProgress(
 data class DocumentMetadata(
     val title: String? = null,
     val author: String? = null,
+)
+
+/**
+ * A document heading extracted by an engine at open time. Resolution runs once per open, not on
+ * every reflow — pagination caches the page indices so repeated reflows with the same layout
+ * don't re-scan.
+ *
+ * @param level Markdown heading level (1–6); EPUB nav entries are also normalised to this range.
+ * @param title Plain-text heading body used for display.
+ * @param pageIndex Page that contains the heading's first occurrence after pagination.
+ */
+data class DocumentHeading(
+    val level: Int,
+    val title: String,
+    val pageIndex: Int,
 )
 
 class DocumentEngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -228,6 +252,13 @@ internal class TextDocumentContent(
     context: Context,
     text: CharSequence,
     val metadata: DocumentMetadata,
+    /**
+     * Raw heading descriptors detected upstream (e.g. by [MarkdownHtmlRenderer.extractHeadings])
+     * as (level, title) pairs. They are not yet bound to a page because pagination happens
+     * after this class is constructed; [TextDocumentSession.headings] resolves each title to
+     * the page that contains it via a single linear scan over the paginated pages.
+     */
+    val headingTitles: List<Pair<Int, String>> = emptyList(),
 ) {
     val displayMetrics = DisplayMetrics().also { it.setTo(context.resources.displayMetrics) }
     val density = displayMetrics.density
@@ -312,6 +343,24 @@ internal class TextDocumentSession(
     private val textHeight = (pageHeight - verticalPadding * 2).coerceAtLeast(1)
     private val textPaint = settings.createTextPaint(content.displayMetrics)
     override val pageCount: Int = pages.size
+
+    /**
+     * Headings resolved from [TextDocumentContent.headingTitles] to their target page.
+     * Resolution is a single linear scan over the already-paginated [pages]; the first page
+     * whose text contains the heading title wins. Headings that don't appear in any page
+     * (e.g. dropped by the markdown renderer or stripped during normalization) are omitted.
+     */
+    override val headings: List<DocumentHeading> by lazy {
+        val titles = content.headingTitles
+        if (titles.isEmpty()) {
+            emptyList()
+        } else {
+            titles.mapNotNull { (level, title) ->
+                val pageIndex = pages.indexOfFirst { it.contains(title) }
+                if (pageIndex >= 0) DocumentHeading(level, title, pageIndex) else null
+            }
+        }
+    }
 
     override fun page(index: Int): DocumentPage {
         return TextDocumentPage(index, pages.getOrNull(index) ?: error("Invalid document page"))

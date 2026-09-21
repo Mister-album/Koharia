@@ -5,6 +5,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import koharia.document.DocumentEngines
+import koharia.document.DocumentHeading
 import koharia.document.DocumentRenderSettings
 import koharia.document.DocumentSession
 import koharia.document.ReflowableDocumentSession
@@ -32,6 +33,13 @@ internal class DocumentPageLoader(
         get() = session.pageCount
 
     override val supportsRemoteProgress: Boolean = false
+
+    /**
+     * Document headings (level, title, pageIndex) detected at load time. Returns an empty
+     * list for engines that don't extract headings (plain text, plain mobi, etc.). Resolved
+     * lazily on the session's paginated pages and therefore cached after first read.
+     */
+    fun documentHeadings(): List<DocumentHeading> = synchronized(lock) { session.headings }
 
     override suspend fun getPages(): List<ReaderPage> {
         synchronized(lock) {

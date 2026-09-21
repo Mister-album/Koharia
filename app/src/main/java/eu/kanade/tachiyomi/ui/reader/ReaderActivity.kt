@@ -82,6 +82,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.AddToLibra
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
 import eu.kanade.tachiyomi.ui.reader.loader.EmptyReaderBufferingState
+import eu.kanade.tachiyomi.ui.reader.loader.LocalPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
@@ -299,6 +300,10 @@ class ReaderActivity : BaseActivity() {
     private var loadingIndicator: ReaderProgressIndicator? = null
 
     var isScrollingThroughPages = false
+        private set
+
+    /** Toggles the heading-list sheet for text-format documents (Markdown, etc.). */
+    var headingsSheetVisible = false
         private set
 
     /**
@@ -1091,7 +1096,16 @@ class ReaderActivity : BaseActivity() {
                 onNextChapter = ::loadNextChapter,
                 onOpenContents = {
                     onPanelChange(EpubBottomPanel.NONE)
-                    openMangaScreen()
+                    // Text-format docs that expose headings (Markdown) get a dedicated
+                    // sheet that lets the user jump to a heading. Documents without
+                    // detected headings fall back to the manga info screen, preserving
+                    // the prior behaviour for EPUB / archive / image / TXT / MOBI.
+                    val headings = (state.currentChapter?.pageLoader as? LocalPageLoader)?.documentHeadings
+                    if (!headings.isNullOrEmpty()) {
+                        headingsSheetVisible = true
+                    } else {
+                        openMangaScreen()
+                    }
                 },
                 toolbarActions = toolbarActions,
                 onToggleNightMode = {
@@ -1150,6 +1164,23 @@ class ReaderActivity : BaseActivity() {
                     totalPages = totalPages,
                     onDismissRequest = { showBookInfo.value = false },
                 )
+            }
+
+            if (headingsSheetVisible) {
+                val headings = (state.currentChapter?.pageLoader as? LocalPageLoader)?.documentHeadings
+                if (!headings.isNullOrEmpty()) {
+                    HeadingListSheet(
+                        headings = headings,
+                        currentPageIndex = currentPage - 1,
+                        onDismiss = { headingsSheetVisible = false },
+                        onSelect = { heading ->
+                            headingsSheetVisible = false
+                            moveToPageIndex(heading.pageIndex)
+                        },
+                    )
+                } else {
+                    headingsSheetVisible = false
+                }
             }
         }
     }
