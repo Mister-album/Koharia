@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
 import koharia.document.DocumentEngines
+import koharia.document.DocumentHeading
 import koharia.document.DocumentRenderSettings
 import koharia.media.LocalMediaFormats
 import tachiyomi.core.common.storage.extension
@@ -48,6 +49,9 @@ internal class DownloadPageLoader(
 
     override val progressPageCount: Int?
         get() = documentPageLoader?.progressPageCount
+
+    override val documentHeadings: List<DocumentHeading>?
+        get() = documentPageLoader?.documentHeadings
 
     override suspend fun getPages(): List<ReaderPage> {
         val dbChapter = chapter.chapter

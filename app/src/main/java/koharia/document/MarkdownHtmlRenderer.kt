@@ -28,6 +28,9 @@ internal object MarkdownHtmlRenderer {
         setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE),
     )
 
+    /** `<br>`, `<br/>`, `<br />` — rendered as a newline by Html.fromHtml. */
+    private val breakTagPattern = Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE)
+
     private val nestedTagPattern = Regex("""<[^>]+>""")
 
     /** Named HTML entities used by markdown rendering (case-insensitive; "&AMP;" is also matched). */
@@ -53,9 +56,16 @@ internal object MarkdownHtmlRenderer {
         return headingPattern.findAll(html).mapNotNull { match ->
             val level = match.groupValues[1].drop(1).toIntOrNull() ?: return@mapNotNull null
             val text = match.groupValues[2]
+                // A GFM hard line break renders as <br>; Html.fromHtml turns it into a newline.
+                // Replace it before the generic tag strip, otherwise the words on either side are
+                // concatenated and the title no longer text-matches the rendered page.
+                .replace(breakTagPattern, "\n")
                 .replace(nestedTagPattern, "")
-                .replace(namedEntityPattern) { entity -> decodeNamedEntity(entity.groupValues[1]) }
+                // Numeric pass runs FIRST: the named pass can synthesize numeric input
+                // (`&amp;#39;` -> `&#39;`), which would then be decoded a second time. Html.fromHtml
+                // decodes entities exactly once, so `&amp;#39;` must stay `&#39;`.
                 .replace(numericEntityPattern) { entity -> decodeNumericEntity(entity.groupValues[1]) }
+                .replace(namedEntityPattern) { entity -> decodeNamedEntity(entity.groupValues[1]) }
                 .trim()
             if (text.isBlank()) null else RawDocumentHeading(level, text)
         }.toList()

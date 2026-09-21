@@ -14,6 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import koharia.document.DocumentHeading
@@ -68,6 +69,10 @@ internal fun HeadingListSheet(
                         text = heading.title,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = if (heading.level <= 2) FontWeight.Medium else FontWeight.Normal,
+                        // Clamp like EpubNavigationSheet.TocTab: heading bodies can be full
+                        // sentences, which would otherwise dominate the sheet.
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                         color = if (index == activeHeadingIndex) {
                             MaterialTheme.colorScheme.primary
                         } else {

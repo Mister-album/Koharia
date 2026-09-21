@@ -40,13 +40,7 @@ internal class LocalPageLoader(
     override val progressPageCount: Int?
         get() = documentLoader?.progressPageCount
 
-    /**
-     * Document headings from the text-format document engine, or null when this chapter is
-     * not loaded via [DocumentPageLoader] (e.g. archive, EPUB, PDF, image). Used by the
-     * reader's text-mode navigation sheet to render a heading list when the underlying
-     * document is Markdown (or another reflowable format with detected headings).
-     */
-    val documentHeadings: List<DocumentHeading>?
+    override val documentHeadings: List<DocumentHeading>?
         get() = documentLoader?.documentHeadings
 
     override suspend fun getPages(): List<ReaderPage> {

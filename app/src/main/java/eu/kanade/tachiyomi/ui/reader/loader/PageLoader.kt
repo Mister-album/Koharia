@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.loader
 import androidx.annotation.CallSuper
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import koharia.document.DocumentHeading
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -28,6 +29,14 @@ abstract class PageLoader {
     open val progressPageCount: Int? = null
 
     open val pdfFile: UniFile? = null
+
+    /**
+     * Headings of the underlying text-format document, or null when this loader does not serve a
+     * reflowable document (archive, EPUB, PDF, image). Declared on the base class so the reader can
+     * read it uniformly regardless of which loader variant wrapped the [DocumentPageLoader]
+     * (local library vs. downloaded chapter).
+     */
+    open val documentHeadings: List<DocumentHeading>? = null
 
     /**
      * Returns the list of pages of a chapter.

@@ -41,7 +41,7 @@ internal class DocumentPageLoader(
      * on the loader's IO coroutine, not on the UI thread the first time a consumer reads this
      * property.
      */
-    val documentHeadings: List<DocumentHeading>
+    override val documentHeadings: List<DocumentHeading>
         get() = synchronized(lock) { session.headings }
 
     override suspend fun getPages(): List<ReaderPage> {
@@ -74,6 +74,12 @@ internal class DocumentPageLoader(
         val refreshedSession = currentSession.reflow(settingsProvider())
         currentCoroutineContext().ensureActive()
         val refreshedPages = createPages(refreshedSession)
+        // Warm the refreshed session's heading binding OUTSIDE the lock: a reflow creates a
+        // brand-new TextDocumentSession whose `headings` lazy would otherwise first resolve on the
+        // UI thread (sheet open) after a typography/theme change. Forcing it while holding `lock`
+        // would instead block the UI thread for the whole scan, since documentHeadings takes that
+        // same lock. `refreshedSession` is a local, so warming it here is safe.
+        refreshedSession.headings
         val previousSession = synchronized(lock) {
             if (isRecycled || generation != refreshGeneration.get()) {
                 refreshedSession.close()
@@ -82,10 +88,6 @@ internal class DocumentPageLoader(
             val previous = session
             session = refreshedSession
             pages = refreshedPages
-            // Warm the refreshed session's heading binding here too: a reflow creates a brand-new
-            // TextDocumentSession whose `headings` lazy would otherwise first resolve on the UI
-            // thread (sheet open) after a typography/theme change.
-            refreshedSession.headings
             previous
         }
         synchronized(renderLock) {

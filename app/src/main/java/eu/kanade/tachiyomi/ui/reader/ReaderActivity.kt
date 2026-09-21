@@ -82,7 +82,6 @@ import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.AddToLibra
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
 import eu.kanade.tachiyomi.ui.reader.loader.EmptyReaderBufferingState
-import eu.kanade.tachiyomi.ui.reader.loader.LocalPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
@@ -1097,7 +1096,7 @@ class ReaderActivity : BaseActivity() {
                     // sheet that lets the user jump to a heading. Documents without
                     // detected headings fall back to the manga info screen, preserving
                     // the prior behaviour for EPUB / archive / image / TXT / MOBI.
-                    val headings = (state.currentChapter?.pageLoader as? LocalPageLoader)?.documentHeadings
+                    val headings = state.currentChapter?.pageLoader?.documentHeadings
                     if (!headings.isNullOrEmpty()) {
                         headingsSheetVisible.value = true
                     } else {
@@ -1164,9 +1163,10 @@ class ReaderActivity : BaseActivity() {
             }
 
             if (headingsSheetVisible.value) {
-                // Resolve headings outside the HeadingListSheet call so the lazy binding
-                // (O(P × H) scan) runs once when the sheet opens, not on every recomposition.
-                val loader = state.currentChapter?.pageLoader as? LocalPageLoader
+                // Resolve headings outside the HeadingListSheet call so the binding is read once
+                // when the sheet opens, not on every recomposition. The loader warms the binding on
+                // its IO coroutine, so this is a cheap cached read.
+                val loader = state.currentChapter?.pageLoader
                 val headings = remember(loader) { loader?.documentHeadings.orEmpty() }
                 if (headings.isNotEmpty()) {
                     HeadingListSheet(
@@ -1179,9 +1179,14 @@ class ReaderActivity : BaseActivity() {
                         },
                     )
                 } else {
-                    // Drive the auto-dismiss via side effect to avoid writing snapshot state
-                    // from inside composition (Compose would emit a warning + inconsistent renders).
-                    LaunchedEffect(loader) { headingsSheetVisible.value = false }
+                    // The loader can be swapped (or a refresh can land) between the click and this
+                    // composition. Fall back to the manga info screen rather than silently doing
+                    // nothing, preserving the previous behaviour for the no-headings case. Driven
+                    // via a side effect to avoid writing snapshot state during composition.
+                    LaunchedEffect(loader) {
+                        headingsSheetVisible.value = false
+                        openMangaScreen()
+                    }
                 }
             }
         }

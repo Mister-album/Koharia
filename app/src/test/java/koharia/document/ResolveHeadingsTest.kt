@@ -95,6 +95,24 @@ class ResolveHeadingsTest {
     }
 
     @Test
+    fun `two identically-titled headings on the same page both bind to that page`() {
+        // Short pages / repeated section names can put two "Notes" headings on one page; both
+        // must be kept (the within-page cursor advances past the first match).
+        val pages = listOf("Notes then more text then Notes again")
+        val raws = listOf(
+            RawDocumentHeading(1, "Notes"),
+            RawDocumentHeading(2, "Notes"),
+        )
+        assertEquals(
+            listOf(
+                DocumentHeading(1, "Notes", 0),
+                DocumentHeading(2, "Notes", 0),
+            ),
+            resolveHeadings(raws, pages),
+        )
+    }
+
+    @Test
     fun `headings missing from the pages are dropped but the cursor still advances`() {
         val pages = listOf("intro", "real heading", "outro")
         val raws = listOf(

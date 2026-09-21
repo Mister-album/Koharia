@@ -144,21 +144,20 @@ class DocumentEngineException(message: String, cause: Throwable? = null) : Excep
 /**
  * Binds a list of [RawDocumentHeading] emitted at open time to the pages that contain them.
  *
- * Uses a forward-moving cursor so:
- * - duplicate titles bind to their *respective* occurrences (not all to the first);
- * - the resulting `pageIndex` values are strictly non-decreasing, which `HeadingListSheet`
- *   relies on for `indexOfLast { it.pageIndex <= currentPageIndex }`;
- * - headings split across a page boundary are kept (still found on the page where the
- *   first fragment of the title appears).
+ * Uses a forward-moving cursor (page + within-page character offset) so:
+ * - duplicate titles bind to their *respective* occurrences (not all to the first), including
+ *   two identically-titled headings that happen to fall on the same page;
+ * - the resulting `pageIndex` values are non-decreasing, which `HeadingListSheet` relies on for
+ *   `indexOfLast { it.pageIndex <= currentPageIndex }`.
  *
- * Known limitation: matching is text-based, so a heading whose title also occurs as ordinary
- * body text on an earlier page can still bind to that earlier page. Fixing that properly
- * requires the heading's character offset in the document, which the HTML-regex extractor
- * does not produce. In practice Markdown heading bodies are distinctive enough that this is
- * rare, and the binding is still monotonic.
+ * Known limitations (matching is text-based, and the HTML-regex extractor does not produce a
+ * document character offset for each heading):
+ * - a heading whose title also occurs as ordinary body text on an earlier page can bind to that
+ *   earlier page;
+ * - a heading whose title straddles a page break is on no single page and is dropped.
  *
  * Pure over `(raws, pages)` so it can be exercised by the plain-JVM test suite without an
- * Android layout. O(raws × remaining pages), called once at first read.
+ * Android layout. Called once per session, off the UI thread.
  */
 internal fun resolveHeadings(
     raws: List<RawDocumentHeading>,
@@ -166,24 +165,29 @@ internal fun resolveHeadings(
 ): List<DocumentHeading> {
     if (raws.isEmpty() || pages.isEmpty()) return emptyList()
     val out = ArrayList<DocumentHeading>(raws.size)
-    var searchFrom = 0
-    var lastTitle: String? = null
+    var pageCursor = 0
+    // Resume position *within* pages[pageCursor]; advances past a match so a repeated title on
+    // the same page binds to its own occurrence instead of re-matching the previous one.
+    var charCursor = 0
     for (raw in raws) {
-        // Blank titles would match every page (`"x".contains("")` is true), so drop them here
-        // as a defensive measure even though the extractors already filter them out.
+        // Blank titles would match at offset 0 of every page, so drop them here as a defensive
+        // measure even though the extractors already filter them out.
         if (raw.title.isBlank()) continue
-        // A repeated title must bind to a *later* occurrence. Without advancing, the forward
-        // cursor would re-match the very page we just consumed and collapse the duplicates.
-        if (raw.title == lastTitle) {
-            searchFrom = (searchFrom + 1).coerceAtMost(pages.size)
+
+        var page = pageCursor
+        var from = charCursor
+        while (page < pages.size) {
+            val index = pages[page].indexOf(raw.title, startIndex = from)
+            if (index >= 0) {
+                out += DocumentHeading(level = raw.level, title = raw.title, pageIndex = page)
+                pageCursor = page
+                charCursor = index + raw.title.length
+                break
+            }
+            page++
+            from = 0
         }
-        if (searchFrom >= pages.size) break
-        val offset = pages.subList(searchFrom, pages.size).indexOfFirst { it.contains(raw.title) }
-        if (offset < 0) continue
-        val pageIndex = searchFrom + offset
-        out += DocumentHeading(level = raw.level, title = raw.title, pageIndex = pageIndex)
-        searchFrom = pageIndex
-        lastTitle = raw.title
+        // Not found: leave both cursors untouched so later headings can still match.
     }
     return out
 }
