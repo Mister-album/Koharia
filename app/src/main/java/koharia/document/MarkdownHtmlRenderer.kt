@@ -23,11 +23,6 @@ internal object MarkdownHtmlRenderer {
         }
     }
 
-    private val headingPattern = Regex(
-        """<(h[1-6])(?:\s[^>]*)?>(.*?)</\1>""",
-        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE),
-    )
-
     /** `<br>`, `<br/>`, `<br />` — rendered as a newline by Html.fromHtml. */
     private val breakTagPattern = Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE)
 
@@ -53,9 +48,47 @@ internal object MarkdownHtmlRenderer {
      */
     fun extractHeadings(html: String): List<RawDocumentHeading> {
         if (html.isBlank()) return emptyList()
-        return headingPattern.findAll(html).mapNotNull { match ->
-            val level = match.groupValues[1].drop(1).toIntOrNull() ?: return@mapNotNull null
-            val text = match.groupValues[2]
+        val out = ArrayList<RawDocumentHeading>()
+        // Linear scan: locate each `<hN ...>` open tag, then indexOf its matching close tag. A
+        // regex with a lazy body plus a backreference would rescan to end-of-input for every
+        // unclosed tag (unbalanced inline HTML passes through intellij-markdown verbatim), making
+        // crafted input quadratic.
+        var cursor = 0
+        // Once a level's close tag is absent from a position onward it is absent for the whole
+        // remainder, so a single failed lookup per level is enough to keep the scan linear even
+        // when the input contains many unclosed headings.
+        val closeTagAbsent = BooleanArray(7)
+        while (true) {
+            val open = html.indexOf("<h", cursor, ignoreCase = true)
+            if (open < 0) break
+            val levelChar = html.getOrNull(open + 2)
+            if (levelChar == null || levelChar !in '1'..'6') {
+                cursor = open + 2
+                continue
+            }
+            // The tag name must be exactly h1..h6, so the next char has to end the name.
+            val afterName = html.getOrNull(open + 3)
+            if (afterName != null && afterName != '>' && !afterName.isWhitespace()) {
+                cursor = open + 3
+                continue
+            }
+            val openEnd = html.indexOf('>', open + 3)
+            if (openEnd < 0) break
+            val level = levelChar - '0'
+            val closeTag = "</h$levelChar>"
+            if (closeTagAbsent[level]) {
+                cursor = openEnd + 1
+                continue
+            }
+            val close = html.indexOf(closeTag, openEnd + 1, ignoreCase = true)
+            if (close < 0) {
+                // Unclosed heading: remember that this level has no close tag from here on, and
+                // skip past this open tag rather than rescanning the remainder.
+                closeTagAbsent[level] = true
+                cursor = openEnd + 1
+                continue
+            }
+            val text = html.substring(openEnd + 1, close)
                 // A GFM hard line break renders as <br>; Html.fromHtml turns it into a newline.
                 // Replace it before the generic tag strip, otherwise the words on either side are
                 // concatenated and the title no longer text-matches the rendered page.
@@ -66,9 +99,26 @@ internal object MarkdownHtmlRenderer {
                 // decodes entities exactly once, so `&amp;#39;` must stay `&#39;`.
                 .replace(numericEntityPattern) { entity -> decodeNumericEntity(entity.groupValues[1]) }
                 .replace(namedEntityPattern) { entity -> decodeNamedEntity(entity.groupValues[1]) }
-                .trim()
-            if (text.isBlank()) null else RawDocumentHeading(level, text)
-        }.toList()
+                .trimPreservingNbsp()
+            if (text.isNotEmpty()) {
+                out += RawDocumentHeading(level, text)
+            }
+            cursor = close + closeTag.length
+        }
+        return out
+    }
+
+    /**
+     * Like [String.trim] but preserves U+00A0. Kotlin's `Char.isWhitespace()` reports NBSP as
+     * whitespace, which would strip the very character [decodeNamedEntity] deliberately produces
+     * and break the byte-identical match against the rendered page.
+     */
+    private fun String.trimPreservingNbsp(): String {
+        var start = 0
+        var end = length
+        while (start < end && this[start].isWhitespace() && this[start] != '\u00A0') start++
+        while (end > start && this[end - 1].isWhitespace() && this[end - 1] != '\u00A0') end--
+        return substring(start, end)
     }
 
     /**
@@ -98,9 +148,10 @@ internal object MarkdownHtmlRenderer {
         } else {
             reference.toIntOrNull()
         } ?: return "&#$reference;"
-        // The pattern only matches unsigned decimal/hex digits, so `code` is never negative;
-        // the upper bound guards against out-of-range references such as &#1114112;.
-        if (code > 0x10FFFF) return "&#$reference;"
+        // Reject values that are not valid code points: 0 (NUL) and the surrogate range would be
+        // accepted by Character.toChars and inject ill-formed characters that never text-match the
+        // rendered page; the upper bound rejects out-of-range references such as &#1114112;.
+        if (code <= 0 || code > 0x10FFFF || code in 0xD800..0xDFFF) return "&#$reference;"
         return String(Character.toChars(code))
     }
 }

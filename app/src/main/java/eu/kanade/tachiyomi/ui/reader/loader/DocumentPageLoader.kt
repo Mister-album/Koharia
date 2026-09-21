@@ -53,18 +53,6 @@ internal class DocumentPageLoader(
     override val documentHeadings: List<DocumentHeading>
         get() = headingsSnapshot ?: synchronized(lock) { session.headings }
 
-    /**
-     * Forces the session's heading→page binding on the calling (IO) coroutine and publishes the
-     * result, so later UI-thread reads of [documentHeadings] are contention-free. Must be called
-     * OUTSIDE [lock]: the scan is O(pages × headings) and [documentHeadings] takes the same lock
-     * from the UI thread.
-     */
-    private fun warmHeadings(owner: DocumentSession): List<DocumentHeading> {
-        val resolved = owner.headings
-        headingsSnapshot = resolved
-        return resolved
-    }
-
     override suspend fun getPages(): List<ReaderPage> {
         val currentSession = synchronized(lock) {
             if (pages.isEmpty()) {
@@ -72,8 +60,16 @@ internal class DocumentPageLoader(
             }
             session
         }
-        warmHeadings(currentSession)
-        return synchronized(lock) { pages }
+        // Resolve on this IO coroutine, outside the lock (the scan is O(pages × headings) and
+        // documentHeadings takes the same lock from the UI thread). Publish only if this session is
+        // still the active one, so a concurrent refreshPages cannot be clobbered by a stale result.
+        val resolved = currentSession.headings
+        return synchronized(lock) {
+            if (session === currentSession) {
+                headingsSnapshot = resolved
+            }
+            pages
+        }
     }
 
     override suspend fun refreshPages(): List<ReaderPage>? {
@@ -93,12 +89,14 @@ internal class DocumentPageLoader(
         val refreshedSession = currentSession.reflow(settingsProvider())
         currentCoroutineContext().ensureActive()
         val refreshedPages = createPages(refreshedSession)
-        // Warm the refreshed session's heading binding OUTSIDE the lock: a reflow creates a
+        // Resolve the refreshed session's heading binding OUTSIDE the lock: a reflow creates a
         // brand-new TextDocumentSession whose `headings` lazy would otherwise first resolve on the
-        // UI thread (sheet open) after a typography/theme change. Forcing it while holding `lock`
-        // would instead block the UI thread for the whole scan, since documentHeadings takes that
-        // same lock. `refreshedSession` is a local, so warming it here is safe.
-        warmHeadings(refreshedSession)
+        // UI thread (sheet open) after a typography/theme change, and forcing it while holding
+        // `lock` would block the UI thread for the whole scan (documentHeadings takes that same
+        // lock). It is published inside the commit block below so the snapshot swaps atomically
+        // with `session`/`pages` — otherwise a stale-path or in-flight read could report headings
+        // whose pageIndex no longer matches the pages the reader is showing.
+        val refreshedHeadings = refreshedSession.headings
         val previousSession = synchronized(lock) {
             if (isRecycled || generation != refreshGeneration.get()) {
                 refreshedSession.close()
@@ -107,6 +105,7 @@ internal class DocumentPageLoader(
             val previous = session
             session = refreshedSession
             pages = refreshedPages
+            headingsSnapshot = refreshedHeadings
             previous
         }
         synchronized(renderLock) {

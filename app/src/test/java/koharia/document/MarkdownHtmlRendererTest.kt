@@ -136,4 +136,46 @@ class MarkdownHtmlRendererTest {
             MarkdownHtmlRenderer.extractHeadings(html),
         )
     }
+
+    @Test
+    fun `extractHeadings preserves a non-breaking space at the edges`() {
+        // trim() would strip U+00A0 (Kotlin treats it as whitespace), breaking the exact match
+        // against the rendered page.
+        val html = "<h1>&nbsp;A&nbsp;</h1>"
+        assertEquals(
+            listOf(RawDocumentHeading(1, "\u00A0A\u00A0")),
+            MarkdownHtmlRenderer.extractHeadings(html),
+        )
+    }
+
+    @Test
+    fun `extractHeadings rejects invalid numeric references`() {
+        // NUL, an unpaired surrogate and an out-of-range value must stay literal rather than
+        // injecting ill-formed characters.
+        val html = "<h1>&#0;&#xD800;&#1114112;ok</h1>"
+        assertEquals(
+            listOf(RawDocumentHeading(1, "&#0;&#xD800;&#1114112;ok")),
+            MarkdownHtmlRenderer.extractHeadings(html),
+        )
+    }
+
+    @Test
+    fun `extractHeadings skips unclosed heading tags without scanning to end of input`() {
+        // Unbalanced inline HTML must not turn the scan quadratic; the unclosed tags yield no
+        // heading and the well-formed one after them is still found.
+        val html = "<h1>unclosed\n".repeat(2000) + "<h2>Real</h2>"
+        assertEquals(
+            listOf(RawDocumentHeading(2, "Real")),
+            MarkdownHtmlRenderer.extractHeadings(html),
+        )
+    }
+
+    @Test
+    fun `extractHeadings ignores h-prefixed tags that are not headings`() {
+        val html = "<header>Nav</header><h3>Real</h3><hr>"
+        assertEquals(
+            listOf(RawDocumentHeading(3, "Real")),
+            MarkdownHtmlRenderer.extractHeadings(html),
+        )
+    }
 }

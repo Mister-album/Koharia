@@ -174,9 +174,10 @@ internal fun resolveHeadings(
     // the same page binds to its own occurrence instead of re-matching the previous one.
     var charCursor = 0
     for (raw in raws) {
-        // Blank titles would match at offset 0 of every page, so drop them here as a defensive
-        // measure even though the extractors already filter them out.
-        if (raw.title.isBlank()) continue
+        // Empty titles would match at offset 0 of every page, so drop them here as a defensive
+        // measure even though the extractors already filter them out. (isEmpty, not isBlank: a
+        // title may legitimately consist of a non-breaking space, which isBlank would discard.)
+        if (raw.title.isEmpty()) continue
 
         var page = pageCursor
         var from = charCursor
