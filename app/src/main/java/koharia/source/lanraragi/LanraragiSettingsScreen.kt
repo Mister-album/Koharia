@@ -1,13 +1,16 @@
 package koharia.source.lanraragi
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material3.AlertDialog
@@ -43,6 +46,7 @@ import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.network.NetworkHelper
+import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionProfileManager
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.domain.lanraragi.LanraragiRepository
@@ -55,6 +59,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import okio.ByteString.Companion.encodeUtf8
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
@@ -78,12 +83,14 @@ class LanraragiSettingsScreen(
         val prefs = remember(sourceId) { LanraragiPreferences(sourceId) }
         val initialName = remember(sourceId) { manager.profiles().firstOrNull { it.id == sourceId }?.name.orEmpty() }
         val initialAddress = remember(sourceId) { prefs.address }
+        val initialInternalAddress = remember(sourceId) { prefs.internalAddress }
         val initialKey = remember(sourceId) { prefs.apiKey }
         val initialMode = remember(sourceId) { prefs.archiveOpenMode }
         val initialCategory = remember(sourceId) { prefs.defaultCategory }
         val initialGrouped = remember(sourceId) { prefs.groupCollections }
         var name by rememberSaveable(sourceId) { mutableStateOf(initialName) }
         var address by rememberSaveable(sourceId) { mutableStateOf(initialAddress) }
+        var internalAddress by rememberSaveable(sourceId) { mutableStateOf(initialInternalAddress) }
         var archiveOpenMode by rememberSaveable(sourceId) { mutableStateOf(initialMode) }
         var defaultCategory by rememberSaveable(sourceId) { mutableStateOf(initialCategory) }
         var grouped by rememberSaveable(sourceId) { mutableStateOf(initialGrouped) }
@@ -98,7 +105,8 @@ class LanraragiSettingsScreen(
         val cachedEntries by remember(sourceId) { repository.observeEntries(sourceId) }.collectAsState(emptyList())
         val scope = rememberCoroutineScope()
         val busy = saving
-        val dirty = name != initialName || address != initialAddress || apiKey != initialKey ||
+        val dirty = name != initialName || address != initialAddress || internalAddress != initialInternalAddress ||
+            apiKey != initialKey ||
             archiveOpenMode != initialMode || defaultCategory != initialCategory || grouped != initialGrouped
         val validAddress = remember(address) { runCatching { LanraragiApi.normalizeBase(address) }.isSuccess }
         val categories = if (address == initialAddress) cachedEntries else emptyList()
@@ -135,6 +143,19 @@ class LanraragiSettingsScreen(
             scope.launch {
                 try {
                     val normalized = LanraragiApi.normalizeBase(address).toString()
+                    if (internalAddress.isNotBlank()) {
+                        val headers = okhttp3.Headers.Builder().apply {
+                            if (apiKey.isNotBlank()) {
+                                set("Authorization", "Bearer ${apiKey.trim().encodeUtf8().base64()}")
+                            }
+                        }.build()
+                        koharia.connection.ConnectionAddressVerification(Injekt.get<NetworkHelper>().client).verify(
+                            koharia.connection.ConnectionAddressVerification.Provider.LANRARAGI,
+                            normalized,
+                            internalAddress,
+                            headers,
+                        )
+                    }
                     if (checkConnection) {
                         val connected = try {
                             withContext(Dispatchers.IO) {
@@ -144,6 +165,12 @@ class LanraragiSettingsScreen(
                                     Injekt.get<NetworkHelper>().client.newBuilder()
                                         .callTimeout(10, TimeUnit.SECONDS).build(),
                                     Injekt.get<Json>(),
+                                    addressRouter = ConnectionAddressRouter.forAndroid(
+                                        context,
+                                        { normalized },
+                                        { internalAddress },
+                                        "api/info",
+                                    ),
                                 )
                                 try {
                                     withTimeoutOrNull(10_000) { api.serverInfo(true) } != null
@@ -162,7 +189,14 @@ class LanraragiSettingsScreen(
                     }
                     val profile = manager.profiles().first { it.id == sourceId }
                     withContext(Dispatchers.IO) {
-                        prefs.save(normalized, apiKey.trim(), archiveOpenMode, defaultCategory, grouped)
+                        prefs.save(
+                            normalized,
+                            apiKey.trim(),
+                            archiveOpenMode,
+                            defaultCategory,
+                            grouped,
+                            internalAddress,
+                        )
                     }
                     manager.update(profile.copy(name = name.trim()))
                     (Injekt.get<SourceManager>().get(sourceId) as? LanraragiSource)?.reload()
@@ -174,7 +208,11 @@ class LanraragiSettingsScreen(
                     }
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
-                    message = context.lanraragiError(error)
+                    message = if (error is koharia.connection.ConnectionAddressVerification.Failure) {
+                        error.userMessage(context)
+                    } else {
+                        context.lanraragiError(error)
+                    }
                 } finally {
                     saving = false
                 }
@@ -222,18 +260,16 @@ class LanraragiSettingsScreen(
                         hint = stringResource(MR.strings.lanraragi_name_help),
                         valid = { it.isNotBlank() },
                     ) { name = it.trim() }
-                    LanraragiTextSetting(
-                        title = stringResource(MR.strings.lanraragi_address),
-                        value = address,
+                    LanraragiAddressSetting(
+                        publicAddress = address,
+                        internalAddress = internalAddress,
                         enabled = !busy,
-                        hint = stringResource(MR.strings.lanraragi_error_address),
-                        keyboardType = KeyboardType.Uri,
-                        valid = { runCatching { LanraragiApi.normalizeBase(it) }.isSuccess },
-                    ) {
-                        if (address != it.trim()) {
+                    ) { publicValue, internalValue ->
+                        if (address != publicValue) {
                             defaultCategory = ""
                         }
-                        address = it.trim()
+                        address = publicValue
+                        internalAddress = internalValue
                         message = null
                     }
                     LanraragiTextSetting(
@@ -340,6 +376,85 @@ class LanraragiSettingsScreen(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun LanraragiAddressSetting(
+    publicAddress: String,
+    internalAddress: String,
+    enabled: Boolean,
+    onConfirm: (String, String) -> Unit,
+) {
+    var showDialog by rememberSaveable { mutableStateOf(false) }
+    TextPreferenceWidget(
+        title = stringResource(MR.strings.lanraragi_address),
+        subtitle = publicAddress.ifBlank { stringResource(MR.strings.lanraragi_error_address) },
+        enabled = enabled,
+        onPreferenceClick = { showDialog = true },
+    )
+    if (showDialog) {
+        var publicDraft by rememberSaveable { mutableStateOf(publicAddress) }
+        var internalDraft by rememberSaveable { mutableStateOf(internalAddress) }
+        var advancedExpanded by rememberSaveable { mutableStateOf(false) }
+        val validPublic = ConnectionAddressRouter.normalize(publicDraft) != null
+        val validInternal = internalDraft.isBlank() || ConnectionAddressRouter.normalize(internalDraft) != null
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text(stringResource(MR.strings.lanraragi_address)) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    OutlinedTextField(
+                        value = publicDraft,
+                        onValueChange = { publicDraft = it },
+                        label = { Text(stringResource(MR.strings.connection_public_address)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        isError = publicDraft.isNotBlank() && !validPublic,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    )
+                    TextButton(
+                        onClick = { advancedExpanded = !advancedExpanded },
+                        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                            contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+                        ),
+                    ) {
+                        Text(stringResource(MR.strings.connection_address_advanced))
+                    }
+                    if (advancedExpanded) {
+                        OutlinedTextField(
+                            value = internalDraft,
+                            onValueChange = { internalDraft = it },
+                            label = { Text(stringResource(MR.strings.connection_internal_address)) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            isError = !validInternal,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        )
+                        Text(
+                            stringResource(MR.strings.connection_internal_address_summary),
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = validPublic && validInternal,
+                    onClick = {
+                        onConfirm(publicDraft.trim(), internalDraft.trim())
+                        showDialog = false
+                    },
+                ) { Text(stringResource(MR.strings.action_ok)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDialog = false }) { Text(stringResource(MR.strings.action_cancel)) }
+            },
+        )
     }
 }
 

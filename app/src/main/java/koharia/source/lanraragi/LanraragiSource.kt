@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import koharia.connection.ConnectionAccount
 import koharia.connection.ConnectionAccountAdapter
+import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionBackupRestoreAdapter
 import koharia.connection.ConnectionBrowseAdapter
 import koharia.connection.ConnectionChapterMetadata
@@ -195,16 +196,31 @@ class LanraragiSource(
     }
 
     private var apiAddress: String? = null
+    private var apiInternalAddress: String? = null
     private var apiCredential: String? = null
     val api: LanraragiApi get() = synchronized(this) {
         val address = preferences.address
         val credential = preferences.apiKey
-        if (apiAddress != address || apiCredential != credential) {
+        val internalAddress = preferences.internalAddress
+        if (apiAddress != address || apiInternalAddress != internalAddress || apiCredential != credential) {
             apiInstance?.close()
             apiInstance = null
         }
-        apiInstance ?: LanraragiApi(address, credential, network.client, json, diagnosticConnectionId = id).also {
+        apiInstance ?: LanraragiApi(
+            address,
+            credential,
+            network.client,
+            json,
+            diagnosticConnectionId = id,
+            addressRouter = ConnectionAddressRouter.forAndroid(
+                Injekt.get<android.app.Application>(),
+                { address },
+                { internalAddress },
+                "api/info",
+            ),
+        ).also {
             apiAddress = address
+            apiInternalAddress = internalAddress
             apiCredential = credential
             apiInstance = it
         }

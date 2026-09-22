@@ -53,6 +53,8 @@ class PagerPageHolder(
 ),
     ViewPagerAdapter.PositionableView {
 
+    internal val renderedLayout = viewer.config.resolvedLayout
+
     val page: ReaderPage = slot.first
     private val extraPage: ReaderPage? = slot.second
 
@@ -246,8 +248,8 @@ class PagerPageHolder(
                         }
                     }
                 }
-                val layoutChanged = withUIContext { viewer.onPagesClassified(classifications) }
-                if (layoutChanged) return
+                val slotReplaced = withUIContext { viewer.onPagesClassified(classifications, slot) }
+                if (slotReplaced) return
                 withUIContext { viewer.onPagesPrepared(slot) }
             }
 
@@ -483,10 +485,10 @@ class PagerPageHolder(
                     val rotation = if (viewer.config.dualPageRotateToFitInvert) -90f else 90f
                     ImageUtil.rotateImage(ownedBitmap, rotation)
                 }
-                viewer.config.dualPageSplit && physicalPage is InsertPage -> {
+                viewer.config.splitsWidePages && physicalPage is InsertPage -> {
                     split()
                 }
-                viewer.config.dualPageSplit && ownedBitmap.width > ownedBitmap.height -> {
+                viewer.config.splitsWidePages && ownedBitmap.width > ownedBitmap.height -> {
                     onPageSplit(physicalPage)
                     split()
                 }
@@ -513,7 +515,7 @@ class PagerPageHolder(
             return splitInHalf(physicalPage, imageSource)
         }
         if (viewer.config.dualPageRotateToFit) return PageContent.Encoded(rotateDualPage(imageSource))
-        if (!viewer.config.dualPageSplit) return PageContent.Encoded(imageSource)
+        if (!viewer.config.splitsWidePages) return PageContent.Encoded(imageSource)
         if (physicalPage is InsertPage) return splitInHalf(physicalPage, imageSource)
         if (!ImageUtil.isWideImage(imageSource)) return PageContent.Encoded(imageSource)
         onPageSplit(physicalPage)

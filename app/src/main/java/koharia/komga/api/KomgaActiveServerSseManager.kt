@@ -35,8 +35,9 @@ class KomgaActiveServerSseManager(
             komgaServerPreferences.activeServerId.get()
                 .takeIf { it != KomgaServerPreferences.NO_ACTIVE_SERVER }
         },
-        headersProvider = { currentSource()?.currentHeaders() ?: Headers.Builder().build() },
+        headersProvider = { currentSource()?.currentReadiumHeaders() ?: Headers.Builder().build() },
         cachedOnlyProvider = { basePreferences.downloadedOnly.get() },
+        clientProvider = { currentSource()?.routedClient(networkHelper.client) ?: networkHelper.client },
     )
 
     init {

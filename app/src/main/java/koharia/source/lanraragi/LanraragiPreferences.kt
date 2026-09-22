@@ -11,6 +11,7 @@ import tachiyomi.core.common.preference.Preference
 class LanraragiPreferences(connectionId: Long) {
     private val preferences = sourcePreferences("source_$connectionId")
     val address: String get() = preferences.getString("address", "").orEmpty()
+    val internalAddress: String get() = preferences.getString("internal_address", "").orEmpty()
     val apiKey: String get() = preferences.getString(Preference.privateKey("api_key"), "").orEmpty()
     val indexedAddress: String get() = preferences.getString(Preference.appStateKey("indexed_address"), "").orEmpty()
     val defaultCategory: String get() = preferences.getString("default_category", "").orEmpty()
@@ -56,9 +57,11 @@ class LanraragiPreferences(connectionId: Long) {
         archiveOpenMode: LanraragiArchiveOpenMode = this.archiveOpenMode,
         defaultCategory: String = this.defaultCategory,
         groupCollections: Boolean = this.groupCollections,
+        internalAddress: String = this.internalAddress,
     ) {
         check(
             preferences.edit().putString("address", address)
+                .putString("internal_address", internalAddress)
                 .putString("archive_open_mode", archiveOpenMode.name)
                 .putString("default_category", defaultCategory)
                 .putBoolean("group_collections", groupCollections)

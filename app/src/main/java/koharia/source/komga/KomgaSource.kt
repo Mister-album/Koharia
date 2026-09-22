@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.connection.ConnectionAccountAdapter
+import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionBrowseAdapter
 import koharia.connection.ConnectionChapterTitleAdapter
 import koharia.connection.ConnectionDownloadStorageAdapter
@@ -228,6 +229,35 @@ class KomgaSource(
 
     fun currentHeaders(): Headers = headersBuilder().build()
 
+    suspend fun verifyServerAddresses(store: androidx.preference.PreferenceDataStore) {
+        val internalAddress = store.getString(ConnectionAddressRouter.INTERNAL_ADDRESS_KEY, "").orEmpty()
+        if (internalAddress.isBlank()) return
+        val publicAddress = store.getString(PREF_ADDRESS, "").orEmpty()
+        val mode = store.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
+        val validationHeaders = Headers.Builder().apply {
+            if (mode == AUTH_MODE_API_KEY) {
+                val key = store.getString(PREF_API_KEY, null)
+                    ?: store.getString(PREF_API_KEY_WRONG_CASE, "").orEmpty()
+                if (key.isNotBlank()) {
+                    set("X-API-Key", key)
+                    set("X-Komga-Api-Key", key)
+                }
+            } else {
+                val user = store.getString(PREF_USERNAME, "").orEmpty()
+                val password = store.getString(PREF_PASSWORD, "").orEmpty()
+                if (user.isNotBlank()) set("Authorization", Credentials.basic(user, password))
+            }
+        }.build()
+        koharia.connection.ConnectionAddressVerification(
+            Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>().client,
+        ).verify(
+            koharia.connection.ConnectionAddressVerification.Provider.KOMGA,
+            publicAddress,
+            internalAddress,
+            validationHeaders,
+        )
+    }
+
     fun currentReadiumHeaders(): Headers = currentHeaders().newBuilder()
         .also { builder ->
             builder.removeAll("X-API-Key")
@@ -251,6 +281,23 @@ class KomgaSource(
             }
         }
 
+    private val addressRouter by lazy {
+        ConnectionAddressRouter.forAndroid(
+            application,
+            publicAddress = { baseUrl },
+            internalAddress = {
+                preferences.getString(ConnectionAddressRouter.INTERNAL_ADDRESS_KEY, "").orEmpty()
+            },
+            probePath = "api/v1/libraries?size=1",
+        )
+    }
+
+    fun routedClient(client: OkHttpClient): OkHttpClient = client.newBuilder()
+        .addInterceptor(addressRouter)
+        .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard)
+        .dns(Dns.SYSTEM)
+        .build()
+
     override val client = super.client.newBuilder()
         .addInterceptor(
             KomgaOfflineInterceptor(application, ::shelfCacheNamespace, {
@@ -269,6 +316,8 @@ class KomgaSource(
             }
             chain.proceed(newBuilder.build())
         }
+        .addInterceptor(addressRouter)
+        .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard)
         .dns(Dns.SYSTEM)
         .build()
 
@@ -1093,18 +1142,10 @@ class KomgaSource(
             showValueAsSummary = true,
         )
 
-        screen.addEditTextPreference(
-            title = screen.context.stringResource(MR.strings.komga_pref_address_title),
-            default = "",
-            summary = baseUrl.ifBlank { screen.context.stringResource(MR.strings.komga_pref_address_summary) },
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
-            validate = {
-                val address = it.trim()
-                address.startsWith("http://") || address.startsWith("https://")
-            },
-            validationMessage = screen.context.stringResource(MR.strings.komga_pref_address_validation),
-            key = PREF_ADDRESS,
-        )
+        koharia.connection.ui.ConnectionAddressPreference(screen.context, PREF_ADDRESS).apply {
+            screen.addPreference(this)
+            summary = publicAddress.ifBlank { screen.context.stringResource(MR.strings.komga_pref_address_summary) }
+        }
         val authModePref = androidx.preference.ListPreference(screen.context).apply {
             key = PREF_AUTH_MODE
             title = screen.context.stringResource(MR.strings.komga_pref_auth_mode_title)
@@ -1177,6 +1218,10 @@ class KomgaSource(
 
                 val dataStore = pref.preferenceManager.preferenceDataStore
                 val currentAddress = (dataStore?.getString(PREF_ADDRESS, "") ?: "").trim().trimEnd('/')
+                val currentInternalAddress = dataStore?.getString(
+                    ConnectionAddressRouter.INTERNAL_ADDRESS_KEY,
+                    "",
+                ).orEmpty()
                 val currentAuthMode =
                     dataStore?.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
                 val currentUsername = dataStore?.getString(PREF_USERNAME, "") ?: ""
@@ -1202,7 +1247,18 @@ class KomgaSource(
                                 }
                             }.build()
 
-                            val cleanClient = Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>().client
+                            val cleanClient = Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>()
+                                .client.newBuilder()
+                                .addInterceptor(
+                                    ConnectionAddressRouter.forAndroid(
+                                        application,
+                                        { currentAddress },
+                                        { currentInternalAddress },
+                                        "api/v1/libraries?size=1",
+                                    ),
+                                )
+                                .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard)
+                                .build()
                             val tempApiClient = KomgaApiClient(currentAddress, tempHeaders, cleanClient, json)
                             val tempRepo = KomgaRepository(currentAddress, tempApiClient)
                             tempRepo.fetchFilterOptions(forceRefresh = true).libraries
@@ -1486,6 +1542,7 @@ class KomgaSource(
         const val TYPE_ALL = "All"
 
         private val SERVER_SETTING_KEYS = setOf(
+            ConnectionAddressRouter.INTERNAL_ADDRESS_KEY,
             PREF_SERVER_PROFILE_NAME,
             PREF_ADDRESS,
             PREF_USERNAME,

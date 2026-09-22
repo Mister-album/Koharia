@@ -55,6 +55,7 @@ class SourcePreferencesScreen(
     private val actions: @Composable RowScope.() -> Unit = {},
     private val bottomBar: @Composable () -> Unit = {},
     private val navigateUpOverride: (() -> Unit)? = null,
+    private val preferencesEnabled: Boolean = true,
 ) : Screen() {
 
     @Composable
@@ -82,6 +83,7 @@ class SourcePreferencesScreen(
         ) { contentPadding ->
             FragmentContainer(
                 fragmentManager = (context as FragmentActivity).supportFragmentManager,
+                enabled = preferencesEnabled,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding),
@@ -97,6 +99,7 @@ class SourcePreferencesScreen(
     @Composable
     private fun FragmentContainer(
         fragmentManager: FragmentManager,
+        enabled: Boolean,
         modifier: Modifier = Modifier,
         commit: FragmentTransaction.(containerId: Int) -> Unit,
     ) {
@@ -117,6 +120,8 @@ class SourcePreferencesScreen(
                 } else {
                     fragmentManager.onContainerAvailable(view)
                 }
+                (fragmentManager.findFragmentById(view.id) as? PreferenceFragmentCompat)
+                    ?.preferenceScreen?.isEnabled = enabled
             },
         )
     }
@@ -133,6 +138,21 @@ class SourcePreferencesScreen(
 }
 
 class SourcePreferencesFragment : PreferenceFragmentCompat() {
+
+    @Suppress("DEPRECATION")
+    override fun onDisplayPreferenceDialog(preference: androidx.preference.Preference) {
+        if (preference is koharia.connection.ui.ConnectionAddressPreference) {
+            val tag = "connection_address_dialog"
+            val preferenceKey = preference.key
+            if (parentFragmentManager.findFragmentByTag(tag) != null) return
+            koharia.connection.ui.ConnectionAddressPreferenceDialog().apply {
+                arguments = Bundle().apply { putString("key", preferenceKey) }
+                setTargetFragment(this@SourcePreferencesFragment, 0)
+            }.show(parentFragmentManager, tag)
+        } else {
+            super.onDisplayPreferenceDialog(preference)
+        }
+    }
 
     override fun getContext(): Context? {
         val superCtx = super.getContext() ?: return null

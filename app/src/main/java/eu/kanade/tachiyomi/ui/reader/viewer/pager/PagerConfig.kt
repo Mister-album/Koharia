@@ -44,8 +44,14 @@ class PagerConfig(
 
     private var automaticDoublePagesAllowedByViewport = configurationAllowsAutomaticDoublePages()
 
+    internal var resolvedLayout = PagerLayoutPolicy.resolve(PageLayout.SINGLE_PAGE, false, false, false)
+        private set
+
     val automaticallySplitsWidePages: Boolean
-        get() = pageLayout.automaticallySplitsWidePages
+        get() = resolvedLayout.automaticSplit
+
+    val splitsWidePages: Boolean
+        get() = resolvedLayout.splitsWidePages
 
     val usesContentAwarePairing: Boolean
         get() = pageLayout.usesContentAwarePairing
@@ -165,9 +171,13 @@ class PagerConfig(
     private fun updateDoublePages(value: Int) {
         val horizontalViewer = viewer is L2RPagerViewer || viewer is R2LPagerViewer
         pageLayout = PageLayout.fromPreference(value)
-        val viewportAllowsLayout = pageLayout != PageLayout.AUTOMATIC_DOUBLE_PAGES ||
-            automaticDoublePagesAllowedByViewport
-        doublePages = horizontalViewer && !dualPageSplit && pageLayout.usesDoublePages && viewportAllowsLayout
+        resolvedLayout = PagerLayoutPolicy.resolve(
+            pageLayout,
+            dualPageSplit,
+            horizontalViewer,
+            automaticDoublePagesAllowedByViewport,
+        )
+        doublePages = resolvedLayout.doublePages
     }
 
     fun onConfigurationChanged() {
@@ -181,10 +191,10 @@ class PagerConfig(
 
     private fun updateViewport(width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
-        val previous = doublePages
+        val previous = resolvedLayout
         automaticDoublePagesAllowedByViewport = DoublePageViewportPolicy.allowsAutomaticDoublePages(width, height)
         updateDoublePages(readerPreferences.pageLayout.get())
-        if (previous != doublePages) doublePageLayoutChangedListener?.invoke()
+        if (previous != resolvedLayout) doublePageLayoutChangedListener?.invoke()
     }
 
     private fun configurationAllowsAutomaticDoublePages(): Boolean {

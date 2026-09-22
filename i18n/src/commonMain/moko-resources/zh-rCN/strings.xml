@@ -245,7 +245,7 @@
     <string name="entry_open_page_preview">页面预览</string>
     <string name="entry_open_details">标准详情</string>
     <string name="entry_open_local_single">本地单文件漫画</string>
-    <string name="entry_open_komga_book">Komga 单册作品</string>
+    <string name="entry_open_komga_book">单册作品</string>
     <string name="local_library_sort_added">添加时间</string>
     <string name="local_library_sort_modified">最近修改</string>
     <string name="lanraragi_open_details">标准详情</string>
@@ -1692,4 +1692,19 @@
     <string name="tts_playback_settings">声音</string>
     <string name="tts_full_settings">完整朗读设置</string>
     <string name="tts_quick_settings">返回快捷设置</string>
+    <string name="pref_library_columns_dialog_title">书架列数</string>
+    <string name="pref_library_columns_all_auto">全部自动</string>
+    <string name="pref_library_columns_summary">竖屏：%1$s · 横屏：%2$s</string>
+    <string name="pref_library_columns_auto_hint">自动模式会根据可用宽度调整列数，也可分别设置横竖屏。</string>
+    <string name="pref_library_columns_decrease">减少列数</string>
+    <string name="pref_library_columns_increase">增加列数</string>
+    <string name="page_layout_automatic_double_summary">窄窗口拆分宽图；宽窗口显示完整跨页图，并将适合的单页图片配对。</string>
+    <string name="connection_public_address">服务器地址</string>
+    <string name="connection_internal_address">内网地址</string>
+    <string name="connection_internal_address_summary">可选，留空则不启用。Wi-Fi 下优先尝试内网，无法访问时使用服务器地址。两个地址需指向同一服务。</string>
+    <string name="connection_address_advanced">高级设置</string>
+    <string name="connection_verify_auth_failed">两个地址未能全部通过认证。请确认两个地址均可访问，且提供的 API 密钥在两端均有效。本次未保存。</string>
+    <string name="connection_verify_unavailable">无法校验两个地址。请确认两个地址均可访问，且账号或密钥有权限创建和删除临时校验标记。本次未保存。</string>
+    <string name="connection_verify_mismatch">两个地址未读取到相同的校验标记，请确认它们指向同一服务器和账号。本次未保存。</string>
+    <string name="connection_verify_cleanup">无法确认临时标记 %1$s 已删除，本次未保存。请在Komga 服务器的客户端设置中检查并删除此标记。</string>
 </resources>

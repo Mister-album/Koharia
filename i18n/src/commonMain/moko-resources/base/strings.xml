@@ -631,7 +631,7 @@
     <string name="entry_open_page_preview">Page preview</string>
     <string name="entry_open_details">Standard details</string>
     <string name="entry_open_local_single">Local single-file comics</string>
-    <string name="entry_open_komga_book">Komga single books</string>
+    <string name="entry_open_komga_book">Single books</string>
     <string name="local_library_sort_added">Date added</string>
     <string name="local_library_sort_modified">Last modified</string>
     <string name="lanraragi_open_details">Standard details</string>
@@ -1831,4 +1831,19 @@
     <string name="tts_playback_settings">Voice</string>
     <string name="tts_full_settings">All read-aloud settings</string>
     <string name="tts_quick_settings">Back to quick settings</string>
+    <string name="pref_library_columns_dialog_title">Shelf columns</string>
+    <string name="pref_library_columns_all_auto">Automatic for both orientations</string>
+    <string name="pref_library_columns_summary">Portrait: %1$s · Landscape: %2$s</string>
+    <string name="pref_library_columns_auto_hint">Automatic adapts the number of columns to the available width. You can also set each orientation separately.</string>
+    <string name="pref_library_columns_decrease">Fewer columns</string>
+    <string name="pref_library_columns_increase">More columns</string>
+    <string name="page_layout_automatic_double_summary">Narrow windows split wide images. Wide windows show the original spread and pair compatible single pages.</string>
+    <string name="connection_public_address">Server address</string>
+    <string name="connection_internal_address">Local network address</string>
+    <string name="connection_internal_address_summary">Optional. On Wi-Fi, try the local address first and fall back to the server address if unavailable. Leave empty to disable. Both addresses must point to the same service.</string>
+    <string name="connection_address_advanced">Advanced settings</string>
+    <string name="connection_verify_auth_failed">Could not authenticate both addresses. Check that both are reachable and accept the supplied API key. Nothing was saved.</string>
+    <string name="connection_verify_unavailable">Could not verify both addresses. Make sure both are reachable and the credentials allow creating and deleting a temporary verification marker. Nothing was saved.</string>
+    <string name="connection_verify_mismatch">The addresses do not share the same verification marker. Check that they point to the same server and account. Nothing was saved.</string>
+    <string name="connection_verify_cleanup">Could not confirm removal of temporary marker %1$s. Nothing was saved. Check and remove this marker in the Komga server client settings.</string>
 </resources>

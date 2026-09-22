@@ -13,12 +13,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import eu.kanade.domain.manga.model.readerOrientation
-import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
-import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.VerticalPagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import tachiyomi.i18n.MR
@@ -30,19 +28,8 @@ import tachiyomi.presentation.core.util.collectAsState
 import java.text.NumberFormat
 
 @Composable
-internal fun ColumnScope.ReadingModePage(screenModel: ReaderSettingsScreenModel) {
+internal fun ColumnScope.ViewerSettingsPage(screenModel: ReaderSettingsScreenModel) {
     val manga by screenModel.mangaFlow.collectAsState()
-
-    val readingMode = remember(manga) { ReadingMode.fromPreference(manga?.readingMode?.toInt()) }
-    SettingsChipRow(MR.strings.pref_category_reading_mode) {
-        ReadingMode.entries.map {
-            FilterChip(
-                selected = it == readingMode,
-                onClick = { screenModel.onChangeReadingMode(it) },
-                label = { Text(stringResource(it.stringRes)) },
-            )
-        }
-    }
 
     val orientation = remember(manga) { ReaderOrientation.fromPreference(manga?.readerOrientation?.toInt()) }
     SettingsChipRow(MR.strings.rotation_type) {
@@ -142,7 +129,7 @@ private fun ColumnScope.PagerViewerSettings(
                 FilterChip(
                     selected = effectivePageLayout == layout,
                     onClick = {
-                        if (layout != PageLayout.SINGLE_PAGE) {
+                        if (layout != PageLayout.SINGLE_PAGE && layout != PageLayout.AUTOMATIC_DOUBLE_PAGES) {
                             screenModel.preferences.dualPageSplitPaged.set(false)
                         }
                         screenModel.preferences.pageLayout.set(layout.value)
@@ -150,6 +137,14 @@ private fun ColumnScope.PagerViewerSettings(
                     label = { Text(stringResource(ReaderPreferences.PageLayouts[layout.value])) },
                 )
             }
+    }
+    if (pageLayout == PageLayout.AUTOMATIC_DOUBLE_PAGES) {
+        Text(
+            text = stringResource(MR.strings.page_layout_automatic_double_summary),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
     }
     if (supportsDoublePages && pageLayout.usesDoublePages) {
         CheckboxItem(
@@ -170,12 +165,16 @@ private fun ColumnScope.PagerViewerSettings(
         checked = dualPageSplitPaged,
         onClick = {
             val enabled = !dualPageSplitPaged
-            if (enabled) screenModel.preferences.pageLayout.set(PageLayout.SINGLE_PAGE.value)
+            if (enabled && pageLayout != PageLayout.AUTOMATIC_DOUBLE_PAGES) {
+                screenModel.preferences.pageLayout.set(PageLayout.SINGLE_PAGE.value)
+            }
             screenModel.preferences.dualPageSplitPaged.set(enabled)
         },
     )
 
-    if (dualPageSplitPaged || pageLayout.automaticallySplitsWidePages) {
+    if (dualPageSplitPaged || pageLayout.automaticallySplitsWidePages ||
+        pageLayout == PageLayout.AUTOMATIC_DOUBLE_PAGES
+    ) {
         CheckboxItem(
             label = stringResource(MR.strings.pref_dual_page_invert),
             pref = screenModel.preferences.dualPageInvertPaged,

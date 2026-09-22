@@ -112,6 +112,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     /** Physical page that must remain visible while the current spread is rebuilt. */
     private var stableSlotAnchor: ReaderPage? = null
 
+    private var layoutRestoreAnchor: ReaderPage? = null
+
     private var awaitingSlotRebuildAnchor: ReaderPage? = null
 
     private var userDragSelectionPending = false
@@ -279,18 +281,26 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
 
         config.dualPageSplitChangedListener = { enabled ->
-            if (!enabled) {
+            if (!enabled && !config.splitsWidePages) {
                 cleanupPageSplit()
             }
         }
 
         config.doublePageLayoutChangedListener = {
-            pendingProgressCommitAnchor = null
-            val anchor = stableSlotAnchor ?: (currentSlot as? PagerSlot.Pages)?.progressPage
-            if (!config.dualPageSplit && !config.automaticallySplitsWidePages) {
+            val state = configurationState()
+            val selectedAnchor = layoutRestoreAnchor ?: stableSlotAnchor ?: (currentSlot as? PagerSlot.Pages)?.first
+            val anchor = if (!config.splitsWidePages &&
+                selectedAnchor is InsertPage
+            ) {
+                selectedAnchor.parent
+            } else {
+                selectedAnchor
+            }
+            if (!config.splitsWidePages) {
                 pendingPageSplits.clear()
                 adapter.removePageSplitItems()
             }
+            pendingProgressCommitAnchor = anchor.takeIf { state?.commitPending == true }
             requestSlotRebuild(anchor)
         }
 
@@ -316,6 +326,15 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
 
         applyPageTransitionEffect()
+    }
+
+    internal fun configurationState(): PagerLayoutState? {
+        val anchor = layoutRestoreAnchor ?: stableSlotAnchor ?: return null
+        return DoublePageProgressPolicy.layoutState(
+            currentSlot as? PagerSlot.Pages,
+            anchor,
+            pendingProgressCommitAnchor,
+        )
     }
 
     override fun destroy() {
@@ -400,10 +419,19 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                             ?: stableSlotAnchor?.takeIf(slot::contains)
                             ?: slot.first
                     }
+                    layoutRestoreAnchor = DoublePageProgressPolicy.layoutAnchor(
+                        slot = slot,
+                        requestedAnchor = anchor,
+                        previousAnchor = layoutRestoreAnchor,
+                        userNavigation = cause == PageChangeCause.USER_NAVIGATION,
+                        layoutRebuild = cause == PageChangeCause.LAYOUT_REBUILD,
+                    )
                     stableSlotAnchor = selectionAnchor
-                    val commitProgress = !config.doublePages ||
-                        cause == PageChangeCause.USER_NAVIGATION ||
-                        pendingProgressCommitAnchor?.let(slot::contains) == true
+                    val commitProgress = DoublePageProgressPolicy.shouldCommitSelection(
+                        userNavigation = cause == PageChangeCause.USER_NAVIGATION,
+                        restoringSinglePage = cause == PageChangeCause.RESTORE && !config.doublePages,
+                        pendingCommitInSlot = pendingProgressCommitAnchor?.let(slot::contains) == true,
+                    )
                     onReaderPagesSelected(
                         slot = slot,
                         allowPreload = allowPreload,
@@ -536,11 +564,18 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
         // Layout the pager once a chapter is being set
         val firstLayout = pager.isGone
+        val recreationState = if (firstLayout) {
+            activity.viewModel.consumePagerRecreationState(
+                chapters.currChapter,
+            )
+        } else {
+            null
+        }
         if (pager.isGone) {
             logcat { "Pager first layout" }
             val pages = chapters.currChapter.pages ?: return
-            val openingPage = pages[min(chapters.currChapter.requestedPage, pages.lastIndex)]
-            pendingProgressCommitAnchor = null
+            val openingPage = recreationState?.anchor ?: pages[min(chapters.currChapter.requestedPage, pages.lastIndex)]
+            pendingProgressCommitAnchor = openingPage.takeIf { recreationState?.commitPending == true }
             stableSlotAnchor = openingPage
             adapter.positionOf(openingPage)
                 .takeIf { it >= 0 }
@@ -553,7 +588,13 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pendingPageMove = null
         onPageChange(
             position = pager.currentItem,
-            cause = if (firstLayout) PageChangeCause.RESTORE else PageChangeCause.LAYOUT_REBUILD,
+            cause = if (firstLayout &&
+                recreationState == null
+            ) {
+                PageChangeCause.RESTORE
+            } else {
+                PageChangeCause.LAYOUT_REBUILD
+            },
             anchor = stableSlotAnchor,
         )
     }
@@ -691,7 +732,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         if (target in adapter.slots.indices) {
             pendingPageMove = PendingPageMove(
                 position = target,
-                anchor = (adapter.slots[target] as? PagerSlot.Pages)?.progressPage,
+                anchor = (adapter.slots[target] as? PagerSlot.Pages)?.first,
                 cause = PageChangeCause.USER_NAVIGATION,
             )
         }
@@ -956,7 +997,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     fun onPageSplit(currentPage: ReaderPage, newPage: InsertPage) {
         activity.runOnUiThread {
             if (!scope.isActive) return@runOnUiThread
-            if (!config.dualPageSplit && !config.automaticallySplitsWidePages) return@runOnUiThread
+            if (!config.splitsWidePages) return@runOnUiThread
             if (isIdle) {
                 adapter.onPageSplit(currentPage, newPage)
             } else {
@@ -978,7 +1019,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
     }
 
-    internal fun onPagesClassified(classifications: Map<ReaderPage, ReaderPage.SpreadInfo>): Boolean {
+    internal fun onPagesClassified(
+        classifications: Map<ReaderPage, ReaderPage.SpreadInfo>,
+        renderingSlot: PagerSlot.Pages,
+    ): Boolean {
         val selection = DoublePageProgressPolicy.classificationAnchor(
             pendingCommitAnchor = pendingProgressCommitAnchor,
             stableAnchor = stableSlotAnchor,
@@ -993,7 +1037,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         if (!layoutChanged && selection.transfersPendingCommit) {
             pendingProgressCommitAnchor = previousPendingCommitAnchor
         }
-        return layoutChanged
+        // Other pairs can change while this holder is retained and still needs to finish rendering.
+        return layoutChanged && !adapter.isSlotPlanned(renderingSlot)
     }
 
     internal fun onPagesPrepared(slot: PagerSlot.Pages) {

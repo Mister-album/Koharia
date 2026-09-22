@@ -36,6 +36,7 @@ class KomgaSseClient(
     private val sourceIdProvider: () -> Long?,
     private val headersProvider: () -> Headers,
     private val cachedOnlyProvider: () -> Boolean,
+    private val clientProvider: () -> okhttp3.OkHttpClient = { networkHelper.client },
 ) : DefaultLifecycleObserver {
 
     private var appScope: CoroutineScope? = null
@@ -50,14 +51,13 @@ class KomgaSseClient(
     private var progressSyncJob: Job? = null
     private var connectionGeneration = 0L
     private var activeTarget: KomgaSseConnectionTarget? = null
-    private val eventSourceClient by lazy {
+    private val eventSourceClient get() =
         // Keep the shared connection pool/interceptors, but do not apply the ordinary request
         // timeouts to a server-sent event stream that is expected to stay open indefinitely.
-        networkHelper.client.newBuilder()
+        clientProvider().newBuilder()
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .build()
-    }
 
     fun start(scope: CoroutineScope) {
         if (isStarted) return

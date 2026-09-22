@@ -25,9 +25,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import eu.kanade.presentation.components.AdaptiveSheet
+import eu.kanade.presentation.components.TabbedDialog
+import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import koharia.epub.settings.ComicThemePreference
+import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
@@ -70,20 +72,27 @@ fun ComicReaderSettingsContent(
     }
 
     when (activeDialog) {
-        ComicSettingsDialog.READING_MODE -> AdaptiveSheet(onDismissRequest = { activeDialog = null }) {
+        ComicSettingsDialog.READING_MODE -> ReadingModeSelectDialog(
+            onDismissRequest = { activeDialog = null },
+            screenModel = screenModel,
+            onChange = {},
+        )
+        ComicSettingsDialog.MORE -> TabbedDialog(
+            onDismissRequest = { activeDialog = null },
+            tabTitles = persistentListOf(
+                stringResource(MR.strings.pref_category_reader),
+                stringResource(MR.strings.pref_category_general),
+                stringResource(MR.strings.pref_custom_color_filter),
+            ),
+        ) { page ->
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
             ) {
-                ReadingModePage(screenModel)
-            }
-        }
-        ComicSettingsDialog.MORE -> AdaptiveSheet(onDismissRequest = { activeDialog = null }) {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
-            ) {
-                GeneralPage(screenModel)
-                ReaderSettingsGroupDivider()
-                ColorFilterPage(screenModel, showBrightnessAndTheme = false)
+                when (page) {
+                    0 -> ViewerSettingsPage(screenModel)
+                    1 -> GeneralPage(screenModel)
+                    2 -> ColorFilterPage(screenModel, showBrightnessAndTheme = false)
+                }
             }
         }
         null -> Unit

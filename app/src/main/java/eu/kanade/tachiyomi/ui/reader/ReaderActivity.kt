@@ -685,6 +685,11 @@ class ReaderActivity : BaseActivity() {
         val startedAt = SystemClock.uptimeMillis()
         try {
             try {
+                if (isChangingConfigurations) {
+                    viewModel.savePagerRecreationState(
+                        (viewModel.state.value.viewer as? PagerViewer)?.configurationState(),
+                    )
+                }
                 viewModel.state.value.viewer?.destroy()
             } catch (error: Throwable) {
                 CrashDiagnostics.recordNonFatal(this, "reader.viewer.destroy", error)
@@ -1187,6 +1192,9 @@ class ReaderActivity : BaseActivity() {
     private fun updateViewer() {
         val prevViewer = viewModel.state.value.viewer
         val newViewer = ReadingMode.toViewer(effectiveReadingModePreference(), this)
+        if (prevViewer is PagerViewer && newViewer.javaClass == prevViewer.javaClass) {
+            viewModel.savePagerRecreationState(prevViewer.configurationState())
+        }
 
         if (window.sharedElementEnterTransition is MaterialContainerTransform) {
             // Wait until transition is complete to avoid crash on API 26

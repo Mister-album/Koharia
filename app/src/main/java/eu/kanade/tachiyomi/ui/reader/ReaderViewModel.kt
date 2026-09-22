@@ -653,6 +653,20 @@ class ReaderViewModel @JvmOverloads constructor(
         eventChannel.trySend(Event.ReloadViewerChapters)
     }
 
+    private var pagerRecreationState: eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerLayoutState? = null
+
+    fun savePagerRecreationState(state: eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerLayoutState?) {
+        pagerRecreationState = state
+    }
+
+    fun consumePagerRecreationState(
+        chapter: ReaderChapter,
+    ): eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerLayoutState? {
+        val state = pagerRecreationState
+        pagerRecreationState = null
+        return state?.takeIf { it.anchor.chapter === chapter && chapter.pages?.contains(it.anchor) == true }
+    }
+
     fun onViewerLoaded(viewer: Viewer?) {
         mutableState.update {
             it.copy(viewer = viewer)

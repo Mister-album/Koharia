@@ -52,7 +52,8 @@ class KomgaServerSettingsScreen(
     override fun Content() {
         var showHelpDialog by rememberSaveable { mutableStateOf(false) }
         var showUnsavedDialog by rememberSaveable { mutableStateOf(false) }
-        var isSaving by rememberSaveable { mutableStateOf(false) }
+        var isSaving by remember { mutableStateOf(false) }
+        var validationError by remember { mutableStateOf<String?>(null) }
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val basePreferences = remember { Injekt.get<BasePreferences>() }
@@ -90,6 +91,7 @@ class KomgaServerSettingsScreen(
         }
 
         fun onCancel() {
+            if (isSaving) return
             if (deferredDataStore?.hasUnsavedChanges == true) {
                 showUnsavedDialog = true
             } else {
@@ -102,6 +104,7 @@ class KomgaServerSettingsScreen(
             isSaving = true
             scope.launch {
                 try {
+                    deferredDataStore?.let { komgaSource?.verifyServerAddresses(it) }
                     val currentName = serverPreferences.getProfiles()
                         .find { it.id == sourceId }
                         ?.name
@@ -127,6 +130,8 @@ class KomgaServerSettingsScreen(
                     } else {
                         navigator.pop()
                     }
+                } catch (error: koharia.connection.ConnectionAddressVerification.Failure) {
+                    validationError = error.userMessage(context)
                 } finally {
                     isSaving = false
                 }
@@ -137,8 +142,21 @@ class KomgaServerSettingsScreen(
             onCancel()
         }
 
+        validationError?.let { message ->
+            AlertDialog(
+                onDismissRequest = { validationError = null },
+                text = { Text(message) },
+                confirmButton = {
+                    TextButton(onClick = { validationError = null }) {
+                        Text(stringResource(MR.strings.action_ok))
+                    }
+                },
+            )
+        }
+
         SourcePreferencesScreen(
             sourceId = sourceId,
+            preferencesEnabled = !isSaving,
             titleOverride = titleOverride ?: stringResource(MR.strings.pref_komga_server),
             navigateUpOverride = { onCancel() },
             actions = {

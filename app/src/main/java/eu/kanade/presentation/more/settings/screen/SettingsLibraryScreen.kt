@@ -1,11 +1,33 @@
 package eu.kanade.presentation.more.settings.screen
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
@@ -14,6 +36,7 @@ import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionRegistry
 import koharia.connection.EntryOpenMode
 import koharia.connection.EntryOpenPreferences
+import koharia.source.komga.KomgaConnectionProvider
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -52,9 +75,12 @@ object SettingsLibraryScreen : SearchableSettings {
             ?.connectionLibrarySettings()
             .orEmpty()
 
-        return providerSettings + listOf(
+        return providerSettings + listOfNotNull(
             getDisplayGroup(libraryPreferences),
-            getEntryOpeningGroup(),
+            getEntryOpeningGroup(
+                isLocal = activeConnectionId == ConnectionPreferences.LOCAL_CONNECTION_ID,
+                isKomga = activeProvider?.id == KomgaConnectionProvider.ID,
+            ),
             getChapterSettingsGroup(libraryPreferences),
             getGlobalUpdateGroup(libraryPreferences),
             getBehaviorGroup(libraryPreferences),
@@ -62,7 +88,8 @@ object SettingsLibraryScreen : SearchableSettings {
     }
 
     @Composable
-    private fun getEntryOpeningGroup(): Preference.PreferenceGroup {
+    private fun getEntryOpeningGroup(isLocal: Boolean, isKomga: Boolean): Preference.PreferenceGroup? {
+        if (!isLocal && !isKomga) return null
         val preferences = remember { Injekt.get<EntryOpenPreferences>() }
         val entries = persistentMapOf(
             EntryOpenMode.READER.name to stringResource(MR.strings.entry_open_reader),
@@ -73,14 +100,11 @@ object SettingsLibraryScreen : SearchableSettings {
             title = stringResource(MR.strings.entry_open_group),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.ListPreference(
-                    preference = preferences.localSingleComic,
+                    preference = if (isLocal) preferences.localSingleComic else preferences.komgaSingleBook,
                     entries = entries,
-                    title = stringResource(MR.strings.entry_open_local_single),
-                ),
-                Preference.PreferenceItem.ListPreference(
-                    preference = preferences.komgaSingleBook,
-                    entries = entries,
-                    title = stringResource(MR.strings.entry_open_komga_book),
+                    title = stringResource(
+                        if (isLocal) MR.strings.entry_open_local_single else MR.strings.entry_open_komga_book,
+                    ),
                 ),
             ),
         )
@@ -92,23 +116,35 @@ object SettingsLibraryScreen : SearchableSettings {
     ): Preference.PreferenceGroup {
         val portraitColumns by libraryPreferences.portraitColumns.collectAsState()
         val landscapeColumns by libraryPreferences.landscapeColumns.collectAsState()
+        var showColumnsDialog by rememberSaveable { mutableStateOf(false) }
+        if (showColumnsDialog) {
+            LibraryColumnsDialog(
+                portraitColumns = portraitColumns,
+                landscapeColumns = landscapeColumns,
+                onDismiss = { showColumnsDialog = false },
+                onSave = { portrait, landscape ->
+                    libraryPreferences.portraitColumns.set(portrait)
+                    libraryPreferences.landscapeColumns.set(landscape)
+                    showColumnsDialog = false
+                },
+            )
+        }
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_category_display),
             preferenceItems = persistentListOf(
-                Preference.PreferenceItem.SliderPreference(
-                    value = portraitColumns.coerceIn(LibraryColumnsRange),
-                    title = stringResource(MR.strings.pref_library_columns_portrait),
-                    valueString = libraryColumnsValueString(portraitColumns),
-                    valueRange = LibraryColumnsRange,
-                    onValueChanged = libraryPreferences.portraitColumns::set,
-                ),
-                Preference.PreferenceItem.SliderPreference(
-                    value = landscapeColumns.coerceIn(LibraryColumnsRange),
-                    title = stringResource(MR.strings.pref_library_columns_landscape),
-                    valueString = libraryColumnsValueString(landscapeColumns),
-                    valueRange = LibraryColumnsRange,
-                    onValueChanged = libraryPreferences.landscapeColumns::set,
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_library_columns_dialog_title),
+                    subtitle = if (portraitColumns == 0 && landscapeColumns == 0) {
+                        stringResource(MR.strings.pref_library_columns_all_auto)
+                    } else {
+                        stringResource(
+                            MR.strings.pref_library_columns_summary,
+                            libraryColumnsValueString(portraitColumns),
+                            libraryColumnsValueString(landscapeColumns),
+                        )
+                    },
+                    onClick = { showColumnsDialog = true },
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = libraryPreferences.showLibraryReadProgress,
@@ -291,5 +327,68 @@ private fun libraryColumnsValueString(columns: Int): String {
         columns.toString()
     } else {
         stringResource(MR.strings.label_auto)
+    }
+}
+
+@Composable
+private fun LibraryColumnsDialog(
+    portraitColumns: Int,
+    landscapeColumns: Int,
+    onDismiss: () -> Unit,
+    onSave: (Int, Int) -> Unit,
+) {
+    var portrait by rememberSaveable { mutableIntStateOf(portraitColumns.coerceIn(LibraryColumnsRange)) }
+    var landscape by rememberSaveable { mutableIntStateOf(landscapeColumns.coerceIn(LibraryColumnsRange)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(MR.strings.pref_library_columns_dialog_title)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    stringResource(MR.strings.pref_library_columns_auto_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LibraryColumnsRow(stringResource(MR.strings.pref_library_columns_portrait), portrait) { portrait = it }
+                LibraryColumnsRow(stringResource(MR.strings.pref_library_columns_landscape), landscape) {
+                    landscape = it
+                }
+                TextButton(onClick = {
+                    portrait = 0
+                    landscape = 0
+                }, enabled = portrait != 0 || landscape != 0) {
+                    Text(stringResource(MR.strings.pref_library_columns_all_auto))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(portrait, landscape) }) { Text(stringResource(MR.strings.action_save)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(MR.strings.action_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun LibraryColumnsRow(title: String, value: Int, onChange: (Int) -> Unit) {
+    Column {
+        Text(title, style = MaterialTheme.typography.bodyMedium)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            IconButton(onClick = { onChange(value - 1) }, enabled = value > LibraryColumnsRange.first) {
+                Icon(Icons.Outlined.Remove, stringResource(MR.strings.pref_library_columns_decrease))
+            }
+            Text(libraryColumnsValueString(value), style = MaterialTheme.typography.titleMedium)
+            IconButton(onClick = { onChange(value + 1) }, enabled = value < LibraryColumnsRange.last) {
+                Icon(Icons.Outlined.Add, stringResource(MR.strings.pref_library_columns_increase))
+            }
+        }
     }
 }

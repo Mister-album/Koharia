@@ -2,6 +2,7 @@ package koharia.lanraragi
 
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.network.await
+import koharia.connection.ConnectionAddressRouter
 import koharia.domain.lanraragi.LanraragiEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -80,6 +81,7 @@ class LanraragiApi(
     networkClient: OkHttpClient,
     private val json: Json,
     diagnosticConnectionId: Long? = null,
+    private val addressRouter: ConnectionAddressRouter? = null,
 ) {
     val base: HttpUrl = normalizeBase(baseUrl)
 
@@ -89,7 +91,9 @@ class LanraragiApi(
         .dispatcher(Dispatcher())
         .dns(Dns.SYSTEM)
         .addNetworkInterceptor { chain ->
-            if (!owns(chain.request().url)) throw LanraragiException(LanraragiException.Reason.ADDRESS)
+            if (!owns(chain.request().url) && addressRouter?.ownsInternal(chain.request().url) != true) {
+                throw LanraragiException(LanraragiException.Reason.ADDRESS)
+            }
             chain.proceed(chain.request())
         }
         .addInterceptor { chain ->
@@ -102,6 +106,10 @@ class LanraragiApi(
         }
 
     init {
+        addressRouter?.let {
+            clientBuilder.addInterceptor(it)
+                .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard)
+        }
         if (BuildConfig.LANRARAGI_DIAGNOSTICS) {
             val inheritedFactory = networkClient.eventListenerFactory
             clientBuilder.eventListenerFactory { call ->
@@ -137,15 +145,17 @@ class LanraragiApi(
 
     fun request(path: String): Request = Request.Builder().url(url(path)).build()
 
-    fun imageUrl(path: String): String {
+    fun imageUrl(resourcePath: String): String {
+        val path = addressRouter?.canonicalResourcePath(resourcePath) ?: resourcePath
         val candidate = when {
             path.startsWith("http://") || path.startsWith("https://") -> path.toHttpUrl()
             path.startsWith(base.encodedPath.trimEnd('/') + "/") && base.encodedPath != "/" -> base.resolve(path)
             path.startsWith("/api/") -> base.resolve(path.removePrefix("/"))
             else -> base.resolve(path)
         } ?: throw LanraragiException(LanraragiException.Reason.ADDRESS)
-        if (!owns(candidate)) throw LanraragiException(LanraragiException.Reason.ADDRESS)
-        return candidate.toString()
+        val canonical = addressRouter?.canonicalUrl(candidate) ?: candidate
+        if (!owns(canonical)) throw LanraragiException(LanraragiException.Reason.ADDRESS)
+        return canonical.toString()
     }
 
     private fun owns(url: HttpUrl): Boolean =

@@ -11,7 +11,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import org.readium.r2.shared.util.Try
-import org.readium.r2.shared.util.http.DefaultHttpClient
 import org.readium.r2.shared.util.http.HttpClient
 import org.readium.r2.shared.util.http.HttpError
 import org.readium.r2.shared.util.http.HttpRequest
@@ -26,7 +25,6 @@ import uy.kohesive.injekt.api.get
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 class KomgaReadiumHttpClient(
     private val sourceManager: SourceManager = Injekt.get(),
@@ -34,8 +32,7 @@ class KomgaReadiumHttpClient(
     private val epubCacheManager: EpubCacheManager = Injekt.get(),
 ) {
 
-    private val requestLogCount = AtomicInteger(0)
-    private val clients = ConcurrentHashMap<Long, DefaultHttpClient>()
+    private val clients = ConcurrentHashMap<Long, HttpClient>()
 
     suspend fun cachedResource(
         sourceId: Long,
@@ -70,31 +67,9 @@ class KomgaReadiumHttpClient(
         }
     }
 
-    private fun createClient(sourceId: Long): DefaultHttpClient {
-        return DefaultHttpClient().apply {
-            callback = object : DefaultHttpClient.Callback {
-                override suspend fun onStartRequest(request: HttpRequest) = Try.success(
-                    request.copy {
-                        val source = sourceManager.get(sourceId) as? KomgaSource
-                        val baseUrl = source?.baseUrl?.trimEnd('/').orEmpty()
-                        val shouldInjectHeaders = baseUrl.isNotEmpty() &&
-                            request.url.toString().startsWith(baseUrl)
-                        source?.currentReadiumHeaders()
-                            .takeIf { shouldInjectHeaders }
-                            ?.let { headers ->
-                                headers.names().forEach { name ->
-                                    setHeader(name, headers.values(name))
-                                }
-                            }
-
-                        if (requestLogCount.getAndIncrement() < 20) {
-                            logcat(LogPriority.DEBUG) {
-                                "EPUB http request url=${request.url} injectHeaders=$shouldInjectHeaders baseUrl=$baseUrl"
-                            }
-                        }
-                    },
-                )
-            }
+    private fun createClient(sourceId: Long): HttpClient = KomgaReadiumTransport {
+        (sourceManager.get(sourceId) as? KomgaSource)?.let {
+            KomgaReadiumTransport.Connection(it.baseUrl, it.client, it.currentReadiumHeaders())
         }
     }
 }

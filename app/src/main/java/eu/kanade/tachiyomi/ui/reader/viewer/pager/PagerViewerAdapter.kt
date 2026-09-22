@@ -79,6 +79,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
     }
 
     override fun getItemPosition(view: Any): Int {
+        if (view is PagerPageHolder && view.renderedLayout != viewer.config.resolvedLayout) return POSITION_NONE
         if (view is PositionableView) {
             val position = when (val item = view.item) {
                 is PagerSlot -> slots.indexOf(item)
@@ -193,6 +194,8 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         flushSegment()
         return result
     }
+
+    fun isSlotPlanned(slot: PagerSlot.Pages): Boolean = slot in resolvedSlots()
 
     private fun resolvedSlots(): List<PagerSlot> {
         val forwardSlots = if (viewer.config.doublePages) buildDoublePageSlots() else buildSinglePageSlots()

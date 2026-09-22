@@ -85,5 +85,86 @@ class DoublePageProgressPolicyTest {
         assertSame(replacement, displayPage)
     }
 
+    @Test
+    fun `new spread restores its first logical page without changing the progress page`() {
+        val first = page(4)
+        val second = page(5)
+        val slot = PagerSlot.Pages(first, second)
+        val anchor = DoublePageProgressPolicy.layoutAnchor(slot, null, page(3), userNavigation = true)
+        assertSame(first, anchor)
+        assertSame(second, slot.progressPage)
+    }
+
+    @Test
+    fun `rotation round trip preserves an explicitly selected second page`() {
+        val first = page(4)
+        val second = page(5)
+        val pair = PagerSlot.Pages(first, second)
+        val landscape = DoublePageProgressPolicy.layoutAnchor(pair, second, null, userNavigation = false)
+        val portrait = DoublePageProgressPolicy.layoutAnchor(
+            PagerSlot.Pages(second),
+            landscape,
+            null,
+            userNavigation = false,
+        )
+        assertSame(second, portrait)
+        assertSame(second, DoublePageProgressPolicy.layoutAnchor(pair, second, first, userNavigation = true))
+    }
+
+    @Test
+    fun `layout changes do not commit progress but classified user navigation still does`() {
+        assertFalse(DoublePageProgressPolicy.shouldCommitSelection(false, false, false))
+        assertTrue(DoublePageProgressPolicy.shouldCommitSelection(true, false, false))
+        assertTrue(DoublePageProgressPolicy.shouldCommitSelection(false, true, false))
+        assertTrue(DoublePageProgressPolicy.shouldCommitSelection(false, false, true))
+    }
+
+    @Test
+    fun `background classification preserves the visible spread reading anchor`() {
+        val first = page(4)
+        val second = page(5)
+        assertSame(
+            first,
+            DoublePageProgressPolicy.layoutAnchor(
+                PagerSlot.Pages(first, second),
+                second,
+                first,
+                userNavigation = false,
+                layoutRebuild = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `pending spread navigation follows first page into single page layout`() {
+        val first = page(4)
+        val second = page(5)
+        val pending = DoublePageProgressPolicy.layoutState(PagerSlot.Pages(first, second), first, second)
+        val rebuilt = PagerSlot.Pages(pending.anchor)
+        assertSame(first, pending.anchor)
+        assertTrue(
+            DoublePageProgressPolicy.shouldCommitSelection(
+                userNavigation = false,
+                restoringSinglePage = false,
+                pendingCommitInSlot = pending.commitPending && rebuilt.contains(pending.anchor),
+            ),
+        )
+    }
+
+    @Test
+    fun `recreating a committed spread does not advance progress`() {
+        val first = page(4)
+        val state = DoublePageProgressPolicy.layoutState(PagerSlot.Pages(first, page(5)), first, null)
+        assertFalse(state.commitPending)
+        assertSame(first, state.anchor)
+    }
+
+    @Test
+    fun `layout state does not transfer pending navigation from another slot`() {
+        val first = page(4)
+        val state = DoublePageProgressPolicy.layoutState(PagerSlot.Pages(first, page(5)), first, page(3))
+        assertFalse(state.commitPending)
+    }
+
     private fun page(index: Int) = ReaderPage(index, "page-$index", null)
 }

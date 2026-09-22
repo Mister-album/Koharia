@@ -14,6 +14,7 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -55,8 +56,33 @@ class PagerSplitDeviceTest {
         automatic = true,
     )
 
-    private fun verify(mode: ReadingMode, automatic: Boolean = false) = runBlocking(Dispatchers.IO) {
+    @Test
+    fun automaticDoubleRestoresWholeWideImagesAcrossRotation() = verify(
+        ReadingMode.RIGHT_TO_LEFT,
+        rotateAutomaticDouble = true,
+    )
+
+    @Test
+    fun automaticDoubleRestoresWholeWideImagesAcrossRotationLeftToRight() = verify(
+        ReadingMode.LEFT_TO_RIGHT,
+        rotateAutomaticDouble = true,
+    )
+
+    @Test
+    fun manualDoublePageSwitchKeepsWideFirstPageRenderedWhenOtherPairsChange() = verify(
+        ReadingMode.RIGHT_TO_LEFT,
+        rotateAutomaticDouble = true,
+        manualShiftSwitch = true,
+    )
+
+    private fun verify(
+        mode: ReadingMode,
+        automatic: Boolean = false,
+        rotateAutomaticDouble: Boolean = false,
+        manualShiftSwitch: Boolean = false,
+    ) = runBlocking(Dispatchers.IO) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName == "app.koharia.dev.devicefixture")
         val connections = Injekt.get<ConnectionPreferences>()
         val previousProfiles = connections.getProfiles()
         val previousActiveConnection = connections.activeConnectionId.get()
@@ -82,15 +108,22 @@ class PagerSplitDeviceTest {
             }
             check(Injekt.get<SourceManager>().get(sourceId) != null)
             override(preferences.persistReaderSettingsChanges, false)
-            override(preferences.dualPageSplitPaged, !automatic)
+            override(preferences.dualPageSplitPaged, !automatic && !manualShiftSwitch)
             override(preferences.dualPageInvertPaged, false)
+            override(preferences.shiftDoublePages, manualShiftSwitch)
+            override(preferences.invertDoublePages, false)
             override(preferences.dualPageRotateToFit, false)
             override(
                 preferences.pageLayout,
-                if (automatic) PageLayout.AUTOMATIC_SINGLE_PAGE.value else PageLayout.SINGLE_PAGE.value,
+                when {
+                    manualShiftSwitch -> PageLayout.SINGLE_PAGE.value
+                    rotateAutomaticDouble -> PageLayout.AUTOMATIC_DOUBLE_PAGES.value
+                    automatic -> PageLayout.AUTOMATIC_SINGLE_PAGE.value
+                    else -> PageLayout.SINGLE_PAGE.value
+                },
             )
             override(preferences.pagerPageTransitionEffect, 0)
-            override(preferences.navigateToPan, true)
+            override(preferences.navigateToPan, !rotateAutomaticDouble)
             override(preferences.landscapeZoom, true)
             val preferredScale = if (automatic) {
                 SubsamplingScaleImageView.SCALE_TYPE_FIT_HEIGHT
@@ -101,7 +134,13 @@ class PagerSplitDeviceTest {
             val comic = File(directory, "split-test.cbz")
             ZipOutputStream(comic.outputStream()).use { zip ->
                 repeat(6) { index ->
-                    val width = if (index % 2 == 0) 1200 else 3600
+                    val width = if (rotateAutomaticDouble && index > 0) {
+                        300
+                    } else if (index % 2 == 0) {
+                        1200
+                    } else {
+                        3600
+                    }
                     val image = Bitmap.createBitmap(width, 600, Bitmap.Config.ARGB_8888)
                     val canvas = Canvas(image)
                     canvas.drawColor(Color.rgb(30 + index * 30, 60, 140))
@@ -143,9 +182,59 @@ class PagerSplitDeviceTest {
                 ),
             ).single()
             val intent = ReaderActivity.newIntent(context, manga.id, chapter.id, sourceId, pageIndex = 0)
-            repeat(if (automatic) 1 else 2) {
+            repeat(if (automatic || rotateAutomaticDouble) 1 else 2) {
                 ActivityScenario.launch<ReaderActivity>(intent).use { scenario ->
+                    if (manualShiftSwitch) {
+                        awaitLogicalSlot(scenario, 0, null)
+                        repeat(3) {
+                            scenario.onActivity { activity ->
+                                checkNotNull(activity.viewModel.state.value.viewerChapters?.currChapter?.pages)
+                                    .forEach { it.spreadInfo = ReaderPage.SpreadInfo.UNKNOWN }
+                                activity.readerPreferences.pageLayout.set(PageLayout.DOUBLE_PAGES.value)
+                            }
+                            awaitManualLayout(scenario, doublePages = true)
+                            scenario.onActivity { activity ->
+                                val slots = adapter(activity.viewModel.state.value.viewer as PagerViewer)
+                                    .slots.filterIsInstance<PagerSlot.Pages>()
+                                assertTrue(slots.any { it.first.index == 0 && it.second == null })
+                                assertTrue(slots.any { it.first.index == 1 && it.second == null })
+                                assertTrue(slots.any { it.first.index == 2 && it.second?.index == 3 })
+                                activity.readerPreferences.pageLayout.set(PageLayout.SINGLE_PAGE.value)
+                            }
+                            awaitManualLayout(scenario, doublePages = false)
+                        }
+                        return@use
+                    }
                     awaitHalf(scenario, 0)
+                    if (rotateAutomaticDouble) {
+                        scenario.onActivity { activity ->
+                            (activity.viewModel.state.value.viewer as PagerViewer).moveToNext()
+                        }
+                        awaitHalf(scenario, 1)
+                        scenario.onActivity { it.viewModel.setMangaOrientationType(ReaderOrientation.LOCKED_LANDSCAPE) }
+                        awaitWholeWidePage(scenario)
+                        scenario.onActivity { it.viewModel.setMangaOrientationType(ReaderOrientation.LOCKED_PORTRAIT) }
+                        awaitHalf(scenario, 0)
+                        scenario.onActivity { it.viewModel.setMangaOrientationType(ReaderOrientation.LOCKED_LANDSCAPE) }
+                        awaitWholeWidePage(scenario)
+                        scenario.onActivity { (it.viewModel.state.value.viewer as PagerViewer).moveToNext() }
+                        awaitLogicalSlot(scenario, 1, null)
+                        scenario.onActivity { (it.viewModel.state.value.viewer as PagerViewer).moveToNext() }
+                        awaitLogicalSlot(scenario, 2, 3)
+                        scenario.onActivity { activity ->
+                            assertEquals(3, activity.viewModel.state.value.viewerChapters?.currChapter?.requestedPage)
+                            activity.viewModel.setMangaOrientationType(ReaderOrientation.LOCKED_PORTRAIT)
+                        }
+                        awaitHalf(scenario, 4)
+                        scenario.onActivity { activity ->
+                            assertEquals(
+                                "Rotation must not rewind committed reading progress",
+                                3,
+                                activity.viewModel.state.value.viewerChapters?.currChapter?.requestedPage,
+                            )
+                        }
+                        return@use
+                    }
                     scenario.onActivity { activity ->
                         val viewer = activity.viewModel.state.value.viewer as PagerViewer
                         val adapter = adapter(viewer)
@@ -216,16 +305,111 @@ class PagerSplitDeviceTest {
         }
     }
 
+    private fun awaitManualLayout(scenario: ActivityScenario<ReaderActivity>, doublePages: Boolean) {
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        var stableSince = 0L
+        while (SystemClock.uptimeMillis() < deadline) {
+            var ready = false
+            scenario.onActivity { activity ->
+                val viewer = activity.viewModel.state.value.viewer as? PagerViewer ?: return@onActivity
+                val slot = adapter(viewer).currentSlot() as? PagerSlot.Pages ?: return@onActivity
+                ready = viewer.config.doublePages == doublePages && slot.first.index == 0 && slot.second == null &&
+                    viewer.pager.children.filterIsInstance<PagerPageHolder>().any { holder ->
+                        holder.slot == slot && holder.renderedLayout == viewer.config.resolvedLayout &&
+                            holder.isTransitionTargetReady() &&
+                            holder.children.filterIsInstance<SubsamplingScaleImageView>().any {
+                                it.sWidth == 1200 && it.sHeight == 600
+                            }
+                    }
+            }
+            if (ready) {
+                if (stableSince == 0L) stableSince = SystemClock.uptimeMillis()
+                if (SystemClock.uptimeMillis() - stableSince > 500) return
+            } else {
+                stableSince = 0L
+            }
+            SystemClock.sleep(25)
+        }
+        assertTrue("Manual layout switch must finish drawing the retained wide page; double=$doublePages", false)
+    }
+
+    private fun awaitLogicalSlot(scenario: ActivityScenario<ReaderActivity>, first: Int, second: Int?) {
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        var stableSince = 0L
+        while (SystemClock.uptimeMillis() < deadline) {
+            var ready = false
+            scenario.onActivity { activity ->
+                val viewer = activity.viewModel.state.value.viewer as? PagerViewer ?: return@onActivity
+                val slot = adapter(viewer).currentSlot() as? PagerSlot.Pages ?: return@onActivity
+                ready = slot.first.index == first && slot.second?.index == second &&
+                    viewer.pager.children.filterIsInstance<PagerPageHolder>().any {
+                        it.slot == slot && it.isTransitionTargetReady()
+                    }
+            }
+            if (ready) {
+                if (stableSince == 0L) stableSince = SystemClock.uptimeMillis()
+                if (SystemClock.uptimeMillis() - stableSince > 500) return
+            } else {
+                stableSince = 0L
+            }
+            SystemClock.sleep(25)
+        }
+        assertTrue("Expected stable logical slot $first/$second", false)
+    }
+
+    private fun awaitWholeWidePage(scenario: ActivityScenario<ReaderActivity>) {
+        val deadline = SystemClock.uptimeMillis() + 15_000
+        var readySince = 0L
+        while (SystemClock.uptimeMillis() < deadline) {
+            var ready = false
+            scenario.onActivity { activity ->
+                val viewer = activity.viewModel.state.value.viewer as? PagerViewer ?: return@onActivity
+                val adapter = adapter(viewer)
+                val slot = adapter.currentSlot() as? PagerSlot.Pages ?: return@onActivity
+                ready = viewer.config.doublePages && !viewer.config.splitsWidePages && slot.first.index == 0 &&
+                    slot.first !is InsertPage && slot.second == null &&
+                    adapter.slots.filterIsInstance<PagerSlot.Pages>().none {
+                        it.first is InsertPage ||
+                            it.second is InsertPage
+                    } &&
+                    viewer.pager.children.filterIsInstance<PagerPageHolder>().any { holder ->
+                        holder.slot == slot && holder.isTransitionTargetReady() &&
+                            holder.children.filterIsInstance<SubsamplingScaleImageView>().any {
+                                it.sWidth == 1200 && it.sHeight == 600
+                            }
+                    }
+            }
+            if (ready) {
+                if (readySince == 0L) readySince = SystemClock.uptimeMillis()
+                if (SystemClock.uptimeMillis() - readySince > 500) return
+            } else {
+                readySince = 0
+            }
+            SystemClock.sleep(25)
+        }
+        assertTrue("Landscape must display the whole original wide page without inserted halves", false)
+    }
+
     private fun awaitHalf(scenario: ActivityScenario<ReaderActivity>, expected: Int) {
         val deadline = SystemClock.uptimeMillis() + 10_000
         var stableSince = 0L
         var actual: Int? = null
+        var diagnostic = ""
         while (SystemClock.uptimeMillis() < deadline) {
             var ready = false
             scenario.onActivity { activity ->
                 val viewer = activity.viewModel.state.value.viewer as? PagerViewer ?: return@onActivity
                 val slot = adapter(viewer).currentSlot() as? PagerSlot.Pages ?: return@onActivity
                 actual = slot.first.index * 2 + if (slot.first is InsertPage) 1 else 0
+                diagnostic = "double=${viewer.config.doublePages}, split=${viewer.config.splitsWidePages}, " +
+                    "viewport=${viewer.pager.width}x${viewer.pager.height}, holders=" +
+                    viewer.pager.children.filterIsInstance<PagerPageHolder>().joinToString { holder ->
+                        val image = holder.children.filterIsInstance<SubsamplingScaleImageView>().firstOrNull()
+                        "${holder.slot.first.index}/${holder.slot.first is InsertPage}:" +
+                            "ready=${holder.isTransitionTargetReady()},selected=${holder.slot == slot}," +
+                            "size=${image?.sWidth}x${image?.sHeight},scale=${image?.scale}/${image?.minScale}," +
+                            "pan=${holder.canNavigatePanLeft()}/${holder.canNavigatePanRight()}"
+                    }
                 ready = viewer.pager.children.filterIsInstance<PagerPageHolder>()
                     .any { holder ->
                         val image = holder.children.filterIsInstance<SubsamplingScaleImageView>().firstOrNull()
@@ -243,7 +427,7 @@ class PagerSplitDeviceTest {
             }
             SystemClock.sleep(25)
         }
-        assertTrue("Expected half $expected to remain ready; actual=$actual", false)
+        assertTrue("Expected half $expected to remain ready; actual=$actual; $diagnostic", false)
     }
 
     private fun verifyZoomAndReset(scenario: ActivityScenario<ReaderActivity>, mode: ReadingMode) {
