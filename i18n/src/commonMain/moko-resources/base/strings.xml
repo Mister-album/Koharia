@@ -1846,4 +1846,24 @@
     <string name="connection_verify_unavailable">Could not verify both addresses. Make sure both are reachable and the credentials allow creating and deleting a temporary verification marker. Nothing was saved.</string>
     <string name="connection_verify_mismatch">The addresses do not share the same verification marker. Check that they point to the same server and account. Nothing was saved.</string>
     <string name="connection_verify_cleanup">Could not confirm removal of temporary marker %1$s. Nothing was saved. Check and remove this marker in the Komga server client settings.</string>
+    <string name="connection_refresh">Refresh library</string>
+    <string name="smanga_setup_help">Connect to smanga 4.3 with your username and password. OPDS must be enabled. Enter the server URL, including any reverse-proxy path; an /api suffix is also accepted.</string>
+    <string name="smanga_error_connection">Could not connect to smanga. Check the server address and try again.</string>
+    <string name="smanga_error_request">Could not load content from smanga. Try again or check the connection settings.</string>
+    <string name="smanga_error_server">The smanga server could not process this request. Please try again later.</string>
+    <string name="smanga_error_timeout">The smanga request timed out. Check your connection and try again.</string>
+    <string name="smanga_error_auth">smanga rejected these credentials. Check your username and password.</string>
+    <string name="smanga_error_opds">smanga OPDS is unavailable. Enable OPDS on the server before saving this connection.</string>
+    <string name="smanga_error_permission">This smanga account does not have permission to access this resource.</string>
+    <string name="smanga_error_missing">The file is missing or no longer accessible on smanga.</string>
+    <string name="smanga_error_preparing">smanga is still extracting this chapter. Check the server extraction task, then retry.</string>
+    <string name="smanga_error_protocol">The smanga response is incomplete or incompatible with this app.</string>
+    <string name="smanga_cache_incomplete">The requested shelf is unavailable. Cached results may be incomplete; retry online or open downloaded content.</string>
+    <string name="smanga_media">Media library</string>
+    <string name="smanga_sort_name">Name</string>
+    <string name="smanga_sort_updated">Updated date</string>
+    <string name="smanga_sort_created">Added date</string>
+    <string name="smanga_descending">Descending order</string>
+    <string name="smanga_downloaded">Downloaded content in this connection</string>
+    <string name="reader_remote_mapping_message">The page order or page count has changed. Positions cannot be matched automatically. Local: page %1$d of %2$d (%3$d%%). Server: page %4$d of %5$d (%6$d%%). Confirm which position to use; an unavailable server page cannot be selected.</string>
 </resources>

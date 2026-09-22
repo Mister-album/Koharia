@@ -1,4 +1,4 @@
-package koharia.lanraragi
+package koharia.connection
 
 import android.content.Context
 import android.net.ConnectivityManager
@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** One process-wide callback, rather than consuming an Android network request for every library. */
-class LanraragiNetworkMonitor(context: Context) {
+class ConnectionNetworkMonitor(context: Context) {
     private val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
     private val connected = MutableStateFlow(connectivity.activeNetwork != null)
     val available = connected.asStateFlow()

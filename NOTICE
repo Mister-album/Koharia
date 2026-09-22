@@ -21,3 +21,4 @@ Names of upstream projects are used in this repository only to identify origin, 
 
 Additional third-party components:
 - djvu-rs 0.30.0 scalar WASM decoder, MIT License, executed by Android WebView/V8, https://github.com/matyushkin/djvu-rs
+- smanga compact logo, by lkw199711 and smanga contributors, from src/assets/logo2.png at e18b39cef5ef51f58ed99f8ae00a7fc15ee14bdf, https://github.com/lkw199711/smanga. The image is included unchanged; the upstream GPL-2.0 license is retained in app/src/main/assets/licenses/smanga-logo-GPL-2.0.txt.

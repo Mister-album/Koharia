@@ -142,7 +142,10 @@ class MangaScreen(
             }.takeIf { mangaBehavior.allowsLocalLibraryManagement },
             onWebViewClicked = null,
             onWebViewLongClicked = null,
-            onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
+            onTagSearch = { tag: String ->
+                scope.launch { performGenreSearch(navigator, tag, screenModel.source!!) }
+                Unit
+            }.takeIf { mangaBehavior.allowsTagSearch },
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onChapterCoverDisplayModeChange = screenModel::setChapterCoverDisplayMode,
             onRefresh = screenModel::fetchAllFromSource,

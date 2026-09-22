@@ -1,16 +1,13 @@
 package koharia.source.lanraragi
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material3.AlertDialog
@@ -48,6 +45,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.network.NetworkHelper
 import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionProfileManager
+import koharia.connection.ui.ConnectionAddressSetting
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.domain.lanraragi.LanraragiRepository
 import koharia.lanraragi.LanraragiApi
@@ -260,7 +258,7 @@ class LanraragiSettingsScreen(
                         hint = stringResource(MR.strings.lanraragi_name_help),
                         valid = { it.isNotBlank() },
                     ) { name = it.trim() }
-                    LanraragiAddressSetting(
+                    ConnectionAddressSetting(
                         publicAddress = address,
                         internalAddress = internalAddress,
                         enabled = !busy,
@@ -376,85 +374,6 @@ class LanraragiSettingsScreen(
                 },
             )
         }
-    }
-}
-
-@Composable
-private fun LanraragiAddressSetting(
-    publicAddress: String,
-    internalAddress: String,
-    enabled: Boolean,
-    onConfirm: (String, String) -> Unit,
-) {
-    var showDialog by rememberSaveable { mutableStateOf(false) }
-    TextPreferenceWidget(
-        title = stringResource(MR.strings.lanraragi_address),
-        subtitle = publicAddress.ifBlank { stringResource(MR.strings.lanraragi_error_address) },
-        enabled = enabled,
-        onPreferenceClick = { showDialog = true },
-    )
-    if (showDialog) {
-        var publicDraft by rememberSaveable { mutableStateOf(publicAddress) }
-        var internalDraft by rememberSaveable { mutableStateOf(internalAddress) }
-        var advancedExpanded by rememberSaveable { mutableStateOf(false) }
-        val validPublic = ConnectionAddressRouter.normalize(publicDraft) != null
-        val validInternal = internalDraft.isBlank() || ConnectionAddressRouter.normalize(internalDraft) != null
-        AlertDialog(
-            onDismissRequest = { showDialog = false },
-            title = { Text(stringResource(MR.strings.lanraragi_address)) },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    OutlinedTextField(
-                        value = publicDraft,
-                        onValueChange = { publicDraft = it },
-                        label = { Text(stringResource(MR.strings.connection_public_address)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        isError = publicDraft.isNotBlank() && !validPublic,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    )
-                    TextButton(
-                        onClick = { advancedExpanded = !advancedExpanded },
-                        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
-                            contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
-                        ),
-                    ) {
-                        Text(stringResource(MR.strings.connection_address_advanced))
-                    }
-                    if (advancedExpanded) {
-                        OutlinedTextField(
-                            value = internalDraft,
-                            onValueChange = { internalDraft = it },
-                            label = { Text(stringResource(MR.strings.connection_internal_address)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            isError = !validInternal,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        )
-                        Text(
-                            stringResource(MR.strings.connection_internal_address_summary),
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = validPublic && validInternal,
-                    onClick = {
-                        onConfirm(publicDraft.trim(), internalDraft.trim())
-                        showDialog = false
-                    },
-                ) { Text(stringResource(MR.strings.action_ok)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDialog = false }) { Text(stringResource(MR.strings.action_cancel)) }
-            },
-        )
     }
 }
 

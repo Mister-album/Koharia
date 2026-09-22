@@ -1707,4 +1707,24 @@
     <string name="connection_verify_unavailable">无法校验两个地址。请确认两个地址均可访问，且账号或密钥有权限创建和删除临时校验标记。本次未保存。</string>
     <string name="connection_verify_mismatch">两个地址未读取到相同的校验标记，请确认它们指向同一服务器和账号。本次未保存。</string>
     <string name="connection_verify_cleanup">无法确认临时标记 %1$s 已删除，本次未保存。请在Komga 服务器的客户端设置中检查并删除此标记。</string>
+    <string name="connection_refresh">刷新书库</string>
+    <string name="smanga_setup_help">使用账号用户名和密码连接 smanga 4.3。服务器必须启用 OPDS。填写服务器地址，可包含反向代理子路径，也可带 /api 后缀。</string>
+    <string name="smanga_error_connection">无法连接 smanga，请检查服务器地址后重试。</string>
+    <string name="smanga_error_request">未能加载 smanga 内容，请重试或检查连接设置。</string>
+    <string name="smanga_error_server">smanga 服务器暂时无法处理此请求，请稍后重试。</string>
+    <string name="smanga_error_timeout">smanga 请求超时，请检查网络连接后重试。</string>
+    <string name="smanga_error_auth">smanga 拒绝了登录凭据，请检查用户名和密码。</string>
+    <string name="smanga_error_opds">smanga OPDS 不可用，请在服务器上启用 OPDS 后保存连接。</string>
+    <string name="smanga_error_permission">此 smanga 账号无权访问该资源。</string>
+    <string name="smanga_error_missing">文件在 smanga 上缺失或已无法访问。</string>
+    <string name="smanga_error_preparing">smanga 仍在解压此章节。请检查服务器解压任务后重试。</string>
+    <string name="smanga_error_protocol">smanga 返回的数据不完整或与当前应用不兼容。</string>
+    <string name="smanga_cache_incomplete">当前书架请求不可用，缓存结果可能不完整。请联网重试，或打开已下载的内容。</string>
+    <string name="smanga_media">媒体库</string>
+    <string name="smanga_sort_name">名称</string>
+    <string name="smanga_sort_updated">更新时间</string>
+    <string name="smanga_sort_created">添加时间</string>
+    <string name="smanga_descending">降序</string>
+    <string name="smanga_downloaded">此连接中已下载的内容</string>
+    <string name="reader_remote_mapping_message">页序或页数已变化，无法自动匹配阅读位置。本地：第 %1$d / %2$d 页（%3$d%%）；服务器：第 %4$d / %5$d 页（%6$d%%）。请确认使用哪个位置，超出当前页数的远端位置不可选择。</string>
 </resources>

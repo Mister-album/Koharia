@@ -9,10 +9,13 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import koharia.connection.ConnectionLocalFileAdapter
 import koharia.connection.ConnectionPagePublication
+import koharia.connection.ConnectionPdfFileAdapter
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.document.DocumentRenderSettings
 import koharia.epub.cache.EpubCacheManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.withIOContext
@@ -22,6 +25,7 @@ import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Loader used to retrieve the [PageLoader] for a given chapter.
@@ -36,6 +40,8 @@ class ChapterLoader(
     private val documentSettingsProvider: () -> DocumentRenderSettings = { DocumentRenderSettings.DEFAULT },
 ) {
 
+    private val chapterLoadMutexes = ConcurrentHashMap<ReaderChapter, Mutex>()
+
     /**
      * Assigns the chapter's page loader and loads the its pages. Returns immediately if the chapter
      * is already loaded.
@@ -44,6 +50,24 @@ class ChapterLoader(
         chapter: ReaderChapter,
         initialPageIndex: Int? = null,
         beforePageActivation: (suspend (ReaderChapter, List<ReaderPage>) -> Unit)? = null,
+        allowPdfDownload: Boolean = true,
+    ) {
+        val previousError = chapter.state as? ReaderChapter.State.Error
+        chapterLoadMutexes.getOrPut(chapter) { Mutex() }.withLock {
+            val error = chapter.state as? ReaderChapter.State.Error
+            // Concurrent requests share a failed attempt; a later explicit retry can try again.
+            if (error != null && error !== previousError && error.error !is CancellationException) {
+                throw error.error
+            }
+            loadChapterLocked(chapter, initialPageIndex, beforePageActivation, allowPdfDownload)
+        }
+    }
+
+    private suspend fun loadChapterLocked(
+        chapter: ReaderChapter,
+        initialPageIndex: Int?,
+        beforePageActivation: (suspend (ReaderChapter, List<ReaderPage>) -> Unit)?,
+        allowPdfDownload: Boolean,
     ) {
         if (chapterIsReady(chapter)) {
             if (beforePageActivation != null) {
@@ -61,7 +85,10 @@ class ChapterLoader(
         withIOContext {
             logcat { "Loading pages for ${chapter.chapter.name}" }
             try {
-                val initialLoader = getPageLoader(chapter)
+                val initialLoader = getPageLoader(chapter, allowPdfDownload) ?: run {
+                    chapter.state = ReaderChapter.State.Wait
+                    return@withIOContext
+                }
                 chapter.pageLoader = initialLoader
                 val (loader, loadedPages) = loadPagesWithCacheFallback(chapter, initialLoader)
                 chapter.pageLoader = loader
@@ -140,7 +167,7 @@ class ChapterLoader(
     /**
      * Returns the page loader to use for this [chapter].
      */
-    private fun getPageLoader(chapter: ReaderChapter): PageLoader {
+    private suspend fun getPageLoader(chapter: ReaderChapter, allowPdfDownload: Boolean): PageLoader? {
         val dbChapter = chapter.chapter
         val isDownloaded = downloadManager.isChapterDownloaded(
             dbChapter.name,
@@ -151,6 +178,7 @@ class ChapterLoader(
             skipCache = true,
         )
         val completeEpubCache = if (!isDownloaded) findCompleteEpubCache(dbChapter) else null
+        val pdfAdapter = source as? ConnectionPdfFileAdapter
         logcat {
             "KohariaOfflineDebug: chapter loader selected " +
                 "mangaId=${manga.id} mangaTitle=${manga.title} " +
@@ -167,6 +195,18 @@ class ChapterLoader(
                 downloadProvider,
                 documentSettingsProvider,
             )
+            pdfAdapter?.isPdfChapter(dbChapter.url) == true -> {
+                val file = pdfAdapter.findCompletePdfFile(dbChapter.url)
+                    ?: if (allowPdfDownload) pdfAdapter.preparePdfFile(dbChapter.url) else return null
+                LocalPageLoader(
+                    chapter = chapter,
+                    source = source,
+                    fileAdapter = object : ConnectionLocalFileAdapter {
+                        override fun localChapterFile(chapterUrl: String) = file.takeIf { chapterUrl == dbChapter.url }
+                    },
+                    documentSettingsProvider = documentSettingsProvider,
+                )
+            }
             source is ConnectionLocalFileAdapter -> LocalPageLoader(
                 chapter = chapter,
                 source = source,

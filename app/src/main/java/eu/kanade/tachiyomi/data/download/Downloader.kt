@@ -13,12 +13,15 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
 import koharia.connection.ConnectionDownloadStorageAdapter
 import koharia.connection.ConnectionRawDownloadAdapter
+import koharia.connection.ConnectionRawDownloadResumePolicy
 import koharia.core.archive.ZipWriter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -60,6 +63,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 import java.io.IOException
+import java.io.OutputStream
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
@@ -179,6 +183,12 @@ class Downloader(
                 restoredDownloads.forEach { download ->
                     download.status = Download.State.PAUSED
                     if (download.mode == Download.Mode.RAW_FILE) {
+                        if ((download.source as? ConnectionRawDownloadAdapter)?.resumePolicy ==
+                            ConnectionRawDownloadResumePolicy.RESTART
+                        ) {
+                            download.updateRawProgress(0, download.rawTotalBytes)
+                            return@forEach
+                        }
                         val mangaDir = provider.findMangaDir(download.manga.title, download.source)
                         if (mangaDir != null) {
                             val chapterDirname = provider.getChapterDirName(
@@ -402,7 +412,6 @@ class Downloader(
         if (chapters.isEmpty()) return
 
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
-        val resolvedMode = resolveDownloadMode(source, mode)
         val wasEmpty = queueState.value.isEmpty()
         val chaptersToQueue = chapters.asSequence()
             // Filter out those already downloaded.
@@ -412,7 +421,14 @@ class Downloader(
             // Filter out those already enqueued.
             .filter { chapter -> queueState.value.none { it.chapter.id == chapter.id } }
             // Create a download for each one.
-            .map { Download(source, manga, it, resolvedMode) }
+            .map { chapter ->
+                Download(
+                    source,
+                    manga,
+                    chapter,
+                    resolveChapterDownloadMode(source as? ConnectionRawDownloadAdapter, chapter, mode),
+                )
+            }
             .toList()
 
         if (chaptersToQueue.isNotEmpty()) {
@@ -561,24 +577,26 @@ class Downloader(
         }
     }
 
-    private fun resolveDownloadMode(source: HttpSource, mode: Download.Mode?): Download.Mode {
-        return mode ?: if (source is ConnectionRawDownloadAdapter) Download.Mode.RAW_FILE else Download.Mode.PAGE_CACHE
-    }
-
     private suspend fun tryDownloadRawFile(download: Download, mangaDir: UniFile, chapterDirname: String): Boolean {
         val source = download.source as? ConnectionRawDownloadAdapter ?: return false
+        val resumePolicy = source.resumePolicy
+        val restart = resumePolicy == ConnectionRawDownloadResumePolicy.RESTART
 
         fun tmpFileFor(extension: String): Pair<String, UniFile> {
             val finalFileName = "$chapterDirname.$extension"
             val tmpFileName = "$finalFileName$TMP_DIR_SUFFIX"
-            val existing = mangaDir.findFile(tmpFileName)
+            var existing = mangaDir.findFile(tmpFileName)
+            if (restart && existing != null) {
+                if (!existing.delete()) throw IOException("Failed to reset raw download file: $tmpFileName")
+                existing = null
+            }
             val tmpFile = existing ?: mangaDir.createFile(tmpFileName)
                 ?: error("Failed to create raw download file: $tmpFileName")
             return finalFileName to tmpFile
         }
 
         repeat(4) { attempt ->
-            val existingRawTmpFile = findExistingRawTmpFile(mangaDir, chapterDirname)
+            val existingRawTmpFile = if (restart) null else findExistingRawTmpFile(mangaDir, chapterDirname)
             var finalFileName = existingRawTmpFile?.first
             var tmpFile = existingRawTmpFile?.second
             val existingBytes = tmpFile?.length()?.takeIf { it > 0L } ?: 0L
@@ -593,8 +611,10 @@ class Downloader(
                     },
                 ),
             )
-            val cancellationHandle = coroutineContext[Job]?.invokeOnCompletion { cause: Throwable? ->
-                if (cause != null) {
+            val cancellationHandle = CoroutineScope(coroutineContext).launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
                     responseCall.cancel()
                 }
             }
@@ -602,16 +622,22 @@ class Downloader(
                 val response = responseCall.execute()
                 response.use {
                     if (!response.isSuccessful) {
-                        if (response.code == 416 && existingBytes > 0L && tmpFile != null && finalFileName != null) {
+                        if (!restart && response.code == 416 && existingBytes > 0L && tmpFile != null &&
+                            finalFileName != null
+                        ) {
                             logcat(LogPriority.INFO) {
                                 "HTTP 416 Range Not Satisfiable, assuming file is fully downloaded"
                             }
+                            source.validateRawDownload(tmpFile)
                             tmpFile.renameTo(finalFileName)
                             download.updateRawProgress(existingBytes, existingBytes)
                             download.status = Download.State.DOWNLOADING
                             return true
                         }
                         error("HTTP ${response.code}")
+                    }
+                    if (restart && response.code != 200) {
+                        throw IOException("Expected a complete raw download response, received HTTP ${response.code}")
                     }
 
                     val extension = finalFileName
@@ -632,21 +658,30 @@ class Downloader(
                     }
 
                     val resolvedFinalFileName = checkNotNull(finalFileName)
-                    var resolvedTmpFile = checkNotNull(tmpFile)
+                    val resolvedTmpFile = checkNotNull(tmpFile)
 
                     val resumedBytes = when {
+                        restart -> 0L
                         response.code == 206 -> existingBytes
                         response.code == 200 && existingBytes > 0L -> existingBytes
                         else -> 0L
                     }
-                    val totalBytes = resolveRawFileTotalBytes(response, resumedBytes)
+                    val totalBytes = if (restart) {
+                        response.body.contentLength().coerceAtLeast(0L)
+                    } else {
+                        resolveRawFileTotalBytes(response, resumedBytes)
+                    }
                     download.updateRawProgress(resumedBytes, totalBytes)
                     if (download.mode == Download.Mode.RAW_FILE && totalBytes > 0L) {
                         store.addAll(listOf(download))
                     }
                     download.status = Download.State.DOWNLOADING
 
-                    val outputMode = if (resumedBytes > 0L) "wa" else "w"
+                    val outputMode = when {
+                        restart -> "wt"
+                        resumedBytes > 0L -> "wa"
+                        else -> "w"
+                    }
                     val outputStream = try {
                         context.contentResolver.openOutputStream(resolvedTmpFile.uri, outputMode)
                     } catch (e: IllegalArgumentException) {
@@ -661,30 +696,22 @@ class Downloader(
                         }
                     }
 
-                    outputStream?.use { output ->
-                        response.body.byteStream().use { input ->
-                            if (response.code == 200 && resumedBytes > 0L) {
-                                skipFully(input, resumedBytes)
+                    val downloadedBytes = outputStream?.use { output ->
+                        copyRawDownloadResponse(response, output, resumePolicy, resumedBytes) { downloadedBytes ->
+                            download.updateRawProgress(downloadedBytes, totalBytes)
+                            notifier.onProgressChange(download)
+                            logcat(LogPriority.DEBUG) {
+                                "Raw Download Progress: $downloadedBytes / $totalBytes (${download.progress}%)"
                             }
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            var downloadedBytes = resumedBytes
-                            while (true) {
-                                coroutineContext.ensureActive()
-                                val read = input.read(buffer)
-                                if (read < 0) break
-                                output.write(buffer, 0, read)
-                                downloadedBytes += read
-                                download.updateRawProgress(downloadedBytes, totalBytes)
-                                notifier.onProgressChange(download)
-                                logcat(LogPriority.DEBUG) {
-                                    "Raw Download Progress: $downloadedBytes / $totalBytes (${download.progress}%)"
-                                }
-                            }
-                            output.flush()
-                            download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
                         }
                     } ?: error("Failed to open raw download output stream: ${resolvedTmpFile.name}")
 
+                    if (restart && resolvedTmpFile.length() != downloadedBytes) {
+                        throw IOException("Incomplete raw download file: received=$downloadedBytes")
+                    }
+                    download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
+                    source.validateRawDownload(resolvedTmpFile)
+                    coroutineContext.ensureActive()
                     mangaDir.findFile(resolvedFinalFileName)?.delete()
                     if (!resolvedTmpFile.renameTo(resolvedFinalFileName)) {
                         error("Failed to finalize raw download file: $resolvedFinalFileName")
@@ -705,6 +732,7 @@ class Downloader(
 
                 return true
             } catch (error: Throwable) {
+                coroutineContext.ensureActive()
                 if (error is CancellationException) throw error
                 if (error is IOException && attempt < 3) {
                     logcat(LogPriority.WARN, error) {
@@ -715,7 +743,7 @@ class Downloader(
                     throw error
                 }
             } finally {
-                cancellationHandle?.dispose()
+                cancellationHandle.cancel()
             }
         }
 
@@ -767,6 +795,7 @@ class Downloader(
             return download.rawTotalBytes
         }
         val source = download.source as? ConnectionRawDownloadAdapter ?: return 0L
+        if (source.resumePolicy == ConnectionRawDownloadResumePolicy.RESTART) return 0L
         return runCatching {
             source.rawDownloadClient.newCall(source.rawFileRequest(download.chapter.url, existingBytes))
                 .execute()
@@ -1134,6 +1163,51 @@ class Downloader(
         const val TMP_DIR_SUFFIX = "_tmp"
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
     }
+}
+
+internal fun resolveChapterDownloadMode(
+    source: ConnectionRawDownloadAdapter?,
+    chapter: Chapter,
+    mode: Download.Mode?,
+): Download.Mode = mode ?: if (source?.preferRawDownload(chapter) == true) {
+    Download.Mode.RAW_FILE
+} else {
+    Download.Mode.PAGE_CACHE
+}
+
+internal suspend fun copyRawDownloadResponse(
+    response: Response,
+    output: OutputStream,
+    resumePolicy: ConnectionRawDownloadResumePolicy,
+    resumedBytes: Long,
+    onProgress: (Long) -> Unit,
+): Long {
+    val restart = resumePolicy == ConnectionRawDownloadResumePolicy.RESTART
+    if (restart && response.code != 200) {
+        throw IOException("Expected a complete raw download response, received HTTP ${response.code}")
+    }
+    var downloadedBytes = if (restart) 0L else resumedBytes
+    val coroutineContext = currentCoroutineContext()
+    response.body.byteStream().use { input ->
+        if (!restart && response.code == 200 && resumedBytes > 0L) {
+            skipFully(input, resumedBytes)
+        }
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            coroutineContext.ensureActive()
+            val read = input.read(buffer)
+            if (read < 0) break
+            output.write(buffer, 0, read)
+            downloadedBytes += read
+            onProgress(downloadedBytes)
+        }
+        output.flush()
+    }
+    val expectedBytes = response.body.contentLength()
+    if (restart && expectedBytes >= 0L && downloadedBytes != expectedBytes) {
+        throw IOException("Incomplete raw download: expected=$expectedBytes received=$downloadedBytes")
+    }
+    return downloadedBytes
 }
 
 private fun List<Download>.statusSummary(): String {

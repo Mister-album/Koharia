@@ -1,0 +1,47 @@
+CREATE TABLE IF NOT EXISTS smanga_cache (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    group_key TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    generation INTEGER NOT NULL,
+    PRIMARY KEY (connection_id, account_key, group_key, cache_key)
+);
+
+CREATE TABLE IF NOT EXISTS smanga_read_state (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    manga_id INTEGER NOT NULL,
+    page_index INTEGER NOT NULL,
+    total_pages INTEGER NOT NULL,
+    completed INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    pending INTEGER NOT NULL,
+    explicit_unread INTEGER NOT NULL DEFAULT 0,
+    initial_page INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (connection_id, account_key, chapter_id)
+);
+
+CREATE TABLE IF NOT EXISTS smanga_history_event (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    manga_id INTEGER NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    media_id INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    status INTEGER NOT NULL DEFAULT 0 CHECK (status IN (0, 1, 2)),
+    PRIMARY KEY (connection_id, account_key, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS smanga_read_state_pending_index
+ON smanga_read_state (connection_id, account_key, pending, chapter_id);
+
+CREATE INDEX IF NOT EXISTS smanga_read_state_manga_index
+ON smanga_read_state (connection_id, account_key, manga_id, chapter_id);
+
+CREATE INDEX IF NOT EXISTS smanga_history_event_pending_index
+ON smanga_history_event (connection_id, account_key, status, read_at, event_id);

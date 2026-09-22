@@ -154,11 +154,11 @@ class DownloadManager(
                 source = download.source,
                 manga = download.manga,
                 chapter = download.chapter,
-                mode = mode ?: if (download.source is ConnectionRawDownloadAdapter) {
-                    Download.Mode.RAW_FILE
-                } else {
-                    Download.Mode.PAGE_CACHE
-                },
+                mode = resolveChapterDownloadMode(
+                    download.source as? ConnectionRawDownloadAdapter,
+                    download.chapter,
+                    mode,
+                ),
             )
         } ?: return
         toAdd.status = Download.State.QUEUE

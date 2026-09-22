@@ -246,7 +246,7 @@ fun ExpandableMangaDescription(
     description: String?,
     tagsProvider: () -> List<String>?,
     notes: String,
-    onTagSearch: (String) -> Unit,
+    onTagSearch: ((String) -> Unit)?,
     onCopyTagToClipboard: (tag: String) -> Unit,
     onEditNotes: () -> Unit,
     modifier: Modifier = Modifier,
@@ -286,9 +286,10 @@ fun ExpandableMangaDescription(
                     DropdownMenuItem(
                         text = { Text(text = stringResource(MR.strings.action_search)) },
                         onClick = {
-                            onTagSearch(tagSelected)
+                            onTagSearch?.invoke(tagSelected)
                             showMenu = false
                         },
+                        enabled = onTagSearch != null,
                     )
                     DropdownMenuItem(
                         text = { Text(text = stringResource(MR.strings.action_copy_to_clipboard)) },

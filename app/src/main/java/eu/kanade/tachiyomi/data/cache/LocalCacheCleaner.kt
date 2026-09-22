@@ -20,7 +20,10 @@ class LocalCacheCleaner(
 ) {
 
     fun temporaryCacheReadableSize(): String {
-        return Formatter.formatFileSize(context, LocalTempCacheDirectoryProvider.temporaryCacheSize(context))
+        return Formatter.formatFileSize(
+            context,
+            LocalTempCacheDirectoryProvider.temporaryCacheSize(context) + koharia.smanga.SmangaPdfCache.size(context),
+        )
     }
 
     fun clearDeletedMangaCache(activeManga: Collection<Manga>): Int {
@@ -45,6 +48,7 @@ class LocalCacheCleaner(
         deleted += LocalTempCacheDirectoryProvider.clearSharedImageCache(context)
         deleted += epubCacheManager.clear()
         deleted += pdfReflowCacheManager.clear()
+        deleted += koharia.smanga.SmangaPdfCache.clear(context)
         return deleted
     }
 }

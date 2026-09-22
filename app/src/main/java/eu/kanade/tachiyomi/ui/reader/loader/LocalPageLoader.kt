@@ -37,7 +37,7 @@ internal class LocalPageLoader(
         get() = documentLoader?.supportsRemoteProgress ?: true
 
     override val progressPageCount: Int?
-        get() = documentLoader?.progressPageCount
+        get() = pdfLoader?.progressPageCount ?: documentLoader?.progressPageCount
 
     override suspend fun getPages(): List<ReaderPage> {
         val file = fileAdapter.localChapterFile(chapter.chapter.url)

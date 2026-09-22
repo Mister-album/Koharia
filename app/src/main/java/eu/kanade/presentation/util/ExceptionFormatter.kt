@@ -5,6 +5,9 @@ import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.util.system.isOnline
 import koharia.lanraragi.LanraragiException
 import koharia.lanraragi.ui.lanraragiError
+import koharia.smanga.SmangaException
+import koharia.smanga.ui.SmangaShelfException
+import koharia.smanga.ui.smangaError
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.data.source.NoResultsException
 import tachiyomi.domain.source.model.SourceNotInstalledException
@@ -16,6 +19,7 @@ val Throwable.formattedMessage: String
     get() {
         when (this) {
             is LanraragiException -> return context.lanraragiError(this)
+            is SmangaException, is SmangaShelfException -> return context.smangaError(this)
             is HttpException -> return context.stringResource(MR.strings.exception_http, code)
             is UnknownHostException -> {
                 return if (!context.isOnline()) {

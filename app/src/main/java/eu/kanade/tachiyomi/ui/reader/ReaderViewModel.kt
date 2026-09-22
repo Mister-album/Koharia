@@ -200,6 +200,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private var chapterToDownload: Download? = null
     private val currentChapterAutoCacheRequests = mutableSetOf<Long>()
     private val remoteProgressChecksStarted = mutableSetOf<Long>()
+    private val connectionReadingSessions = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     private val explicitOpeningChapterId = savedState.get<Long>("chapter")
         ?.takeIf { savedState.get<Boolean>("explicit_page_selection") == true }
     private val navigatedConnectionChapters = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
@@ -505,6 +506,13 @@ class ReaderViewModel @JvmOverloads constructor(
         chapter: ReaderChapter,
         initialPageIndex: Int? = null,
     ): ViewerChapters {
+        if (!incognitoMode) {
+            val chapterId = chapter.chapter.id
+            if (chapterId != null && connectionReadingSessions.add(chapterId)) {
+                (connectionPageProgressAdapter() as? koharia.connection.ConnectionLocalPageProgressAdapter)
+                    ?.beginReadingSession(chapter.chapter.url)
+            }
+        }
         loader.loadChapter(chapter, initialPageIndex, ::resolveConnectionProgressBeforePageActivation)
         persistDocumentPageCount(chapter)
 
@@ -539,6 +547,8 @@ class ReaderViewModel @JvmOverloads constructor(
         val manga = manga ?: return
         val adapter = connectionPageProgressAdapter() ?: return
         if (adapter !is koharia.connection.ConnectionLocalPageProgressAdapter) return
+        // PDF progress is measured against the loaded file, before negotiating a server position.
+        persistDocumentPageCount(readerChapter)
         val chapterId = readerChapter.chapter.id ?: return
         synchronized(remoteProgressOpeningPages) {
             remoteProgressOpeningPages.putIfAbsent(
@@ -611,12 +621,16 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    private val transitionPreloads = java.util.concurrent.ConcurrentHashMap.newKeySet<ReaderChapter>()
+
     /**
      * Called when the viewers decide it's a good time to preload a [chapter] and improve the UX so
      * that the user doesn't have to wait too long to continue reading.
      */
-    suspend fun preload(chapter: ReaderChapter) {
-        if (chapter.state is ReaderChapter.State.Loaded || chapter.state == ReaderChapter.State.Loading) {
+    suspend fun preload(chapter: ReaderChapter, allowPdfDownload: Boolean = false) {
+        if (chapter.state is ReaderChapter.State.Loaded ||
+            (chapter.state == ReaderChapter.State.Loading && !allowPdfDownload)
+        ) {
             return
         }
 
@@ -636,21 +650,28 @@ class ReaderViewModel @JvmOverloads constructor(
             }
         }
 
-        if (chapter.state != ReaderChapter.State.Wait && chapter.state !is ReaderChapter.State.Error) {
+        if (chapter.state != ReaderChapter.State.Wait && chapter.state !is ReaderChapter.State.Error &&
+            !(allowPdfDownload && chapter.state == ReaderChapter.State.Loading)
+        ) {
             return
         }
 
         val loader = loader ?: return
+        if (allowPdfDownload && !transitionPreloads.add(chapter)) return
         try {
             logcat { "Preloading ${chapter.chapter.url}" }
-            loader.loadChapter(chapter)
+            loader.loadChapter(chapter, allowPdfDownload = allowPdfDownload)
         } catch (e: Throwable) {
             if (e is CancellationException) {
                 throw e
             }
             return
+        } finally {
+            if (allowPdfDownload) transitionPreloads.remove(chapter)
         }
-        eventChannel.trySend(Event.ReloadViewerChapters)
+        if (chapter.state is ReaderChapter.State.Loaded) {
+            eventChannel.trySend(Event.ReloadViewerChapters)
+        }
     }
 
     private var pagerRecreationState: eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerLayoutState? = null
@@ -779,6 +800,9 @@ class ReaderViewModel @JvmOverloads constructor(
             val pageCount = currentChapter.pages?.size ?: 0
             viewModelScope.launchNonCancellable {
                 runCatching {
+                    if (connectionReadingSessions.add(displayedChapterId)) {
+                        localAdapter.beginReadingSession(chapterUrl)
+                    }
                     localAdapter.recordLocalPageProgress(
                         chapterUrl,
                         page.index,
@@ -891,23 +915,25 @@ class ReaderViewModel @JvmOverloads constructor(
                 }
                 return
             }
-            if (refreshedPages.isNullOrEmpty()) {
+            if (refreshedPages.isNullOrEmpty() && !remote.requiresPageMappingConfirmation) {
                 logcat(LogPriority.WARN) {
                     "MangaStartup: page list refresh unavailable chapterId=$chapterId " +
                         "publicationChanged=$publicationChanged pageCountChanged=$pageCountChanged"
                 }
                 return
             }
-            readerChapter.state = ReaderChapter.State.Loaded(refreshedPages)
-            pages = refreshedPages
-            if (!beforePageActivation) {
+            if (!refreshedPages.isNullOrEmpty()) {
+                readerChapter.state = ReaderChapter.State.Loaded(refreshedPages)
+                pages = refreshedPages
+            }
+            if (!beforePageActivation && !refreshedPages.isNullOrEmpty()) {
                 val activePage = pages[readerChapter.requestedPage.coerceIn(0, pages.lastIndex)]
                 pageLoader.setActivePage(activePage)
                 eventChannel.trySend(Event.ReloadViewerChapters)
             }
         }
 
-        if (remote.totalPages > 0 && remote.totalPages != pages.size) {
+        if (remote.totalPages > 0 && remote.totalPages != pages.size && !remote.requiresPageMappingConfirmation) {
             logcat(LogPriority.WARN) {
                 "MangaStartup: server/local page count still differs chapterId=$chapterId " +
                     "server=${remote.totalPages} local=${pages.size}"
@@ -937,7 +963,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     totalPages = pages.size,
                 ) ?: 0
             }
-        if (remotePageIndex !in pages.indices) return
+        if (remotePageIndex !in pages.indices && !remote.requiresPageMappingConfirmation) return
         val localPageIndex = readerChapter.requestedPage.coerceIn(0, pages.lastIndex)
         val openingLocalPageIndex = synchronized(remoteProgressOpeningPages) {
             remoteProgressOpeningPages[chapterId]
@@ -951,9 +977,10 @@ class ReaderViewModel @JvmOverloads constructor(
                 // safely prove that a different local page is newer than Komga's position.
                 localUpdatedAtMillis = null,
                 remoteUpdatedAtMillis = remoteUpdatedAtMillis,
-                sameLocation = remotePageIndex == localPageIndex,
+                sameLocation = remotePageIndex == localPageIndex && !remote.requiresPageMappingConfirmation,
                 localChangedDuringCheck =
-                localPageIndex != openingLocalPageIndex || chapterId == explicitOpeningChapterId,
+                !remote.requiresPageMappingConfirmation &&
+                    (localPageIndex != openingLocalPageIndex || chapterId == explicitOpeningChapterId),
             )
         ) {
             RemoteProgressDecision.SAME_LOCATION -> {
@@ -995,6 +1022,9 @@ class ReaderViewModel @JvmOverloads constructor(
             remoteVersion = remoteVersion,
             migratesLegacyEpubProgress = migratesLegacyEpubProgress,
             remoteReadAt = remoteUpdatedAtMillis,
+            remoteCompleted = remote.completed,
+            requiresPageMappingConfirmation = remote.requiresPageMappingConfirmation,
+            canUseRemotePosition = remotePageIndex in pages.indices,
         )
         when {
             remote.requiresConfirmation -> {
@@ -1033,7 +1063,7 @@ class ReaderViewModel @JvmOverloads constructor(
             updateChapter.await(
                 ChapterUpdate(
                     id = conflict.chapterId,
-                    read = conflict.remotePageIndex == pages.lastIndex,
+                    read = conflict.remoteCompleted ?: (conflict.remotePageIndex == pages.lastIndex),
                     lastPageRead = conflict.remotePageIndex.toLong(),
                 ),
             )
@@ -1132,13 +1162,14 @@ class ReaderViewModel @JvmOverloads constructor(
         val selectedAt = System.currentTimeMillis()
         viewModelScope.launchNonCancellable {
             (connectionPageProgressAdapter() as? koharia.connection.ConnectionLocalPageProgressAdapter)
-                ?.recordLocalPageProgress(currentChapter.chapter.url, localPageIndex, pages.size, selectedAt)
+                ?.confirmLocalPageProgress(currentChapter.chapter.url, localPageIndex, pages.size, selectedAt)
             pushPageProgressIfAllowed(currentChapter, localPageIndex, pages.size)
         }
     }
 
     fun useRemoteProgress() {
         val conflict = state.value.remoteProgressConflict ?: return
+        if (!conflict.canUseRemotePosition) return
         mutableState.update { it.copy(remoteProgressConflict = null) }
         val currentChapter = getCurrentChapter()?.takeIf { it.chapter.id == conflict.chapterId } ?: return
         val pages = currentChapter.pages ?: return
@@ -1164,7 +1195,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 updateChapter.await(
                     ChapterUpdate(
                         id = conflict.chapterId,
-                        read = conflict.remotePageIndex == pages.lastIndex,
+                        read = conflict.remoteCompleted ?: (conflict.remotePageIndex == pages.lastIndex),
                         lastPageRead = conflict.remotePageIndex.toLong(),
                     ),
                 )
@@ -1213,8 +1244,12 @@ class ReaderViewModel @JvmOverloads constructor(
         if (currentChapter.pageLoader is DownloadPageLoader) return
 
         val manga = manga ?: return
-        if (sourceManager.get(manga.source) is ConnectionRawDownloadAdapter) return
         val chapter = currentChapter.chapter.toDomainChapter() ?: return
+        if ((sourceManager.get(manga.source) as? ConnectionRawDownloadAdapter)?.preferRawDownload(chapter) ==
+            true
+        ) {
+            return
+        }
         val chapterId = chapter.id
         synchronized(currentChapterAutoCacheRequests) {
             if (!currentChapterAutoCacheRequests.add(chapterId)) return

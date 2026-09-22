@@ -1,0 +1,141 @@
+CREATE TABLE smanga_cache (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    group_key TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    generation INTEGER NOT NULL,
+    PRIMARY KEY (connection_id, account_key, group_key, cache_key)
+);
+
+CREATE TABLE smanga_read_state (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    manga_id INTEGER NOT NULL,
+    page_index INTEGER NOT NULL,
+    total_pages INTEGER NOT NULL,
+    completed INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    pending INTEGER NOT NULL,
+    explicit_unread INTEGER NOT NULL DEFAULT 0,
+    initial_page INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (connection_id, account_key, chapter_id)
+);
+
+CREATE TABLE smanga_history_event (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    manga_id INTEGER NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    media_id INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    status INTEGER NOT NULL DEFAULT 0 CHECK (status IN (0, 1, 2)),
+    PRIMARY KEY (connection_id, account_key, event_id)
+);
+
+CREATE INDEX smanga_read_state_pending_index
+ON smanga_read_state (connection_id, account_key, pending, chapter_id);
+
+CREATE INDEX smanga_read_state_manga_index
+ON smanga_read_state (connection_id, account_key, manga_id, chapter_id);
+
+CREATE INDEX smanga_history_event_pending_index
+ON smanga_history_event (connection_id, account_key, status, read_at, event_id);
+
+getCache:
+SELECT cache_key, payload, updated_at, generation FROM smanga_cache
+WHERE connection_id = :connectionId AND account_key = :accountKey AND group_key = :groupKey AND cache_key = :key;
+
+getCacheGroup:
+SELECT cache_key, payload, updated_at, generation FROM smanga_cache
+WHERE connection_id = :connectionId AND account_key = :accountKey AND group_key = :groupKey
+ORDER BY cache_key;
+
+putCache:
+INSERT OR REPLACE INTO smanga_cache
+VALUES (:connectionId, :accountKey, :groupKey, :key, :payload, :updatedAt, :generation);
+
+removeCacheGroup:
+DELETE FROM smanga_cache
+WHERE connection_id = :connectionId AND account_key = :accountKey AND group_key = :groupKey;
+
+getReadState:
+SELECT chapter_id, manga_id, page_index, total_pages, completed, read_at, revision, pending, explicit_unread, initial_page
+FROM smanga_read_state
+WHERE connection_id = :connectionId AND account_key = :accountKey AND chapter_id = :chapterId;
+
+getReadStates:
+SELECT chapter_id, manga_id, page_index, total_pages, completed, read_at, revision, pending, explicit_unread, initial_page
+FROM smanga_read_state
+WHERE connection_id = :connectionId AND account_key = :accountKey
+ORDER BY chapter_id;
+
+getPendingReadStates:
+SELECT chapter_id, manga_id, page_index, total_pages, completed, read_at, revision, pending, explicit_unread, initial_page
+FROM smanga_read_state
+WHERE connection_id = :connectionId AND account_key = :accountKey AND pending = 1
+ORDER BY chapter_id;
+
+getReadStatesForManga:
+SELECT chapter_id, manga_id, page_index, total_pages, completed, read_at, revision, pending, explicit_unread, initial_page
+FROM smanga_read_state
+WHERE connection_id = :connectionId AND account_key = :accountKey AND manga_id = :mangaId
+ORDER BY chapter_id;
+
+putReadState:
+INSERT OR REPLACE INTO smanga_read_state
+VALUES (:connectionId, :accountKey, :chapterId, :mangaId, :pageIndex, :totalPages, :completed, :readAt, :revision, :pending, :explicitUnread, :initialPage);
+
+acknowledgeReadState:
+UPDATE smanga_read_state SET pending = 0
+WHERE connection_id = :connectionId AND account_key = :accountKey AND chapter_id = :chapterId
+AND revision = :revision AND pending = 1
+RETURNING revision;
+
+resetReadStates:
+DELETE FROM smanga_read_state
+WHERE connection_id = :connectionId AND account_key = :accountKey AND chapter_id IN :chapterIds;
+
+enqueueHistory:
+INSERT OR IGNORE INTO smanga_history_event
+VALUES (:connectionId, :accountKey, :eventId, :mangaId, :chapterId, :mediaId, :readAt, :status);
+
+getHistoryEvents:
+SELECT event_id, manga_id, chapter_id, media_id, read_at, status FROM smanga_history_event
+WHERE connection_id = :connectionId AND account_key = :accountKey
+ORDER BY read_at, event_id;
+
+getPendingHistoryEvents:
+SELECT event_id, manga_id, chapter_id, media_id, read_at, status FROM smanga_history_event
+WHERE connection_id = :connectionId AND account_key = :accountKey AND status = 0
+ORDER BY read_at, event_id;
+
+getHistoryEvent:
+SELECT event_id, manga_id, chapter_id, media_id, read_at, status FROM smanga_history_event
+WHERE connection_id = :connectionId AND account_key = :accountKey AND event_id = :eventId;
+
+updateHistoryStatus:
+UPDATE smanga_history_event SET status = :status
+WHERE connection_id = :connectionId AND account_key = :accountKey AND event_id = :eventId AND status < :status;
+
+removeConnectionCache:
+DELETE FROM smanga_cache WHERE connection_id = :connectionId;
+
+removeConnectionReadStates:
+DELETE FROM smanga_read_state WHERE connection_id = :connectionId;
+
+removeConnectionHistory:
+DELETE FROM smanga_history_event WHERE connection_id = :connectionId;
+
+removeAccountCache:
+DELETE FROM smanga_cache WHERE connection_id = :connectionId AND account_key = :accountKey;
+
+removeAccountReadStates:
+DELETE FROM smanga_read_state WHERE connection_id = :connectionId AND account_key = :accountKey;
+
+removeAccountHistory:
+DELETE FROM smanga_history_event WHERE connection_id = :connectionId AND account_key = :accountKey;

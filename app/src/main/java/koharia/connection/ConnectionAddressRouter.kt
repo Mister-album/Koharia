@@ -18,6 +18,7 @@ class ConnectionAddressRouter(
     private val wifiNetwork: () -> Any?,
     private val probePath: String,
     private val clock: () -> Long = System::nanoTime,
+    private val authenticateProbe: Boolean = true,
 ) : Interceptor {
     private data class Route(val network: Any, val public: HttpUrl, val internal: HttpUrl)
     private var lastRoute: Route? = null
@@ -92,6 +93,14 @@ class ConnectionAddressRouter(
             .removeHeader("Content-Type")
             .header("Cache-Control", "no-store")
             .header("Accept", "application/json")
+            .apply {
+                if (!authenticateProbe) {
+                    removeHeader("Authorization")
+                    removeHeader("Proxy-Authorization")
+                    removeHeader("token")
+                    removeHeader("Cookie")
+                }
+            }
             .tag(InternalRoute::class.java, InternalRoute(internal))
             .build()
         return try {
@@ -131,6 +140,7 @@ class ConnectionAddressRouter(
             publicAddress: () -> String,
             internalAddress: () -> String,
             probePath: String,
+            authenticateProbe: Boolean = true,
         ): ConnectionAddressRouter {
             val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
             return ConnectionAddressRouter(publicAddress, internalAddress, {
@@ -138,7 +148,7 @@ class ConnectionAddressRouter(
                     connectivity.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ==
                         true
                 }
-            }, probePath)
+            }, probePath, authenticateProbe = authenticateProbe)
         }
 
         fun normalize(address: String): HttpUrl? = address.trim().toHttpUrlOrNull()

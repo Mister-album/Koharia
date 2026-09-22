@@ -160,7 +160,7 @@ class LanraragiSource(
     val status = MutableStateFlow(LanraragiSyncStatus())
     private val refreshes = MutableSharedFlow<ConnectionLibraryRefreshResult>(replay = 1)
     override val libraryRefreshes = refreshes.asSharedFlow()
-    private val networkMonitor: koharia.lanraragi.LanraragiNetworkMonitor = Injekt.get()
+    private val networkMonitor: koharia.connection.ConnectionNetworkMonitor = Injekt.get()
     private var coverCatalog: List<LanraragiEntry>? = null
     private var coverEntries = emptyMap<String, LanraragiEntry>()
     val networkAvailable = MutableStateFlow(networkMonitor.available.value)

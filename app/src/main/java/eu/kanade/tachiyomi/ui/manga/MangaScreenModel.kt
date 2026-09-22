@@ -490,7 +490,9 @@ class MangaScreenModel(
         val state = successState ?: return
         try {
             withIOContext {
-                val networkManga = state.source.getMangaDetails(state.manga.toSManga())
+                val networkManga = (state.source as? koharia.connection.ConnectionCatalogAdapter)
+                    ?.getMangaDetails(state.manga.toSManga(), manualFetch)
+                    ?: state.source.getMangaDetails(state.manga.toSManga())
                 updateManga.awaitUpdateFromSource(state.manga, networkManga, manualFetch)
 
                 val progressAdapter = state.source as? ConnectionViewerSettingsAdapter
@@ -821,7 +823,9 @@ class MangaScreenModel(
         val state = successState ?: return
         try {
             withIOContext {
-                val chapters = state.source.getChapterList(state.manga.toSManga())
+                val chapters = (state.source as? koharia.connection.ConnectionCatalogAdapter)
+                    ?.getChapterList(state.manga.toSManga(), manualFetch)
+                    ?: state.source.getChapterList(state.manga.toSManga())
 
                 val newChapters = syncChaptersWithSource.await(
                     chapters,

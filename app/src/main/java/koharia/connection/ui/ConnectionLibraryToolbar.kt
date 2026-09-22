@@ -1,4 +1,4 @@
-package koharia.lanraragi.ui
+package koharia.connection.ui
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -30,7 +30,7 @@ import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
-fun LanraragiLibraryToolbar(
+fun ConnectionLibraryToolbar(
     searchQuery: String?,
     onSearchQueryChange: (String?) -> Unit,
     onSearch: (String) -> Unit,
@@ -82,7 +82,7 @@ fun LanraragiLibraryToolbar(
                             Icons.Outlined.FilterList,
                             onClick = onFilterClick,
                         ),
-                        AppBar.OverflowAction(stringResource(MR.strings.lanraragi_refresh), onRefresh),
+                        AppBar.OverflowAction(stringResource(MR.strings.connection_refresh), onRefresh),
                         AppBar.OverflowAction(stringResource(MR.strings.action_settings), onSettings),
                     ),
                 )

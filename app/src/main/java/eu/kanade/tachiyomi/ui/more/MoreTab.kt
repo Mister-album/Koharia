@@ -5,10 +5,8 @@ import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import cafe.adriel.voyager.core.model.ScreenModel
 import cafe.adriel.voyager.core.model.rememberScreenModel
@@ -27,24 +25,14 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
-import koharia.connection.ConnectionAccount
-import koharia.connection.ConnectionAccountAdapter
-import koharia.connection.ConnectionConfigManager
-import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.feature.support.SupportUsScreen
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.motion.rememberEInkAwareAnimatedVectorPainter
@@ -74,12 +62,7 @@ data object MoreTab : Tab {
         val navigator = LocalNavigator.currentOrThrow
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
-        val user by screenModel.user.collectAsState()
-        LaunchedEffect(Unit) {
-            screenModel.refreshUser()
-        }
         MoreScreen(
-            user = user,
             downloadQueueStateProvider = { downloadQueueState },
             downloadedOnly = screenModel.downloadedOnly,
             downloadedOnlyEnabled = true,
@@ -107,12 +90,6 @@ internal class MoreScreenModel(
     private var _downloadQueueState: MutableStateFlow<DownloadQueueState> = MutableStateFlow(DownloadQueueState.Stopped)
     val downloadQueueState: StateFlow<DownloadQueueState> = _downloadQueueState.asStateFlow()
 
-    private val sourceManager: tachiyomi.domain.source.service.SourceManager = Injekt.get()
-    private val connectionPreferences: ConnectionPreferences = Injekt.get()
-    private val _user = MutableStateFlow<ConnectionAccount?>(null)
-    private var refreshUserJob: Job? = null
-    val user: StateFlow<ConnectionAccount?> = _user.asStateFlow()
-
     init {
         // Handle running/paused status change and queue progress updating
         screenModelScope.launchIO {
@@ -129,36 +106,6 @@ internal class MoreScreenModel(
                     }
                 }
         }
-
-        screenModelScope.launchIO {
-            connectionPreferences.activeConnectionId.changes().collectLatest {
-                refreshUser()
-            }
-        }
-
-        refreshUser()
-    }
-
-    fun refreshUser(): Job {
-        refreshUserJob?.cancel()
-        val activeConnectionId = connectionPreferences.activeConnectionId.get()
-        _user.value = null
-        return screenModelScope.launchIO {
-            val accountAdapter = sourceManager.get(activeConnectionId) as? ConnectionAccountAdapter
-            val account = loadConnectionAccount(accountAdapter)
-            currentCoroutineContext().ensureActive()
-            if (connectionPreferences.activeConnectionId.get() == activeConnectionId) _user.value = account
-        }.also { refreshUserJob = it }
-    }
-}
-
-internal suspend fun loadConnectionAccount(adapter: ConnectionAccountAdapter?): ConnectionAccount? {
-    return try {
-        if (adapter?.hasValidConnection() != true) null else adapter.getAccount()
-    } catch (error: Exception) {
-        if (error is CancellationException) throw error
-        MoreTab.logcat(LogPriority.WARN, error) { "Unable to refresh connection account" }
-        null
     }
 }
 

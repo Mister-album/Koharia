@@ -646,7 +646,11 @@ class ReaderActivity : BaseActivity() {
                     text = {
                         Text(
                             stringResource(
-                                MR.strings.reader_remote_progress_message,
+                                if (conflict.requiresPageMappingConfirmation) {
+                                    MR.strings.reader_remote_mapping_message
+                                } else {
+                                    MR.strings.reader_remote_progress_message
+                                },
                                 conflict.localPageIndex + 1,
                                 conflict.localTotalPages,
                                 conflict.localPercent,
@@ -662,7 +666,7 @@ class ReaderActivity : BaseActivity() {
                         }
                     },
                     confirmButton = {
-                        TextButton(onClick = viewModel::useRemoteProgress) {
+                        TextButton(onClick = viewModel::useRemoteProgress, enabled = conflict.canUseRemotePosition) {
                             Text(stringResource(MR.strings.epub_reader_jump_remote_progress))
                         }
                     },
@@ -1393,10 +1397,14 @@ class ReaderActivity : BaseActivity() {
 
     /**
      * Called from the viewer when the given [chapter] should be preloaded. It should be called when
-     * the viewer is reaching the beginning or end of a chapter or the transition page is active.
+     * the viewer is reaching the beginning or end of a chapter.
      */
     fun requestPreloadChapter(chapter: ReaderChapter) {
         lifecycleScope.launchIO { viewModel.preload(chapter) }
+    }
+
+    fun requestTransitionChapter(chapter: ReaderChapter) {
+        lifecycleScope.launchIO { viewModel.preload(chapter, allowPdfDownload = true) }
     }
 
     /**

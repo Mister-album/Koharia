@@ -18,15 +18,19 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -51,6 +55,7 @@ import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.atomic.AtomicLong
 
 class HistoryScreenModel(
     private val addTracks: AddTracks = Injekt.get(),
@@ -71,40 +76,72 @@ class HistoryScreenModel(
     private val _events: Channel<Event> = Channel(Channel.UNLIMITED)
     val events: Flow<Event> = _events.receiveAsFlow()
 
+    private val historyScopeGeneration = AtomicLong()
+    private val historyScopes = combine(
+        connectionPreferences.activeConnectionId.changes().distinctUntilChanged(),
+        sourceManager.catalogueSources,
+    ) { sourceId, _ ->
+        sourceId to (sourceManager.get(sourceId) as? ConnectionHistorySyncAdapter)
+    }.distinctUntilChanged().flatMapLatest { (sourceId, adapter) ->
+        (adapter?.historyScopeChanges ?: flowOf(Unit)).map {
+            HistoryScope(sourceId, adapter, historyScopeGeneration.incrementAndGet())
+        }
+    }.flowOn(Dispatchers.IO)
+        .shareIn(screenModelScope, SharingStarted.Eagerly, replay = 1)
+
     init {
         screenModelScope.launchIO {
-            connectionPreferences.activeConnectionId.changes()
-                .distinctUntilChanged()
+            historyScopes
                 .collectLatest(::syncConnectionHistory)
         }
 
         screenModelScope.launch {
+            var displayedScopeGeneration: Long? = null
             combine(
                 state.map { it.searchQuery }.distinctUntilChanged(),
-                connectionPreferences.activeConnectionId.changes().distinctUntilChanged(),
-            ) { query, sourceId -> query to sourceId }
-                .flatMapLatest { (query, sourceId) ->
-                    val history = if (sourceId == NO_ACTIVE_CONNECTION) {
+                historyScopes,
+            ) { query, scope -> query to scope }
+                .flatMapLatest { (query, scope) ->
+                    val history = if (scope.sourceId == NO_ACTIVE_CONNECTION) {
                         flowOf(emptyList())
                     } else {
-                        getHistory.subscribe(query ?: "", sourceId)
+                        getHistory.subscribe(query ?: "", scope.sourceId)
                     }
                     history
                         .distinctUntilChanged()
+                        .map { rows ->
+                            val allowed = scope.adapter?.historyMangaIds()
+                            if (!scope.isCurrent() || sourceManager.get(scope.sourceId) == null) {
+                                emptyList()
+                            } else {
+                                rows.withinScope(allowed)
+                            }
+                        }
+                        .onStart { emit(emptyList()) }
                         .catch { error ->
                             logcat(LogPriority.ERROR, error)
+                            emit(emptyList())
                             _events.send(Event.InternalError)
                         }
-                        .map { it.toHistoryUiModels() }
+                        .map { scope to it.toHistoryUiModels() }
                         .flowOn(Dispatchers.IO)
                 }
-                .collect { newList -> mutableState.update { it.copy(list = newList) } }
+                .collect { (scope, newList) ->
+                    val changedScope = displayedScopeGeneration != scope.generation
+                    displayedScopeGeneration = scope.generation
+                    mutableState.update {
+                        it.copy(
+                            list = if (scope.isCurrent()) newList else emptyList(),
+                            dialog = if (changedScope) null else it.dialog,
+                        )
+                    }
+                }
         }
     }
 
-    private suspend fun syncConnectionHistory(sourceId: Long) {
-        if (sourceId == NO_ACTIVE_CONNECTION) return
-        val progressAdapter = sourceManager.get(sourceId) as? ConnectionHistorySyncAdapter ?: return
+    private suspend fun syncConnectionHistory(scope: HistoryScope) {
+        if (scope.sourceId == NO_ACTIVE_CONNECTION) return
+        val progressAdapter = scope.adapter ?: return
         runCatching { progressAdapter.syncConnectionHistory() }
             .onFailure { error ->
                 logcat(LogPriority.WARN, error) { "Failed to sync connection history from provider" }
@@ -125,12 +162,26 @@ class HistoryScreenModel(
     }
 
     suspend fun getNextChapter(): Chapter? {
-        return withIOContext { getNextChapters.await(onlyUnread = false).firstOrNull() }
+        return withIOContext {
+            val scope = currentHistoryScope() ?: return@withIOContext null
+            val allowed = scope.allowedMangaIds
+                ?: return@withIOContext getNextChapters.await(onlyUnread = false).firstOrNull()
+            val latest = getHistory.subscribe("", scope.sourceId).first()
+                .withinScope(allowed)
+                .maxByOrNull { it.readAt?.time ?: 0L }
+                ?: return@withIOContext null
+            if (!scope.isCurrent()) return@withIOContext null
+            val chapter = getNextChapters.await(latest.mangaId, latest.chapterId, onlyUnread = false).firstOrNull()
+            chapter?.takeIf { scope.isCurrent() && it.mangaId in allowed }
+        }
     }
 
     fun getNextChapterForManga(mangaId: Long, chapterId: Long) {
         screenModelScope.launchIO {
-            sendNextChapterEvent(getNextChapters.await(mangaId, chapterId, onlyUnread = false))
+            val scope = currentHistoryScope() ?: return@launchIO
+            if (!scope.allows(mangaId)) return@launchIO
+            val chapters = getNextChapters.await(mangaId, chapterId, onlyUnread = false)
+            if (scope.isCurrent()) sendNextChapterEvent(chapters)
         }
     }
 
@@ -141,26 +192,63 @@ class HistoryScreenModel(
 
     fun removeFromHistory(history: HistoryWithRelations) {
         screenModelScope.launchIO {
-            removeHistory.await(history)
+            val scope = currentHistoryScope() ?: return@launchIO
+            if (scope.allows(history.mangaId)) removeHistory.await(history)
         }
     }
 
     fun removeAllFromHistory(mangaId: Long) {
         screenModelScope.launchIO {
-            removeHistory.await(mangaId)
+            val scope = currentHistoryScope() ?: return@launchIO
+            if (scope.allows(mangaId)) removeHistory.await(mangaId)
         }
     }
 
     fun removeAllHistory() {
         screenModelScope.launchIO {
-            val sourceId = connectionPreferences.activeConnectionId.get()
-                .takeUnless { it == NO_ACTIVE_CONNECTION }
-                ?: return@launchIO
-            val result = removeHistory.awaitAll(sourceId)
-            if (!result) return@launchIO
+            val scope = currentHistoryScope() ?: return@launchIO
+            if (scope.sourceId == NO_ACTIVE_CONNECTION) return@launchIO
+            val allowed = scope.allowedMangaIds
+            if (allowed == null) {
+                if (!removeHistory.awaitAll(scope.sourceId)) return@launchIO
+            } else {
+                for (mangaId in allowed) {
+                    if (!scope.isCurrent()) return@launchIO
+                    removeHistory.await(mangaId)
+                }
+            }
+            if (!scope.isCurrent()) return@launchIO
             _events.send(Event.HistoryCleared)
         }
     }
+
+    private suspend fun currentHistoryScope(): HistoryScope? {
+        val sourceId = connectionPreferences.activeConnectionId.get()
+        val source = sourceManager.get(sourceId)
+        if (sourceId != NO_ACTIVE_CONNECTION && source == null) return null
+        val adapter = source as? ConnectionHistorySyncAdapter
+        val scope = HistoryScope(sourceId, adapter, historyScopeGeneration.get())
+        val allowed = adapter?.historyMangaIds()
+        return scope.copy(allowedMangaIds = allowed).takeIf { it.isCurrent() }
+    }
+
+    private fun HistoryScope.isCurrent(): Boolean =
+        sourceId == connectionPreferences.activeConnectionId.get() &&
+            adapter === (sourceManager.get(sourceId) as? ConnectionHistorySyncAdapter) &&
+            generation == historyScopeGeneration.get()
+
+    private fun HistoryScope.allows(mangaId: Long): Boolean = isCurrent() &&
+        (allowedMangaIds == null || mangaId in allowedMangaIds)
+
+    private fun List<HistoryWithRelations>.withinScope(allowed: Set<Long>?): List<HistoryWithRelations> =
+        if (allowed == null) this else filter { it.mangaId in allowed }
+
+    private data class HistoryScope(
+        val sourceId: Long,
+        val adapter: ConnectionHistorySyncAdapter?,
+        val generation: Long,
+        val allowedMangaIds: Set<Long>? = null,
+    )
 
     fun updateSearchQuery(query: String?) {
         mutableState.update { it.copy(searchQuery = query) }

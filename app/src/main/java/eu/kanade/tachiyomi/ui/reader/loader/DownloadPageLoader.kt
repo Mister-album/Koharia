@@ -47,7 +47,7 @@ internal class DownloadPageLoader(
         get() = documentPageLoader?.supportsRemoteProgress ?: true
 
     override val progressPageCount: Int?
-        get() = documentPageLoader?.progressPageCount
+        get() = pdfPageLoader?.progressPageCount ?: documentPageLoader?.progressPageCount
 
     override suspend fun getPages(): List<ReaderPage> {
         val dbChapter = chapter.chapter

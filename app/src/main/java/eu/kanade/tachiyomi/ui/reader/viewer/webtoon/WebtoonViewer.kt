@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.WebtoonLayoutManager
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
+import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
@@ -69,6 +70,8 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      */
     private var currentPage: Any? = null
 
+    private var scrollingByCommand = false
+
     private val threshold: Int = activity.readerPreferences.readerHideThreshold.get().threshold
 
     init {
@@ -82,18 +85,13 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         recycler.addOnScrollListener(
             object : RecyclerView.OnScrollListener() {
                 override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    val userScroll = dy != 0 &&
+                        (scrollingByCommand || recyclerView.scrollState != RecyclerView.SCROLL_STATE_IDLE)
                     onScrolled()
+                    if (userScroll) requestVisibleTransition(forward = dy > 0)
 
                     if ((dy > threshold || dy < -threshold) && activity.viewModel.state.value.menuVisible) {
                         activity.hideMenu()
-                    }
-
-                    if (dy < 0) {
-                        val firstIndex = layoutManager.findFirstVisibleItemPosition()
-                        val firstItem = adapter.items.getOrNull(firstIndex)
-                        if (firstItem is ChapterTransition.Prev && firstItem.to != null) {
-                            activity.requestPreloadChapter(firstItem.to)
-                        }
                     }
 
                     val lastIndex = layoutManager.findLastEndVisibleItemPosition()
@@ -104,6 +102,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
                 }
             },
         )
+        recycler.scrollIntentListener = ::requestVisibleTransition
         recycler.tapListener = { event ->
             val viewPosition = IntArray(2)
             recycler.getLocationOnScreen(viewPosition)
@@ -276,21 +275,43 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      * Scrolls up by [scrollDistance].
      */
     private fun scrollUp() {
-        if (config.webtoonSmoothScroll) {
-            recycler.smoothScrollBy(0, -scrollDistance)
-        } else {
-            recycler.scrollBy(0, -scrollDistance)
-        }
+        scrollByCommand(forward = false)
     }
 
     /**
      * Scrolls down by [scrollDistance].
      */
     private fun scrollDown() {
-        if (config.webtoonSmoothScroll) {
-            recycler.smoothScrollBy(0, scrollDistance)
+        scrollByCommand(forward = true)
+    }
+
+    private fun scrollByCommand(forward: Boolean) {
+        requestVisibleTransition(forward)
+        scrollingByCommand = true
+        try {
+            val distance = if (forward) scrollDistance else -scrollDistance
+            if (config.webtoonSmoothScroll) {
+                recycler.smoothScrollBy(0, distance)
+            } else {
+                recycler.scrollBy(0, distance)
+            }
+        } finally {
+            scrollingByCommand = false
+        }
+    }
+
+    private fun requestVisibleTransition(forward: Boolean) {
+        val position = if (forward) {
+            layoutManager.findLastEndVisibleItemPosition()
         } else {
-            recycler.scrollBy(0, scrollDistance)
+            layoutManager.findFirstVisibleItemPosition()
+        }
+        val transition = adapter.items.getOrNull(position)
+        if ((forward && transition is ChapterTransition.Next) || (!forward && transition is ChapterTransition.Prev)) {
+            val chapter = (transition as ChapterTransition).to
+            if (chapter != null && chapter.state !is ReaderChapter.State.Error) {
+                activity.requestTransitionChapter(chapter)
+            }
         }
     }
 

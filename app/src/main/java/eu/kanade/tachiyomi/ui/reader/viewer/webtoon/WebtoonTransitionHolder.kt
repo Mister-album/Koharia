@@ -139,7 +139,7 @@ class WebtoonTransitionHolder(
             setOnClickListener {
                 val toChapter = transition.to
                 if (toChapter != null) {
-                    viewer.activity.requestPreloadChapter(toChapter)
+                    viewer.activity.requestTransitionChapter(toChapter)
                 }
             }
         }

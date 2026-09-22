@@ -137,7 +137,7 @@ class PagerTransitionHolder(
             setOnClickListener {
                 val toChapter = transition.to
                 if (toChapter != null) {
-                    this@PagerTransitionHolder.viewer.activity.requestPreloadChapter(toChapter)
+                    this@PagerTransitionHolder.viewer.activity.requestTransitionChapter(toChapter)
                 }
             }
         }

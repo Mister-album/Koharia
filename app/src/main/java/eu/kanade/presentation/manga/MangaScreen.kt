@@ -128,7 +128,7 @@ fun MangaScreen(
     onWebViewLongClicked: (() -> Unit)?,
 
     // For tags menu
-    onTagSearch: (String) -> Unit,
+    onTagSearch: ((String) -> Unit)?,
 
     onFilterButtonClicked: () -> Unit,
     onChapterCoverDisplayModeChange: (Long) -> Unit,
@@ -268,7 +268,7 @@ private fun MangaScreenSmallImpl(
     onWebViewLongClicked: (() -> Unit)?,
 
     // For tags menu
-    onTagSearch: (String) -> Unit,
+    onTagSearch: ((String) -> Unit)?,
     onCopyTagToClipboard: (tag: String) -> Unit,
 
     onFilterClicked: () -> Unit,
@@ -545,7 +545,7 @@ fun MangaScreenLargeImpl(
     onWebViewLongClicked: (() -> Unit)?,
 
     // For tags menu
-    onTagSearch: (String) -> Unit,
+    onTagSearch: ((String) -> Unit)?,
     onCopyTagToClipboard: (tag: String) -> Unit,
 
     onFilterButtonClicked: () -> Unit,
@@ -942,7 +942,7 @@ private fun LazyListScope.sharedMangaDetailHeaderListItems(
     onEditCategoryClicked: (() -> Unit)?,
     onSearch: (query: String, global: Boolean) -> Unit,
     onCoverClicked: () -> Unit,
-    onTagSearch: (String) -> Unit,
+    onTagSearch: ((String) -> Unit)?,
     onCopyTagToClipboard: (tag: String) -> Unit,
     onEditNotesClicked: () -> Unit,
     onFilterClicked: () -> Unit,
@@ -1010,7 +1010,7 @@ private fun LazyGridScope.sharedMangaDetailHeaderGridItems(
     onEditCategoryClicked: (() -> Unit)?,
     onSearch: (query: String, global: Boolean) -> Unit,
     onCoverClicked: () -> Unit,
-    onTagSearch: (String) -> Unit,
+    onTagSearch: ((String) -> Unit)?,
     onCopyTagToClipboard: (tag: String) -> Unit,
     onEditNotesClicked: () -> Unit,
     onFilterClicked: () -> Unit,

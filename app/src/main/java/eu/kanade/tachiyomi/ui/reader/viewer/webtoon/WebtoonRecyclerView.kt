@@ -56,6 +56,7 @@ class WebtoonRecyclerView @JvmOverloads constructor(
 
     var tapListener: ((MotionEvent) -> Unit)? = null
     var longTapListener: ((MotionEvent) -> Boolean)? = null
+    var scrollIntentListener: ((forward: Boolean) -> Unit)? = null
 
     private var isManuallyScrolling = false
     private var tapDuringManualScroll = false
@@ -241,6 +242,16 @@ class WebtoonRecyclerView @JvmOverloads constructor(
     }
 
     inner class GestureListener : GestureDetectorWithLongTap.Listener() {
+
+        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+            if (e2.pointerCount == 1 && !isZooming && currentScale <= DEFAULT_RATE &&
+                abs(distanceY) > abs(distanceX)
+            ) {
+                // At the list boundary a drag expresses navigation even when no pixels can scroll.
+                scrollIntentListener?.invoke(distanceY > 0)
+            }
+            return false
+        }
 
         override fun onSingleTapConfirmed(ev: MotionEvent): Boolean {
             if (!tapDuringManualScroll) {

@@ -43,6 +43,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import koharia.connection.ConnectionBrowseScreen
 import koharia.connection.ConnectionPreferences
+import koharia.connection.ui.ConnectionLibraryToolbar
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.lanraragi.LanraragiEntryDestination
 import koharia.lanraragi.LanraragiEntryOpenManager
@@ -177,7 +178,7 @@ class LanraragiLibraryScreen(
         Scaffold(
             topBar = {
                 Column {
-                    LanraragiLibraryToolbar(
+                    ConnectionLibraryToolbar(
                         searchQuery = state.toolbarQuery,
                         onSearchQueryChange = model::setToolbarQuery,
                         onSearch = model::search,

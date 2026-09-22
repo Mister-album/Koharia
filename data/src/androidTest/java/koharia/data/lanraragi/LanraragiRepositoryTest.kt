@@ -62,6 +62,7 @@ class LanraragiRepositoryTest {
             ),
             historyAdapter = History.Adapter(DateColumnAdapter),
             mangasAdapter = Mangas.Adapter(StringListColumnAdapter, UpdateStrategyColumnAdapter, MemoColumnAdapter),
+            tts_progressAdapter = tachiyomi.data.Tts_progress.Adapter(DateColumnAdapter),
         )
         repository = LanraragiRepositoryImpl(database, Json)
         runBlocking { repository.entries(1) }

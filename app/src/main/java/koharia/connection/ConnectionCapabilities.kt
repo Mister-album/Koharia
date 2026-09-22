@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -56,6 +57,12 @@ interface ConnectionPageAdapter {
     fun decoratePageImageUrls(pages: List<Page>, chapterMemo: JsonObject): List<Page> = pages
 }
 
+/** Lets persisted catalogues distinguish opening cached details from an explicit refresh. */
+interface ConnectionCatalogAdapter {
+    suspend fun getMangaDetails(manga: SManga, forceNetwork: Boolean): SManga
+    suspend fun getChapterList(manga: SManga, forceNetwork: Boolean): List<SChapter>
+}
+
 @Serializable
 data class ConnectionPageMetadata(
     val width: Int? = null,
@@ -73,6 +80,15 @@ data class ConnectionPageList(
 /** Provides a source-owned local file for the reader without routing it through downloads. */
 interface ConnectionLocalFileAdapter {
     fun localChapterFile(chapterUrl: String): UniFile?
+}
+
+/** Supplies complete PDFs to the document reader without registering them as manual downloads. */
+interface ConnectionPdfFileAdapter {
+    fun isPdfChapter(chapterUrl: String): Boolean
+
+    fun findCompletePdfFile(chapterUrl: String): UniFile?
+
+    suspend fun preparePdfFile(chapterUrl: String): UniFile
 }
 
 /** Reader defaults follow the owning library, independently of the currently selected UI tab. */
@@ -293,6 +309,7 @@ data class ConnectionMangaBehavior(
     val allowsFetchIntervalManagement: Boolean = true,
     val showSourceName: Boolean = true,
     val detailsRefreshIntervalMillis: Long? = null,
+    val allowsTagSearch: Boolean = true,
 ) {
     init {
         require(detailsRefreshIntervalMillis == null || detailsRefreshIntervalMillis > 0L) {
@@ -318,10 +335,22 @@ interface ConnectionHealthAdapter {
     suspend fun isConnectionReachable(): Boolean
 }
 
+enum class ConnectionRawDownloadResumePolicy {
+    RESUME,
+    RESTART,
+}
+
 interface ConnectionRawDownloadAdapter {
     val rawDownloadClient: OkHttpClient
 
+    val resumePolicy: ConnectionRawDownloadResumePolicy
+        get() = ConnectionRawDownloadResumePolicy.RESUME
+
+    fun preferRawDownload(chapter: Chapter): Boolean = true
+
     fun rawFileRequest(resourceUrl: String, rangeStart: Long? = null): Request
+
+    suspend fun validateRawDownload(file: UniFile) = Unit
 }
 
 interface ConnectionDownloadStorageAdapter {
@@ -418,6 +447,11 @@ interface ConnectionChapterTitleAdapter {
 }
 
 interface ConnectionHistorySyncAdapter {
+    val historyScopeChanges: Flow<Unit> get() = flowOf(Unit)
+
+    /** Null leaves the provider's history unrestricted; empty means this account owns no entries. */
+    suspend fun historyMangaIds(): Set<Long>? = null
+
     suspend fun syncConnectionHistory()
 }
 
@@ -441,6 +475,13 @@ interface ConnectionPageProgressAdapter {
 
 /** Persists confirmed local reading independently of network progress negotiation. */
 interface ConnectionLocalPageProgressAdapter {
+    /** Called once per displayed chapter in a reader session; preloading is not a visit. */
+    fun beginReadingSession(chapterUrl: String) = Unit
+
+    suspend fun confirmLocalPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {
+        recordLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt)
+    }
+
     /** Accept an explicitly selected remote snapshot without producing a new local reading event. */
     suspend fun acceptRemotePageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {}
 
@@ -465,6 +506,7 @@ data class ConnectionPageProgressSnapshot(
     val previousPublicationVersion: String?,
     val publicationVersion: String?,
     val requiresConfirmation: Boolean = true,
+    val requiresPageMappingConfirmation: Boolean = false,
 )
 
 interface ConnectionEpubProgressAdapter {

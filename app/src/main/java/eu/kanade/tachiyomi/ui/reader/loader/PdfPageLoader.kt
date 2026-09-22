@@ -61,6 +61,7 @@ internal class PdfPageLoader(
     override var isLocal: Boolean = true
 
     override val pdfFile: UniFile get() = file
+    override val progressPageCount: Int get() = renderer.pageCount
 
     override suspend fun getPages(): List<ReaderPage> {
         val loadedPages = List(renderer.pageCount) { index ->
