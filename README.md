@@ -112,17 +112,21 @@ DJVU 解码器由系统 WebView 的 JavaScript / WebAssembly 运行时执行，�
 - 可调整字号、字体、行距、段落间距、页边距、首行缩进和阅读区域。
 - 支持自定义背景颜色、亮度、出版商样式、音量键翻页及刘海区域显示。
 - 提供目录、书签、全文搜索、章节切换、阅读百分比与视觉页数显示。
+- 支持语音朗读，可边听边看，自动续读与句级高亮帮助跟随正文；支持切换语音引擎、音色和语速。
 - 排版变化后重新计算当前页与总页数，并缓存相同设备和排版设置下的分页结果。
 
 #### 朗读（TTS）
 
 - 按句朗读当前 EPUB 章节，并自动续播下一章；句级高亮与朗读进度保持同步，可在阅读器控制条或锁屏 / 蓝牙媒体键上切句、暂停与继续。
-- 内置两种语音引擎：MiMo（需自备 API key）与 Microsoft Edge 在线语音（免费、无需 Key）；音色按引擎分别保存。
+- 默认使用 Microsoft Edge 在线语音，无需 API Key；也可切换至小米 MiMo TTS（需配置自己的 API Key），音色按引擎分别保存。
+- 阅读器内提供播放控制和常用朗读设置，完整配置位于书籍阅读器设置中的“语音引擎”。
 - 朗读语速可调；句间停顿与 MP3 编码器延迟 / padding 会自动裁剪，保证连续听感。
 - 朗读时申请音频焦点，与其他播放器互斥：被电话等短暂打断后自动恢复，需要让出音量时（duck）会自动压低。
 - 合成结果按句缓存在本地（上限 256 MiB，按最近使用淘汰），重复朗读同一章节不再重新合成。
 - **数据披露**：语音由所选引擎合成，因此**当前章节正文会上传至对应厂商**（MiMo 或 Microsoft）。首次朗读前会弹窗确认，设置页也常驻说明；不希望正文外发时可改用其他阅读方式。
 - API key 只保存在设备本地，使用 Android 系统密钥库（Keystore，AES-256-GCM）加密，构建产物与备份中不含明文 Key。
+
+小米 MiMo TTS **目前可免费试用（限时）**，可前往[小米 MiMo 开放平台注册试用](https://platform.xiaomimimo.com?ref=RD7JZG)。注册并创建 API Key 后，在 Koharia 的语音引擎设置中选择 MiMo 并填写密钥即可使用。免费试用范围、额度与期限以[小米官方说明](https://mimo.mi.com/models/zh-CN/mimo-v2.5-tts)及平台最新规则为准。
 
 ### 进度、离线与数据管理
 
@@ -177,9 +181,9 @@ Koharia 建立在 Javier Tomas 最初完成的工作、Mihon 项目贡献者的�
 
 ## 支持
 
-Koharia 是一个个人维护的开源项目。持续维护需要投入时间处理上游变更、阅读器体验、下载与同步、Android 版本兼容，以及日常测试和发布工作。
+Koharia 是一个由项目维护者与社区贡献者共同改进的开源项目。持续开发与维护需要投入时间处理上游变更、阅读体验、下载与同步、Android 兼容，以及日常测试和发布工作。
 
-如果 Koharia 对你的阅读流程有帮助，欢迎通过 Patreon 或爱发电支持项目。你的支持会直接帮助项目保持更新，并让我能更稳定地投入到修复问题和打磨漫画、书籍阅读体验中。
+如果 Koharia 对你的阅读流程有帮助，欢迎通过 Patreon 或爱发电支持项目。你的支持有助于项目持续维护、修复问题和打磨漫画与书籍阅读体验。提交代码、完善文档、参与测试和反馈问题，同样是对项目的支持。
 
 - Patreon：[https://www.patreon.com/c/ALBUM937](https://www.patreon.com/c/ALBUM937)
 - 爱发电：[https://ifdian.net/a/album-Koharia](https://ifdian.net/a/album-Koharia)
@@ -197,3 +201,18 @@ Copyright (C) Mihon contributors
 Copyright (C) 2026 Koharia contributors
 
 本项目基于 Apache License, Version 2.0 授权。详情见 [LICENSE](./LICENSE) 与 [NOTICE](./NOTICE)。
+
+## 贡献者
+
+感谢每一位为 Koharia 提交代码、完善文档与翻译、参与测试和反馈问题的贡献者。欢迎阅读[贡献指南](./CONTRIBUTING.md)，一起改进阅读体验。
+
+<!-- koharia-contributors:start -->
+<p>
+  <a href="https://github.com/CurrenWong"><img src="./.github/assets/contributors/CurrenWong.svg" width="64" height="64" alt="CurrenWong" title="CurrenWong" /></a>
+  <a href="https://github.com/Mister-album"><img src="./.github/assets/contributors/Mister-album.svg" width="64" height="64" alt="Mister-album" title="Mister-album" /></a>
+</p>
+<!-- koharia-contributors:end -->
+
+以上名单仅统计 Koharia 独立开发以来的提交作者，排除上游历史与机器人，由 GitHub Actions 自动更新。
+
+[提交问题或建议](https://github.com/Mister-album/Koharia/issues)

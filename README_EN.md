@@ -112,17 +112,21 @@ The DjVu decoder runs in the JavaScript / WebAssembly runtime provided by the sy
 - Adjustable font size, font family, line height, paragraph spacing, page margins, first-line indentation, and reading area.
 - Custom background colors, brightness, publisher styles, volume-key page turning, and display cutout support.
 - Table of contents, bookmarks, full-text search, chapter navigation, reading percentage, and visual page counts.
+- Read aloud while following sentence highlighting, with automatic continuation and controls for the speech engine, voice, and speed.
 - Recalculates the current and total visual pages after layout changes, and reuses pagination results for matching device and layout settings.
 
 #### Read-aloud (TTS)
 
 - Reads the current EPUB chapter sentence by sentence and continues into the next chapter automatically; sentence highlighting and reading progress stay in sync, and you can skip sentences, pause, and resume from the in-reader control bar or from the lock screen / Bluetooth media keys.
-- Two built-in engines: MiMo (bring your own API key) and Microsoft Edge online voices (free, no key required). Voices are stored separately per engine.
+- Microsoft Edge online voices are used by default, with no API key required. You can also choose Xiaomi MiMo TTS with your own API key. Voices are stored separately per engine.
+- Playback controls and frequently used options are available inside the reader; full configuration is under the speech engine section of book reader settings.
 - Adjustable reading speed; inter-sentence gaps and MP3 encoder delay/padding are trimmed automatically for smooth playback.
 - Read-aloud holds audio focus and coexists correctly with other players: playback resumes after a short interruption such as a phone call, and volume is lowered when ducking is requested.
 - Synthesized sentences are cached on device (256 MiB cap, least-recently-used eviction), so replaying a chapter does not re-synthesize it.
 - **Data disclosure**: speech is synthesized by the selected engine, so **the current chapter text is uploaded to that vendor** (MiMo or Microsoft). A one-time dialog confirms this before the first listen and the settings page keeps the notice permanently visible; use another reading mode if you would rather not share chapter text.
 - API keys are stored only on the device, encrypted with the Android keystore (AES-256-GCM); no plaintext key is present in build artifacts or backups.
+
+Xiaomi MiMo TTS is **currently available for a free, limited-time trial**. You can [register on the Xiaomi MiMo Open Platform](https://platform.xiaomimimo.com?ref=RD7JZG) to try it. Create an API key, then select MiMo and enter the key in Koharia’s speech engine settings. Trial availability, quotas, and duration are subject to [Xiaomi’s official information](https://mimo.mi.com/models/en-US/mimo-v2.5-tts) and the platform’s latest terms.
 
 ### Progress, offline access, and data management
 
@@ -177,9 +181,9 @@ Join the [Komga Discord server](https://discord.gg/komga-678794935368941569) and
 
 ## Support
 
-Koharia is an independently maintained open-source project. Ongoing maintenance requires time for upstream changes, reader improvements, downloads and synchronization, Android compatibility, testing, and releases.
+Koharia is an open-source project improved by its maintainer and community contributors. Ongoing maintenance requires time for upstream changes, reader improvements, downloads and synchronization, Android compatibility, testing, and releases.
 
-If Koharia is useful to your reading workflow, you can support the project through Patreon or Afdian. Your support helps keep the project updated and makes it possible to spend more time fixing issues and improving the comic and book reading experience.
+If Koharia is useful to your reading workflow, you can support the project through Patreon or Afdian. Your support helps sustain maintenance, bug fixes, and improvements to the comic and book reading experience. Code, documentation, testing, and issue reports are equally welcome ways to contribute.
 
 - Patreon: [https://www.patreon.com/c/ALBUM937](https://www.patreon.com/c/ALBUM937)
 - Afdian: [https://ifdian.net/a/album-Koharia](https://ifdian.net/a/album-Koharia)
@@ -197,3 +201,18 @@ Copyright (C) Mihon contributors
 Copyright (C) 2026 Koharia contributors
 
 This project is licensed under the Apache License, Version 2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE) for details.
+
+## Contributors
+
+Thank you to everyone who contributes code, documentation, translations, testing, and issue reports to Koharia. Read the [contribution guide](./CONTRIBUTING.md) to get involved.
+
+<!-- koharia-contributors:start -->
+<p>
+  <a href="https://github.com/CurrenWong"><img src="./.github/assets/contributors/CurrenWong.svg" width="64" height="64" alt="CurrenWong" title="CurrenWong" /></a>
+  <a href="https://github.com/Mister-album"><img src="./.github/assets/contributors/Mister-album.svg" width="64" height="64" alt="Mister-album" title="Mister-album" /></a>
+</p>
+<!-- koharia-contributors:end -->
+
+This list includes commit authors since Koharia development began, excluding upstream history and bots. GitHub Actions updates it automatically.
+
+[Report an issue or suggest an improvement](https://github.com/Mister-album/Koharia/issues)

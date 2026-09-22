@@ -1,0 +1,37 @@
+name: Update contributors
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-contributors
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'Mister-album/Koharia'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fetch upstream history for exclusion
+        run: git fetch --no-tags https://github.com/mihonapp/mihon.git main:refs/remotes/contributors-upstream/main
+      - name: Generate contributor blocks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/contributors/update.py --upstream-ref refs/remotes/contributors-upstream/main
+      - name: Commit updated blocks
+        run: |
+          git add -- README.md README_EN.md .github/assets/contributors/
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: update Koharia contributors'
+          git push origin HEAD:main
