@@ -1,4 +1,0 @@
-# Project-scoped orchestration; keep the main model selected by the user.
-[agents]
-enabled = true
-max_concurrent_threads_per_session = 3

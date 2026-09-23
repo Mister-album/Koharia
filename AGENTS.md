@@ -55,18 +55,6 @@ English release notes
 <!-- koharia-release-notes:end -->
 ```
 
-## Codex Subagent Orchestration
-
-- For work with independently deliverable parts, delegate bounded investigation, review, verification, or mechanical edits to subagents when this reduces waiting or exploration context. Complete simple tasks directly. The main agent owns design, complex implementation, scope, and integration.
-- Use 1–3 subagents only as useful, within the runtime limit. Project roles live in `.codex/agents/`: `quick_scan` (Luna/low), `default` (Terra/medium), `code_explorer` (Terra/high), `reviewer` (Astra/high), `verifier` (Terra/medium), and `mechanical_editor` (Luna/medium).
-- Select a configured role only when the runtime exposes role selection. If the tool only exposes model and reasoning overrides, read the corresponding role file and include its instructions in a self-contained assignment, using its model/effort when supported. Never invent an `agent_type` parameter or silently claim a role file was loaded. Read-only instructions still apply if live permissions override sandbox defaults.
-- Use `fork_turns="none"` when supported. Supply the repository path, objective, relevant paths, known evidence, exclusions, and completion criteria. Use limited history only when necessary; give independent reviewers the question and evidence without a preferred conclusion.
-- Child agents must not spawn or request more agents. Reuse a suitable existing agent for related follow-ups; avoid duplicate investigation. Use subagent tools for delegated work; use `create_thread` only when the user explicitly requests a separate task.
-- Delegate read-only work by default. Assign mechanical editors exclusive file ownership and exact conversion rules; preserve existing user changes. Main-agent formatting must account for the dirty working tree. Serialize Gradle operations and device tests that share outputs or device state.
-- Every assignment must respect the mandatory rules above, including secret handling, isolated device fixtures, package/data retention, and `.test-artifacts/<task>/` paths. Investigation and review must preserve the project boundaries and remote shelf cache contract below.
-- Work independently after dispatch and wait only for an actual dependency. Reassess stalled work instead of repeated polling. Child results should begin with `complete`, `partial`, or `blocked`, include evidence and limitations, and report critical blockers promptly without routine heartbeats or internal report files.
-- Integrate supported findings without repeating every read or successful check. Recheck conflicting evidence, high-risk conclusions, and final behavior after edits; the main agent remains responsible for required verification.
-
 ## Project Map
 
 | Path | Purpose |
