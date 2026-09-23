@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
+import eu.kanade.tachiyomi.data.backup.BackupCrypto
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
 import eu.kanade.tachiyomi.data.backup.create.creators.CategoriesBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.MangaBackupCreator
@@ -28,6 +29,7 @@ import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.storage.service.StoragePreferences
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -55,19 +57,12 @@ class BackupCreator(
     private val sourcesBackupCreator: SourcesBackupCreator = SourcesBackupCreator(),
 ) {
 
-    suspend fun backup(uri: Uri, options: BackupOptions): String {
+    suspend fun backup(uri: Uri, options: BackupOptions, password: CharArray? = null): String {
         var file: UniFile? = null
         try {
             file = if (isAutoBackup) {
                 // Get dir of file and create
                 val dir = UniFile.fromUri(context, uri)
-
-                // Delete older backups
-                dir?.listFiles { _, filename -> FILENAME_REGEX.matches(filename) }
-                    .orEmpty()
-                    .sortedByDescending { it.name }
-                    .drop(MAX_AUTO_BACKUPS - 1)
-                    .forEach { it.delete() }
 
                 // Create new file to place backup
                 dir?.createFile(getFilename())
@@ -91,6 +86,11 @@ class BackupCreator(
                 backupSources = backupSources(backupManga),
                 backupPreferences = backupAppPreferences(options),
                 backupSourcePreferences = backupSourcePreferences(options),
+                backupStorageDirectory = if (options.appSettings) {
+                    Injekt.get<StoragePreferences>().baseStorageDirectory.get()
+                } else {
+                    ""
+                },
             )
 
             val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
@@ -101,14 +101,20 @@ class BackupCreator(
             val compressedPayload = ByteArrayOutputStream().also { output ->
                 GZIPOutputStream(output).use { gzip -> gzip.write(byteArray) }
             }.toByteArray()
+            val encrypted = password?.takeIf(CharArray::isNotEmpty)?.let { BackupCrypto.encrypt(compressedPayload, it) }
+            val storedPayload = encrypted?.ciphertext ?: compressedPayload
             val envelope = KohariaBackupEnvelope(
                 magic = KohariaBackupEnvelope.MAGIC,
                 formatVersion = KohariaBackupEnvelope.FORMAT_VERSION,
                 schemaVersion = KohariaBackupEnvelope.SCHEMA_VERSION,
                 createdAt = System.currentTimeMillis(),
                 applicationId = BuildConfig.APPLICATION_ID,
-                payloadSha256 = compressedPayload.sha256(),
-                compressedPayload = compressedPayload,
+                payloadSha256 = storedPayload.sha256(),
+                compressedPayload = if (encrypted == null) compressedPayload else byteArrayOf(),
+                encryptionSalt = encrypted?.salt ?: byteArrayOf(),
+                encryptionIv = encrypted?.iv ?: byteArrayOf(),
+                encryptionIterations = encrypted?.iterations ?: 0,
+                encryptedPayload = encrypted?.ciphertext ?: byteArrayOf(),
             )
             val envelopeBytes = parser.encodeToByteArray(KohariaBackupEnvelope.serializer(), envelope)
             file.openOutputStream()
@@ -117,9 +123,14 @@ class BackupCreator(
             val fileUri = file.uri
 
             // Make sure it's a valid backup file
-            BackupFileValidator(context).validate(fileUri)
+            BackupFileValidator(context).validate(fileUri, password)
 
             if (isAutoBackup) {
+                UniFile.fromUri(context, uri)?.listFiles { _, filename -> FILENAME_REGEX.matches(filename) }
+                    .orEmpty()
+                    .sortedByDescending { it.name }
+                    .drop(MAX_AUTO_BACKUPS)
+                    .forEach { it.delete() }
                 backupPreferences.lastAutoBackupTimestamp.set(Instant.now().toEpochMilli())
             }
 

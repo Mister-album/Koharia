@@ -28,6 +28,7 @@ import koharia.connection.ConnectionContentScopeController
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionProfileManager
 import koharia.connection.ConnectionRegistry
+import koharia.cover.CustomCoverStore
 import koharia.epub.cache.EpubCacheManager
 import koharia.epub.cache.EpubCachePreferences
 import koharia.epub.font.EpubFontManager
@@ -253,6 +254,7 @@ class AppModule(val app: Application) : InjektModule {
 
         addSingletonFactory { ChapterCache(app, get()) }
         addSingletonFactory { CoverCache(app) }
+        addSingletonFactory { CustomCoverStore(app, get(), get(), get(), get()) }
         addSingletonFactory { EpubCachePreferences(get()) }
         addSingletonFactory { EpubCacheManager(app, get()) }
         addSingletonFactory { PdfReflowCacheManager(app) }
@@ -313,6 +315,7 @@ class AppModule(val app: Application) : InjektModule {
                 }
 
                 Injekt.get<Database>()
+                Injekt.get<CustomCoverStore>().initialize(startupScope)
 
                 Injekt.get<DownloadManager>()
             }

@@ -18,6 +18,11 @@ SELECT chapter_id, manga_id, sentence_index, updated_at
 FROM tts_progress
 WHERE chapter_id = :chapterId;
 
+getByMangaId:
+SELECT chapter_id, manga_id, sentence_index, updated_at
+FROM tts_progress
+WHERE manga_id = :mangaId;
+
 upsert:
 INSERT INTO tts_progress(chapter_id, manga_id, sentence_index, updated_at)
 VALUES (:chapterId, :mangaId, :sentenceIndex, :updatedAt)

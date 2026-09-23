@@ -54,7 +54,7 @@ class LocalFolderConnectionProvider(
         val mangaRepository = Injekt.get<MangaRepository>()
         val coverCache = Injekt.get<CoverCache>()
         mangaRepository.getMangaBySourceId(profile.id).forEach { manga ->
-            coverCache.deleteFromCache(manga, deleteCustomCover = true)
+            coverCache.deleteFromCache(manga)
         }
         mangaRepository.deleteMangaBySourceId(profile.id)
 

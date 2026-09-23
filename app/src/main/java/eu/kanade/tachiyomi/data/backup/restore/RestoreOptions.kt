@@ -46,9 +46,13 @@ data class RestoreOptions(
 
         fun fromBooleanArray(array: BooleanArray) = RestoreOptions(
             libraryEntries = array[0],
-            categories = array[1],
-            appSettings = array[2],
-            connectionSettings = array.getOrElse(4) { array.getOrElse(3) { true } },
+            categories = if (array.size == 3) array[0] else array[1],
+            appSettings = array[if (array.size == 3) 1 else 2],
+            connectionSettings = when (array.size) {
+                3 -> array[2]
+                5 -> array[4]
+                else -> array.getOrElse(3) { true }
+            },
         )
     }
 

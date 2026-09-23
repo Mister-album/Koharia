@@ -714,10 +714,8 @@ class LanraragiSource(
     }
 
     override suspend fun prepareReadingStateRestore(chapterUrls: List<String>) {
-        val archiveIds = chapterUrls.filter { it.startsWith("/lanraragi/$id/archive/") }.map(::archiveId)
         progressMutex.withLock {
             readingEpoch.incrementAndGet()
-            repository.resetReadStates(id, archiveIds)
         }
     }
 

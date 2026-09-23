@@ -396,7 +396,7 @@ class SmangaReadingCoordinatorTest {
     }
 
     @Test
-    fun `restore cancels pending uploads and retires unsent history without posting`() = runTest {
+    fun `restore cancels in-flight uploads and preserves local pending state and history`() = runTest {
         val fixture = Fixture(this)
         val entered = CompletableDeferred<Unit>()
         coEvery { fixture.api.chapters(20) } coAnswers {
@@ -415,12 +415,9 @@ class SmangaReadingCoordinatorTest {
             fixture.coordinator.retryPending()
         }
         advanceUntilIdle()
-        coEvery { fixture.api.chapters(20) } returns listOf(chapter)
-        fixture.coordinator.retryPending()
-        advanceUntilIdle()
 
-        assertTrue(fixture.states.isEmpty())
-        assertEquals(1, fixture.history.values.single().status)
+        assertTrue(fixture.states.getValue(10).pending)
+        assertEquals(0, fixture.history.values.single().status)
         coVerify(exactly = 0) { fixture.api.pushProgress(any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { fixture.api.addHistory(any(), any(), any()) }
     }
@@ -668,16 +665,15 @@ class SmangaReadingCoordinatorTest {
     }
 
     @Test
-    fun `restore retires an explicit read choice before it can upload`() = runTest {
+    fun `restore preserves an explicit read choice without starting an upload`() = runTest {
         val fixture = Fixture(this)
         fixture.coordinator.requireMappingConfirmation(10)
         fixture.coordinator.setRead(chapter, true)
 
         ConnectionRestoreState.duringRestore { fixture.coordinator.prepareRestore(listOf(10)) }
-        fixture.coordinator.retryPending()
         advanceUntilIdle()
 
-        assertTrue(fixture.states.isEmpty())
+        assertTrue(fixture.states.containsKey(10))
         assertTrue(fixture.history.isEmpty())
         coVerify(exactly = 0) { fixture.api.pushProgress(any(), any(), any(), any(), any()) }
     }
@@ -1062,7 +1058,7 @@ class SmangaReadingCoordinatorTest {
     }
 
     @Test
-    fun `restore resets confirmation gates only for the restored chapters`() = runTest {
+    fun `restore retains confirmation gates for restored and other chapters`() = runTest {
         val fixture = Fixture(this)
         val other = chapter.copy(id = 11)
         coEvery { fixture.api.chapters(20) } returns listOf(chapter, other)
@@ -1074,9 +1070,9 @@ class SmangaReadingCoordinatorTest {
         fixture.coordinator.record(other, 2, 10, 100, false)
         advanceUntilIdle()
 
-        assertFalse(fixture.states.getValue(10).pending)
+        assertTrue(fixture.states.getValue(10).pending)
         assertTrue(fixture.states.getValue(11).pending)
-        coVerify(exactly = 1) { fixture.api.pushProgress(20, 10, 2, 10, false) }
+        coVerify(exactly = 0) { fixture.api.pushProgress(20, 10, 2, 10, false) }
         coVerify(exactly = 0) { fixture.api.pushProgress(20, 11, 2, 10, false) }
     }
 

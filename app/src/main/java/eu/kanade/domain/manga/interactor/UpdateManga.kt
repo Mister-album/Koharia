@@ -1,6 +1,5 @@
 package eu.kanade.domain.manga.interactor
 
-import eu.kanade.domain.manga.model.hasCustomCover
 import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
@@ -59,12 +58,8 @@ class UpdateManga(
                 // Never refresh covers if the url is empty to avoid "losing" existing covers
                 remoteManga.thumbnail_url.isNullOrEmpty() -> null
                 !manualFetch && localManga.thumbnailUrl == remoteManga.thumbnail_url -> null
-                localManga.hasCustomCover(coverCache) -> {
-                    coverCache.deleteFromCache(localManga, false)
-                    null
-                }
                 else -> {
-                    coverCache.deleteFromCache(localManga, false)
+                    coverCache.deleteFromCache(localManga)
                     Instant.now().toEpochMilli()
                 }
             }

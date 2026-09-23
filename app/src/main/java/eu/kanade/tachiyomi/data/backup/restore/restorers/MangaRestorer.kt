@@ -2,13 +2,21 @@ package eu.kanade.tachiyomi.data.backup.restore.restorers
 
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
-import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupChapter
+import eu.kanade.tachiyomi.data.backup.models.BackupEpubBookmark
+import eu.kanade.tachiyomi.data.backup.models.BackupEpubProgress
 import eu.kanade.tachiyomi.data.backup.models.BackupHistory
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupTracking
+import eu.kanade.tachiyomi.data.backup.models.BackupTtsProgress
+import eu.kanade.tachiyomi.data.backup.providers.BackupLanraragiState
+import eu.kanade.tachiyomi.data.backup.providers.BackupSmangaState
+import eu.kanade.tachiyomi.data.backup.providers.LanraragiStateBackupAdapter
+import eu.kanade.tachiyomi.data.backup.providers.SmangaStateBackupAdapter
+import koharia.domain.epub.repository.EpubBookmarkRepository
+import koharia.domain.epub.repository.EpubProgressRepository
 import tachiyomi.data.Database
 import tachiyomi.data.MemoColumnAdapter
 import tachiyomi.data.UpdateStrategyColumnAdapter
@@ -35,6 +43,10 @@ class MangaRestorer(
     private val updateManga: UpdateManga = Injekt.get(),
     private val getTracks: GetTracks = Injekt.get(),
     private val insertTrack: InsertTrack = Injekt.get(),
+    private val epubProgressRepository: EpubProgressRepository = Injekt.get(),
+    private val epubBookmarkRepository: EpubBookmarkRepository = Injekt.get(),
+    private val lanraragiStateBackupAdapter: LanraragiStateBackupAdapter = LanraragiStateBackupAdapter(),
+    private val smangaStateBackupAdapter: SmangaStateBackupAdapter = SmangaStateBackupAdapter(),
     fetchInterval: FetchInterval = Injekt.get(),
 ) {
 
@@ -80,6 +92,11 @@ class MangaRestorer(
                 history = backupManga.history,
                 tracks = backupManga.tracking,
                 excludedScanlators = backupManga.excludedScanlators,
+                epubProgress = backupManga.epubProgress,
+                epubBookmarks = backupManga.epubBookmarks,
+                ttsProgress = backupManga.ttsProgress,
+                lanraragiState = backupManga.lanraragiState,
+                smangaState = backupManga.smangaState,
             )
         }
     }
@@ -280,15 +297,89 @@ class MangaRestorer(
         history: List<BackupHistory>,
         tracks: List<BackupTracking>,
         excludedScanlators: List<String>,
+        epubProgress: List<BackupEpubProgress>,
+        epubBookmarks: List<BackupEpubBookmark>,
+        ttsProgress: List<BackupTtsProgress>,
+        lanraragiState: List<BackupLanraragiState>,
+        smangaState: List<BackupSmangaState>,
     ): Manga {
         restoreCategories(manga, categories, backupCategories)
         restoreChapters(manga, chapters)
+        restoreEpubState(manga, epubProgress, epubBookmarks)
+        restoreTtsProgress(manga, ttsProgress)
+        if (lanraragiState.isNotEmpty() || smangaState.isNotEmpty()) {
+            val chapterIdByUrl = restoredChapterIdsByUrl(manga.id)
+            lanraragiStateBackupAdapter.restore(manga.id, chapterIdByUrl, lanraragiState)
+            smangaStateBackupAdapter.restore(manga.id, chapterIdByUrl, smangaState)
+        }
         restoreTracking(manga, tracks)
-        restoreHistory(history)
+        restoreHistory(manga, history)
         restoreExcludedScanlators(manga, excludedScanlators)
         updateManga.awaitUpdateFetchInterval(manga, now, currentFetchWindow)
         return manga
     }
+
+    private suspend fun restoreEpubState(
+        manga: Manga,
+        progress: List<BackupEpubProgress>,
+        bookmarks: List<BackupEpubBookmark>,
+    ) {
+        if (progress.isEmpty() && bookmarks.isEmpty()) return
+        val chaptersByUrl = restoredChapterIdsByUrl(manga.id)
+        val existingProgress = epubProgressRepository.getProgressesByMangaId(manga.id)
+            .associateBy { it.chapterId }
+        progress.forEach { saved ->
+            val chapterId = chaptersByUrl[saved.chapterUrl] ?: return@forEach
+            if ((existingProgress[chapterId]?.updatedAt?.time ?: Long.MIN_VALUE) >= saved.updatedAt) return@forEach
+            database.epub_progressQueries.upsert(
+                chapterId = chapterId,
+                mangaId = manga.id,
+                bookUrl = saved.bookUrl,
+                locatorJson = saved.locatorJson,
+                progression = saved.progression,
+                positionIndex = saved.positionIndex,
+                updatedAt = Date(saved.updatedAt),
+                lastSyncedAt = saved.lastSyncedAt?.let(::Date),
+            )
+        }
+        val existingBookmarks = epubBookmarkRepository.getBookmarksByMangaId(manga.id)
+            .associateBy { it.chapterId to (it.locatorJson to it.createdAt.time) }
+        bookmarks.forEach { saved ->
+            val chapterId = chaptersByUrl[saved.chapterUrl] ?: return@forEach
+            val existing = existingBookmarks[chapterId to (saved.locatorJson to saved.createdAt)]
+            if (existing != null) {
+                if (existing.note != saved.note) database.epub_bookmarkQueries.updateNote(saved.note, existing.id)
+                return@forEach
+            }
+            database.epub_bookmarkQueries.insert(
+                chapterId = chapterId,
+                mangaId = manga.id,
+                locatorJson = saved.locatorJson,
+                sectionTitle = saved.sectionTitle,
+                progression = saved.progression,
+                note = saved.note,
+                createdAt = Date(saved.createdAt),
+            )
+        }
+    }
+
+    private suspend fun restoreTtsProgress(manga: Manga, progress: List<BackupTtsProgress>) {
+        if (progress.isEmpty()) return
+        val chaptersByUrl = restoredChapterIdsByUrl(manga.id)
+        val existing = database.tts_progressQueries.getByMangaId(manga.id)
+            .awaitAsList()
+            .associateBy { it.chapter_id }
+        progress.forEach { saved ->
+            val chapterId = chaptersByUrl[saved.chapterUrl] ?: return@forEach
+            if ((existing[chapterId]?.updated_at?.time ?: Long.MIN_VALUE) >= saved.updatedAt) return@forEach
+            database.tts_progressQueries.upsert(chapterId, manga.id, saved.sentenceIndex, Date(saved.updatedAt))
+        }
+    }
+
+    private suspend fun restoredChapterIdsByUrl(mangaId: Long): Map<String, Long> =
+        database.chaptersQueries.getChaptersByMangaId(mangaId, 0)
+            .awaitAsList()
+            .associate { it.url to it._id }
 
     /**
      * Restores the categories a manga is in.
@@ -324,24 +415,18 @@ class MangaRestorer(
         }
     }
 
-    private suspend fun restoreHistory(backupHistory: List<BackupHistory>) {
+    private suspend fun restoreHistory(manga: Manga, backupHistory: List<BackupHistory>) {
+        val chaptersByUrl = restoredChapterIdsByUrl(manga.id)
+        val historyByChapterId = database.historyQueries.getHistoryByMangaId(manga.id)
+            .awaitAsList()
+            .associateBy { it.chapter_id }
         val toUpdate = backupHistory.mapNotNull { history ->
-            val dbHistory = database.historyQueries
-                .getHistoryByChapterUrl(history.url)
-                .awaitAsOneOrNull()
+            val chapterId = chaptersByUrl[history.url] ?: return@mapNotNull null
+            val dbHistory = historyByChapterId[chapterId]
             val item = history.getHistoryImpl()
 
             if (dbHistory == null) {
-                val chapter = database.chaptersQueries
-                    .getChapterByUrl(history.url)
-                    .awaitAsOneOrNull()
-                return@mapNotNull if (chapter == null) {
-                    // Chapter doesn't exist; skip
-                    null
-                } else {
-                    // New history entry
-                    item.copy(chapterId = chapter._id)
-                }
+                return@mapNotNull item.copy(chapterId = chapterId)
             }
 
             // Update history entry

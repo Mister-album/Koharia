@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.data.backup.models
 
+import eu.kanade.tachiyomi.data.backup.providers.BackupLanraragiState
+import eu.kanade.tachiyomi.data.backup.providers.BackupSmangaState
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import koharia.core.common.extensions.JsonObjectEmptyBytes
 import kotlinx.serialization.Serializable
@@ -46,6 +48,11 @@ class BackupManga(
     @ProtoNumber(110) var notes: String = "",
     @ProtoNumber(111) var initialized: Boolean = false,
     @ProtoNumber(112) var memo: ByteArray = JsonObjectEmptyBytes,
+    @ProtoNumber(113) var epubProgress: List<BackupEpubProgress> = emptyList(),
+    @ProtoNumber(114) var epubBookmarks: List<BackupEpubBookmark> = emptyList(),
+    @ProtoNumber(115) var ttsProgress: List<BackupTtsProgress> = emptyList(),
+    @ProtoNumber(116) var lanraragiState: List<BackupLanraragiState> = emptyList(),
+    @ProtoNumber(117) var smangaState: List<BackupSmangaState> = emptyList(),
 ) {
     fun getMangaImpl(): Manga {
         return Manga.create().copy(

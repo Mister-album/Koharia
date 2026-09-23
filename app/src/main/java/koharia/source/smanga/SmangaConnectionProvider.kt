@@ -39,7 +39,7 @@ class SmangaConnectionProvider(private val context: Context) : ConnectionProvide
             },
         ).forEach(chapterCache::removePageListFromCache)
         val coverCache = Injekt.get<CoverCache>()
-        mangas.forEach { coverCache.deleteFromCache(it, deleteCustomCover = false) }
+        mangas.forEach { coverCache.deleteFromCache(it) }
         Injekt.get<SmangaRepository>().removeConnection(profile.id)
         File(context.cacheDir, "smanga-pdf/${profile.id}").deleteRecursively()
         false

@@ -267,7 +267,7 @@ class LocalFolderSource(
                             LocalLibraryLocator.entryUrl(id, it.rootId, it.relativePath)
                         }
                         existingMangas.filter { it.url in urls }.forEach { manga ->
-                            coverCache.deleteFromCache(manga, deleteCustomCover = true)
+                            coverCache.deleteFromCache(manga)
                             mangaRepository.deleteMangaById(manga.id)
                         }
                         preferences.removeDeletedItems(removedItems.mapTo(mutableSetOf()) { it.itemKey })
@@ -1737,7 +1737,7 @@ class LocalFolderSource(
         }.filterNotNull()
         if (changedManga.isNotEmpty()) {
             val changedExistingManga = changedManga.mapNotNull { existingByUrl[it.url] }
-            changedExistingManga.forEach { coverCache.deleteFromCache(it, deleteCustomCover = false) }
+            changedExistingManga.forEach { coverCache.deleteFromCache(it) }
             if (changedExistingManga.isNotEmpty()) {
                 mangaRepository.updateAll(
                     changedExistingManga.map { manga ->

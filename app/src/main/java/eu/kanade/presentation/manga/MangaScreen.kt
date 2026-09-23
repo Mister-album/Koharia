@@ -1164,6 +1164,7 @@ private fun LazyGridScope.sharedChapterGridItems(
                         isMangaFavorite = false,
                         url = thumbnailUrl,
                         lastModified = item.chapter.dateUpload,
+                        useCustomCover = false,
                     )
                 }
                 val onLongClick = {

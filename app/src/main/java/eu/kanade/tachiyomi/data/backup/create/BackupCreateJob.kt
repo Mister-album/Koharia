@@ -13,16 +13,21 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
+import eu.kanade.tachiyomi.data.backup.BackupPasswordStore
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.cancelNotification
-import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
 import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.guava.await
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.backup.service.BackupPreferences
@@ -52,8 +57,15 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
         val options = inputData.getBooleanArray(OPTIONS_KEY)?.let { BackupOptions.fromBooleanArray(it) }
             ?: BackupOptions()
 
+        val passwordId = inputData.getString(PASSWORD_ID_KEY)
+        var password: CharArray? = null
         return try {
-            val location = BackupCreator(context, isAutoBackup).backup(uri, options)
+            password = if (isAutoBackup) {
+                BackupPasswordStore.loadAutomatic(context)
+            } else {
+                passwordId?.let { BackupPasswordStore.loadManual(context, it) }
+            }
+            val location = BackupCreator(context, isAutoBackup).backup(uri, options, password)
             if (!isAutoBackup) {
                 notifier.showBackupComplete(UniFile.fromUri(context, location.toUri())!!)
             }
@@ -63,6 +75,8 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
             if (!isAutoBackup) notifier.showBackupError(e.message)
             Result.failure()
         } finally {
+            password?.fill('\u0000')
+            passwordId?.let { BackupPasswordStore.removeManual(context, it) }
             context.cancelNotification(Notifications.ID_BACKUP_PROGRESS)
         }
     }
@@ -86,7 +100,9 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
 
     companion object {
         fun isManualJobRunning(context: Context): Boolean {
-            return context.workManager.isRunning(TAG_MANUAL)
+            return context.workManager.getWorkInfosByTag(TAG_MANUAL).get().any {
+                it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING
+            }
         }
 
         fun setupTask(context: Context, prefInterval: Int? = null) {
@@ -115,18 +131,34 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
             }
         }
 
-        fun startNow(context: Context, uri: Uri, options: BackupOptions) {
-            val inputData = workDataOf(
-                IS_AUTO_BACKUP_KEY to false,
-                LOCATION_URI_KEY to uri.toString(),
-                OPTIONS_KEY to options.asBooleanArray(),
-            )
-            val request = OneTimeWorkRequestBuilder<BackupCreateJob>()
-                .addTag(TAG_MANUAL)
-                .setInputData(inputData)
-                .build()
-            context.workManager.enqueueUniqueWork(TAG_MANUAL, ExistingWorkPolicy.KEEP, request)
-        }
+        suspend fun startNow(context: Context, uri: Uri, options: BackupOptions, password: String? = null): Boolean =
+            withContext(Dispatchers.IO + NonCancellable) {
+                var passwordId: String? = null
+                var removeTemporaryPassword = true
+                try {
+                    passwordId = password?.takeIf(String::isNotEmpty)?.let {
+                        BackupPasswordStore.saveManual(context, it)
+                    }
+                    val values = mutableListOf<Pair<String, Any>>(
+                        IS_AUTO_BACKUP_KEY to false,
+                        LOCATION_URI_KEY to uri.toString(),
+                        OPTIONS_KEY to options.asBooleanArray(),
+                    )
+                    passwordId?.let { values += PASSWORD_ID_KEY to it }
+                    val request = OneTimeWorkRequestBuilder<BackupCreateJob>()
+                        .addTag(TAG_MANUAL)
+                        .setInputData(workDataOf(*values.toTypedArray()))
+                        .build()
+                    val workManager = context.workManager
+                    workManager.enqueueUniqueWork(TAG_MANUAL, ExistingWorkPolicy.KEEP, request).result.await()
+                    removeTemporaryPassword = false
+                    val accepted = workManager.getWorkInfoById(request.id).await() != null
+                    removeTemporaryPassword = !accepted
+                    accepted
+                } finally {
+                    if (removeTemporaryPassword) passwordId?.let { BackupPasswordStore.removeManual(context, it) }
+                }
+            }
     }
 }
 
@@ -136,3 +168,4 @@ private const val TAG_MANUAL = "$TAG_AUTO:manual"
 private const val IS_AUTO_BACKUP_KEY = "is_auto_backup" // Boolean
 private const val LOCATION_URI_KEY = "location_uri" // String
 private const val OPTIONS_KEY = "options" // BooleanArray
+private const val PASSWORD_ID_KEY = "password_id"

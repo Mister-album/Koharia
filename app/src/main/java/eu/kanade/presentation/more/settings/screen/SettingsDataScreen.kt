@@ -9,6 +9,7 @@ import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -24,6 +25,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MultiChoiceSegmentedButtonRow
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.Text
@@ -41,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -51,7 +55,7 @@ import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
 import eu.kanade.presentation.more.settings.screen.data.StorageInfo
 import eu.kanade.presentation.more.settings.widget.BasePreferenceWidget
 import eu.kanade.presentation.more.settings.widget.PrefsHorizontalPadding
-import eu.kanade.presentation.util.relativeTimeSpanString
+import eu.kanade.tachiyomi.data.backup.BackupPasswordStore
 import eu.kanade.tachiyomi.data.backup.create.BackupCreateJob
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.cache.ChapterCache
@@ -257,8 +261,81 @@ object SettingsDataScreen : SearchableSettings {
     private fun getBackupAndRestoreGroup(backupPreferences: BackupPreferences): Preference.PreferenceGroup {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
+        var automaticPassword by remember { mutableStateOf("") }
+        var automaticConfirmation by remember { mutableStateOf("") }
+        var hasAutomaticPassword by remember { mutableStateOf(BackupPasswordStore.hasAutomatic(context)) }
+        var showAutomaticPasswordDialog by rememberSaveable { mutableStateOf(false) }
 
-        val lastAutoBackup by backupPreferences.lastAutoBackupTimestamp.collectAsState()
+        fun dismissAutomaticPasswordDialog() {
+            automaticPassword = ""
+            automaticConfirmation = ""
+            showAutomaticPasswordDialog = false
+        }
+
+        if (showAutomaticPasswordDialog) {
+            AlertDialog(
+                onDismissRequest = ::dismissAutomaticPasswordDialog,
+                title = { Text(stringResource(MR.strings.backup_automatic_password)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = automaticPassword,
+                            onValueChange = { automaticPassword = it },
+                            label = { Text(stringResource(MR.strings.password)) },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        val mismatch = automaticConfirmation.isNotEmpty() &&
+                            automaticPassword != automaticConfirmation
+                        OutlinedTextField(
+                            value = automaticConfirmation,
+                            onValueChange = { automaticConfirmation = it },
+                            label = { Text(stringResource(MR.strings.backup_password_confirm)) },
+                            supportingText = if (mismatch) {
+                                { Text(stringResource(MR.strings.backup_password_mismatch)) }
+                            } else {
+                                null
+                            },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            isError = mismatch,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            BackupPasswordStore.setAutomatic(context, automaticPassword)
+                            hasAutomaticPassword = true
+                            dismissAutomaticPasswordDialog()
+                        },
+                        enabled = automaticPassword.isNotEmpty() && automaticPassword == automaticConfirmation,
+                    ) {
+                        Text(stringResource(MR.strings.backup_password_save))
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        if (hasAutomaticPassword) {
+                            TextButton(
+                                onClick = {
+                                    BackupPasswordStore.setAutomatic(context, null)
+                                    hasAutomaticPassword = false
+                                    dismissAutomaticPasswordDialog()
+                                },
+                            ) {
+                                Text(stringResource(MR.strings.backup_password_clear))
+                            }
+                        }
+                        TextButton(onClick = ::dismissAutomaticPasswordDialog) {
+                            Text(stringResource(MR.strings.action_cancel))
+                        }
+                    }
+                },
+            )
+        }
 
         val chooseBackup = rememberLauncherForActivityResult(
             object : ActivityResultContracts.GetContent() {
@@ -340,9 +417,16 @@ object SettingsDataScreen : SearchableSettings {
                         true
                     },
                 ),
-                Preference.PreferenceItem.InfoPreference(
-                    stringResource(MR.strings.backup_info) + "\n\n" +
-                        stringResource(MR.strings.last_auto_backup_info, relativeTimeSpanString(lastAutoBackup)),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.backup_automatic_password),
+                    subtitle = stringResource(
+                        if (hasAutomaticPassword) {
+                            MR.strings.backup_password_configured
+                        } else {
+                            MR.strings.backup_unencrypted_warning
+                        },
+                    ),
+                    onClick = { showAutomaticPasswordDialog = true },
                 ),
             ),
         )

@@ -88,7 +88,7 @@ class PreferenceRestorer(
         preferences.forEach {
             if (!it.sourceKey.startsWith("source_")) return@forEach
             val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(it.sourceKey))
-            restorePreferences(it.prefs, sourcePrefs)
+            restorePreferences(it.prefs, sourcePrefs, strict = true)
         }
         if (connectionRestorePolicy.shouldForceLegacyInventoryAfterSourceRestore(
                 sourceKeys = preferences.map(BackupSourcePreferences::sourceKey),
@@ -103,6 +103,7 @@ class PreferenceRestorer(
         toRestore: List<BackupPreference>,
         preferenceStore: PreferenceStore,
         backupCategories: List<BackupCategory>? = null,
+        strict: Boolean = false,
     ) {
         val allCategories = if (backupCategories != null) getCategories.await() else emptyList()
         val categoriesByName = allCategories.associateBy { it.name }
@@ -162,6 +163,7 @@ class PreferenceRestorer(
                 }
             } catch (e: Exception) {
                 Log.e("PreferenceRestorer", "Failed to restore preference <$key>", e)
+                if (strict) throw IllegalStateException("Failed to restore source preference <$key>", e)
             }
         }
     }

@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.preferenceKey
 import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.connection.ConnectionPreferences
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.source.service.SourceManager
@@ -20,6 +21,7 @@ import uy.kohesive.injekt.api.get
 class PreferenceBackupCreator(
     private val sourceManager: SourceManager = Injekt.get(),
     private val preferenceStore: PreferenceStore = Injekt.get(),
+    private val connectionPreferences: ConnectionPreferences = Injekt.get(),
 ) {
 
     fun createApp(includePrivatePreferences: Boolean): List<BackupPreference> {
@@ -31,15 +33,19 @@ class PreferenceBackupCreator(
     }
 
     fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
-        return sourceManager.getCatalogueSources()
+        val sourceKeys = sourceManager.getCatalogueSources()
             .filterIsInstance<ConfigurableSource>()
-            .map {
-                BackupSourcePreferences(
-                    it.preferenceKey(),
-                    it.sourcePreferences().all.toBackupPreferences()
-                        .withPrivatePreferences(includePrivatePreferences),
-                )
-            }
+            .map { it.preferenceKey() }
+            .plus(connectionPreferences.getProfiles().map { "source_${it.id}" })
+            .distinct()
+            .sorted()
+        return sourceKeys.map { key ->
+            BackupSourcePreferences(
+                key,
+                sourcePreferences(key).all.toBackupPreferences()
+                    .withPrivatePreferences(includePrivatePreferences),
+            )
+        }
             .filter { it.prefs.isNotEmpty() }
     }
 

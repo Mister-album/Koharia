@@ -45,7 +45,7 @@ class LanraragiConnectionProvider(private val context: Context) : ConnectionProv
             },
         ).forEach(chapterCache::removePageListFromCache)
         val covers = Injekt.get<CoverCache>()
-        mangas.forEach { covers.deleteFromCache(it, deleteCustomCover = false) }
+        mangas.forEach { covers.deleteFromCache(it) }
         if (source == null) Injekt.get<LanraragiRepository>().remove(profile.id)
         false
     }

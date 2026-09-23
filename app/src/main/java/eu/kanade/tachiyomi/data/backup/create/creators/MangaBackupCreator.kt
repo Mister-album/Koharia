@@ -4,11 +4,18 @@ import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
 import eu.kanade.tachiyomi.data.backup.create.BackupOptions
 import eu.kanade.tachiyomi.data.backup.models.BackupChapter
+import eu.kanade.tachiyomi.data.backup.models.BackupEpubBookmark
+import eu.kanade.tachiyomi.data.backup.models.BackupEpubProgress
 import eu.kanade.tachiyomi.data.backup.models.BackupHistory
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
+import eu.kanade.tachiyomi.data.backup.models.BackupTtsProgress
 import eu.kanade.tachiyomi.data.backup.models.backupChapterMapper
 import eu.kanade.tachiyomi.data.backup.models.backupTrackMapper
+import eu.kanade.tachiyomi.data.backup.providers.LanraragiStateBackupAdapter
+import eu.kanade.tachiyomi.data.backup.providers.SmangaStateBackupAdapter
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import koharia.domain.epub.repository.EpubBookmarkRepository
+import koharia.domain.epub.repository.EpubProgressRepository
 import tachiyomi.data.Database
 import tachiyomi.data.MemoColumnAdapter
 import tachiyomi.domain.category.interactor.GetCategories
@@ -21,6 +28,10 @@ class MangaBackupCreator(
     private val database: Database = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
     private val getHistory: GetHistory = Injekt.get(),
+    private val epubProgressRepository: EpubProgressRepository = Injekt.get(),
+    private val epubBookmarkRepository: EpubBookmarkRepository = Injekt.get(),
+    private val lanraragiStateBackupAdapter: LanraragiStateBackupAdapter = LanraragiStateBackupAdapter(),
+    private val smangaStateBackupAdapter: SmangaStateBackupAdapter = SmangaStateBackupAdapter(),
 ) {
 
     suspend operator fun invoke(mangas: List<Manga>, options: BackupOptions): List<BackupManga> {
@@ -48,6 +59,48 @@ class MangaBackupCreator(
                 .awaitAsList()
                 .takeUnless(List<BackupChapter>::isEmpty)
                 ?.let { mangaObject.chapters = it }
+
+            val chapterUrlsById = database.chaptersQueries.getChaptersByMangaId(manga.id, 0)
+                .awaitAsList()
+                .associate { it._id to it.url }
+            mangaObject.epubProgress = epubProgressRepository.getProgressesByMangaId(manga.id).mapNotNull { progress ->
+                chapterUrlsById[progress.chapterId]?.let { chapterUrl ->
+                    BackupEpubProgress(
+                        chapterUrl = chapterUrl,
+                        bookUrl = progress.bookUrl,
+                        locatorJson = progress.locatorJson,
+                        progression = progress.progression,
+                        positionIndex = progress.positionIndex,
+                        updatedAt = progress.updatedAt.time,
+                        lastSyncedAt = progress.lastSyncedAt?.time,
+                    )
+                }
+            }
+            mangaObject.epubBookmarks = epubBookmarkRepository.getBookmarksByMangaId(manga.id).mapNotNull { bookmark ->
+                chapterUrlsById[bookmark.chapterId]?.let { chapterUrl ->
+                    BackupEpubBookmark(
+                        chapterUrl = chapterUrl,
+                        locatorJson = bookmark.locatorJson,
+                        sectionTitle = bookmark.sectionTitle,
+                        progression = bookmark.progression,
+                        note = bookmark.note,
+                        createdAt = bookmark.createdAt.time,
+                    )
+                }
+            }
+            mangaObject.ttsProgress = database.tts_progressQueries.getByMangaId(manga.id)
+                .awaitAsList()
+                .mapNotNull { progress ->
+                    chapterUrlsById[progress.chapter_id]?.let { chapterUrl ->
+                        BackupTtsProgress(chapterUrl, progress.sentence_index, progress.updated_at.time)
+                    }
+                }
+            mangaObject.lanraragiState = lanraragiStateBackupAdapter.capture(manga.id, chapterUrlsById)
+            mangaObject.smangaState = smangaStateBackupAdapter.capture(manga.id, chapterUrlsById)
+                .map { if (options.history) it else it.copy(pendingHistoryEvents = emptyList()) }
+                .filter {
+                    it.readState != null || it.pendingHistoryEvents.isNotEmpty() || it.confirmationPayload != null
+                }
         }
 
         if (options.categories) {

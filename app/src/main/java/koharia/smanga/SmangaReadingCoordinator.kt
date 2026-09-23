@@ -283,15 +283,9 @@ class SmangaReadingCoordinator(
             lastPulledStates.clear()
             lastUploadedStates.clear()
             remoteBaselineRevisions.clear()
-            val ids = chapterIds.toSet()
-            repository.resetReadStates(connectionId, accountKey, chapterIds)
-            ids.forEach {
-                setUploadPause(it, false)
+            chapterIds.forEach {
                 localConfirmations.remove(it)
             }
-            repository.pendingHistoryEvents(connectionId, accountKey)
-                .filter { it.chapterId in ids }
-                .forEach { repository.updateHistoryStatus(connectionId, accountKey, it.id, HISTORY_ATTEMPTED) }
         }
     }
 

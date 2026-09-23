@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher.Companion.USE_CUSTOM_COVE
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.online.HttpSource
 import koharia.connection.ConnectionChapterThumbnailAdapter
+import koharia.cover.CustomCoverStore
 import logcat.LogPriority
 import okhttp3.CacheControl
 import okhttp3.Call
@@ -36,6 +37,7 @@ import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 
 /**
  * A [Fetcher] that fetches cover image for [Manga] object.
@@ -52,7 +54,7 @@ class MangaCoverFetcher(
     private val isLibraryManga: Boolean,
     private val options: Options,
     private val coverFileLazy: Lazy<File?>,
-    private val customCoverFileLazy: Lazy<File>,
+    private val openCustomCover: suspend () -> InputStream?,
     private val diskCacheKeyLazy: Lazy<String>,
     private val sourceLazy: Lazy<HttpSource?>,
     private val chapterThumbnailSourceLazy: Lazy<ConnectionChapterThumbnailAdapter?>,
@@ -67,9 +69,13 @@ class MangaCoverFetcher(
         // Use custom cover if exists
         val useCustomCover = options.extras.getOrDefault(USE_CUSTOM_COVER_KEY)
         if (useCustomCover) {
-            val customCoverFile = customCoverFileLazy.value
-            if (customCoverFile.exists()) {
-                return fileLoader(customCoverFile)
+            val input = openCustomCover()
+            if (input != null) {
+                return SourceFetchResult(
+                    source = ImageSource(source = input.source().buffer(), fileSystem = FileSystem.SYSTEM),
+                    mimeType = "image/*",
+                    dataSource = DataSource.DISK,
+                )
             }
         }
 
@@ -352,6 +358,7 @@ class MangaCoverFetcher(
     ) : Fetcher.Factory<Manga> {
 
         private val coverCache: CoverCache by injectLazy()
+        private val customCovers: CustomCoverStore by injectLazy()
         private val sourceManager: SourceManager by injectLazy()
 
         override fun create(data: Manga, options: Options, imageLoader: ImageLoader): Fetcher {
@@ -360,7 +367,7 @@ class MangaCoverFetcher(
                 isLibraryManga = data.favorite,
                 options = options,
                 coverFileLazy = lazy { coverCache.getCoverFile(data.thumbnailUrl) },
-                customCoverFileLazy = lazy { coverCache.getCustomCoverFile(data.id) },
+                openCustomCover = { customCovers.open(data) },
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
                 sourceLazy = lazy { sourceManager.get(data.source) as? HttpSource },
                 chapterThumbnailSourceLazy = lazy {
@@ -377,6 +384,7 @@ class MangaCoverFetcher(
     ) : Fetcher.Factory<MangaCover> {
 
         private val coverCache: CoverCache by injectLazy()
+        private val customCovers: CustomCoverStore by injectLazy()
         private val sourceManager: SourceManager by injectLazy()
 
         override fun create(data: MangaCover, options: Options, imageLoader: ImageLoader): Fetcher {
@@ -385,7 +393,9 @@ class MangaCoverFetcher(
                 isLibraryManga = data.isMangaFavorite,
                 options = options,
                 coverFileLazy = lazy { coverCache.getCoverFile(data.url) },
-                customCoverFileLazy = lazy { coverCache.getCustomCoverFile(data.mangaId) },
+                openCustomCover = {
+                    if (data.useCustomCover) customCovers.open(data.mangaId, data.sourceId) else null
+                },
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
                 sourceLazy = lazy { sourceManager.get(data.sourceId) as? HttpSource },
                 chapterThumbnailSourceLazy = lazy {

@@ -10,7 +10,7 @@ import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.size.Size
 import eu.kanade.domain.manga.interactor.UpdateManga
-import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.domain.manga.model.hasCustomCover
 import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
@@ -19,6 +19,10 @@ import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import koharia.connection.ConnectionSeriesCoverAdapter
 import koharia.connection.isConnectionLibraryEntry
+import koharia.cover.CustomCoverStore
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -38,17 +42,24 @@ class MangaCoverScreenModel(
     private val mangaId: Long,
     private val getManga: GetManga = Injekt.get(),
     private val imageSaver: ImageSaver = Injekt.get(),
-    private val coverCache: CoverCache = Injekt.get(),
+    private val customCovers: CustomCoverStore = Injekt.get(),
     private val updateManga: UpdateManga = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
 
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<Manga?>(null) {
 
+    private val _hasCustomCover = MutableStateFlow(false)
+    val hasCustomCover = _hasCustomCover.asStateFlow()
+
     init {
         screenModelScope.launchIO {
-            getManga.subscribe(mangaId)
-                .collect { newManga -> mutableState.update { newManga } }
+            combine(getManga.subscribe(mangaId), customCovers.changes) { manga, _ ->
+                manga to manga.hasCustomCover(customCovers)
+            }.collect { (newManga, hasCover) ->
+                _hasCustomCover.value = hasCover
+                mutableState.update { newManga }
+            }
         }
     }
 
@@ -130,7 +141,7 @@ class MangaCoverScreenModel(
             }
             context.contentResolver.openInputStream(data)?.use {
                 try {
-                    manga.editCover(it, updateManga, coverCache, sourceManager)
+                    manga.editCover(it, updateManga, customCovers, sourceManager)
                     notifyCoverUpdated(context)
                 } catch (e: Exception) {
                     notifyFailedCoverUpdate(context, e)
@@ -162,7 +173,7 @@ class MangaCoverScreenModel(
                     }
                     return@launchIO
                 }
-                cover.inputStream().use { manga.editCover(it, updateManga, coverCache, sourceManager) }
+                cover.inputStream().use { manga.editCover(it, updateManga, customCovers, sourceManager) }
                 notifyCoverUpdated(context)
             } catch (e: Exception) {
                 notifyFailedCoverUpdate(context, e)
@@ -171,11 +182,11 @@ class MangaCoverScreenModel(
     }
 
     fun deleteCustomCover(context: Context) {
-        val mangaId = state.value?.id ?: return
+        val manga = state.value ?: return
         screenModelScope.launchIO {
             try {
-                coverCache.deleteCustomCover(mangaId)
-                updateManga.awaitUpdateCoverLastModified(mangaId)
+                customCovers.delete(manga)
+                updateManga.awaitUpdateCoverLastModified(manga.id)
                 notifyCoverUpdated(context)
             } catch (e: Exception) {
                 notifyFailedCoverUpdate(context, e)

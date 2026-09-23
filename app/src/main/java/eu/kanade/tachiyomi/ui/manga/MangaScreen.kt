@@ -23,7 +23,6 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.core.util.ifSourcesLoaded
-import eu.kanade.domain.manga.model.hasCustomCover
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.components.NavigatorAdaptiveSheet
@@ -267,6 +266,7 @@ class MangaScreen(
             MangaScreenModel.Dialog.FullCover -> {
                 val sm = rememberScreenModel { MangaCoverScreenModel(successState.manga.id) }
                 val manga by sm.state.collectAsState()
+                val hasCustomCover by sm.hasCustomCover.collectAsStateWithLifecycle()
                 if (manga != null) {
                     val getContent = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {
                         if (it == null) return@rememberLauncherForActivityResult
@@ -275,7 +275,7 @@ class MangaScreen(
                     MangaCoverDialog(
                         manga = manga!!,
                         snackbarHostState = sm.snackbarHostState,
-                        isCustomCover = remember(manga) { manga!!.hasCustomCover() },
+                        isCustomCover = hasCustomCover,
                         canUseFirstItemAsCover = remember(manga) { sm.canUseFirstItemAsCover(manga!!) },
                         onShareClick = { sm.shareCover(context) },
                         onSaveClick = { sm.saveCover(context) },

@@ -11,11 +11,15 @@ data class KohariaBackupEnvelope(
     @ProtoNumber(4) val createdAt: Long,
     @ProtoNumber(5) val applicationId: String,
     @ProtoNumber(6) val payloadSha256: String,
-    @ProtoNumber(7) val compressedPayload: ByteArray,
+    @ProtoNumber(7) val compressedPayload: ByteArray = byteArrayOf(),
+    @ProtoNumber(8) val encryptionSalt: ByteArray = byteArrayOf(),
+    @ProtoNumber(9) val encryptionIv: ByteArray = byteArrayOf(),
+    @ProtoNumber(10) val encryptionIterations: Int = 0,
+    @ProtoNumber(11) val encryptedPayload: ByteArray = byteArrayOf(),
 ) {
     companion object {
         const val MAGIC = "KOHARIA_BACKUP"
-        const val FORMAT_VERSION = 1
-        const val SCHEMA_VERSION = 1
+        const val FORMAT_VERSION = 2
+        const val SCHEMA_VERSION = 2
     }
 }

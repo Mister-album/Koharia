@@ -9,6 +9,7 @@ data class MangaCover(
     val isMangaFavorite: Boolean,
     val url: String?,
     val lastModified: Long,
+    val useCustomCover: Boolean = true,
 )
 
 fun Manga.asMangaCover(): MangaCover {

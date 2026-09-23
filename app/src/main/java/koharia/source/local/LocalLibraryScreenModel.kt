@@ -390,7 +390,7 @@ internal class LocalLibraryScreenModel(
                 val cover = adapter.loadSuggestedSeriesCover(manga.url)
                     ?: error("No usable cover image was found")
                 cover.inputStream().use {
-                    manga.editCover(it, updateManga, coverCache, sourceManager)
+                    manga.editCover(it, updateManga, sourceManager = sourceManager)
                 }
             }.fold(
                 onSuccess = { eventChannel.send(Event.CoverUpdated) },

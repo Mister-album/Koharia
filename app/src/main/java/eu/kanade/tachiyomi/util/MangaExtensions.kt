@@ -1,10 +1,10 @@
 package eu.kanade.tachiyomi.util
 
 import eu.kanade.domain.manga.interactor.UpdateManga
-import eu.kanade.domain.manga.model.hasCustomCover
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.source.model.SManga
 import koharia.connection.isConnectionLibraryEntry
+import koharia.cover.CustomCoverStore
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
@@ -24,20 +24,12 @@ fun Manga.prepUpdateCover(coverCache: CoverCache, remoteManga: SManga, refreshSa
 
     if (!refreshSameUrl && thumbnailUrl == newUrl) return this
 
-    return when {
-        hasCustomCover(coverCache) -> {
-            coverCache.deleteFromCache(this, false)
-            this
-        }
-        else -> {
-            coverCache.deleteFromCache(this, false)
-            this.copy(coverLastModified = Instant.now().toEpochMilli())
-        }
-    }
+    coverCache.deleteFromCache(this)
+    return copy(coverLastModified = Instant.now().toEpochMilli())
 }
 
 fun Manga.removeCovers(coverCache: CoverCache = Injekt.get()): Manga {
-    return if (coverCache.deleteFromCache(this, true) > 0) {
+    return if (coverCache.deleteFromCache(this) > 0) {
         return copy(coverLastModified = Instant.now().toEpochMilli())
     } else {
         this
@@ -47,11 +39,11 @@ fun Manga.removeCovers(coverCache: CoverCache = Injekt.get()): Manga {
 suspend fun Manga.editCover(
     stream: InputStream,
     updateManga: UpdateManga = Injekt.get(),
-    coverCache: CoverCache = Injekt.get(),
+    customCovers: CustomCoverStore = Injekt.get(),
     sourceManager: SourceManager = Injekt.get(),
 ) {
     if (isConnectionLibraryEntry(sourceManager)) {
-        coverCache.setCustomCoverToCache(this, stream)
+        customCovers.write(this, stream)
         updateManga.awaitUpdateCoverLastModified(id)
     }
 }

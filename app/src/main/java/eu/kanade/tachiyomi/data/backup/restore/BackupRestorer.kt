@@ -14,12 +14,14 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceRestorer
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import koharia.connection.ConnectionBackupRestoreAdapter
 import koharia.connection.ConnectionRestoreState
+import koharia.cover.CustomCoverStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.storage.service.StoragePreferences
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -47,10 +49,15 @@ class BackupRestorer(
      */
     private var sourceMapping: Map<Long, String> = emptyMap()
 
-    suspend fun restore(uri: Uri, options: RestoreOptions) {
+    suspend fun restore(
+        uri: Uri,
+        options: RestoreOptions,
+        password: CharArray? = null,
+        directoryBindings: Map<String, String> = emptyMap(),
+    ) {
         val startTime = System.currentTimeMillis()
 
-        restoreFromFile(uri, options)
+        restoreFromFile(uri, options, password, directoryBindings)
 
         val time = System.currentTimeMillis() - startTime
 
@@ -65,8 +72,27 @@ class BackupRestorer(
         )
     }
 
-    private suspend fun restoreFromFile(uri: Uri, options: RestoreOptions) {
-        val backup = BackupDecoder(context).decode(uri)
+    private suspend fun restoreFromFile(
+        uri: Uri,
+        options: RestoreOptions,
+        password: CharArray?,
+        directoryBindings: Map<String, String>,
+    ) {
+        val backup = BackupDecoder(context).decode(uri, password)
+        // Resolve every directory before changing preferences or library data.
+        val sourcePreferences = if (options.connectionSettings) {
+            BackupDirectoryRemapper.remap(context, backup.backupSourcePreferences, directoryBindings)
+        } else {
+            emptyList()
+        }
+        val storageDirectory = backup.backupStorageDirectory.takeIf { options.appSettings && it.isNotBlank() }
+            ?.let {
+                val selected = checkNotNull(directoryBindings[it]) { "Storage access must be granted before restore" }
+                check(BackupDirectoryRemapper.hasTreePermission(context, selected, true)) {
+                    "Storage access was revoked before restore"
+                }
+                selected
+            }
 
         // Store source mapping for error messages
         val backupMaps = backup.backupSources
@@ -96,23 +122,28 @@ class BackupRestorer(
             }
             coroutineScope {
                 if (options.categories) {
-                    restoreCategories(backup.backupCategories)
+                    restoreCategories(backup.backupCategories).join()
                 }
                 if (options.appSettings) {
                     restoreAppPreferences(
                         backup.backupPreferences,
                         backup.backupCategories.takeIf { options.categories },
-                    )
+                    ).join()
+                    storageDirectory?.let { Injekt.get<StoragePreferences>().baseStorageDirectory.set(it) }
                 }
                 if (options.connectionSettings) {
-                    restoreSourcePreferences(backup.backupSourcePreferences)
+                    restoreSourcePreferences(sourcePreferences).join()
                 }
                 if (options.libraryEntries) {
-                    restoreManga(backup.backupManga, if (options.categories) backup.backupCategories else emptyList())
+                    restoreManga(
+                        backup.backupManga,
+                        if (options.categories) backup.backupCategories else emptyList(),
+                    ).join()
                 }
                 // TODO: optionally trigger online library + tracker update
             }
             if (options.appSettings) preferenceRestorer.finishRestore()
+            Injekt.get<CustomCoverStore>().invalidate()
         }
     }
 
