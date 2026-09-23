@@ -31,7 +31,7 @@ internal class DocumentPageLoader(
      * Resolved headings, published after [warmHeadings] runs on the loader's IO coroutine.
      * Kept as a plain field (not a lazy on the session) so the [documentHeadings] getter - which
      * the UI thread reads from the toolbar click handler and the sheet composition - never has to
-     * take [lock] or run the O(pages × headings) scan once warm-up has completed.
+     * take [lock] or run the heading-offset scan once warm-up has completed.
      */
     @Volatile
     private var headingsSnapshot: List<DocumentHeading>? = null
@@ -60,7 +60,7 @@ internal class DocumentPageLoader(
             }
             session
         }
-        // Resolve on this IO coroutine, outside the lock (the scan is O(pages × headings) and
+        // Resolve on this IO coroutine, outside the lock (the scan is heading-offset and
         // documentHeadings takes the same lock from the UI thread). Publish only if this session is
         // still the active one, so a concurrent refreshPages cannot be clobbered by a stale result.
         val resolved = currentSession.headings

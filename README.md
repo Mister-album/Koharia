@@ -88,7 +88,7 @@ Koharia 专注于个人媒体库阅读，不提供公共在线内容源，也不
 | EPUB | `EPUB` | 使用原生可重排阅读器，支持目录、书签、搜索与排版设置 |
 | PDF | `PDF` | 按页原生渲染，使用漫画分页或连续滚动阅读流程 |
 | 纯文本 | `TXT` | 自动识别 UTF-8、UTF-16、GB18030 等常见编码，支持分页和书籍排版设置；单文件上限为 64 MiB |
-| Markdown | `MD`、`MARKDOWN`、`MDOWN`、`MKD`、`MKDN` | 使用可重排分页渲染标题、加粗、斜体、列表、引用、代码块等富文本；支持分页和书籍排版设置；不渲染内嵌图片，表格按文本降级显示；单文件上限为 64 MiB |
+| Markdown | `MD`、`MARKDOWN`、`MDOWN`、`MKD`、`MKDN` | 使用可重排分页渲染标题、加粗、斜体、列表、引用、代码块等富文本；支持分页和书籍排版设置；不渲染内嵌图片，表格按文本降级显示；单文件上限为 16 MiB |
 | Mobipocket / Kindle | `MOBI`、`PRC`、`AZW`、`AZW3` | 实验性支持 PalmDOC / KF8 文本和基础元数据，使用可重排分页；暂不支持 DRM、复杂布局与内嵌图片，单文件上限为 256 MiB |
 | DjVu | `DJVU`、`DJV` | 通过 MIT 许可的 `djvu-rs` WASM 解码 JB2 / IW44 页面并使用漫画阅读器显示；运行依赖 Android WebView 的 WebAssembly 能力 |
 

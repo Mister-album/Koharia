@@ -76,7 +76,7 @@ interface DocumentSession : Closeable {
      * Document headings detected at open time, e.g. Markdown `# Heading` blocks or EPUB
      * navigation entries. Empty by default; engines that support headings override this.
      *
-     * Resolution is O(P × H) (page count × heading count) and is memoised per session. A reflow
+     * Resolution maps rendered character offsets to pages and is memoised per session. A reflow
      * builds a new session, so the resolution is recomputed for it; callers on the UI thread
      * should rely on the page loader warming the binding first.
      */
@@ -133,66 +133,31 @@ data class DocumentHeading(
     val pageIndex: Int,
 )
 
-/**
- * A heading descriptor as emitted by an engine, before pagination binds it to a page. Kept as a
- * named value type (instead of a `Pair<Int, String>`) so call sites can't accidentally swap
- * `level` and `title`.
- */
+/** A heading's position in the final rendered text, before pagination. */
 data class RawDocumentHeading(
     val level: Int,
     val title: String,
+    val offset: Int,
 )
 
 class DocumentEngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-/**
- * Binds a list of [RawDocumentHeading] emitted at open time to the pages that contain them.
- *
- * Uses a forward-moving cursor (page + within-page character offset) so:
- * - duplicate titles bind to their *respective* occurrences (not all to the first), including
- *   two identically-titled headings that happen to fall on the same page;
- * - the resulting `pageIndex` values are non-decreasing, which `HeadingListSheet` relies on for
- *   `indexOfLast { it.pageIndex <= currentPageIndex }`.
- *
- * Known limitations (matching is text-based, and the HTML-regex extractor does not produce a
- * document character offset for each heading):
- * - a heading whose title also occurs as ordinary body text on an earlier page can bind to that
- *   earlier page;
- * - a heading whose title straddles a page break is on no single page and is dropped.
- *
- * Pure over `(raws, pages)` so it can be exercised by the plain-JVM test suite without an
- * Android layout. Called once per session, off the UI thread.
- */
+/** Bind offsets to half-open page ranges, including headings that span multiple pages. */
 internal fun resolveHeadings(
     raws: List<RawDocumentHeading>,
     pages: List<CharSequence>,
 ): List<DocumentHeading> {
     if (raws.isEmpty() || pages.isEmpty()) return emptyList()
     val out = ArrayList<DocumentHeading>(raws.size)
-    var pageCursor = 0
-    // Resume position *within* pages[pageCursor]; advances past a match so a repeated title on
-    // the same page binds to its own occurrence instead of re-matching the previous one.
-    var charCursor = 0
-    for (raw in raws) {
-        // Empty titles would match at offset 0 of every page, so drop them here as a defensive
-        // measure even though the extractors already filter them out. (isEmpty, not isBlank: a
-        // title may legitimately consist of a non-breaking space, which isBlank would discard.)
-        if (raw.title.isEmpty()) continue
-
-        var page = pageCursor
-        var from = charCursor
-        while (page < pages.size) {
-            val index = pages[page].indexOf(raw.title, startIndex = from)
-            if (index >= 0) {
-                out += DocumentHeading(level = raw.level, title = raw.title, pageIndex = page)
-                pageCursor = page
-                charCursor = index + raw.title.length
-                break
-            }
+    var page = 0
+    var end = pages[0].length
+    for (raw in raws.sortedBy { it.offset }) {
+        if (raw.title.isEmpty() || raw.offset < 0) continue
+        while (page < pages.lastIndex && raw.offset >= end) {
             page++
-            from = 0
+            end += pages[page].length
         }
-        // Not found: leave both cursors untouched so later headings can still match.
+        if (raw.offset < end) out += DocumentHeading(raw.level, raw.title, page)
     }
     return out
 }
@@ -318,12 +283,7 @@ internal class TextDocumentContent(
     context: Context,
     text: CharSequence,
     val metadata: DocumentMetadata,
-    /**
-     * Raw heading descriptors detected upstream (e.g. by [MarkdownHtmlRenderer.extractHeadings])
-     * as (level, title) pairs. They are not yet bound to a page because pagination happens
-     * after this class is constructed; [TextDocumentSession.headings] resolves each title to
-     * the page that contains it via a single linear scan over the paginated pages.
-     */
+    /** Offsets refer to text after newline normalization. */
     val headingTitles: List<RawDocumentHeading> = emptyList(),
 ) {
     val displayMetrics = DisplayMetrics().also { it.setTo(context.resources.displayMetrics) }
@@ -410,12 +370,6 @@ internal class TextDocumentSession(
     private val textPaint = settings.createTextPaint(content.displayMetrics)
     override val pageCount: Int = pages.size
 
-    /**
-     * Headings resolved from [TextDocumentContent.headingTitles] to their target page.
-     * Delegates to the pure helper [resolveHeadings] (which uses a forward-moving cursor so
-     * duplicates bind to their own pages and the result is monotonic). The lazy trigger runs
-     * once on first access; subsequent reads return the cached value.
-     */
     override val headings: List<DocumentHeading> by lazy {
         resolveHeadings(content.headingTitles, pages)
     }
