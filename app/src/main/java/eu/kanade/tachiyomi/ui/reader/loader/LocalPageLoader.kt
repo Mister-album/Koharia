@@ -10,6 +10,7 @@ import koharia.connection.ConnectionLocalFileAdapter
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
 import koharia.document.DocumentEngines
+import koharia.document.DocumentHeading
 import koharia.document.DocumentRenderSettings
 import koharia.media.LocalMediaFormats
 import tachiyomi.core.common.storage.extension
@@ -38,6 +39,9 @@ internal class LocalPageLoader(
 
     override val progressPageCount: Int?
         get() = pdfLoader?.progressPageCount ?: documentLoader?.progressPageCount
+
+    override val documentHeadings: List<DocumentHeading>
+        get() = documentLoader?.documentHeadings ?: emptyList()
 
     override suspend fun getPages(): List<ReaderPage> {
         val file = fileAdapter.localChapterFile(chapter.chapter.url)

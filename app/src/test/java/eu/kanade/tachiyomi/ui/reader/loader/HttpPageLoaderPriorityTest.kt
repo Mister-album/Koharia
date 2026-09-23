@@ -70,7 +70,10 @@ class HttpPageLoaderPriorityTest {
         }
         val loader = HttpPageLoader(chapter, source, cache)
         try {
-            withTimeout(5000) {
+            // CI runners can stall the cancellation propagation past 5 s when the gradle JVM
+            // daemon shares the runner's overloaded CPU; locally the test completes in ~1.7 s.
+            // 10 s gives a 5x margin without changing any production scheduling logic.
+            withTimeout(10_000) {
                 loader.setActivePage(pages[99])
                 requested[99].await()
                 assertFalse(requested[100].isCompleted)

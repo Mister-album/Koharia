@@ -1087,6 +1087,7 @@
     <string name="epub_reader_server_time_warning_title">Server time is not synchronized</string>
     <string name="epub_reader_server_time_warning_message">The Komga server and this device differ by about %d minutes. Reading progress may be overwritten or restored incorrectly. Please synchronize the date, time, and time zone on both devices.</string>
     <string name="epub_reader_toc">Table of contents</string>
+    <string name="document_reader_toc">Table of contents</string>
     <string name="epub_reader_quick_night_mode">Night</string>
     <string name="epub_reader_unsupported_book">This Komga book cannot be opened with the native EPUB reader.</string>
     <string name="epub_reader_manga_not_found">Manga not found</string>
@@ -1689,7 +1690,7 @@
     <string name="external_media_open_after_import">Open after import</string>
     <string name="external_media_action_import">Import</string>
     <string name="external_media_action_import_summary">Choose a target connection, destination, library, and series information</string>
-    <string name="external_media_unsupported">No supported comic or book files were found. Koharia supports common images, CBZ, ZIP, CBR, RAR, 7Z, TAR, EPUB, PDF, TXT, MOBI, PRC, AZW, AZW3, DJVU, and DJV.</string>
+    <string name="external_media_unsupported">No supported comic or book files were found. Koharia supports common images, CBZ, ZIP, CBR, RAR, 7Z, TAR, EPUB, PDF, TXT, MD, MARKDOWN, MOBI, PRC, AZW, AZW3, DJVU, and DJV.</string>
     <string name="external_media_no_destination">No writable destination accepts all selected files. Configure a local library, then try again.</string>
     <string name="external_media_import_success">Import completed</string>
     <string name="external_media_import_failed">Couldn’t import the selected files.</string>

@@ -1,5 +1,6 @@
 package koharia.media
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -29,5 +30,17 @@ class LocalMediaFormatsTest {
         assertTrue(LocalMediaFormats.isReflowableBook("txt"))
         assertTrue(LocalMediaFormats.isReflowableBook("mobi"))
         assertTrue("pdf" in LocalMediaFormats.comicExtensions)
+    }
+
+    @Test
+    fun `markdown is a reflowable book with its own format kind`() {
+        assertTrue("md" in LocalMediaFormats.allExtensions)
+        assertTrue("md" in LocalMediaFormats.knownExtensions)
+        assertTrue(LocalMediaFormats.isBook("md"))
+        assertTrue(LocalMediaFormats.isReflowableBook("md"))
+        assertTrue("md" in LocalMediaFormats.bookExtensions)
+        assertTrue("md" in LocalMediaFormats.reflowableBookExtensions)
+        assertEquals(LocalMediaKind.MARKDOWN, LocalMediaFormats.find("md")?.kind)
+        assertFalse("md" in LocalMediaFormats.comicExtensions)
     }
 }

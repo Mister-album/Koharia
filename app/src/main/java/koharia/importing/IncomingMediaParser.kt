@@ -83,6 +83,7 @@ internal fun detectMediaExtension(
         "application/epub+zip" -> "epub"
         "application/pdf" -> "pdf"
         "text/plain" -> "txt"
+        "text/markdown", "text/x-markdown" -> "md"
         "application/x-mobipocket-ebook", "application/vnd.amazon.ebook",
         "application/x-palm-database",
         -> "mobi"

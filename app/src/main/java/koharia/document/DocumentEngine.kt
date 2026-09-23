@@ -72,6 +72,17 @@ interface DocumentSession : Closeable {
     val metadata: DocumentMetadata
     val pageCount: Int
 
+    /**
+     * Document headings detected at open time, e.g. Markdown `# Heading` blocks or EPUB
+     * navigation entries. Empty by default; engines that support headings override this.
+     *
+     * Resolution is O(P × H) (page count × heading count) and is memoised per session. A reflow
+     * builds a new session, so the resolution is recomputed for it; callers on the UI thread
+     * should rely on the page loader warming the binding first.
+     */
+    val headings: List<DocumentHeading>
+        get() = emptyList()
+
     fun page(index: Int): DocumentPage
 }
 
@@ -105,7 +116,86 @@ data class DocumentMetadata(
     val author: String? = null,
 )
 
+/**
+ * A document heading extracted by an engine at open time and bound to a page after pagination.
+ *
+ * Binding is resolved once per [DocumentSession]: a reflow builds a new session, so the resolution
+ * is recomputed for it. The reader's page loader warms the binding on its IO coroutine, keeping the
+ * scan off the UI thread.
+ *
+ * @param level Markdown heading level (1–6); EPUB nav entries are also normalised to this range.
+ * @param title Plain-text heading body used for display.
+ * @param pageIndex Page that contains the heading's first occurrence after pagination.
+ */
+data class DocumentHeading(
+    val level: Int,
+    val title: String,
+    val pageIndex: Int,
+)
+
+/**
+ * A heading descriptor as emitted by an engine, before pagination binds it to a page. Kept as a
+ * named value type (instead of a `Pair<Int, String>`) so call sites can't accidentally swap
+ * `level` and `title`.
+ */
+data class RawDocumentHeading(
+    val level: Int,
+    val title: String,
+)
+
 class DocumentEngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/**
+ * Binds a list of [RawDocumentHeading] emitted at open time to the pages that contain them.
+ *
+ * Uses a forward-moving cursor (page + within-page character offset) so:
+ * - duplicate titles bind to their *respective* occurrences (not all to the first), including
+ *   two identically-titled headings that happen to fall on the same page;
+ * - the resulting `pageIndex` values are non-decreasing, which `HeadingListSheet` relies on for
+ *   `indexOfLast { it.pageIndex <= currentPageIndex }`.
+ *
+ * Known limitations (matching is text-based, and the HTML-regex extractor does not produce a
+ * document character offset for each heading):
+ * - a heading whose title also occurs as ordinary body text on an earlier page can bind to that
+ *   earlier page;
+ * - a heading whose title straddles a page break is on no single page and is dropped.
+ *
+ * Pure over `(raws, pages)` so it can be exercised by the plain-JVM test suite without an
+ * Android layout. Called once per session, off the UI thread.
+ */
+internal fun resolveHeadings(
+    raws: List<RawDocumentHeading>,
+    pages: List<CharSequence>,
+): List<DocumentHeading> {
+    if (raws.isEmpty() || pages.isEmpty()) return emptyList()
+    val out = ArrayList<DocumentHeading>(raws.size)
+    var pageCursor = 0
+    // Resume position *within* pages[pageCursor]; advances past a match so a repeated title on
+    // the same page binds to its own occurrence instead of re-matching the previous one.
+    var charCursor = 0
+    for (raw in raws) {
+        // Empty titles would match at offset 0 of every page, so drop them here as a defensive
+        // measure even though the extractors already filter them out. (isEmpty, not isBlank: a
+        // title may legitimately consist of a non-breaking space, which isBlank would discard.)
+        if (raw.title.isEmpty()) continue
+
+        var page = pageCursor
+        var from = charCursor
+        while (page < pages.size) {
+            val index = pages[page].indexOf(raw.title, startIndex = from)
+            if (index >= 0) {
+                out += DocumentHeading(level = raw.level, title = raw.title, pageIndex = page)
+                pageCursor = page
+                charCursor = index + raw.title.length
+                break
+            }
+            page++
+            from = 0
+        }
+        // Not found: leave both cursors untouched so later headings can still match.
+    }
+    return out
+}
 
 internal fun DocumentRenderSettings.createTextPaint(displayMetrics: DisplayMetrics): TextPaint {
     val fontSizeSp = baseFontSizeSp.coerceAtLeast(1f) * fontSizeScale.coerceIn(0.5f, 3f)
@@ -122,6 +212,7 @@ object DocumentEngines {
         TextDocumentEngine,
         MobiDocumentEngine,
         DjvuDocumentEngine,
+        MarkdownDocumentEngine,
     )
 
     @Synchronized
@@ -223,10 +314,17 @@ object DjvuDocumentEngine : DocumentEngine {
     }
 }
 
-private class TextDocumentContent(
+internal class TextDocumentContent(
     context: Context,
     text: CharSequence,
     val metadata: DocumentMetadata,
+    /**
+     * Raw heading descriptors detected upstream (e.g. by [MarkdownHtmlRenderer.extractHeadings])
+     * as (level, title) pairs. They are not yet bound to a page because pagination happens
+     * after this class is constructed; [TextDocumentSession.headings] resolves each title to
+     * the page that contains it via a single linear scan over the paginated pages.
+     */
+    val headingTitles: List<RawDocumentHeading> = emptyList(),
 ) {
     val displayMetrics = DisplayMetrics().also { it.setTo(context.resources.displayMetrics) }
     val density = displayMetrics.density
@@ -296,7 +394,7 @@ internal data class DocumentPaginationLayoutSnapshot(
     )
 }
 
-private class TextDocumentSession(
+internal class TextDocumentSession(
     private val content: TextDocumentContent,
     private val settings: DocumentRenderSettings,
     private val pages: List<CharSequence>,
@@ -311,6 +409,16 @@ private class TextDocumentSession(
     private val textHeight = (pageHeight - verticalPadding * 2).coerceAtLeast(1)
     private val textPaint = settings.createTextPaint(content.displayMetrics)
     override val pageCount: Int = pages.size
+
+    /**
+     * Headings resolved from [TextDocumentContent.headingTitles] to their target page.
+     * Delegates to the pure helper [resolveHeadings] (which uses a forward-moving cursor so
+     * duplicates bind to their own pages and the result is monotonic). The lazy trigger runs
+     * once on first access; subsequent reads return the cached value.
+     */
+    override val headings: List<DocumentHeading> by lazy {
+        resolveHeadings(content.headingTitles, pages)
+    }
 
     override fun page(index: Int): DocumentPage {
         return TextDocumentPage(index, pages.getOrNull(index) ?: error("Invalid document page"))
@@ -756,7 +864,7 @@ private data class MobiMetadata(
     val author: String? = null,
 )
 
-private fun decodeText(bytes: ByteArray): String {
+internal fun decodeText(bytes: ByteArray): String {
     if (bytes.startsWith(byteArrayOf(0xef.toByte(), 0xbb.toByte(), 0xbf.toByte()))) {
         return bytes.copyOfRange(3, bytes.size).toString(StandardCharsets.UTF_8)
     }
@@ -783,7 +891,7 @@ private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
     return size >= prefix.size && prefix.indices.all { index -> this[index] == prefix[index] }
 }
 
-private fun java.io.InputStream.readAtMost(limit: Int): ByteArray {
+internal fun java.io.InputStream.readAtMost(limit: Int): ByteArray {
     val output = ByteArrayOutputStream(limit.coerceAtMost(8192))
     val buffer = ByteArray(8192)
     var remaining = limit

@@ -1374,9 +1374,10 @@ class LocalFolderSource(
                     ?.use { it.readBytes() }
             }
             extension == "pdf" -> renderFirstPdfPage(file)
-            extension in LocalMediaFormats.text.extensions ||
-                extension in LocalMediaFormats.mobi.extensions ||
-                extension in LocalMediaFormats.djvu.extensions -> {
+            // Ask the engine registry rather than hand-maintaining a parallel extension list
+            // (txt/mobi/djvu/md today). Image, epub and pdf are matched above, so the registry
+            // answer is equivalent here and stays correct when a new engine is registered.
+            DocumentEngines.forExtension(extension) != null -> {
                 renderFirstDocumentPage(file)
             }
             else -> file.archiveReader(context).use { reader ->

@@ -1018,6 +1018,7 @@ class ReaderActivity : BaseActivity() {
             (currentPage - 1).toDouble() / (totalPages - 1).toDouble()
         }
         val showBookInfo = remember { mutableStateOf(false) }
+        val headingsSheetVisible = remember { mutableStateOf(false) }
         val chapter = state.currentChapter?.chapter
         val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
         val fileName = chapter?.let { currentChapter ->
@@ -1100,7 +1101,16 @@ class ReaderActivity : BaseActivity() {
                 onNextChapter = ::loadNextChapter,
                 onOpenContents = {
                     onPanelChange(EpubBottomPanel.NONE)
-                    openMangaScreen()
+                    // Text-format docs that expose headings (Markdown) get a dedicated
+                    // sheet that lets the user jump to a heading. Documents without
+                    // detected headings fall back to the manga info screen, preserving
+                    // the prior behaviour for EPUB / archive / image / TXT / MOBI.
+                    val headings = state.currentChapter?.pageLoader?.documentHeadings.orEmpty()
+                    if (headings.isNotEmpty()) {
+                        headingsSheetVisible.value = true
+                    } else {
+                        openMangaScreen()
+                    }
                 },
                 toolbarActions = toolbarActions,
                 onToggleNightMode = {
@@ -1159,6 +1169,34 @@ class ReaderActivity : BaseActivity() {
                     totalPages = totalPages,
                     onDismissRequest = { showBookInfo.value = false },
                 )
+            }
+
+            if (headingsSheetVisible.value) {
+                // Resolve headings outside the HeadingListSheet call so the binding is read once
+                // when the sheet opens, not on every recomposition. The loader warms the binding on
+                // its IO coroutine, so this is a cheap cached read.
+                val loader = state.currentChapter?.pageLoader
+                val headings = remember(loader) { loader?.documentHeadings.orEmpty() }
+                if (headings.isNotEmpty()) {
+                    HeadingListSheet(
+                        headings = headings,
+                        currentPageIndex = currentPage - 1,
+                        onDismiss = { headingsSheetVisible.value = false },
+                        onSelect = { heading ->
+                            headingsSheetVisible.value = false
+                            moveToPageIndex(heading.pageIndex)
+                        },
+                    )
+                } else {
+                    // The loader can be swapped (or a refresh can land) between the click and this
+                    // composition. Fall back to the manga info screen rather than silently doing
+                    // nothing, preserving the previous behaviour for the no-headings case. Driven
+                    // via a side effect to avoid writing snapshot state during composition.
+                    LaunchedEffect(loader) {
+                        headingsSheetVisible.value = false
+                        openMangaScreen()
+                    }
+                }
             }
         }
     }

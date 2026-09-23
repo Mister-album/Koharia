@@ -9,6 +9,7 @@ enum class LocalMediaKind {
     EPUB,
     PDF,
     TEXT,
+    MARKDOWN,
     MOBI,
     DJVU,
 }
@@ -84,6 +85,13 @@ object LocalMediaFormats {
         mimeTypes = setOf("text/plain"),
     )
 
+    val markdown = LocalMediaFormat(
+        kind = LocalMediaKind.MARKDOWN,
+        extensions = setOf("md", "markdown", "mdown", "mkd", "mkdn"),
+        support = LocalMediaSupport.STABLE,
+        mimeTypes = setOf("text/markdown", "text/x-markdown"),
+    )
+
     /** PalmDOC and KF8 text are supported; DRM-protected files are intentionally rejected. */
     val mobi = LocalMediaFormat(
         kind = LocalMediaKind.MOBI,
@@ -104,13 +112,13 @@ object LocalMediaFormats {
         mimeTypes = setOf("image/vnd.djvu", "image/x-djvu"),
     )
 
-    val all: List<LocalMediaFormat> = listOf(archives, images, epub, pdf, text, mobi, djvu)
+    val all: List<LocalMediaFormat> = listOf(archives, images, epub, pdf, text, markdown, mobi, djvu)
     val available: List<LocalMediaFormat> = all.filter { it.support != LocalMediaSupport.UNAVAILABLE }
     val knownExtensions: Set<String> = all.flatMapTo(linkedSetOf()) { it.extensions }
     val allExtensions: Set<String> = available.flatMapTo(linkedSetOf()) { it.extensions }
-    val bookExtensions: Set<String> = (setOf(epub, pdf, text, mobi, djvu))
+    val bookExtensions: Set<String> = (setOf(epub, pdf, text, markdown, mobi, djvu))
         .flatMapTo(linkedSetOf()) { it.extensions }
-    val reflowableBookExtensions: Set<String> = (setOf(epub, text, mobi))
+    val reflowableBookExtensions: Set<String> = (setOf(epub, text, markdown, mobi))
         .flatMapTo(linkedSetOf()) { it.extensions }
     val comicExtensions: Set<String> = (allExtensions - bookExtensions) + pdf.extensions
     val documentImportExtensions: Set<String> = allExtensions - images.extensions
