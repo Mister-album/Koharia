@@ -24,6 +24,8 @@ import java.io.File
  * A successfully cached empty response is data; failed/cancelled refreshes retain the old cache.
  */
 interface ConnectionBrowseAdapter {
+    fun seriesSettingsAvailable(): Flow<Boolean> = flowOf(false)
+
     fun availableContentScopes(): Set<LibraryContentScope> = setOf(LibraryContentScope.ALL)
 
     fun contentScopesChanges(): Flow<Set<LibraryContentScope>> = flowOf(availableContentScopes())

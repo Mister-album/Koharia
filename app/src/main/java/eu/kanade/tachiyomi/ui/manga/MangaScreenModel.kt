@@ -193,6 +193,7 @@ class MangaScreenModel(
     val chapterSwipeStartAction = libraryPreferences.swipeToEndAction.get()
     val chapterSwipeEndAction = libraryPreferences.swipeToStartAction.get()
     val chapterCoverGridColumns = libraryPreferences.chapterCoverGridColumns.asState(screenModelScope)
+    val chapterCoverGridLandscapeColumns = libraryPreferences.chapterCoverGridLandscapeColumns.asState(screenModelScope)
     var showChapterReadProgress by mutableStateOf(libraryPreferences.showChapterReadProgress.get())
         private set
     var showChapterFileSize by mutableStateOf(libraryPreferences.showChapterFileSize.get())
@@ -1441,7 +1442,7 @@ class MangaScreenModel(
             val isRefreshingData: Boolean = false,
             val dialog: Dialog? = null,
             val hasPromptedToAddBefore: Boolean = false,
-            val hideMissingChapters: Boolean = false,
+            val hideMissingChapters: Boolean = true,
             val cachedOnly: Boolean = false,
         ) : State {
             val processedChapters by lazy {

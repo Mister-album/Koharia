@@ -434,7 +434,11 @@ private fun MangaScreenSmallImpl(
             val layoutDirection = LocalLayoutDirection.current
             if (useChapterCoverGrid) {
                 FastScrollLazyVerticalGrid(
-                    columns = GridCells.Fixed(chapterCoverGridColumns.coerceIn(2, 6)),
+                    columns = if (chapterCoverGridColumns == 0) {
+                        GridCells.Adaptive(128.dp)
+                    } else {
+                        GridCells.Fixed(chapterCoverGridColumns.coerceIn(2, 6))
+                    },
                     modifier = Modifier.fillMaxHeight(),
                     state = chapterGridState,
                     contentPadding = PaddingValues(
@@ -742,7 +746,11 @@ fun MangaScreenLargeImpl(
                 endContent = {
                     if (useChapterCoverGrid) {
                         FastScrollLazyVerticalGrid(
-                            columns = GridCells.Fixed(chapterCoverGridColumns.coerceIn(2, 6)),
+                            columns = if (chapterCoverGridColumns == 0) {
+                                GridCells.Adaptive(128.dp)
+                            } else {
+                                GridCells.Fixed(chapterCoverGridColumns.coerceIn(2, 6))
+                            },
                             modifier = Modifier.fillMaxHeight(),
                             state = chapterGridState,
                             contentPadding = PaddingValues(

@@ -250,6 +250,8 @@ class SmangaSource(private val context: Context, override val connectionProfile:
     }
     override fun availableContentScopes() = setOf(LibraryContentScope.COMIC)
     override suspend fun readerContentScope(manga: Manga, chapter: Chapter) = LibraryContentScope.COMIC
+    override fun seriesSettingsAvailable() = kotlinx.coroutines.flow.flowOf(true)
+
     override fun createBrowseScreen(
         scope: LibraryContentScope,
         listingQuery: String?,

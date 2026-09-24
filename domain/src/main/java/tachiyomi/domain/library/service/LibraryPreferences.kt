@@ -181,6 +181,12 @@ class LibraryPreferences(
         3,
     )
 
+    // Unset landscape columns inherit the existing column count until both orientations are saved.
+    val chapterCoverGridLandscapeColumns: Preference<Int> = preferenceStore.getInt(
+        "default_chapter_cover_grid_landscape_columns",
+        -1,
+    )
+
     val showChapterReadProgress: Preference<Boolean> = preferenceStore.getBoolean(
         "show_chapter_read_progress",
         true,
@@ -212,7 +218,7 @@ class LibraryPreferences(
 
     val hideMissingChapters: Preference<Boolean> = preferenceStore.getBoolean(
         "pref_hide_missing_chapter_indicators",
-        false,
+        true,
     )
     // endregion
 

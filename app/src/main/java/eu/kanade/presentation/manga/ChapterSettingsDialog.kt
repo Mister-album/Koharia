@@ -255,9 +255,9 @@ private fun ColumnScope.DisplayPage(
         )
     }
     SwitchPreferenceWidget(
-        title = stringResource(MR.strings.pref_hide_missing_chapter_indicators),
-        checked = hideMissingChapters,
-        onCheckedChanged = onHideMissingChaptersChanged,
+        title = stringResource(MR.strings.pref_show_missing_chapter_indicators),
+        checked = !hideMissingChapters,
+        onCheckedChanged = { onHideMissingChaptersChanged(!it) },
     )
 
     Text(

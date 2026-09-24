@@ -134,6 +134,10 @@ class LocalFolderSource(
     private val json = Injekt.get<kotlinx.serialization.json.Json>()
     private val xml: XML by injectLazy()
     private val preferences by lazy { LocalLibraryPreferences(id, json) }
+
+    override fun seriesSettingsAvailable() = preferences.configChanges().map { config ->
+        config.roots.any { config.organizationMode(it) == LocalLibraryOrganizationMode.SERIES }
+    }
     private val metadataStore by lazy { LocalMetadataStore(context, id, json, xml) }
     private val mangaRepository: MangaRepository by injectLazy()
     private val getChaptersByMangaId: GetChaptersByMangaId by injectLazy()

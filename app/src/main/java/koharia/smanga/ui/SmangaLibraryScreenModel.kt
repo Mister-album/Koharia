@@ -10,6 +10,7 @@ import androidx.paging.map
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import koharia.connection.ConnectionShelfUpdates
 import koharia.smanga.SmangaMedia
@@ -55,18 +56,22 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
             query = initialQuery.orEmpty(),
             toolbarQuery = initialQuery,
             order = source.preferences.order,
-            displayMode = modes.getOrElse(source.preferences.displayMode) {
-                LibraryDisplayMode.ComfortableGrid
-            },
+            displayMode = Injekt.get<SourcePreferences>().sourceDisplayMode.get(),
         ),
     ) {
     private val session = source.session()
     private val repository: MangaRepository = Injekt.get()
     private val downloads: DownloadManager = Injekt.get()
+    private val sourcePreferences: SourcePreferences = Injekt.get()
     private var searchJob: Job? = null
     private var refreshJob: Job? = null
 
     init {
+        screenModelScope.launch {
+            sourcePreferences.sourceDisplayMode.changes().collect { mode ->
+                mutableState.update { it.copy(displayMode = mode) }
+            }
+        }
         loadMedia()
         screenModelScope.launch {
             Injekt.get<BasePreferences>().downloadedOnly.changes().collect { enabled ->
@@ -185,7 +190,7 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
         mutableState.update { it.copy(selectedMedia = id, error = null) }
     }
     fun setDisplayMode(mode: LibraryDisplayMode) {
-        source.preferences.displayMode = modes.indexOf(mode)
+        sourcePreferences.sourceDisplayMode.set(mode)
         mutableState.update { it.copy(displayMode = mode) }
     }
     fun filter(order: String, downloadedOnly: Boolean) {

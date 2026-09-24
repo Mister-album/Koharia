@@ -140,6 +140,8 @@ class KomgaSource(
         }
     }
 
+    override fun seriesSettingsAvailable() = kotlinx.coroutines.flow.flowOf(true)
+
     override fun contentScopesChanges(): kotlinx.coroutines.flow.Flow<Set<LibraryContentScope>> {
         return Injekt.get<KomgaLibraryClassificationManager>().enabled.changes().map { enabled ->
             if (enabled) {

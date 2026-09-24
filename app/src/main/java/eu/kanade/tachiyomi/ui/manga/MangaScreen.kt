@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.manga
 
 import android.content.Context
+import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -14,6 +15,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.core.net.toUri
@@ -100,7 +102,15 @@ class MangaScreen(
         }
 
         val state by screenModel.state.collectAsStateWithLifecycle()
-        val chapterCoverGridColumns by screenModel.chapterCoverGridColumns
+        val portraitChapterColumns by screenModel.chapterCoverGridColumns
+        val landscapeChapterColumns by screenModel.chapterCoverGridLandscapeColumns
+        val chapterCoverGridColumns = if (
+            LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        ) {
+            landscapeChapterColumns.takeIf { it >= 0 } ?: portraitChapterColumns
+        } else {
+            portraitChapterColumns
+        }
         val showChapterReadProgress = screenModel.showChapterReadProgress
         val showChapterFileSize = screenModel.showChapterFileSize
 

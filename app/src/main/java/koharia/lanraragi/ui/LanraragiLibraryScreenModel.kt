@@ -6,6 +6,7 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.domain.lanraragi.LanraragiReadState
@@ -42,16 +43,23 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
             filter = initialLanraragiFilter(source, initialQuery),
             rememberFilters = source.preferences.rememberFilters,
             toolbarQuery = initialQuery,
+            displayMode = Injekt.get<SourcePreferences>().sourceDisplayMode.get(),
         ),
     ) {
     private val mangaRepository: MangaRepository = Injekt.get()
     private val downloads: DownloadManager = Injekt.get()
+    private val sourcePreferences: SourcePreferences = Injekt.get()
     private var searchJob: Job? = null
     private var progressJob: Job? = null
 
     @Volatile private var searchRevision = 0L
 
     init {
+        screenModelScope.launch {
+            sourcePreferences.sourceDisplayMode.changes().collect { mode ->
+                mutableState.update { it.copy(displayMode = mode) }
+            }
+        }
         screenModelScope.launch {
             while (true) {
                 source.refreshIfStale()
@@ -225,6 +233,7 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
     }
 
     fun setDisplayMode(value: LibraryDisplayMode) {
+        sourcePreferences.sourceDisplayMode.set(value)
         mutableState.update { it.copy(displayMode = value) }
     }
 
