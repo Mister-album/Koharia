@@ -45,6 +45,7 @@ import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionLibraryMembershipAdapter
 import koharia.connection.ConnectionLibraryShelf
 import koharia.connection.ConnectionLibraryShelfAdapter
+import koharia.connection.ConnectionLocalFileAdapter
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
@@ -308,7 +309,7 @@ class MangaScreenModel(
                                     updatedManga,
                                     mergeEpubProgressions(localProgresses, remoteProgresses),
                                 ),
-                                cachedOnly = cachedOnly,
+                                cachedOnly = cachedOnly && source !is ConnectionLocalFileAdapter,
                             )
                         }
                     }
@@ -355,7 +356,7 @@ class MangaScreenModel(
                         manga.chapterFlags,
                         libraryPreferences.hideMissingChapters.get(),
                     ),
-                    cachedOnly = cachedOnlyPreference.get(),
+                    cachedOnly = cachedOnlyPreference.get() && source !is ConnectionLocalFileAdapter,
                 )
             }
 

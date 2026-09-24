@@ -1353,7 +1353,7 @@
     <string name="supportUsScreen.contactForDetailsMessage">如需替代方案或有任何相关问题，请加入我们的 Discord 服务器。</string>
     <string name="supportUsScreen.contactPlatform">Discord</string>
     <string name="supportUsScreen.mihonSupportTitle">Mihon 赞助</string>
-    <string name="supportUsScreen.mihonSupportPrefix">Mihon 的赞助链接：</string>
+    <string name="supportUsScreen.mihonSupportPrefix">也希望您能为原本的 Mihon 提供赞助，赞助链接：</string>
     <string name="supportUsScreen.mihonSupportSeparator"> 或 </string>
     <string name="donationCampaign.title">喜欢本应用吗？</string>
     <string name="donationCampaign.paragraph1">你好！我是 Koharia 的首席开发者，恳请你考虑为 Koharia 的开发工作给予资金方面的支持。有了足够的资金支持，我就能全职投入 Koharia 的开发，专注于解决长期存在的问题以及用户呼声很高的功能。</string>

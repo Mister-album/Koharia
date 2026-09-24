@@ -7,6 +7,7 @@ import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import cafe.adriel.voyager.core.model.ScreenModel
 import cafe.adriel.voyager.core.model.rememberScreenModel
@@ -25,8 +26,10 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
+import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.feature.support.SupportUsScreen
+import koharia.source.local.LocalFolderConnectionProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +39,7 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.motion.rememberEInkAwareAnimatedVectorPainter
+import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -62,7 +66,15 @@ data object MoreTab : Tab {
         val navigator = LocalNavigator.currentOrThrow
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
+        val connectionPreferences = remember { Injekt.get<ConnectionPreferences>() }
+        val activeConnectionId by connectionPreferences.activeConnectionId.collectAsState()
+        val profiles by remember(connectionPreferences) {
+            connectionPreferences.profilesChanges()
+        }.collectAsState(initial = connectionPreferences.getProfiles())
+        val isLocalLibrary = activeConnectionId == ConnectionPreferences.LOCAL_CONNECTION_ID ||
+            profiles.firstOrNull { it.id == activeConnectionId }?.providerId == LocalFolderConnectionProvider.ID
         MoreScreen(
+            showOfflineControls = !isLocalLibrary,
             downloadQueueStateProvider = { downloadQueueState },
             downloadedOnly = screenModel.downloadedOnly,
             downloadedOnlyEnabled = true,

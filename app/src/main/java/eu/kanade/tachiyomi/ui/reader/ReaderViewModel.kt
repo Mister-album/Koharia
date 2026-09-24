@@ -44,6 +44,7 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionEpubProgressAdapter
+import koharia.connection.ConnectionLocalFileAdapter
 import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.connection.ConnectionRawDownloadAdapter
@@ -279,7 +280,9 @@ class ReaderViewModel @JvmOverloads constructor(
                 }
             }
             .run {
-                if (basePreferences.downloadedOnly.get()) {
+                if (basePreferences.downloadedOnly.get() &&
+                    sourceManager.get(manga.source) !is ConnectionLocalFileAdapter
+                ) {
                     val publicationAdapter = sourceManager.get(manga.source) as? ConnectionPublicationAdapter
                     filter { chapter ->
                         downloadManager.isChapterDownloaded(

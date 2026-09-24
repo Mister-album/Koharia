@@ -1516,7 +1516,7 @@
     <string name="supportUsScreen.contactForDetailsMessage">For alternative options or any related questions, join our Discord server.</string>
     <string name="supportUsScreen.contactPlatform">Discord</string>
     <string name="supportUsScreen.mihonSupportTitle">Support Mihon</string>
-    <string name="supportUsScreen.mihonSupportPrefix">Mihon donations: </string>
+    <string name="supportUsScreen.mihonSupportPrefix">Please also consider supporting the original Mihon project. Donation links: </string>
     <string name="supportUsScreen.mihonSupportSeparator"> or </string>
 
     <string name="donationCampaign.title">Enjoying the app?</string>

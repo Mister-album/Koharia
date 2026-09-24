@@ -1,6 +1,7 @@
 package tachiyomi.core.common
 
 object Constants {
+    const val URL_DONATE_KOHARIA_PATREON = "https://www.patreon.com/c/ALBUM937"
     const val URL_DONATE_IFDIAN = "https://ifdian.net/a/album-Koharia"
     const val URL_DONATE_PATREON = "https://patreon.com/mihon/membership"
     const val URL_DONATE_OPENCOLLECTIVE = "https://opencollective.com/mihon/contribute"

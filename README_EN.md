@@ -6,7 +6,7 @@
 
 # Koharia
 
-An Android comic and book reader for Komga, LANraragi, and local media libraries
+An Android comic and book reader for Komga, LANraragi, smanga, and local media libraries
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0877d2?labelColor=27303D)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Mister-album/Koharia?label=release)](https://github.com/Mister-album/Koharia/releases/latest)
@@ -15,7 +15,7 @@ An Android comic and book reader for Komga, LANraragi, and local media libraries
 
 ## Overview
 
-Koharia is a third-party Android client and reader for [Komga](https://komga.org/) and [LANraragi](https://github.com/Difegue/LANraragi) servers, as well as local media libraries. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, MOBI, and Markdown. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app.
+Koharia is a third-party Android client and reader for [Komga](https://komga.org/), [LANraragi](https://github.com/Difegue/LANraragi), and [smanga](https://github.com/lkw199711/smanga) servers, as well as local media libraries. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, MOBI, and Markdown. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app. Supported formats and synchronization features vary by source, as described below.
 
 The project is built on the mature Android reading foundation of [Mihon](https://github.com/mihonapp/mihon). Koharia does not provide or host any content. What you can browse depends on the servers you connect to, your account permissions, and the local directories you explicitly grant the app access to.
 
@@ -69,8 +69,18 @@ Koharia focuses on reading from personal media libraries. It does not provide pu
 - Cached library metadata remains available for offline browsing and search. Page content requires a separate download; metadata cache does not mean a book is downloaded.
 - Synchronize progress per Archive and retry pending offline reading updates after reconnecting. The server must allow progress tracking and grant the required permissions. Marking an entry unread resets local state only, leaving server progress unchanged.
 
+### smanga libraries
+
+- Built-in support without extensions, targeting the **smanga 4.3 API**. Connect with a server URL, username, and password, with **OPDS enabled** on the server. Saving a connection validates both login and OPDS access.
+- Add multiple connections, including server URLs with reverse-proxy subpaths or an `/api` suffix. An optional LAN address for the same server is preferred on Wi-Fi.
+- Browse all media libraries accessible to the account or select a single library. Search by name, sort by name, update time, or creation time, and filter to downloaded content.
+- View series details and chapter lists, read comic pages and PDFs, and download chapters for offline reading. PDFs require the complete original file before pages can be rendered.
+- Shelf and details data are cached persistently and shown first on startup. Previously cached content remains browsable offline; uncached queries still require a connection. Catalogue caching and content downloads are managed separately.
+- Synchronize chapter progress, read status, and reading history, with pending updates stored locally for retry. Progress conflicts or changes to page mapping can prompt a choice between local and server progress. Caches and reading records are isolated by connection and account.
+
 ### Local media libraries
 
+- Read local comic archives, image folders, PDFs, EPUB, TXT, MOBI, and **Markdown documents**. Markdown supports paginated book-style reading with headings, lists, blockquotes, and code blocks, plus adjustable fonts and typography.
 - Link existing folders through Android's system directory picker without moving or deleting their files, or let Koharia create a managed `Comics`, `Books`, and `.koharia` directory structure.
 - Mark local directories as comics, books, or mixed content and assign them to custom bookshelves.
 - Choose between a series-based library, where each top-level folder is treated as a series, and an individual-file library, which recursively lists files and image folders that can be opened directly.
@@ -98,7 +108,7 @@ The DjVu decoder runs in the JavaScript / WebAssembly runtime provided by the sy
 
 - Optionally split media libraries into Comics and Books, or keep everything in a combined library.
 - Cover grid and list views, search, filters, sorting, series details, reading history, and quick switching between servers.
-- Library organization and settings are independent for each connection, making it easier to manage content from different sources.
+- Accounts, library data, and reading records are isolated by connection. App appearance and reader settings are shared for a consistent experience when switching sources.
 
 ### Comic reading
 
@@ -131,11 +141,11 @@ Xiaomi MiMo TTS is **currently available for a free, limited-time trial**. You c
 
 ### Progress, offline access, and data management
 
-- Komga and LANraragi shelves show local cache first. Missing cache, manual refresh, or server update events trigger data retrieval, keeping startup independent of network speed when cache is available.
+- Komga, LANraragi, and smanga shelves show existing local cache first. Missing data is fetched on demand, with manual refresh available afterward; Komga also responds to server update events.
 - Saves local reading positions, history, and bookmarks, and synchronizes supported reading progress with the server.
 - Manual downloads, book cache, and comic page cache use separate policies; cached content is never incorrectly marked as downloaded.
 - Cache size limits, on-demand resource loading, offline access, and server-specific download directories.
-- Multiple server and local library connections, independent reader settings, backup and restore, and database migration from older releases.
+- Multiple server and local library connections, shared reader settings, backup and restore, and database migration from older releases.
 
 ## Download
 
@@ -170,7 +180,7 @@ Release signing reads the local `keystore.properties` file. You normally do not 
 
 Koharia is based on [Mihon](https://github.com/mihonapp/mihon) and is distributed under the Apache License 2.0. License and attribution details are available in [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for contribution guidelines. If you redistribute Koharia or create a derivative project, retain the required attribution and do not describe it as an official Mihon, Komga, or LANraragi release.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for contribution guidelines. If you redistribute Koharia or create a derivative project, retain the required attribution and do not describe it as an official Mihon, Komga, LANraragi, or smanga release.
 
 ## Acknowledgements
 
@@ -213,7 +223,5 @@ Thank you to everyone who contributes code, documentation, translations, testing
   <a href="https://github.com/Mister-album"><img src="./.github/assets/contributors/Mister-album.svg" width="64" height="64" alt="Mister-album" title="Mister-album" /></a>
 </p>
 <!-- koharia-contributors:end -->
-
-This list includes commit authors since Koharia development began, excluding upstream history and bots. GitHub Actions updates it automatically.
 
 [Report an issue or suggest an improvement](https://github.com/Mister-album/Koharia/issues)

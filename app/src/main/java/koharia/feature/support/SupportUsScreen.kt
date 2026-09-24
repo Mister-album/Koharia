@@ -23,7 +23,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
@@ -39,6 +38,8 @@ import tachiyomi.core.common.Constants
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.icons.CustomIcons
+import tachiyomi.presentation.core.icons.Patreon
 
 class SupportUsScreen : Screen() {
 
@@ -90,15 +91,14 @@ class SupportUsScreen : Screen() {
                 )
 
                 SupportItem(
+                    icon = CustomIcons.Patreon,
+                    title = stringResource(MR.strings.supportUsScreen_donationPlatform_patreon),
+                    onClick = { uriHandler.openUri(Constants.URL_DONATE_KOHARIA_PATREON) },
+                )
+                SupportItem(
                     icon = Icons.AutoMirrored.Filled.OpenInNew,
                     title = stringResource(MR.strings.supportUsScreen_donationPlatform_ifdian),
                     onClick = { uriHandler.openUri(Constants.URL_DONATE_IFDIAN) },
-                )
-                Text(
-                    text = stringResource(MR.strings.supportUsScreen_mihonSupportTitle),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                 )
                 MihonSupportLinks()
 
@@ -115,7 +115,7 @@ class SupportUsScreen : Screen() {
 
             withLink(LinkAnnotation.Url(Constants.URL_DONATE_PATREON)) {
                 withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
-                    append("Patreon")
+                    append(stringResource(MR.strings.supportUsScreen_donationPlatform_patreon))
                 }
             }
 
@@ -123,7 +123,7 @@ class SupportUsScreen : Screen() {
 
             withLink(LinkAnnotation.Url(Constants.URL_DONATE_OPENCOLLECTIVE)) {
                 withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
-                    append("OpenCollective")
+                    append(stringResource(MR.strings.supportUsScreen_donationPlatform_opencollective))
                 }
             }
         }

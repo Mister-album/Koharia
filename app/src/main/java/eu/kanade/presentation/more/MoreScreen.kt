@@ -28,6 +28,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
 fun MoreScreen(
+    showOfflineControls: Boolean,
     downloadQueueStateProvider: () -> DownloadQueueState,
     downloadedOnly: Boolean,
     downloadedOnlyEnabled: Boolean,
@@ -52,47 +53,49 @@ fun MoreScreen(
                     iconPadding = PaddingValues(vertical = 32.dp),
                 )
             }
-            item {
-                SwitchPreferenceWidget(
-                    title = stringResource(MR.strings.komga_label_cached_only),
-                    subtitle = scopedSettingsBlockedReason ?: stringResource(MR.strings.komga_cached_only_summary),
-                    icon = Icons.Outlined.CloudOff,
-                    checked = downloadedOnly,
-                    enabled = downloadedOnlyEnabled,
-                    onCheckedChanged = onDownloadedOnlyChange,
-                )
-            }
+            if (showOfflineControls) {
+                item {
+                    SwitchPreferenceWidget(
+                        title = stringResource(MR.strings.komga_label_cached_only),
+                        subtitle = scopedSettingsBlockedReason ?: stringResource(MR.strings.komga_cached_only_summary),
+                        icon = Icons.Outlined.CloudOff,
+                        checked = downloadedOnly,
+                        enabled = downloadedOnlyEnabled,
+                        onCheckedChanged = onDownloadedOnlyChange,
+                    )
+                }
 
-            item { HorizontalDivider() }
+                item { HorizontalDivider() }
 
-            item {
-                val downloadQueueState = downloadQueueStateProvider()
-                TextPreferenceWidget(
-                    title = stringResource(MR.strings.komga_label_offline_cache_queue),
-                    subtitle = when (downloadQueueState) {
-                        DownloadQueueState.Stopped -> null
-                        is DownloadQueueState.Paused -> {
-                            val pending = downloadQueueState.pending
-                            if (pending == 0) {
-                                stringResource(MR.strings.paused)
-                            } else {
-                                "${stringResource(MR.strings.paused)} • ${
-                                    pluralStringResource(
-                                        MR.plurals.download_queue_summary,
-                                        count = pending,
-                                        pending,
-                                    )
-                                }"
+                item {
+                    val downloadQueueState = downloadQueueStateProvider()
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.komga_label_offline_cache_queue),
+                        subtitle = when (downloadQueueState) {
+                            DownloadQueueState.Stopped -> null
+                            is DownloadQueueState.Paused -> {
+                                val pending = downloadQueueState.pending
+                                if (pending == 0) {
+                                    stringResource(MR.strings.paused)
+                                } else {
+                                    "${stringResource(MR.strings.paused)} • ${
+                                        pluralStringResource(
+                                            MR.plurals.download_queue_summary,
+                                            count = pending,
+                                            pending,
+                                        )
+                                    }"
+                                }
                             }
-                        }
-                        is DownloadQueueState.Downloading -> {
-                            val pending = downloadQueueState.pending
-                            pluralStringResource(MR.plurals.download_queue_summary, count = pending, pending)
-                        }
-                    },
-                    icon = Icons.Outlined.GetApp,
-                    onPreferenceClick = onClickDownloadQueue,
-                )
+                            is DownloadQueueState.Downloading -> {
+                                val pending = downloadQueueState.pending
+                                pluralStringResource(MR.plurals.download_queue_summary, count = pending, pending)
+                            }
+                        },
+                        icon = Icons.Outlined.GetApp,
+                        onPreferenceClick = onClickDownloadQueue,
+                    )
+                }
             }
             item {
                 TextPreferenceWidget(
