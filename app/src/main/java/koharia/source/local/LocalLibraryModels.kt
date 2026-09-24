@@ -115,7 +115,47 @@ data class LocalLibraryIndex(
     val scannedAt: Long = 0L,
     val items: List<LocalLibraryItem> = emptyList(),
     val pendingChapterRefreshItemKeys: Set<String> = emptySet(),
-)
+) {
+    val itemsByKey: Map<String, LocalLibraryItem> by lazy { items.associateBy(LocalLibraryItem::itemKey) }
+
+    val libraryItemsByKey: Map<String, LocalLibraryItem> by lazy {
+        itemsByKey.filterValues { it.kind != LocalLibraryItem.Kind.CHAPTER }
+    }
+
+    val chaptersBySeriesKey: Map<String, List<LocalLibraryItem>> by lazy {
+        items.filter { it.kind == LocalLibraryItem.Kind.CHAPTER }.groupBy {
+            LocalLibraryLocator.itemKey(it.rootId, it.relativePath.substringBeforeLast('/', ""))
+        }
+    }
+
+    val chapterNamesBySeriesKey: Map<String, List<String>> by lazy {
+        chaptersBySeriesKey.mapValues { (_, chapters) ->
+            chapters.map { chapter ->
+                val name = chapter.relativePath.substringAfterLast('/')
+                if (chapter.format == "directory") name else name.substringBeforeLast('.')
+            }
+        }
+    }
+
+    val chapterFormatsBySeriesKey: Map<String, String> by lazy {
+        chaptersBySeriesKey.mapValues { (_, chapters) -> chapters.map { it.format }.distinct().joinToString(", ") }
+    }
+}
+
+internal class LocalLibraryIndexCache(private val json: Json) {
+    private var serialized: String? = null
+    private var index = LocalLibraryIndex()
+
+    @Synchronized
+    fun get(value: String?): LocalLibraryIndex {
+        if (value != serialized) {
+            index = value?.let { runCatching { json.decodeFromString<LocalLibraryIndex>(it) }.getOrNull() }
+                ?: LocalLibraryIndex()
+            serialized = value
+        }
+        return index
+    }
+}
 
 @Serializable
 data class LocalLibraryManifest(
@@ -143,6 +183,7 @@ class LocalLibraryPreferences(
     private val json: Json,
 ) {
     private val preferences: SharedPreferences = sourcePreferences("source_$sourceId")
+    private val indexCache = LocalLibraryIndexCache(json)
 
     fun getConfig(): LocalLibraryConfig {
         val storedValue = preferences.getString(KEY_CONFIG, null)
@@ -197,9 +238,7 @@ class LocalLibraryPreferences(
     }
 
     fun getIndex(): LocalLibraryIndex {
-        return preferences.getString(KEY_INDEX, null)
-            ?.let { runCatching { json.decodeFromString<LocalLibraryIndex>(it) }.getOrNull() }
-            ?: LocalLibraryIndex()
+        return indexCache.get(preferences.getString(KEY_INDEX, null))
     }
 
     @Synchronized

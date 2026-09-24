@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
@@ -73,6 +75,7 @@ internal class LocalLibraryScreenModel(
     private val eventChannel = Channel<Event>(Channel.BUFFERED)
     private val readProgressRefreshRequests = Channel<Unit>(Channel.CONFLATED)
     private val localReadProgress = MutableStateFlow<Map<String, MangaReadProgress>>(emptyMap())
+    private val mangaStates = LocalMangaStates()
     private val filterPreferences = runCatching { LocalLibraryFilterPreferences(sourceId) }.getOrNull()
 
     val events = eventChannel.receiveAsFlow()
@@ -201,8 +204,12 @@ internal class LocalLibraryScreenModel(
                 filters = request.filters,
                 bookshelfId = request.bookshelfId,
             ).orEmpty()
+            mangaStates.update(filteredMangas)
+        }
+        .distinctUntilChanged()
+        .map { mangas ->
             PagingData.from(
-                filteredMangas.map { manga -> MutableStateFlow(manga) as StateFlow<Manga> },
+                mangas,
                 sourceLoadStates = LoadStates(
                     refresh = LoadState.NotLoading(false),
                     prepend = LoadState.NotLoading(true),
@@ -499,6 +506,18 @@ internal class LocalLibraryScreenModel(
         val indexedChapterCount: Int,
         val isIndividualFile: Boolean,
     )
+}
+
+internal class LocalMangaStates {
+    private val states = mutableMapOf<Long, MutableStateFlow<Manga>>()
+
+    fun update(mangas: List<Manga>): List<StateFlow<Manga>> {
+        val ids = mangas.mapTo(mutableSetOf(), Manga::id)
+        states.keys.retainAll(ids)
+        return mangas.map { manga ->
+            states.getOrPut(manga.id) { MutableStateFlow(manga) }.also { it.value = manga }
+        }
+    }
 }
 
 internal fun buildLocalReadProgress(

@@ -23,15 +23,14 @@ class SetMangaDefaultChapterFlags(
                     sortingMode = sortChapterBySourceOrNumber.get(),
                     sortingDirection = sortChapterByAscendingOrDescending.get(),
                     displayMode = displayChapterByNameOrNumber.get(),
-                    chapterCoverDisplayMode = chapterCoverDisplayMode.get(),
                 )
             }
         }
     }
 
-    suspend fun awaitAll() {
+    suspend fun awaitAll(additionalManga: List<Manga> = emptyList()) {
         withNonCancellableContext {
-            getFavorites.await().forEach { await(it) }
+            (getFavorites.await() + additionalManga).distinctBy(Manga::id).forEach { await(it) }
         }
     }
 }

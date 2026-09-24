@@ -42,6 +42,7 @@ import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.connection.ConnectionEpubProgressAdapter
+import koharia.connection.ConnectionLibraryMembershipAdapter
 import koharia.connection.ConnectionLibraryShelf
 import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.connection.ConnectionMangaBehavior
@@ -71,6 +72,8 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
@@ -95,6 +98,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
 import tachiyomi.domain.manga.interactor.GetMangaWithChapters
 import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
+import tachiyomi.domain.manga.model.ChapterDisplayOption
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.manga.model.applyFilter
@@ -194,10 +198,17 @@ class MangaScreenModel(
     val chapterSwipeEndAction = libraryPreferences.swipeToStartAction.get()
     val chapterCoverGridColumns = libraryPreferences.chapterCoverGridColumns.asState(screenModelScope)
     val chapterCoverGridLandscapeColumns = libraryPreferences.chapterCoverGridLandscapeColumns.asState(screenModelScope)
-    var showChapterReadProgress by mutableStateOf(libraryPreferences.showChapterReadProgress.get())
-        private set
-    var showChapterFileSize by mutableStateOf(libraryPreferences.showChapterFileSize.get())
-        private set
+    val showChapterReadProgress: Boolean
+        get() = ChapterDisplayOption.READ_PROGRESS.get(
+            manga?.chapterFlags ?: 0L,
+            libraryPreferences.showChapterReadProgress.get(),
+        )
+    val showChapterFileSize: Boolean
+        get() = ChapterDisplayOption.FILE_SIZE.get(
+            manga?.chapterFlags ?: 0L,
+            libraryPreferences.showChapterFileSize.get(),
+        )
+    private val chapterSettingsMutex = Mutex()
     var autoTrackState = trackPreferences.autoUpdateTrackOnMarkRead.get()
 
     private val skipFiltered by readerPreferences.skipFiltered.asState(screenModelScope)
@@ -278,15 +289,21 @@ class MangaScreenModel(
                     chapterUpdates,
                     epubCacheManager.changes,
                     cachedOnlyPreference.changes().onStart { emit(cachedOnlyPreference.get()) },
-                ) { chapterUpdate, _, cachedOnly ->
-                    chapterUpdate to cachedOnly
+                    libraryPreferences.chapterCoverDisplayMode.changes()
+                        .onStart { emit(libraryPreferences.chapterCoverDisplayMode.get()) },
+                ) { chapterUpdate, _, cachedOnly, defaultCoverMode ->
+                    Triple(chapterUpdate, cachedOnly, defaultCoverMode)
                 }
-                    .collectLatest { (chapterUpdate, cachedOnly) ->
+                    .collectLatest { (chapterUpdate, cachedOnly, defaultCoverMode) ->
                         val (mangaAndChapters, localProgresses, remoteProgresses) = chapterUpdate
                         val (updatedManga, chapters) = mangaAndChapters
                         updateSuccessState {
                             it.copy(
-                                manga = updatedManga,
+                                manga = updatedManga.withChapterCoverDisplayMode(defaultCoverMode),
+                                hideMissingChapters = ChapterDisplayOption.HIDE_MISSING.get(
+                                    updatedManga.chapterFlags,
+                                    libraryPreferences.hideMissingChapters.get(),
+                                ),
                                 chapters = chapters.toChapterListItems(
                                     updatedManga,
                                     mergeEpubProgressions(localProgresses, remoteProgresses),
@@ -326,7 +343,7 @@ class MangaScreenModel(
             // Show what we have earlier
             mutableState.update {
                 State.Success(
-                    manga = manga,
+                    manga = manga.withChapterCoverDisplayMode(libraryPreferences.chapterCoverDisplayMode.get()),
                     source = source,
                     isFromSource = isFromSource,
                     chapters = chapters,
@@ -334,7 +351,10 @@ class MangaScreenModel(
                     excludedScanlators = excludedScanlatorsDeferred.await(),
                     isRefreshingData = needRefreshInfo || needRefreshChapter,
                     dialog = null,
-                    hideMissingChapters = libraryPreferences.hideMissingChapters.get(),
+                    hideMissingChapters = ChapterDisplayOption.HIDE_MISSING.get(
+                        manga.chapterFlags,
+                        libraryPreferences.hideMissingChapters.get(),
+                    ),
                     cachedOnly = cachedOnlyPreference.get(),
                 )
             }
@@ -662,7 +682,13 @@ class MangaScreenModel(
                 )
             ) {
                 val updatedManga = mangaRepository.getMangaById(manga.id)
-                updateSuccessState { it.copy(manga = updatedManga) }
+                updateSuccessState {
+                    it.copy(
+                        manga = updatedManga.withChapterCoverDisplayMode(
+                            libraryPreferences.chapterCoverDisplayMode.get(),
+                        ),
+                    )
+                }
             }
         }
     }
@@ -851,7 +877,12 @@ class MangaScreenModel(
                 snackbarHostState.showSnackbar(message = message)
             }
             val newManga = mangaRepository.getMangaById(currentMangaId)
-            updateSuccessState { it.copy(manga = newManga, isRefreshingData = false) }
+            updateSuccessState {
+                it.copy(
+                    manga = newManga.withChapterCoverDisplayMode(libraryPreferences.chapterCoverDisplayMode.get()),
+                    isRefreshingData = false,
+                )
+            }
         }
     }
 
@@ -1133,14 +1164,14 @@ class MangaScreenModel(
      * @param state whether to display only unread chapters or all chapters.
      */
     fun setUnreadFilter(state: TriState) {
-        val manga = successState?.manga ?: return
+        val mangaId = successState?.manga?.id ?: return
 
         val flag = when (state) {
             TriState.DISABLED -> Manga.SHOW_ALL
             TriState.ENABLED_IS -> Manga.CHAPTER_SHOW_UNREAD
             TriState.ENABLED_NOT -> Manga.CHAPTER_SHOW_READ
         }
-        screenModelScope.launchNonCancellable {
+        updateChapterSettings(mangaId) { manga ->
             setMangaChapterFlags.awaitSetUnreadFilter(manga, flag)
         }
     }
@@ -1150,7 +1181,7 @@ class MangaScreenModel(
      * @param state whether to display only downloaded chapters or all chapters.
      */
     fun setDownloadedFilter(state: TriState) {
-        val manga = successState?.manga ?: return
+        val mangaId = successState?.manga?.id ?: return
 
         val flag = when (state) {
             TriState.DISABLED -> Manga.SHOW_ALL
@@ -1158,7 +1189,7 @@ class MangaScreenModel(
             TriState.ENABLED_NOT -> Manga.CHAPTER_SHOW_NOT_DOWNLOADED
         }
 
-        screenModelScope.launchNonCancellable {
+        updateChapterSettings(mangaId) { manga ->
             setMangaChapterFlags.awaitSetDownloadedFilter(manga, flag)
         }
     }
@@ -1168,7 +1199,7 @@ class MangaScreenModel(
      * @param state whether to display only bookmarked chapters or all chapters.
      */
     fun setBookmarkedFilter(state: TriState) {
-        val manga = successState?.manga ?: return
+        val mangaId = successState?.manga?.id ?: return
 
         val flag = when (state) {
             TriState.DISABLED -> Manga.SHOW_ALL
@@ -1176,7 +1207,7 @@ class MangaScreenModel(
             TriState.ENABLED_NOT -> Manga.CHAPTER_SHOW_NOT_BOOKMARKED
         }
 
-        screenModelScope.launchNonCancellable {
+        updateChapterSettings(mangaId) { manga ->
             setMangaChapterFlags.awaitSetBookmarkFilter(manga, flag)
         }
     }
@@ -1186,31 +1217,27 @@ class MangaScreenModel(
      * @param mode the mode to set.
      */
     fun setDisplayMode(mode: Long) {
-        val manga = successState?.manga ?: return
+        val mangaId = successState?.manga?.id ?: return
 
-        screenModelScope.launchNonCancellable {
+        updateChapterSettings(mangaId) { manga ->
             setMangaChapterFlags.awaitSetDisplayMode(manga, mode)
         }
     }
 
     fun setChapterCoverDisplayMode(mode: Long) {
-        val manga = successState?.manga ?: return
-
-        screenModelScope.launchNonCancellable {
-            setMangaChapterFlags.awaitSetChapterCoverDisplayMode(manga, mode)
-        }
+        libraryPreferences.chapterCoverDisplayMode.set(mode)
     }
 
     fun updateShowChapterReadProgress(show: Boolean) {
-        showChapterReadProgress = show
+        setDisplayOption(ChapterDisplayOption.READ_PROGRESS, show)
     }
 
     fun updateShowChapterFileSize(show: Boolean) {
-        showChapterFileSize = show
+        setDisplayOption(ChapterDisplayOption.FILE_SIZE, show)
     }
 
     fun updateHideMissingChapters(hide: Boolean) {
-        updateSuccessState { it.copy(hideMissingChapters = hide) }
+        setDisplayOption(ChapterDisplayOption.HIDE_MISSING, hide)
     }
 
     /**
@@ -1218,37 +1245,61 @@ class MangaScreenModel(
      * @param sort the sorting mode.
      */
     fun setSorting(sort: Long) {
-        val manga = successState?.manga ?: return
+        val mangaId = successState?.manga?.id ?: return
 
-        screenModelScope.launchNonCancellable {
+        updateChapterSettings(mangaId) { manga ->
             setMangaChapterFlags.awaitSetSortingModeOrFlipOrder(manga, sort)
         }
     }
 
     fun setCurrentSettingsAsDefault(applyToExisting: Boolean) {
-        val manga = successState?.manga ?: return
-        val showReadProgress = showChapterReadProgress
-        val showFileSize = showChapterFileSize
-        val hideMissingChapters = successState?.hideMissingChapters ?: return
-        screenModelScope.launchNonCancellable {
+        val mangaId = successState?.manga?.id ?: return
+        updateChapterSettings(mangaId) { manga ->
             libraryPreferences.setChapterSettingsDefault(manga)
-            libraryPreferences.showChapterReadProgress.set(showReadProgress)
-            libraryPreferences.showChapterFileSize.set(showFileSize)
-            libraryPreferences.hideMissingChapters.set(hideMissingChapters)
+            libraryPreferences.showChapterReadProgress.set(
+                ChapterDisplayOption.READ_PROGRESS.get(
+                    manga.chapterFlags,
+                    libraryPreferences.showChapterReadProgress.get(),
+                ),
+            )
+            libraryPreferences.showChapterFileSize.set(
+                ChapterDisplayOption.FILE_SIZE.get(manga.chapterFlags, libraryPreferences.showChapterFileSize.get()),
+            )
+            libraryPreferences.hideMissingChapters.set(
+                ChapterDisplayOption.HIDE_MISSING.get(manga.chapterFlags, libraryPreferences.hideMissingChapters.get()),
+            )
             if (applyToExisting) {
-                setMangaDefaultChapterFlags.awaitAll()
+                val managedEntries = Injekt.get<SourceManager>().getCatalogueSources()
+                    .filter { it.mangaBehavior().providerManagedLibrary }
+                    .flatMap { source ->
+                        val entries = mangaRepository.getMangaBySourceId(source.id)
+                        (source as? ConnectionLibraryMembershipAdapter)?.filterLibraryEntries(entries) ?: entries
+                    }
+                setMangaDefaultChapterFlags.awaitAll(managedEntries)
             }
-            snackbarHostState.showSnackbar(message = context.stringResource(MR.strings.chapter_settings_updated))
+            screenModelScope.launch {
+                snackbarHostState.showSnackbar(message = context.stringResource(MR.strings.chapter_settings_updated))
+            }
         }
     }
 
     fun resetToDefaultSettings() {
-        val manga = successState?.manga ?: return
-        showChapterReadProgress = libraryPreferences.showChapterReadProgress.get()
-        showChapterFileSize = libraryPreferences.showChapterFileSize.get()
-        updateHideMissingChapters(libraryPreferences.hideMissingChapters.get())
-        screenModelScope.launchNonCancellable {
+        val mangaId = successState?.manga?.id ?: return
+        updateChapterSettings(mangaId) { manga ->
             setMangaDefaultChapterFlags.await(manga)
+        }
+    }
+
+    private fun setDisplayOption(option: ChapterDisplayOption, value: Boolean) {
+        val mangaId = successState?.manga?.id ?: return
+        updateChapterSettings(mangaId) { setMangaChapterFlags.awaitSetDisplayOption(mangaId, option, value) }
+    }
+
+    private fun updateChapterSettings(mangaId: Long, update: suspend (Manga) -> Unit) {
+        screenModelScope.launchNonCancellable {
+            chapterSettingsMutex.withLock {
+                update(mangaRepository.getMangaById(mangaId))
+            }
         }
     }
 

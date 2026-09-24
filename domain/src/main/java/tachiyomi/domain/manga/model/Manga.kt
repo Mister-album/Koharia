@@ -52,6 +52,11 @@ data class Manga(
     val chapterCoverDisplayMode: Long
         get() = chapterFlags and CHAPTER_COVER_DISPLAY_MASK
 
+    fun withChapterCoverDisplayMode(mode: Long): Manga = copy(
+        chapterFlags = (chapterFlags and CHAPTER_COVER_DISPLAY_MASK.inv()) or
+            (mode and CHAPTER_COVER_DISPLAY_MASK),
+    )
+
     val unreadFilterRaw: Long
         get() = chapterFlags and CHAPTER_UNREAD_MASK
 

@@ -12,6 +12,14 @@ class LibraryPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
 
+    fun defaultChapterFlags(): Long =
+        (filterChapterByRead.get() and Manga.CHAPTER_UNREAD_MASK) or
+            (filterChapterByDownloaded.get() and Manga.CHAPTER_DOWNLOADED_MASK) or
+            (filterChapterByBookmarked.get() and Manga.CHAPTER_BOOKMARKED_MASK) or
+            (sortChapterBySourceOrNumber.get() and Manga.CHAPTER_SORTING_MASK) or
+            (sortChapterByAscendingOrDescending.get() and Manga.CHAPTER_SORT_DIR_MASK) or
+            (displayChapterByNameOrNumber.get() and Manga.CHAPTER_DISPLAY_MASK)
+
     val displayMode: Preference<LibraryDisplayMode> = preferenceStore.getObjectFromString(
         "pref_display_mode_library",
         LibraryDisplayMode.default,
@@ -208,7 +216,6 @@ class LibraryPreferences(
         filterChapterByBookmarked.set(manga.bookmarkedFilterRaw)
         sortChapterBySourceOrNumber.set(manga.sorting)
         displayChapterByNameOrNumber.set(manga.displayMode)
-        chapterCoverDisplayMode.set(manga.chapterCoverDisplayMode)
         sortChapterByAscendingOrDescending.set(
             if (manga.sortDescending()) Manga.CHAPTER_SORT_DESC else Manga.CHAPTER_SORT_ASC,
         )

@@ -1,5 +1,6 @@
 package tachiyomi.domain.manga.interactor
 
+import tachiyomi.domain.manga.model.ChapterDisplayOption
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
@@ -7,6 +8,13 @@ import tachiyomi.domain.manga.repository.MangaRepository
 class SetMangaChapterFlags(
     private val mangaRepository: MangaRepository,
 ) {
+
+    suspend fun awaitSetDisplayOption(mangaId: Long, option: ChapterDisplayOption, value: Boolean): Boolean {
+        val manga = mangaRepository.getMangaById(mangaId)
+        return mangaRepository.update(
+            MangaUpdate(id = mangaId, chapterFlags = option.set(manga.chapterFlags, value)),
+        )
+    }
 
     suspend fun awaitSetDownloadedFilter(manga: Manga, flag: Long): Boolean {
         return mangaRepository.update(
@@ -44,15 +52,6 @@ class SetMangaChapterFlags(
         )
     }
 
-    suspend fun awaitSetChapterCoverDisplayMode(manga: Manga, flag: Long): Boolean {
-        return mangaRepository.update(
-            MangaUpdate(
-                id = manga.id,
-                chapterFlags = manga.chapterFlags.setFlag(flag, Manga.CHAPTER_COVER_DISPLAY_MASK),
-            ),
-        )
-    }
-
     suspend fun awaitSetSortingModeOrFlipOrder(manga: Manga, flag: Long): Boolean {
         val newFlags = manga.chapterFlags.let {
             if (manga.sorting == flag) {
@@ -86,7 +85,6 @@ class SetMangaChapterFlags(
         sortingMode: Long,
         sortingDirection: Long,
         displayMode: Long,
-        chapterCoverDisplayMode: Long,
     ): Boolean {
         return mangaRepository.update(
             MangaUpdate(
@@ -96,8 +94,7 @@ class SetMangaChapterFlags(
                     .setFlag(bookmarkedFilter, Manga.CHAPTER_BOOKMARKED_MASK)
                     .setFlag(sortingMode, Manga.CHAPTER_SORTING_MASK)
                     .setFlag(sortingDirection, Manga.CHAPTER_SORT_DIR_MASK)
-                    .setFlag(displayMode, Manga.CHAPTER_DISPLAY_MASK)
-                    .setFlag(chapterCoverDisplayMode, Manga.CHAPTER_COVER_DISPLAY_MASK),
+                    .setFlag(displayMode, Manga.CHAPTER_DISPLAY_MASK),
             ),
         )
     }

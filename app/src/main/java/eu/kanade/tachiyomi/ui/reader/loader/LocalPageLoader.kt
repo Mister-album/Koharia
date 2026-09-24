@@ -13,7 +13,10 @@ import koharia.document.DocumentEngines
 import koharia.document.DocumentHeading
 import koharia.document.DocumentRenderSettings
 import koharia.media.LocalMediaFormats
+import kotlinx.coroutines.CancellationException
+import logcat.LogPriority
 import tachiyomi.core.common.storage.extension
+import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
 
 internal class LocalPageLoader(
@@ -29,6 +32,7 @@ internal class LocalPageLoader(
     private var epubLoader: EpubPageLoader? = null
     private var pdfLoader: PdfPageLoader? = null
     private var documentLoader: DocumentPageLoader? = null
+    private var comicPageCount: Int? = null
 
     override var isLocal: Boolean = true
 
@@ -38,21 +42,40 @@ internal class LocalPageLoader(
         get() = documentLoader?.supportsRemoteProgress ?: true
 
     override val progressPageCount: Int?
-        get() = pdfLoader?.progressPageCount ?: documentLoader?.progressPageCount
+        get() = pdfLoader?.progressPageCount ?: documentLoader?.progressPageCount ?: comicPageCount
 
     override val documentHeadings: List<DocumentHeading>
         get() = documentLoader?.documentHeadings ?: emptyList()
 
     override suspend fun getPages(): List<ReaderPage> {
-        val file = fileAdapter.localChapterFile(chapter.chapter.url)
-            ?: error("Local chapter file is unavailable: ${chapter.chapter.url}")
-        return when {
-            file.isDirectory -> DirectoryPageLoader(file).getPages()
-            file.extension.equals("epub", true) -> getPagesFromEpub(file)
-            file.extension.equals("pdf", true) -> getPagesFromPdf(file)
-            DocumentEngines.forExtension(file.extension) != null -> getPagesFromDocument(file)
-            LocalMediaFormats.isImage(file.extension) -> getPagesFromImage(file)
-            else -> getPagesFromArchive(file)
+        var stage = "resolve"
+        var format: String? = null
+        var sizeBytes: Long? = null
+        try {
+            val file = fileAdapter.localChapterFile(chapter.chapter.url)
+                ?: error("Local chapter file is unavailable: ${chapter.chapter.url}")
+            format = file.extension
+            sizeBytes = file.length()
+            stage = "enumerate"
+            val pages = when {
+                file.isDirectory -> DirectoryPageLoader(file).getPages()
+                file.extension.equals("epub", true) -> getPagesFromEpub(file)
+                file.extension.equals("pdf", true) -> getPagesFromPdf(file)
+                DocumentEngines.forExtension(file.extension) != null -> getPagesFromDocument(file)
+                LocalMediaFormats.isImage(file.extension) -> getPagesFromImage(file)
+                else -> getPagesFromArchive(file)
+            }
+            if (file.isDirectory || LocalMediaFormats.isArchive(format) || LocalMediaFormats.isImage(format)) {
+                comicPageCount = pages.size.takeIf { it > 0 }
+            }
+            return pages
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logcat(LogPriority.ERROR, error) {
+                "Local media load failed: stage=$stage, format=$format, bytes=$sizeBytes"
+            }
+            throw error
         }
     }
 

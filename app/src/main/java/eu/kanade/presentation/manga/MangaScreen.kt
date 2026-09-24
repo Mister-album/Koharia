@@ -1338,7 +1338,8 @@ private fun chapterGridProgress(item: ChapterList.Item): String? {
     val progressPercent = item.epubProgressPercent
         ?.takeIf { it > 0 }
         ?: run {
-            val totalPages = ConnectionChapterMetadata.pagesCount(item.chapter.memo) ?: return null
+            val totalPages = ConnectionChapterMetadata.pagesCount(item.chapter.memo)
+                ?: return chapterReadProgress(item)
             item.chapter.lastPageRead
                 .takeIf { it > 0L }
                 ?.let { pageIndex -> pageProgressPercent(pageIndex.toInt(), totalPages) }
