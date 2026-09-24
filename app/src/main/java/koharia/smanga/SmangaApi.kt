@@ -56,6 +56,7 @@ class SmangaApi(
     private val password: String,
     private val namespace: String,
     private val addressRouter: ConnectionAddressRouter? = null,
+    private val preparationDelay: suspend (Long) -> Unit = { delay(it) },
 ) {
     val base: HttpUrl = normalizeBase(address)
     private val dispatcher = Dispatcher()
@@ -256,7 +257,7 @@ class SmangaApi(
                     } ?: protocol()
                     return SmangaPageManifest.create(chapterId, paths)
                 }
-                "compressing" -> if (attempt < PREPARE_ATTEMPTS - 1) delay(PREPARE_DELAY_MS)
+                "compressing" -> if (attempt < PREPARE_ATTEMPTS - 1) preparationDelay(PREPARE_DELAY_MS)
                 else -> throw SmangaException(SmangaException.Reason.SERVER)
             }
         }
@@ -576,9 +577,9 @@ class SmangaApi(
         private const val PAGE_SIZE = 100
         private const val MAX_PAGES = 1000
         private const val MAX_JSON_BYTES = 16L * 1024 * 1024
-        private const val PREPARE_ATTEMPTS = 30
-        private const val PREPARE_DELAY_MS = 1000L
-        private const val PREPARE_TIMEOUT_MS = 90_000L
+        private const val PREPARE_ATTEMPTS = 180
+        private const val PREPARE_DELAY_MS = 2000L
+        private const val PREPARE_TIMEOUT_MS = 360_000L
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         fun normalizeBase(address: String): HttpUrl {

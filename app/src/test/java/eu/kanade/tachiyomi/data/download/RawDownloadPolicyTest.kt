@@ -109,6 +109,41 @@ class RawDownloadPolicyTest {
         }
     }
 
+    @Test
+    fun `416 completes only when the server confirms the exact saved length`() {
+        for ((range, expected) in listOf(
+            "bytes */6" to true,
+            "bytes */5" to false,
+            "bytes */7" to false,
+            "invalid" to false,
+        )) {
+            response("", code = 416).newBuilder().header("Content-Range", range).build().use {
+                assertEquals(expected, isCompleteRawRange(it, 6))
+            }
+        }
+        response("", code = 416).use { assertEquals(false, isCompleteRawRange(it, 6)) }
+    }
+
+    @Test
+    fun `partial response must start at saved offset and cover remaining file`() {
+        for ((range, expected) in listOf("bytes 6-9/10" to true, "bytes 0-9/10" to false, "bytes 6-7/10" to false)) {
+            response("tail", code = 206).newBuilder().header("Content-Range", range).build().use {
+                assertEquals(expected, hasExpectedRawRange(it, 6))
+            }
+        }
+    }
+
+    @Test
+    fun `resume rejects a response shorter than the saved prefix`() {
+        response("old").use {
+            assertThrows(IOException::class.java) {
+                runBlocking {
+                    copyRawDownloadResponse(it, ByteArrayOutputStream(), ConnectionRawDownloadResumePolicy.RESUME, 6) {}
+                }
+            }
+        }
+    }
+
     private fun response(payload: String, code: Int = 200, declaredLength: Long = payload.length.toLong()): Response {
         val body = object : ResponseBody() {
             private val buffer = Buffer().writeUtf8(payload)

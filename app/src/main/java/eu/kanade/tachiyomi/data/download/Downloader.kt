@@ -595,6 +595,10 @@ class Downloader(
             return finalFileName to tmpFile
         }
 
+        // Keep idle/connect timeouts, but allow an actively transferring book to take any duration.
+        val transferClient = source.rawDownloadClient.newBuilder()
+            .callTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build()
         repeat(4) { attempt ->
             val existingRawTmpFile = if (restart) null else findExistingRawTmpFile(mangaDir, chapterDirname)
             var finalFileName = existingRawTmpFile?.first
@@ -602,7 +606,7 @@ class Downloader(
             val existingBytes = tmpFile?.length()?.takeIf { it > 0L } ?: 0L
 
             val coroutineContext = currentCoroutineContext()
-            val responseCall = source.rawDownloadClient.newCall(
+            val responseCall = transferClient.newCall(
                 source.rawFileRequest(
                     download.chapter.url,
                     existingBytes.takeIf {
@@ -625,14 +629,12 @@ class Downloader(
                         if (!restart && response.code == 416 && existingBytes > 0L && tmpFile != null &&
                             finalFileName != null
                         ) {
-                            logcat(LogPriority.INFO) {
-                                "HTTP 416 Range Not Satisfiable, assuming file is fully downloaded"
+                            if (isCompleteRawRange(response, existingBytes)) {
+                                finalizeRawDownload(download, source, mangaDir, tmpFile, finalFileName, existingBytes)
+                                return true
                             }
-                            source.validateRawDownload(tmpFile)
-                            tmpFile.renameTo(finalFileName)
-                            download.updateRawProgress(existingBytes, existingBytes)
-                            download.status = Download.State.DOWNLOADING
-                            return true
+                            if (!tmpFile.delete()) throw IOException("Failed to reset invalid raw download")
+                            throw IOException("Server rejected the saved range; restarting raw download")
                         }
                         error("HTTP ${response.code}")
                     }
@@ -659,6 +661,17 @@ class Downloader(
 
                     val resolvedFinalFileName = checkNotNull(finalFileName)
                     val resolvedTmpFile = checkNotNull(tmpFile)
+
+                    if (response.code == 200 && existingBytes > response.body.contentLength() &&
+                        response.body.contentLength() >= 0L
+                    ) {
+                        if (!resolvedTmpFile.delete()) throw IOException("Failed to reset stale raw download")
+                        throw IOException("Remote file is shorter than the saved download; restarting")
+                    }
+                    if (response.code == 206 && !hasExpectedRawRange(response, existingBytes)) {
+                        if (!resolvedTmpFile.delete()) throw IOException("Failed to reset mismatched raw download")
+                        throw IOException("Unexpected partial response range; restarting raw download")
+                    }
 
                     val resumedBytes = when {
                         restart -> 0L
@@ -710,24 +723,14 @@ class Downloader(
                         throw IOException("Incomplete raw download file: received=$downloadedBytes")
                     }
                     download.updateRawProgress(downloadedBytes, totalBytes.coerceAtLeast(downloadedBytes))
-                    source.validateRawDownload(resolvedTmpFile)
-                    coroutineContext.ensureActive()
-                    mangaDir.findFile(resolvedFinalFileName)?.delete()
-                    if (!resolvedTmpFile.renameTo(resolvedFinalFileName)) {
-                        error("Failed to finalize raw download file: $resolvedFinalFileName")
-                    }
-
-                    cache.addChapter(resolvedFinalFileName, mangaDir, download.manga)
-                    mangaDir.findFile(resolvedFinalFileName)?.let { finalizedFile ->
-                        (download.source as? ConnectionDownloadStorageAdapter)
-                            ?.indexDownloadedChapter(download.chapter, finalizedFile)
-                    }
-                    DiskUtil.createNoMediaFile(mangaDir, context)
-                    download.status = Download.State.DOWNLOADED
-
-                    logcat(LogPriority.INFO) {
-                        "Downloader.tryDownloadRawFile(): saved raw file $resolvedFinalFileName"
-                    }
+                    finalizeRawDownload(
+                        download,
+                        source,
+                        mangaDir,
+                        resolvedTmpFile,
+                        resolvedFinalFileName,
+                        downloadedBytes,
+                    )
                 }
 
                 return true
@@ -748,6 +751,31 @@ class Downloader(
         }
 
         return false
+    }
+
+    private suspend fun finalizeRawDownload(
+        download: Download,
+        source: ConnectionRawDownloadAdapter,
+        mangaDir: UniFile,
+        tmpFile: UniFile,
+        finalFileName: String,
+        downloadedBytes: Long,
+    ) {
+        source.validateRawDownload(tmpFile)
+        currentCoroutineContext().ensureActive()
+        mangaDir.findFile(finalFileName)?.delete()
+        if (!tmpFile.renameTo(finalFileName)) throw IOException("Failed to finalize raw download file: $finalFileName")
+        cache.addChapter(finalFileName, mangaDir, download.manga)
+        mangaDir.findFile(finalFileName)?.let { finalizedFile ->
+            (download.source as? ConnectionDownloadStorageAdapter)?.indexDownloadedChapter(
+                download.chapter,
+                finalizedFile,
+            )
+        }
+        DiskUtil.createNoMediaFile(mangaDir, context)
+        download.updateRawProgress(downloadedBytes, downloadedBytes)
+        download.status = Download.State.DOWNLOADED
+        logcat(LogPriority.INFO) { "Downloader.tryDownloadRawFile(): saved raw file $finalFileName" }
     }
 
     private fun findExistingRawTmpFile(mangaDir: UniFile, chapterDirname: String): Pair<String, UniFile>? {
@@ -1204,8 +1232,9 @@ internal suspend fun copyRawDownloadResponse(
         output.flush()
     }
     val expectedBytes = response.body.contentLength()
-    if (restart && expectedBytes >= 0L && downloadedBytes != expectedBytes) {
-        throw IOException("Incomplete raw download: expected=$expectedBytes received=$downloadedBytes")
+    val expectedTotal = if (response.code == 206) resumedBytes + expectedBytes else expectedBytes
+    if (expectedBytes >= 0L && downloadedBytes != expectedTotal) {
+        throw IOException("Incomplete raw download: expected=$expectedTotal received=$downloadedBytes")
     }
     return downloadedBytes
 }
@@ -1230,7 +1259,7 @@ private fun skipFully(input: java.io.InputStream, bytesToSkip: Long) {
             continue
         }
         if (input.read() == -1) {
-            break
+            throw IOException("Response ended before the saved download offset")
         }
         remaining--
     }
@@ -1238,3 +1267,20 @@ private fun skipFully(input: java.io.InputStream, bytesToSkip: Long) {
 
 // Arbitrary minimum required space to start a download: 200 MB
 private const val MIN_DISK_SPACE = 200L * 1024 * 1024
+
+internal fun isCompleteRawRange(response: Response, existingBytes: Long): Boolean =
+    response.code == 416 && existingBytes > 0L &&
+        response.header("Content-Range")?.let {
+            Regex("bytes \\*/([0-9]+)").matchEntire(it)?.groupValues?.get(1)?.toLongOrNull()
+        } ==
+        existingBytes
+
+internal fun hasExpectedRawRange(response: Response, existingBytes: Long): Boolean {
+    val range = response.header("Content-Range")
+        ?.let { Regex("bytes ([0-9]+)-([0-9]+)/([0-9]+|\\*)").matchEntire(it) }
+        ?: return false
+    val start = range.groupValues[1].toLongOrNull() ?: return false
+    val end = range.groupValues[2].toLongOrNull() ?: return false
+    val total = range.groupValues[3].toLongOrNull()
+    return start == existingBytes && end >= start && (total == null || end == total - 1)
+}

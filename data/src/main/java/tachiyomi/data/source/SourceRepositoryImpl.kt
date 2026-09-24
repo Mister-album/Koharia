@@ -77,17 +77,20 @@ class SourceRepositoryImpl(
         query: String,
         filterList: FilterList,
     ): SourcePagingSource {
-        val source = sourceManager.get(sourceId) as CatalogueSource
+        val source = sourceManager.get(sourceId) as? CatalogueSource
+            ?: return UnavailableSourcePagingSource(sourceId)
         return SourceSearchPagingSource(source, query, filterList)
     }
 
     override fun getPopular(sourceId: Long): SourcePagingSource {
-        val source = sourceManager.get(sourceId) as CatalogueSource
+        val source = sourceManager.get(sourceId) as? CatalogueSource
+            ?: return UnavailableSourcePagingSource(sourceId)
         return SourcePopularPagingSource(source)
     }
 
     override fun getLatest(sourceId: Long): SourcePagingSource {
-        val source = sourceManager.get(sourceId) as CatalogueSource
+        val source = sourceManager.get(sourceId) as? CatalogueSource
+            ?: return UnavailableSourcePagingSource(sourceId)
         return SourceLatestPagingSource(source)
     }
 

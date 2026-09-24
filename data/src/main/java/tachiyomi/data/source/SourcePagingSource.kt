@@ -12,6 +12,14 @@ import tachiyomi.domain.source.repository.SourcePagingSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
+class UnavailableSourcePagingSource(private val sourceId: Long) : SourcePagingSource() {
+    override fun getRefreshKey(state: PagingState<Long, Manga>): Long? = null
+
+    override suspend fun load(params: LoadParams<Long>): LoadResult<Long, Manga> {
+        return LoadResult.Error(IllegalStateException("Source $sourceId is unavailable"))
+    }
+}
+
 class SourceSearchPagingSource(
     source: CatalogueSource,
     private val query: String,

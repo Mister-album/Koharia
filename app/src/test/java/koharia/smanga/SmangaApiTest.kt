@@ -75,7 +75,10 @@ class SmangaApiTest {
     }
     private val root = "http://127.0.0.1:${server.address.port}/reader/"
     private val network = OkHttpClient()
-    private val api = SmangaApi(network, Json, root, "reader", "fixture-password", "account-a")
+    private val api =
+        SmangaApi(network, Json, root, "reader", "fixture-password", "account-a", preparationDelay = {
+            kotlinx.coroutines.delay(1)
+        })
 
     @AfterEach
     fun close() {
@@ -292,7 +295,7 @@ class SmangaApiTest {
                 it.uri.path.endsWith("/client-user-config") ->
                     200 to
                         """{"code":200,"data":{"orderChapterByNumber":true}}"""
-                polls.incrementAndGet() <= 12 ->
+                polls.incrementAndGet() <= 32 ->
                     200 to
                         """{"code":200,"status":"compressing","data":["/private/incomplete.jpg"]}"""
                 else ->
@@ -303,7 +306,7 @@ class SmangaApiTest {
         val manifest = api.preparePages(7)
         assertEquals(listOf(1, 3, 2), manifest.pages.map { it.opdsPage })
         val pollsSeen = requests.filter { it.uri.path.contains("chapter-images") }
-        assertEquals(13, pollsSeen.size)
+        assertEquals(33, pollsSeen.size)
         assertTrue(pollsSeen.all { it.uri.query.substringAfter("reTry=").substringBefore('&').toInt() <= 9 })
         assertTrue(pollsSeen.all { it.uri.query.contains("orderChapterByNumber=1") })
     }
@@ -320,7 +323,7 @@ class SmangaApiTest {
         val error = assertThrows(SmangaException::class.java) { runTest { api.preparePages(7) } }
         assertEquals(SmangaException.Reason.PREPARING, error.reason)
         val polls = requests.filter { it.uri.path.contains("chapter-images") }
-        assertEquals(30, polls.size)
+        assertEquals(180, polls.size)
         assertTrue(polls.all { !it.uri.query.contains("orderChapterByNumber") })
     }
 

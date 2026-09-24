@@ -351,6 +351,7 @@ class EpubCacheManager(
     private fun completeBookTransferClient(sourceId: Long, sourceClient: OkHttpClient): OkHttpClient =
         transferClients.getOrPut(sourceId) {
             sourceClient.newBuilder()
+                .callTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)
                 .dispatcher(
                     Dispatcher().apply {
                         maxRequests = 1

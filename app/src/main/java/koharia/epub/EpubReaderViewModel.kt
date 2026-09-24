@@ -1274,7 +1274,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     bookUrl = bookUrl,
                     publicationKey = publicationKey,
                     acquireLease = true,
-                ) ?: return@launch
+                ) ?: run {
+                    if (chapterId == requestedChapterId && currentPublicationKey == publicationKey) {
+                        completeCacheStarted = false
+                    }
+                    return@launch
+                }
                 leasedFile = cachedFile
                 if (chapterId != requestedChapterId || currentPublicationKey != publicationKey) return@launch
                 val cachedUri = cachedFile.toURI().toString()
@@ -1315,6 +1320,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                if (chapterId == requestedChapterId && currentPublicationKey == publicationKey) {
+                    completeCacheStarted = false
+                }
                 logcat(LogPriority.WARN, error) {
                     "Failed to open cached EPUB for local pagination chapterId=$chapterId"
                 }

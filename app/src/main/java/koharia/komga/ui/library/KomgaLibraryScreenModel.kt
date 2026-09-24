@@ -257,7 +257,10 @@ class KomgaLibraryScreenModel(
     val mangaPagerFlow: Flow<PagingData<StateFlow<Manga>>> = combine(
         state.map { it.listing }.distinctUntilChanged(),
         state.map { it.isLibraryScopeEmpty }.distinctUntilChanged(),
-        state.map { it.isServerConfigured }.distinctUntilChanged(),
+        combine(
+            state.map { it.isServerConfigured }.distinctUntilChanged(),
+            sourceManager.catalogueSources,
+        ) { configured, sources -> configured && sources.any { it.id == sourceId } }.distinctUntilChanged(),
         basePreferences.downloadedOnly.changes().onStart { emit(basePreferences.downloadedOnly.get()) },
         refreshSignal,
     ) { listing, scopeEmpty, serverConfigured, cachedOnly, refreshSignal ->
