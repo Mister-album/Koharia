@@ -24,6 +24,10 @@ class ReaderPreferences(
 
     // region General
 
+    val moireReduction = preferenceStore.getBoolean("reader_moire_reduction", false)
+
+    val moireReductionThreshold = preferenceStore.getInt("reader_moire_reduction_threshold", 50)
+
     val persistReaderSettingsChanges: Preference<Boolean> =
         preferenceStore.getBoolean("reader_persist_settings_changes", true)
 
@@ -190,6 +194,12 @@ class ReaderPreferences(
     val invertDoublePages: Preference<Boolean> = preferenceStore.getBoolean("invert_double_pages", false)
 
     // endregion
+
+    val mergedPageLayout = preferenceStore.getEnum("merged_page_layout", MergedPageLayout.MATCH_HEIGHT)
+
+    val doublePageSaveMode = preferenceStore.getEnum("double_page_save_mode", DoublePageSaveMode.MERGED)
+
+    val mergedPageFormat = preferenceStore.getEnum("merged_page_format", MergedPageFormat.LOSSLESS_AUTO)
 
     // region Color filter
 

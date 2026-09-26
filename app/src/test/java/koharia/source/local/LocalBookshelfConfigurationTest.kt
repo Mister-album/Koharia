@@ -12,6 +12,52 @@ class LocalBookshelfConfigurationTest {
     private val comicsId = initial.defaultBookshelfId(LocalLibraryContentType.COMICS)
 
     @Test
+    fun `readding the same directory restores its URL and cover key`() {
+        val root = LocalLibraryRootConfig(id = "original", treeUri = "content://documents/tree/primary%3ALibrary")
+        val added = initial.withBookshelfDirectory(booksId, root)
+        val detached = added.withoutRoot(root.id)
+        val restored = detached.withBookshelfDirectory(booksId, root.copy(id = "new-random-id"))
+        assertEquals(root.id, restored.roots.single().id)
+        assertTrue(restored.detachedRoots.isEmpty())
+        val oldUrl = LocalLibraryLocator.entryUrl(42, root.id, "Book.epub")
+        val newUrl = LocalLibraryLocator.entryUrl(42, restored.roots.single().id, "Book.epub")
+        assertEquals(oldUrl, newUrl)
+        assertEquals(koharia.cover.SharedCoverFiles.key(42, oldUrl), koharia.cover.SharedCoverFiles.key(42, newUrl))
+    }
+
+    @Test
+    fun `explicit rebind keeps identity while a different newly added directory does not`() {
+        val root = LocalLibraryRootConfig(id = "original", treeUri = "file:///old/Books")
+        val added = initial.withBookshelfDirectory(booksId, root)
+        val target = root.copy(id = "new", treeUri = "file:///new/Books")
+        assertEquals("original", added.withBookshelfDirectory(booksId, target, root.id).roots.single().id)
+        val detached = added.withoutRoot(root.id)
+        assertEquals("new", detached.withBookshelfDirectory(booksId, target).roots.single().id)
+        assertEquals("original", detached.withBookshelfDirectory(booksId, target, root.id).roots.single().id)
+        assertEquals("new", initial.withBookshelfDirectory(booksId, target).roots.single().id)
+    }
+
+    @Test
+    fun `directory identity history survives serialization and URI spelling changes`() {
+        val root = LocalLibraryRootConfig(
+            id = "original",
+            treeUri = "content://documents/tree/primary%3ALibrary",
+            relativePath = "Books",
+        )
+        val detached = initial.withBookshelfDirectory(booksId, root).withoutRoot(root.id)
+        val json = kotlinx.serialization.json.Json
+        val restored = json.decodeFromString(
+            LocalLibraryConfig.serializer(),
+            json.encodeToString(LocalLibraryConfig.serializer(), detached),
+        )
+        val readded = restored.withBookshelfDirectory(
+            booksId,
+            LocalLibraryRootConfig(id = "new", treeUri = "content://documents/tree/primary%3ALibrary%2FBooks"),
+        )
+        assertEquals("original", readded.roots.single().id)
+    }
+
+    @Test
     fun `new connection automatically contains both libraries without requiring directories`() {
         assertEquals(setOf(LocalLibraryContentType.COMICS, LocalLibraryContentType.BOOKS), initial.enabledContentTypes)
         assertEquals(2, initial.bookshelves.size)
@@ -55,7 +101,8 @@ class LocalBookshelfConfigurationTest {
             LocalLibraryRootConfig(id = "new-books", treeUri = "file:///new-books"),
             "books",
         )
-        assertEquals(listOf("new-books"), updated.bookshelfRoots(booksId).map { it.id })
+        assertEquals(listOf("books"), updated.bookshelfRoots(booksId).map { it.id })
+        assertEquals("file:///new-books", updated.bookshelfRoots(booksId).single().treeUri)
         assertEquals(original.bookshelfRoots(comicsId), updated.bookshelfRoots(comicsId))
         assertThrows(IllegalArgumentException::class.java) {
             original.withBookshelfDirectory(

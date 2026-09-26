@@ -171,6 +171,29 @@ class SmangaApi(
         if (values.map { it.id }.distinct().size != values.size) incomplete()
     }
 
+    suspend fun tags(): List<SmangaTag> = read("tag").list().map {
+        val value = it.objectValue()
+        SmangaTag(value.id("tagId"), value.text("tagName"))
+    }.distinctBy { it.id }
+
+    /** count is the deduplicated size of this association page, not a total. Only an empty page ends it. */
+    suspend fun taggedMangas(tagIds: List<Long>, page: Int, order: String): List<SmangaManga> {
+        require(tagIds.isNotEmpty())
+        tagIds.forEach(::requireId)
+        requirePage(page, PAGE_SIZE)
+        return read(
+            "tags-manga",
+            mapOf(
+                "tagIds" to tagIds.distinct().joinToString(","),
+                "page" to page.toString(),
+                "pageSize" to PAGE_SIZE.toString(),
+                "order" to order,
+            ),
+        ).list().map { parseManga(it.objectValue()) }.also {
+            if (it.size > PAGE_SIZE) incomplete()
+        }
+    }
+
     suspend fun mangas(
         mediaId: Long,
         page: Int = 1,

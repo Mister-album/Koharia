@@ -123,7 +123,10 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
                 PagingData.from(
                     local.filter {
                         it.url.startsWith(session.prefix) &&
-                            it.title.contains(request.query, true) &&
+                            (
+                                it.title.contains(request.query, true) ||
+                                    it.genre.orEmpty().any { tag -> tag.contains(request.query, true) }
+                                ) &&
                             downloads.getDownloadCount(it) > 0
                     }.map { MutableStateFlow(it) as StateFlow<Manga> },
                 )
@@ -203,6 +206,10 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
                 error = if (it.media.isEmpty()) it.error else null,
             )
         }
+    }
+    fun selectSearchSort(field: String, ascending: Boolean) {
+        if (field !in listOf("mangaName", "updateTime", "createTime") || state.value.downloadedOnly) return
+        filter("$field ${if (ascending) "asc" else "desc"}", state.value.downloadedOnly)
     }
     fun refresh() {
         if (refreshJob?.isActive == true) return

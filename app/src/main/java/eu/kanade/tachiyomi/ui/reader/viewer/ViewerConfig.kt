@@ -61,6 +61,11 @@ abstract class ViewerConfig(
         protected set
 
     init {
+        readerPreferences.moireReduction
+            .register({}, { imagePropertyChangedListener?.invoke() })
+        readerPreferences.moireReductionThreshold
+            .register({}, { imagePropertyChangedListener?.invoke() })
+
         readerPreferences.readWithLongTap
             .register({ longTapEnabled = it })
 

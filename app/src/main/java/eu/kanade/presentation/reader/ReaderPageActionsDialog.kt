@@ -34,7 +34,6 @@ fun ReaderPageActionsDialog(
     onSetAsCover: () -> Unit,
     onShare: (Boolean) -> Unit,
     onSave: () -> Unit,
-    onSaveMerged: (() -> Unit)? = null,
 ) {
     var showSetCoverDialog by remember { mutableStateOf(false) }
 
@@ -85,16 +84,6 @@ fun ReaderPageActionsDialog(
                         onDismissRequest()
                     },
                 )
-            }
-            if (onSaveMerged != null) {
-                TextButton(
-                    onClick = {
-                        onSaveMerged()
-                        onDismissRequest()
-                    },
-                ) {
-                    Text(stringResource(MR.strings.action_save_merged_page))
-                }
             }
         }
     }

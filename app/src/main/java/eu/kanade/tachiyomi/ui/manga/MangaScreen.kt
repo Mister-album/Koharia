@@ -274,6 +274,7 @@ class MangaScreen(
                 )
             }
             MangaScreenModel.Dialog.FullCover -> {
+                var showSavedCovers by remember { mutableStateOf(false) }
                 val sm = rememberScreenModel { MangaCoverScreenModel(successState.manga.id) }
                 val manga by sm.state.collectAsState()
                 val hasCustomCover by sm.hasCustomCover.collectAsStateWithLifecycle()
@@ -292,12 +293,22 @@ class MangaScreen(
                         onEditClick = {
                             when (it) {
                                 EditCoverAction.EDIT -> getContent.launch("image/*")
+                                EditCoverAction.SAVED -> showSavedCovers = true
                                 EditCoverAction.FIRST_ITEM -> sm.useFirstItemAsCover(context)
                                 EditCoverAction.DELETE -> sm.deleteCustomCover(context)
                             }
                         },
                         onDismissRequest = onDismissRequest,
                     )
+                    if (showSavedCovers) {
+                        koharia.cover.SavedCustomCoverDialog(
+                            onSelect = {
+                                showSavedCovers = false
+                                sm.editCover(context, it)
+                            },
+                            onDismissRequest = { showSavedCovers = false },
+                        )
+                    }
                 } else {
                     LoadingScreen(Modifier.systemBarsPadding())
                 }

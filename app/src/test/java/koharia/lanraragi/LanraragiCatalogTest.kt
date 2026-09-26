@@ -9,6 +9,20 @@ import org.junit.jupiter.api.Test
 
 class LanraragiCatalogTest {
     @Test
+    fun `ordinary query includes tag only and title only hits and emits shared identity once`() {
+        val title = LanraragiEntry("title", title = "排球")
+        val tag = LanraragiEntry("tag", title = "Other", tags = "genre:排球")
+        val both = LanraragiEntry("both", title = "排球", tags = "genre:排球,category:排球")
+        val result = filterLanraragiCatalog(
+            listOf(title, tag, both, both, LanraragiEntry("miss", title = "Other")),
+            emptyList(),
+            LanraragiFilter(query = "排球", grouped = false),
+        )
+        assertEquals(setOf("title", "tag", "both"), result.map { it.id }.toSet())
+        assertEquals(3, result.size)
+    }
+
+    @Test
     fun `downloaded candidates still respect category reading status and grouping`() {
         val a = LanraragiEntry("a", title = "A", pageCount = 10, progress = 10, tags = "tag:a")
         val b = LanraragiEntry("b", title = "B", pageCount = 10, tags = "tag:b")

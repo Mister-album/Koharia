@@ -86,6 +86,11 @@ class SmangaCatalog(
         "shelf/$mediaId/" + json.encodeToString(listOf(query, order)).encodeUtf8().sha256().hex()
 
     suspend fun page(mediaId: Long, query: String, order: String, page: Int): SmangaMangaPage {
+        if (query.isNotBlank()) return searchPage(listOf(mediaId), query, order, page)
+        return titlePage(mediaId, query, order, page)
+    }
+
+    private suspend fun titlePage(mediaId: Long, query: String, order: String, page: Int): SmangaMangaPage {
         val group = shelfKey(mediaId, query, order)
         return lock(group).withLock {
             checkSession()
@@ -111,12 +116,17 @@ class SmangaCatalog(
 
     /** The backend's unscoped manga endpoint does not enforce library permissions. */
     suspend fun page(mediaIds: List<Long>, query: String, order: String, page: Int): SmangaMangaPage {
+        if (query.isNotBlank()) return searchPage(mediaIds, query, order, page)
+        return titlePage(mediaIds, query, order, page)
+    }
+
+    private suspend fun titlePage(mediaIds: List<Long>, query: String, order: String, page: Int): SmangaMangaPage {
         require(page > 0)
         val ids = mediaIds.distinct().sorted()
         require(ids.all { it > 0 })
         checkSession()
         if (ids.isEmpty()) return SmangaMangaPage(emptyList(), page, 100, 0)
-        if (ids.size == 1) return page(ids.single(), query, order, page)
+        if (ids.size == 1) return titlePage(ids.single(), query, order, page)
         val group = mergedShelfKey(ids, query, order)
         return lock(group).withLock {
             readMergedPage(group, page)?.let { return@withLock it.page }
@@ -152,6 +162,10 @@ class SmangaCatalog(
     }
 
     suspend fun refresh(mediaIds: List<Long>, query: String, order: String) {
+        if (query.isNotBlank()) {
+            searchPage(mediaIds, query, order, 1, refresh = true)
+            return
+        }
         val ids = mediaIds.distinct().sorted()
         require(ids.all { it > 0 })
         checkSession()
@@ -208,6 +222,10 @@ class SmangaCatalog(
 
     /** Stage every previously loaded page before replacing a shelf; failures retain all old pages. */
     suspend fun refresh(mediaId: Long, query: String, order: String) {
+        if (query.isNotBlank()) {
+            searchPage(listOf(mediaId), query, order, 1, refresh = true)
+            return
+        }
         val group = shelfKey(mediaId, query, order)
         lock(group).withLock {
             checkSession()
@@ -222,6 +240,101 @@ class SmangaCatalog(
             currentCoroutineContext().ensureActive()
             checkSession()
             repository.replaceCacheGroup(connectionId, accountKey, group, staged)
+        }
+    }
+
+    private suspend inline fun <reified T> searchValue(
+        group: String,
+        key: String,
+        staged: ConcurrentHashMap<String, SmangaCacheEntry>?,
+        generation: Long,
+        fetch: () -> T,
+    ): T {
+        val entry = if (staged != null) staged[key] else cachedEntry(group, key)
+        if (entry != null) return json.decodeFromString(entry.payload)
+        val value = fetch()
+        currentCoroutineContext().ensureActive()
+        checkSession()
+        val result = SmangaCacheEntry(key, json.encodeToString(value), generation, generation)
+        if (staged != null) staged[key] = result else putCacheEntry(group, result)
+        return value
+    }
+
+    private suspend fun searchPage(
+        mediaIds: List<Long>,
+        query: String,
+        order: String,
+        page: Int,
+        refresh: Boolean = false,
+    ): SmangaMangaPage {
+        val ids = mediaIds.distinct().sorted()
+        require(page > 0 && ids.all { it > 0 })
+        checkSession()
+        if (ids.isEmpty()) return SmangaMangaPage(emptyList(), page, 100, 0)
+        val group = "search/title-tags-v1/" +
+            json.encodeToString(listOf(ids.joinToString(","), query, order)).encodeUtf8().sha256().hex()
+        return lock(group).withLock {
+            if (!refresh) {
+                cachedEntry(group, "page/$page")?.let {
+                    return@withLock json.decodeFromString<SmangaSearchPage>(it.payload).page
+                }
+            }
+            val count = if (refresh) {
+                repository.cacheGroup(connectionId, accountKey, group)
+                    .filter { it.key.startsWith("page/") }
+                    .mapNotNull { it.key.substringAfter('/').toIntOrNull() }.maxOrNull() ?: 1
+            } else {
+                page
+            }
+            val generation = System.currentTimeMillis()
+            // Refresh publishes the entire generation atomically. Initial failures retain completed requests for retry.
+            val staged = if (refresh) ConcurrentHashMap<String, SmangaCacheEntry>() else null
+            suspend fun checkpoint(key: String) = if (staged != null) staged[key] else cachedEntry(group, key)
+            suspend fun titlePageAt(number: Int): SmangaMangaPage {
+                var previous = checkpoint("title/page/${number - 1}")?.let {
+                    json.decodeFromString<SmangaMergedShelfPage>(it.payload)
+                }
+                val start = if (previous != null) number else 1
+                for (index in start..number) {
+                    previous = searchValue(group, "title/page/$index", staged, generation) {
+                        mergeSmangaShelfPage(ids, order, index, previous) { id, next ->
+                            searchValue(group, "title/media/$id/$next", staged, generation) {
+                                api.mangas(id, next, query = query, order = order)
+                            }
+                        }
+                    }
+                }
+                return checkNotNull(previous).page
+            }
+            suspend fun tagPageAt(number: Int): List<SmangaManga> {
+                val tags = searchValue(group, "tags", staged, generation) {
+                    api.tags().filter { it.name.contains(query, ignoreCase = true) }.map { it.id }
+                }
+                if (tags.isEmpty()) return emptyList()
+                return searchValue(group, "tag/page/$number", staged, generation) {
+                    api.taggedMangas(tags, number, order)
+                }
+            }
+            var previous = if (!refresh && page > 1) {
+                checkpoint("page/${page - 1}")?.let {
+                    json.decodeFromString<SmangaSearchPage>(it.payload)
+                }
+            } else {
+                null
+            }
+            var requested: SmangaMangaPage? = null
+            val start = if (previous != null) page else 1
+            for (index in start..count) {
+                previous = searchValue(group, "page/$index", staged, generation) {
+                    mergeSmangaSearchPage(ids, order, index, previous, ::titlePageAt, ::tagPageAt)
+                }
+                if (index == page) requested = previous.page
+                if (!previous.page.hasNext) break
+            }
+            currentCoroutineContext().ensureActive()
+            checkSession()
+            if (staged != null) repository.replaceCacheGroup(connectionId, accountKey, group, staged.values.toList())
+            requested ?: SmangaMangaPage(emptyList(), page, 100, checkNotNull(previous).page.total)
         }
     }
 }

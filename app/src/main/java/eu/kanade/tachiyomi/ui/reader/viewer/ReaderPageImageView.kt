@@ -37,9 +37,13 @@ import com.github.chrisbanes.photoview.PhotoView
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.data.coil.cropBorders
 import eu.kanade.tachiyomi.data.coil.customDecoder
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
+import koharia.reader.resampling.MitchellRegionDecoder
+import koharia.reader.resampling.MitchellResampler
+import koharia.reader.resampling.MoireReductionPolicy
 import okio.BufferedSource
 import tachiyomi.core.common.util.system.ImageUtil
 import uy.kohesive.injekt.Injekt
@@ -67,6 +71,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private var pageView: View? = null
+    private var moireReduction = false
+    private var moireThreshold = MoireReductionPolicy.DEFAULT_THRESHOLD
 
     private var config: Config? = null
     private var pendingLandscapeZoom: Runnable? = null
@@ -352,7 +358,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun prepareNonAnimatedImageView() {
-        if (pageView is SubsamplingScaleImageView) return
+        val preferences = Injekt.get<ReaderPreferences>()
+        val filtering = preferences.moireReduction.get() && MitchellResampler.available
+        val threshold = MoireReductionPolicy.normalize(preferences.moireReductionThreshold.get())
+        if (pageView is SubsamplingScaleImageView && filtering == moireReduction && threshold == moireThreshold) return
+        (pageView as? SubsamplingScaleImageView)?.recycle()
+        moireReduction = filtering
+        moireThreshold = threshold
         removeView(pageView)
 
         pageView = if (isWebtoon) {
@@ -360,7 +372,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
         } else {
             SubsamplingScaleImageView(context)
         }.apply {
-            setMaxTileSize(ImageUtil.hardwareBitmapThreshold)
+            if (filtering) {
+                setRegionDecoderFactory { cropBorders, _, profile ->
+                    MitchellRegionDecoder(cropBorders, profile, threshold)
+                }
+            }
+            setMaxTileSize(if (filtering) 256 else ImageUtil.hardwareBitmapThreshold)
             setDoubleTapZoomStyle(SubsamplingScaleImageView.ZOOM_FOCUS_CENTER)
             setPanLimit(SubsamplingScaleImageView.PAN_LIMIT_INSIDE)
             setMinimumTileDpi(180)
@@ -439,7 +456,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 isVisible = true
             }
             is BufferedSource -> {
-                if (!isWebtoon || alwaysDecodeLongStripWithSSIV) {
+                if (moireReduction || !isWebtoon || alwaysDecodeLongStripWithSSIV) {
                     setHardwareConfig(ImageUtil.canUseHardwareBitmap(data))
                     setImage(ImageSource.inputStream(data.inputStream()))
                     isVisible = true

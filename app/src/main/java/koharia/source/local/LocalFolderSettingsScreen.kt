@@ -404,6 +404,22 @@ class LocalFolderSettingsScreen(
                             },
                         )
                     }
+                    if (config.detachedRoots.isNotEmpty()) {
+                        item {
+                            PreferenceGroupHeader(title = stringResource(MR.strings.local_library_detached_directories))
+                        }
+                        items(config.detachedRoots, key = { "detached-${it.id}" }) { root ->
+                            TextPreferenceWidget(
+                                title = root.displayPath.ifBlank { root.treeUri },
+                                subtitle = stringResource(MR.strings.local_library_reconnect_directory),
+                                onPreferenceClick = {
+                                    pickerShelfId = editingShelf.id
+                                    replacingRootId = root.id
+                                    chooseDirectory.launch(Uri.parse(root.treeUri))
+                                },
+                            )
+                        }
+                    }
                     item { PreferenceGroupHeader(title = stringResource(MR.strings.local_library_organization_title)) }
                     val modeLocked = !config.canEditBookshelfMode(editingShelf.id, initial, assignments)
                     if (modeLocked) {
@@ -837,18 +853,6 @@ private fun metadataSummary(storage: LocalMetadataStorage): String {
             LocalMetadataStorage.ADJACENT_SIDECAR -> MR.strings.local_library_metadata_adjacent_summary
             LocalMetadataStorage.UNIFIED_DIRECTORY -> MR.strings.local_library_metadata_unified_summary
         },
-    )
-}
-
-private fun LocalLibraryConfig.withoutRoot(rootId: String): LocalLibraryConfig {
-    val removed = roots.firstOrNull { it.id == rootId } ?: return this
-    val remaining = roots.filterNot { it.id == rootId }
-    val keepManagedBase = managedBaseTreeUri != removed.treeUri ||
-        remaining.any { it.treeUri == managedBaseTreeUri && it.managed }
-    return copy(
-        roots = remaining,
-        managedBaseTreeUri = managedBaseTreeUri.takeIf { keepManagedBase }.orEmpty(),
-        managedBaseDisplayPath = managedBaseDisplayPath.takeIf { keepManagedBase }.orEmpty(),
     )
 }
 

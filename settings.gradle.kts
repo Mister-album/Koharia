@@ -29,6 +29,7 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 rootProject.name = "Koharia"
 include(":app")
+include(":reader-image-view")
 include(":core-metadata")
 include(":core:archive")
 include(":core:common")

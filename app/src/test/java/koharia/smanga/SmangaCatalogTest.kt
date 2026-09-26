@@ -125,6 +125,78 @@ class SmangaCatalogTest {
     }
 
     @Test
+    fun `title tag union is persistent isolated and retains the successful generation on refresh failure`() = runTest {
+        var failTags = false
+        handler = { uri ->
+            when {
+                uri.path.endsWith("/tag") ->
+                    200 to
+                        """{"code":200,"list":[{"tagId":7,"tagName":"SPORT"},{"tagId":8,"tagName":"other"}],"count":2}"""
+                uri.path.endsWith("/tags-manga") && failTags -> 500 to "{}"
+                uri.path.endsWith("/tags-manga") -> {
+                    assertTrue(uri.query.contains("tagIds=7"))
+                    val rows = when (uri.page()) {
+                        1 -> """{"mangaId":99,"mediaId":3,"mangaName":"A-other-library"}"""
+                        2 -> """{"mangaId":1,"mediaId":2,"mangaName":"B-title-and-tag"}"""
+                        3 -> """{"mangaId":2,"mediaId":2,"mangaName":"C-tag-only"}"""
+                        else -> ""
+                    }
+                    200 to """{"code":200,"list":[$rows],"count":${if (rows.isEmpty()) 0 else 1}}"""
+                }
+                else ->
+                    200 to
+                        """{"code":200,"list":[{"mangaId":1,"mediaId":2,"mangaName":"B-title-and-tag"}],"count":1}"""
+            }
+        }
+        val catalog = catalog()
+        val first = catalog.page(2, "sport", ORDER, 1)
+        assertEquals(listOf(1L, 2L), first.data.map { it.id })
+        assertFalse(first.hasNext)
+        assertEquals(4, requests.count { it.path.endsWith("/tags-manga") })
+        val calls = requests.size
+        assertEquals(first, catalog().page(2, "sport", ORDER, 1))
+        assertEquals(calls, requests.size)
+        val successful = repository.snapshot()
+        failTags = true
+        assertTrue(runCatching { catalog.refresh(2, "sport", ORDER) }.isFailure)
+        assertEquals(successful, repository.snapshot())
+        assertEquals(first, catalog().page(2, "sport", ORDER, 1))
+        failTags = false
+        val beforeOtherAccount = requests.size
+        assertEquals(first, catalog(account = "account-b").page(2, "sport", ORDER, 1))
+        assertTrue(requests.size > beforeOtherAccount)
+        val beforeOtherConnection = requests.size
+        assertEquals(first, catalog(connection = 2).page(2, "sport", ORDER, 1))
+        assertTrue(requests.size > beforeOtherConnection)
+    }
+
+    @Test
+    fun `failed initial tag page retry reuses completed title and tag lookup requests`() = runTest {
+        var fail = true
+        handler = { uri ->
+            when {
+                uri.path.endsWith("/tag") ->
+                    200 to
+                        """{"code":200,"list":[{"tagId":7,"tagName":"sport"}],"count":1}"""
+                uri.path.endsWith("/tags-manga") && fail -> 500 to "{}"
+                uri.path.endsWith("/tags-manga") -> 200 to """{"code":200,"list":[],"count":0}"""
+                else -> 200 to """{"code":200,"list":[],"count":0}"""
+            }
+        }
+        val catalog = catalog()
+        assertTrue(runCatching { catalog.page(2, "sport", ORDER, 1) }.isFailure)
+        val tags = requests.count { it.path.endsWith("/tag") }
+        fail = false
+        val result = catalog.page(2, "sport", ORDER, 1)
+        assertFalse(result.hasNext)
+        assertTrue(result.data.isEmpty())
+        assertEquals(tags, requests.count { it.path.endsWith("/tag") })
+        val calls = requests.size
+        assertEquals(result, catalog().page(2, "sport", ORDER, 1))
+        assertEquals(calls, requests.size)
+    }
+
+    @Test
     fun `warm persisted shelves media chapters and valid empty caches send zero requests`() = runTest {
         seedPage(1, "cached")
         repository.putCache(1, "account-a", "media", SmangaCacheEntry("data", "[]", 1))
@@ -133,8 +205,19 @@ class SmangaCatalogTest {
         repository.putCache(
             1,
             "account-a",
-            shelfGroup("empty"),
-            SmangaCacheEntry("1", json.encodeToString(emptyPage), 1),
+            "search/title-tags-v1/" + json.encodeToString(listOf("2", "empty", ORDER)).encodeUtf8().sha256().hex(),
+            SmangaCacheEntry(
+                "page/1",
+                json.encodeToString(
+                    SmangaSearchPage(
+                        emptyPage,
+                        SmangaSearchCursor(ended = true),
+                        SmangaSearchCursor(ended = true),
+                        emptySet(),
+                    ),
+                ),
+                1,
+            ),
         )
         // Construct a fresh catalog to model startup/resume rather than an in-memory warm object.
         repeat(2) {
@@ -334,7 +417,7 @@ class SmangaCatalogTest {
     @Test
     fun `all media empty search is cached separately from single media account and authorized scope`() = runTest {
         handler = { uri ->
-            if (uri.query.contains("keyWord=empty")) {
+            if (uri.path.endsWith("/tag") || uri.query.orEmpty().contains("keyWord=empty")) {
                 200 to """{"code":200,"list":[],"count":0}"""
             } else {
                 200 to mergedPageBody(uri)

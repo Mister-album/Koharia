@@ -18,6 +18,18 @@ import org.junit.jupiter.api.Test
 class KomgaSearchTypeTest {
 
     @Test
+    fun `all sort indices map to original choices and normalize only unsupported selections`() {
+        assertEquals(listOf(0, 2, 3), availableKomgaSortIndices(TYPE_ALL_INDEX))
+        for (index in 0..4) {
+            val sort = SeriesSort(Filter.Sort.Selection(index, false))
+            val filters = FilterList(TypeSelect(), sort)
+            filters.selectContentType(TYPE_ALL_INDEX)
+            assertEquals(if (index in listOf(0, 2, 3)) index else 0, sort.state?.index)
+            assertEquals(index !in listOf(0, 2, 3), sort.state?.ascending)
+        }
+    }
+
+    @Test
     fun `browse type defaults to series`() {
         assertEquals(TYPE_SERIES_INDEX, TypeSelect().state)
     }
@@ -57,6 +69,6 @@ class KomgaSearchTypeTest {
         assertEquals(0, collection.state)
         assertFalse(genre.state)
         assertTrue(tag.state)
-        assertEquals(Filter.Sort.Selection(0, true), sort.state)
+        assertEquals(Filter.Sort.Selection(2, false), sort.state)
     }
 }

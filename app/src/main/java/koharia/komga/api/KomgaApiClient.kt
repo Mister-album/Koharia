@@ -136,6 +136,8 @@ class KomgaApiClient(
             url.addQueryParameter("sort", sortCriteria)
         }
 
+        if (sortIndex in 2..3) url.addQueryParameter("sort", "id,asc")
+
         return GET(url.build(), headers)
             .newBuilder()
             .komgaCachePolicy(cachePolicy)
@@ -189,6 +191,7 @@ class KomgaApiClient(
             else -> null
         }?.let { "$it,${if (sortAscending) "asc" else "desc"}" }
         sortCriteria?.let { url.addQueryParameter("sort", it) }
+        if (sortIndex in 2..3) url.addQueryParameter("sort", "id,asc")
 
         return POST(
             url = url.build().toString(),

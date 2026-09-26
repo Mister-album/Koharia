@@ -9,6 +9,9 @@ data class SmangaAccount(val id: Long, val userName: String, val nickname: Strin
 data class SmangaMedia(val id: Long, val name: String, val mangaCount: Int = 0)
 
 @Serializable
+data class SmangaTag(val id: Long, val name: String)
+
+@Serializable
 data class SmangaManga(
     val id: Long,
     val mediaId: Long,
@@ -29,8 +32,10 @@ data class SmangaMangaPage(
     val page: Int,
     val pageSize: Int,
     val total: Int,
+    // Tag unions have no server total; total is -1 until exhausted.
+    val hasMore: Boolean? = null,
 ) {
-    val hasNext: Boolean get() = page.toLong() * pageSize < total
+    val hasNext: Boolean get() = hasMore ?: (page.toLong() * pageSize < total)
 }
 
 @Serializable

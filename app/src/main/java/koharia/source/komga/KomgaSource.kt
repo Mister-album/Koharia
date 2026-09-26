@@ -1365,6 +1365,23 @@ class KomgaSource(
         browseRefreshRequestedAt.set(System.currentTimeMillis())
     }
 
+    internal fun snapshotFilters(filters: FilterList): FilterList = filters.snapshotKomgaFilters()
+
+    internal fun sortedSearchSession(
+        query: String,
+        filters: FilterList,
+    ): koharia.komga.domain.repository.KomgaSortedSearchSession {
+        val namespace = shelfCacheNamespace()
+        return repository.sortedSearchSession(
+            query,
+            snapshotFilters(filters),
+            shelfLibraryIds.toSet(),
+            consumeBrowseCachePolicy(),
+        ) {
+            if (shelfCacheNamespace() != namespace) throw kotlinx.coroutines.CancellationException("Connection changed")
+        }
+    }
+
     fun configuredShelfLibraryIds(): Set<String> = shelfLibraryIds.toSet()
 
     fun findCachedLibraryId(contentUrl: String): String? = metadataCacheStore.findLibraryId(contentUrl)

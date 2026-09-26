@@ -2,6 +2,7 @@ package koharia.source.local;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.Intent;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
@@ -29,6 +30,13 @@ public final class LocalScanTestProvider extends ContentProvider {
         } else if ("fixture:stats".equals(method)) {
             result.putInt("children", childQueries);
             result.putInt("documents", documentQueries);
+        } else if ("fixture:grant".equals(method)) {
+            Uri root = DocumentsContract.buildTreeDocumentUri(getContext().getPackageName() + ".localscan", "root");
+            getContext().grantUriPermission(arg, root,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        } else if ("fixture:revoke".equals(method)) {
+            Uri root = DocumentsContract.buildTreeDocumentUri(getContext().getPackageName() + ".localscan", "root");
+            getContext().revokeUriPermission(arg, root, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         }
         return result;
     }

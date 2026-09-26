@@ -55,6 +55,7 @@ import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.RelativeUrl
 import org.readium.r2.shared.util.Url
 import org.readium.r2.shared.util.mediatype.MediaType
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -483,6 +484,32 @@ class EpubReaderFragment : Fragment() {
         if (before != navigator.currentLocator.value) return
         val id = runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull() ?: return
         host?.onPdfSourceAnchorChanged(id, before.href.toString())
+    }
+
+    suspend fun captureContinuousScrollProgress() = withUIContext {
+        val installedHref = continuousScrollInstalledHref ?: return@withUIContext
+        val navigator = readyNavigatorFragment() ?: return@withUIContext
+        val raw = try {
+            withTimeoutOrNull(500) {
+                navigator.evaluateJavascript(
+                    "window.__kohariaContinuousScroll ? window.__kohariaContinuousScroll.currentLocation() : null",
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logcat(LogPriority.WARN, error) { "Failed to capture continuous EPUB position" }
+            null
+        } ?: return@withUIContext
+        if (continuousScrollInstalledHref != installedHref ||
+            readyNavigatorFragment() !== navigator
+        ) {
+            return@withUIContext
+        }
+        val location = runCatching { JSONObject(raw) }.getOrNull() ?: return@withUIContext
+        val index = location.optInt("resourceIndex", -1)
+        val progression = location.optDouble("progression", Double.NaN)
+        acceptContinuousScrollLocation(index, progression)
     }
 
     suspend fun currentTocHref(links: List<Link>): String? {
@@ -1332,20 +1359,7 @@ class EpubReaderFragment : Fragment() {
         @JavascriptInterface
         fun onLocationChanged(resourceIndex: Int, progression: Double) {
             view?.post {
-                if (!isAdded || view == null || continuousScrollInstalledHref == null ||
-                    epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
-                ) {
-                    return@post
-                }
-                val session = sessionRepository.get(chapterId) ?: return@post
-                val link = session.publication.readingOrder.getOrNull(resourceIndex) ?: return@post
-                val locator = createContinuousScrollLocator(
-                    link = link,
-                    progression = progression.coerceIn(0.0, 1.0),
-                    positions = session.positionsController.currentPositions(),
-                ) ?: return@post
-                continuousScrollLocator = locator
-                host?.onLocatorChanged(locator)
+                acceptContinuousScrollLocation(resourceIndex, progression)
             }
         }
 
@@ -1371,6 +1385,23 @@ class EpubReaderFragment : Fragment() {
                 goTo(locator, userInitiated = false)
             }
         }
+    }
+
+    private fun acceptContinuousScrollLocation(resourceIndex: Int, progression: Double) {
+        if (!isAdded || view == null || continuousScrollInstalledHref == null || !progression.isFinite() ||
+            epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
+        ) {
+            return
+        }
+        val session = sessionRepository.get(chapterId) ?: return
+        val link = session.publication.readingOrder.getOrNull(resourceIndex) ?: return
+        val locator = createContinuousScrollLocator(
+            link = link,
+            progression = progression.coerceIn(0.0, 1.0),
+            positions = session.positionsController.currentPositions(),
+        ) ?: return
+        continuousScrollLocator = locator
+        host?.onLocatorChanged(locator)
     }
 
     @Suppress("unused")

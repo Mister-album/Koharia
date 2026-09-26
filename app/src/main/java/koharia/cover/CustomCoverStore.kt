@@ -1,9 +1,11 @@
 package koharia.cover
 
 import android.content.Context
+import android.net.Uri
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import koharia.connection.providerManagedLibrarySourceIds
+import koharia.source.local.LocalFolderSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,7 +71,10 @@ class CustomCoverStore(
         mutex.withLock {
             try {
                 val files = storageManager.getCustomCoversDirectory()?.let(::files)
-                files?.find(key(manga))?.let { return@withLock it.openInputStream() }
+                files?.find(key(manga))?.let {
+                    (sourceManager.get(manga.source) as? LocalFolderSource)?.rememberCustomCover(manga.url)
+                    return@withLock it.openInputStream()
+                }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 logcat(LogPriority.WARN) { "Custom cover storage is unavailable" }
@@ -83,11 +88,42 @@ class CustomCoverStore(
 
     suspend fun write(manga: Manga, input: InputStream) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            (sourceManager.get(manga.source) as? LocalFolderSource)?.rememberCustomCover(manga.url)
             val directory = storageManager.getCustomCoversDirectory(create = true)
                 ?: throw IOException("Select a writable storage folder for custom covers")
             files(directory).write(key(manga), input)
             runCatching { deleteLegacy(manga) }
                 .onFailure { logcat(LogPriority.WARN) { "Legacy custom cover cleanup deferred" } }
+        }
+    }
+
+    suspend fun savedCovers(): List<Uri> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            storageManager.getCustomCoversDirectory()?.listFiles().orEmpty()
+                .filter { it.name?.matches(Regex("[0-9a-f]{64}\\.img")) == true && it.isFile }
+                .sortedByDescending { it.lastModified() }
+                .map { it.uri }
+        }
+    }
+
+    suspend fun clearRemovedLocalCovers(): Int = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val directory = storageManager.getCustomCoversDirectory() ?: return@withLock 0
+            val files = files(directory)
+            var deleted = 0
+            try {
+                for (source in sourceManager.getCatalogueSources().filterIsInstance<LocalFolderSource>()) {
+                    for (url in source.customCoverCandidates()) {
+                        val key = SharedCoverFiles.key(source.id, url)
+                        if (files.find(key) == null) continue
+                        if (source.removeCustomCoverIfMissing(url) { files.delete(key) }) deleted++
+                    }
+                }
+            } finally {
+                // A failed provider operation may already have removed part of a replacement.
+                invalidate()
+            }
+            deleted
         }
     }
 
@@ -106,6 +142,7 @@ class CustomCoverStore(
             var published = false
             for (manga in mangas) {
                 val old = legacyFiles(manga).firstOrNull { it.isFile } ?: continue
+                (sourceManager.get(manga.source) as? LocalFolderSource)?.rememberCustomCover(manga.url)
                 try {
                     val directory = storageManager.getCustomCoversDirectory(create = true) ?: break
                     val files = files(directory)

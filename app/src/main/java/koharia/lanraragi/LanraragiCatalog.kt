@@ -91,7 +91,7 @@ fun filterLanraragiCatalog(
     } else {
         listOf(entry)
     }
-    val available = result.filter { availableEntryIds == null || it.id in availableEntryIds }
+    val available = result.filter { availableEntryIds == null || it.id in availableEntryIds }.distinctBy { it.id }
     val sorted = when (filter.sort) {
         1 -> available.sortedBy { members(it).maxOfOrNull(LanraragiEntry::addedAt) ?: 0 }
         2 -> available.sortedBy {

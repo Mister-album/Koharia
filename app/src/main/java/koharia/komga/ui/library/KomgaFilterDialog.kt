@@ -165,7 +165,12 @@ private fun FilterItem(filter: Filter<*>, filters: FilterList, onUpdate: () -> U
                 heading = komgaFilterLabel(filter.name),
             ) {
                 Column {
-                    filter.values.mapIndexed { index, item ->
+                    filter.values.forEachIndexed { index, item ->
+                        if (filter is SeriesSort &&
+                            index !in availableKomgaSortIndices(filters.selectedContentType())
+                        ) {
+                            return@forEachIndexed
+                        }
                         val sortAscending = filter.state?.ascending
                             ?.takeIf { index == filter.state?.index }
                         SortItem(
@@ -203,7 +208,7 @@ private fun FilterItem(filter: Filter<*>, filters: FilterList, onUpdate: () -> U
 }
 
 @Composable
-private fun komgaFilterLabel(label: String): String {
+internal fun komgaFilterLabel(label: String): String {
     return when (label) {
         "Search for" -> stringResource(MR.strings.komga_filter_search_for)
         "Series" -> stringResource(MR.strings.komga_filter_series)
@@ -297,7 +302,7 @@ private fun Filter<*>.isBookFilter(): Boolean {
 }
 
 private fun Filter<*>.isAllFilter(): Boolean {
-    return this is TypeSelect ||
+    return this is SeriesSort || this is TypeSelect ||
         this is LibraryFilter ||
         this is ReadingStateGroup ||
         (this is UriMultiSelectFilter && name == "Tags") ||
@@ -305,6 +310,9 @@ private fun Filter<*>.isAllFilter(): Boolean {
         this is Filter.Header ||
         this is Filter.Separator
 }
+
+internal fun availableKomgaSortIndices(type: Int): List<Int> =
+    if (type == TYPE_ALL_INDEX) listOf(0, 2, 3) else listOf(0, 1, 2, 3, 4)
 
 private fun FilterList.selectedContentType(): Int =
     filterIsInstance<TypeSelect>().firstOrNull()?.state ?: TYPE_ALL_INDEX
@@ -329,7 +337,9 @@ private fun FilterList.clearFiltersHiddenFor(type: Int) {
         }
     }
     if (type == TYPE_ALL_INDEX) {
-        filterIsInstance<SeriesSort>().firstOrNull()?.state = Filter.Sort.Selection(0, true)
+        filterIsInstance<SeriesSort>().firstOrNull()?.let {
+            if (it.state?.index !in availableKomgaSortIndices(type)) it.state = Filter.Sort.Selection(0, true)
+        }
     }
 }
 

@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import androidx.core.animation.doOnEnd
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -196,6 +197,16 @@ class WebtoonRecyclerView @JvmOverloads constructor(
     private fun setScaleRate(rate: Float) {
         scaleX = rate
         scaleY = rate
+        invalidateImageScale(this)
+    }
+
+    private fun invalidateImageScale(group: ViewGroup) {
+        for (index in 0 until group.childCount) {
+            when (val child = group.getChildAt(index)) {
+                is WebtoonSubsamplingImageView -> child.invalidate()
+                is ViewGroup -> invalidateImageScale(child)
+            }
+        }
     }
 
     fun onScale(scaleFactor: Float) {

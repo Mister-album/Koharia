@@ -133,9 +133,9 @@ private fun validatePrevious(
     }
 }
 
-private data class ShelfOrder(val comparator: Comparator<SmangaManga>, val validateSequence: Boolean)
+internal data class ShelfOrder(val comparator: Comparator<SmangaManga>, val validateSequence: Boolean)
 
-private fun shelfOrder(order: String): ShelfOrder {
+internal fun shelfOrder(order: String): ShelfOrder {
     val parts = order.trim().split(Regex("\\s+"))
     if (parts.size != 2 || parts[1] !in setOf("asc", "desc")) protocol()
     val ascending: Comparator<SmangaManga> = when (parts[0]) {

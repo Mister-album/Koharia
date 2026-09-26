@@ -31,7 +31,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -73,6 +72,8 @@ import koharia.connection.EntryOpenMode
 import koharia.connection.EntryOpenPreferences
 import koharia.connection.LibraryContentScope
 import koharia.connection.ui.ConnectionLibraryShelfDialog
+import koharia.connection.ui.ConnectionSearchResults
+import koharia.connection.ui.ConnectionSearchSortOption
 import koharia.connection.ui.SeriesMetadataEditScreen
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.EpubReaderLauncher
@@ -319,26 +320,30 @@ data class LocalLibraryScreen(
                         )
                     }
 
-                    Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = MaterialTheme.padding.small),
-                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                    ) {
-                        if (state.submittedQuery.isNotBlank()) {
-                            Surface(
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                shape = MaterialTheme.shapes.small,
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                            ) {
-                                Text(
-                                    text = stringResource(MR.strings.search_results),
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                                    style = MaterialTheme.typography.labelLarge,
+                    if (state.submittedQuery.isNotBlank()) {
+                        ConnectionSearchResults(
+                            options = listOf(
+                                MR.strings.title,
+                                MR.strings.local_library_sort_added,
+                                MR.strings.local_library_sort_modified,
+                            ).mapIndexed { index, label ->
+                                ConnectionSearchSortOption(
+                                    value = index,
+                                    label = stringResource(label),
+                                    defaultAscending = index == 0,
                                 )
-                            }
-                        } else if (state.bookshelves.isNotEmpty()) {
+                            },
+                            selected = state.filters.sort,
+                            ascending = !state.filters.descending,
+                            onSelect = screenModel::selectSearchSort,
+                        )
+                    } else if (state.toolbarQuery == null && state.bookshelves.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = MaterialTheme.padding.small),
+                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                        ) {
                             FilterChip(
                                 selected = state.selectedBookshelfId == null,
                                 onClick = { screenModel.selectBookshelf(null) },

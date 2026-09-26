@@ -31,6 +31,8 @@ import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.tachiyomi.ui.reader.setting.DoublePageSaveMode
+import eu.kanade.tachiyomi.ui.reader.setting.MergedPageExportOptions
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -1601,31 +1603,21 @@ class ReaderViewModel @JvmOverloads constructor(
      * Saves the image of the selected page on the pictures directory and notifies the UI of the result.
      * There's also a notification to allow sharing the image somewhere else or deleting it.
      */
-    fun saveImage() = savePageImage(merged = false)
-
-    fun saveMergedImage() = savePageImage(merged = true)
-
-    private fun savePageImage(merged: Boolean) {
-        val mergedPages = if (merged) {
-            (state.value.dialog as? Dialog.PageActions)?.mergedPages?.takeIf { pages ->
-                pages.size == 2 && pages.all { it.status == Page.State.Ready && it.stream != null }
-            } ?: return
-        } else {
-            null
+    fun saveImage() {
+        val action = state.value.dialog as? Dialog.PageActions ?: return
+        val page = action.page.takeIf { it.status == Page.State.Ready } ?: return
+        val spread = action.mergedPages?.takeIf { pages ->
+            pages.size == 2 && pages.all { it.status == Page.State.Ready && it.stream != null }
         }
-        val page = (state.value.dialog as? Dialog.PageActions)?.page
-        if (page?.status != Page.State.Ready) return
+        val preferences = Injekt.get<koharia.connection.SharedAppPreferences>().readerPreferences()
+        val merged = spread != null && preferences.doublePageSaveMode.get() == DoublePageSaveMode.MERGED
+        val options = MergedPageExportOptions(preferences.mergedPageLayout.get(), preferences.mergedPageFormat.get())
+        val targets = if (merged) listOf(checkNotNull(spread).minBy { it.index }) else spread ?: listOf(page)
         val manga = manga ?: return
 
         val context = Injekt.get<Application>()
         val notifier = SaveImageNotifier(context)
         notifier.onClear()
-
-        val filename = if (mergedPages != null) {
-            generateFilename(manga, mergedPages.minBy { it.index }, "-${mergedPages.maxOf { it.number }}-merged")
-        } else {
-            generateFilename(manga, page)
-        }
 
         // Pictures directory.
         val relativePath = if (readerPreferences.folderPerManga.get()) {
@@ -1638,30 +1630,45 @@ class ReaderViewModel @JvmOverloads constructor(
 
         // Copy file in background.
         viewModelScope.launchNonCancellable {
-            var mergedFile: File? = null
             try {
-                val input = if (mergedPages != null) {
-                    File.createTempFile("merged-page-", ".png", context.cacheDir).also { file ->
-                        mergedFile = file
-                        MergedPageImage.write(
-                            checkNotNull(mergedPages[0].stream),
-                            checkNotNull(mergedPages[1].stream),
-                            file,
+                var savedUri: Uri? = null
+                for (target in targets) {
+                    var temporaryFile: File? = null
+                    try {
+                        val filename = if (merged) {
+                            generateFilename(manga, target, "-${checkNotNull(spread).maxOf { it.number }}-merged")
+                        } else {
+                            generateFilename(manga, target)
+                        }
+                        val input = if (merged) {
+                            val file = File.createTempFile("merged-page-", ".image", context.cacheDir)
+                            temporaryFile = file
+                            val pages = checkNotNull(spread)
+                            MergedPageImage.write(
+                                checkNotNull(pages[0].stream),
+                                checkNotNull(pages[1].stream),
+                                file,
+                                options,
+                            ).let { export -> { export.file.inputStream() } }
+                        } else {
+                            target.stream
+                                ?: File.createTempFile("page-export-", ".png", context.cacheDir).also { file ->
+                                    temporaryFile = file
+                                    writeReaderPageBitmap(target, file)
+                                }.let { file -> { file.inputStream() } }
+                        }
+                        savedUri = imageSaver.save(
+                            Image.Page(
+                                inputStream = input,
+                                name = filename,
+                                location = Location.Pictures.create(relativePath),
+                            ),
                         )
-                    }.let { file -> { file.inputStream() } }
-                } else {
-                    page.stream ?: File.createTempFile("page-export-", ".png", context.cacheDir).also { file ->
-                        mergedFile = file
-                        writeReaderPageBitmap(page, file)
-                    }.let { file -> { file.inputStream() } }
+                    } finally {
+                        temporaryFile?.delete()
+                    }
                 }
-                val uri = imageSaver.save(
-                    image = Image.Page(
-                        inputStream = input,
-                        name = filename,
-                        location = Location.Pictures.create(relativePath),
-                    ),
-                )
+                val uri = checkNotNull(savedUri)
                 withUIContext {
                     notifier.onComplete(uri)
                     eventChannel.send(Event.SavedImage(SaveImageResult.Success(uri)))
@@ -1683,8 +1690,6 @@ class ReaderViewModel @JvmOverloads constructor(
                 }
                 notifier.onError(error.message)
                 eventChannel.send(Event.SavedImage(SaveImageResult.Error(error)))
-            } finally {
-                mergedFile?.delete()
             }
         }
     }

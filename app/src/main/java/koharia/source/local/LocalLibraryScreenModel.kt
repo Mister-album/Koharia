@@ -285,6 +285,12 @@ internal class LocalLibraryScreenModel(
         mutableState.update { it.copy(filters = filters, rememberFilters = rememberFilters, dialog = null) }
     }
 
+    fun selectSearchSort(index: Int, ascending: Boolean) {
+        val current = state.value
+        if (current.toolbarQuery == null || current.isBusy || index !in 0..2) return
+        applyFilters(current.filters.copy(sort = index, descending = !ascending), current.rememberFilters)
+    }
+
     fun selectBookshelf(bookshelfId: String?) {
         if (state.value.isBusy) return
         clearSelection()

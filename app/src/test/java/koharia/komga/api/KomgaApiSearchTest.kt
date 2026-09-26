@@ -24,6 +24,34 @@ import org.junit.jupiter.api.Test
 class KomgaApiSearchTest {
 
     @Test
+    fun `repository includes tag union in modern requests and legacy fallback for both resource types`() = runTest {
+        for (legacy in listOf(false, true)) {
+            val requests = java.util.concurrent.CopyOnWriteArrayList<Request>()
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                val request = chain.request()
+                requests += request
+                response(request, if (legacy && request.method == "POST") 404 else 200).newBuilder()
+                    .body("""{"content":[],"last":true}""".toResponseBody("application/json".toMediaType())).build()
+            }.build()
+            val repository = koharia.komga.domain.repository.KomgaRepository("https://komga.test", apiClient(client))
+            val filters = eu.kanade.tachiyomi.source.model.FilterList(
+                koharia.source.komga.TypeSelect().apply { state = koharia.source.komga.TYPE_ALL_INDEX },
+            )
+            assertTrue(repository.getSearchManga(1, "排球", filters, emptySet()).mangas.isEmpty())
+            assertEquals(if (legacy) 4 else 2, requests.size)
+            requests.forEach { request ->
+                val query = if (request.method == "POST") {
+                    val body = Buffer().also { request.body!!.writeTo(it) }.readUtf8()
+                    Json.parseToJsonElement(body).jsonObject.getValue("fullTextSearch").jsonPrimitive.content
+                } else {
+                    request.url.queryParameter("search")
+                }
+                assertEquals("(排球) OR tag:(排球)", query)
+            }
+        }
+    }
+
+    @Test
     fun `book list request uses current endpoint and structured conditions`() {
         val api = apiClient(OkHttpClient())
 
@@ -125,6 +153,62 @@ class KomgaApiSearchTest {
             }
         }
         assertEquals(listOf("POST"), methods)
+    }
+
+    @Test
+    fun `time requests have stable secondary identity for both APIs and resource types`() {
+        val api = apiClient(OkHttpClient())
+        for (type in listOf(KomgaApiClient.SearchType.BOOKS, KomgaApiClient.SearchType.SERIES)) {
+            for ((index, field) in listOf(2 to "createdDate", 3 to "lastModifiedDate")) {
+                for (ascending in listOf(true, false)) {
+                    val expected = listOf("$field,${if (ascending) "asc" else "desc"}", "id,asc")
+                    val modern = api.searchListRequest(
+                        1,
+                        "query",
+                        type,
+                        emptySet(),
+                        sortIndex = index,
+                        sortAscending = ascending,
+                    )
+                    val legacy = api.searchRequest(
+                        1,
+                        "query",
+                        type,
+                        emptySet(),
+                        sortIndex = index,
+                        sortAscending = ascending,
+                    )
+                    assertEquals(expected, modern.url.queryParameterValues("sort"))
+                    assertEquals(expected, legacy.url.queryParameterValues("sort"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `sorted sessions reuse successful empty response cache without a request`() = runTest {
+        val client = OkHttpClient.Builder().addInterceptor { error("Warm cache must not access network") }.build()
+        var reads = 0
+        val api =
+            KomgaApiClient("https://komga.test", Headers.Builder().build(), client, Json, KomgaSearchCapabilities()) {
+                reads++
+                response(
+                    it,
+                    200,
+                ).newBuilder().body(
+                    """{"content":[],"last":true}""".toResponseBody("application/json".toMediaType()),
+                ).build()
+            }
+        val repository = koharia.komga.domain.repository.KomgaRepository("https://komga.test", api)
+        val filters = eu.kanade.tachiyomi.source.model.FilterList(
+            koharia.source.komga.SeriesSort(eu.kanade.tachiyomi.source.model.Filter.Sort.Selection(2, false)),
+        )
+        repeat(2) {
+            val session = repository.sortedSearchSession("query", filters, emptySet(), KomgaCachePolicy.Default) {}
+            assertTrue(session.load(1).mangas.isEmpty())
+            assertEquals(false, session.load(1).hasNextPage)
+        }
+        assertEquals(4, reads)
     }
 
     private fun apiClient(client: OkHttpClient): KomgaApiClient = KomgaApiClient(

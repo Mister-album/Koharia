@@ -44,6 +44,8 @@ import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import koharia.connection.ConnectionBrowseScreen
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.ConnectionLibraryToolbar
+import koharia.connection.ui.ConnectionSearchResults
+import koharia.connection.ui.ConnectionSearchSortOption
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.lanraragi.LanraragiEntryDestination
 import koharia.lanraragi.LanraragiEntryOpenManager
@@ -196,11 +198,33 @@ class LanraragiLibraryScreen(
                         onSettings = { navigator.push(LanraragiSettingsScreen(sourceId)) },
                         navigateUp = if (showNavigationUp) ({ navigator.pop() }) else null,
                     )
-                    LanraragiCategoryTabs(
-                        categories = state.categories,
-                        selectedId = state.filter.category,
-                        onSelect = model::selectCategory,
-                    )
+                    if (state.filter.query.isNotBlank()) {
+                        ConnectionSearchResults(
+                            options = listOf(
+                                MR.strings.lanraragi_title,
+                                MR.strings.lanraragi_added,
+                                MR.strings.lanraragi_last_read,
+                                MR.strings.lanraragi_random,
+                            ).mapIndexed { index, label ->
+                                ConnectionSearchSortOption(
+                                    value = index,
+                                    label = stringResource(label),
+                                    supportsDirection = index != 3,
+                                    defaultAscending = index == 0,
+                                )
+                            },
+                            selected = state.filter.sort,
+                            ascending = !state.filter.descending,
+                            onSelect = model::selectSearchSort,
+                        )
+                    }
+                    if (state.toolbarQuery == null) {
+                        LanraragiCategoryTabs(
+                            categories = state.categories,
+                            selectedId = state.filter.category,
+                            onSelect = model::selectCategory,
+                        )
+                    }
                     HorizontalDivider()
                 }
             },

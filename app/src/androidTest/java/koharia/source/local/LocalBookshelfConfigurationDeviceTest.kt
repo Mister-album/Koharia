@@ -4,7 +4,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -13,8 +12,9 @@ import java.nio.file.Files
 @RunWith(AndroidJUnit4::class)
 class LocalBookshelfConfigurationDeviceTest {
     @Test
-    fun savingDirectoryReplacementOnlyInvalidatesItsCacheAndPreservesFiles() {
+    fun savingDirectoryReplacementInvalidatesItsCacheAndPreservesIdentityMetadataAndFiles() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName == "app.koharia.dev.devicefixture")
         val directory = Files.createTempDirectory(context.cacheDir.toPath(), "shelf-config-test-").toFile()
         val sourceId = 9_300_000_000_000L + System.currentTimeMillis()
         val preferences = LocalLibraryPreferences(sourceId, Json)
@@ -78,13 +78,14 @@ class LocalBookshelfConfigurationDeviceTest {
             assertEquals(2, preferences.getIndex().items.size)
             preferences.saveLibraryDraft(draft, preferences.getBookshelfAssignments())
             assertEquals(listOf(keepKey), preferences.getIndex().items.map { it.itemKey })
-            assertFalse(oldKey in preferences.getBookshelfAssignments())
+            assertEquals(bookShelf, preferences.getBookshelfAssignments()[oldKey])
+            assertEquals("old title", preferences.getMetadataOverrides()[oldKey]?.title)
             assertEquals(comicShelf, preferences.getBookshelfAssignments()[keepKey])
             assertEquals("keep title", preferences.getMetadataOverrides()[keepKey]?.title)
             assertEquals("preserved book", oldBook.readText())
             assertEquals("preserved comic", comic.readText())
             assertTrue(replacement.isDirectory)
-            assertEquals("new", preferences.getConfig().bookshelfRoots(bookShelf).single().id)
+            assertEquals("old", preferences.getConfig().bookshelfRoots(bookShelf).single().id)
         } finally {
             context.getSharedPreferences("source_$sourceId", 0).edit().clear().commit()
             check(directory.canonicalFile.parentFile == context.cacheDir.canonicalFile)

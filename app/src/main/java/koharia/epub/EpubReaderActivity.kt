@@ -1183,6 +1183,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         progressionSeekJob?.cancel()
         epubReaderFragment()?.stopPagination()
         lifecycleScope.launchNonCancellable {
+            withUIContext { epubReaderFragment()?.captureContinuousScrollProgress() }
             viewModel.saveCurrentProgress()
             viewModel.updateHistory()
         }
@@ -1241,8 +1242,23 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         if (releaseSession) viewModel.releaseSession()
     }
 
+    private var finishRequested = false
+
     override fun finish() {
-        super.finish()
+        val fragment = if (configStartupDeferred) null else epubReaderFragment()
+        if (fragment == null) {
+            super.finish()
+            return
+        }
+        if (finishRequested) return
+        finishRequested = true
+        lifecycleScope.launchNonCancellable {
+            try {
+                fragment.captureContinuousScrollProgress()
+            } finally {
+                withUIContext { super@EpubReaderActivity.finish() }
+            }
+        }
     }
 
     override fun onProvideAssistContent(outContent: AssistContent) {
@@ -1928,6 +1944,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private fun openAdjacentBook(chapterId: Long) {
         val mangaId = viewModel.state.value.mangaId.takeIf { it > 0L } ?: return
         lifecycleScope.launch {
+            epubReaderFragment()?.captureContinuousScrollProgress()
             viewModel.saveCurrentProgress()
             val targetIntent = epubReaderLauncher.resolveIntent(
                 context = this@EpubReaderActivity,

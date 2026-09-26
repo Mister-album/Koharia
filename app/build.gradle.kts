@@ -335,9 +335,7 @@ dependencies {
 
     // Image loading
     implementation(libs.bundles.coil)
-    implementation(libs.subsamplingScaleImageView) {
-        exclude(module = "image-decoder")
-    }
+    implementation(projects.readerImageView)
     implementation(libs.image.decoder)
 
     // UI libraries

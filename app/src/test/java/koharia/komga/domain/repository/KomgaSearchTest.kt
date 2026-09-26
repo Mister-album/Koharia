@@ -18,6 +18,16 @@ import org.junit.jupiter.api.Test
 class KomgaSearchTest {
 
     @Test
+    fun `plain title and tag queries form one server union while advanced queries remain unchanged`() {
+        assertEquals("(排球) OR tag:(排球)", titleAndTagSearchQuery("排球"))
+        assertEquals("(white knight) OR tag:(white knight)", titleAndTagSearchQuery("white knight"))
+        assertEquals("(\"white knight\") OR tag:(\"white knight\")", titleAndTagSearchQuery("\"white knight\""))
+        for (query in listOf("", "tag:排球", "writer:(sean murphy)", "batman NOT publisher:dc", "batman OR robin")) {
+            assertEquals(query, titleAndTagSearchQuery(query))
+        }
+    }
+
+    @Test
     fun `search query removes delimiters but keeps their content`() {
         assertEquals("Title Edition Extra Full English", normalizeSearchQuery(" Title(Edition)【Extra】（Full）[English] "))
         assertEquals("Title Edition", normalizeSearchQuery("Title( Edition"))

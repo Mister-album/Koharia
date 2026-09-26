@@ -625,13 +625,6 @@ class ReaderActivity : BaseActivity() {
                     onSetAsCover = viewModel::setAsCover,
                     onShare = viewModel::shareImage,
                     onSave = viewModel::saveImage,
-                    onSaveMerged = if ((state.dialog as? ReaderViewModel.Dialog.PageActions)?.mergedPages !=
-                        null
-                    ) {
-                        viewModel::saveMergedImage
-                    } else {
-                        null
-                    },
                 )
             }
             null -> {}

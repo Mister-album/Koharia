@@ -26,6 +26,7 @@ import eu.kanade.presentation.util.ioCoroutineScope
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SManga
 import koharia.connection.ConnectionEpubHistorySyncAdapter
@@ -44,6 +45,7 @@ import koharia.komga.api.dto.LibraryDto
 import koharia.komga.api.dto.mergeKomgaOfflineMemo
 import koharia.komga.api.dto.offlineFilterMetadata
 import koharia.komga.domain.repository.KomgaRepository
+import koharia.komga.domain.repository.komgaSearchTimestamp
 import koharia.komga.download.KomgaChapterMemo
 import koharia.source.komga.AuthorFilter
 import koharia.source.komga.AuthorGroup
@@ -149,6 +151,8 @@ class KomgaLibraryScreenModel(
     @Volatile
     private var filtersInitialized = false
     private var listingBeforeSearch: Listing? = null
+    private var filtersBeforeSearch: FilterList? = null
+    private var filtersBeforeDialog: FilterList? = null
     private var libraryFilterBeforeQuickSelection: Set<String>? = null
 
     @Volatile
@@ -326,7 +330,15 @@ class KomgaLibraryScreenModel(
             }
         } else {
             Pager(PagingConfig(pageSize = 25)) {
-                getRemoteManga(sourceId, request.listing.query ?: "", request.listing.filters)
+                val filters = request.listing.filters
+                if (source is KomgaSource && request.listing.requiresSortedSearchSession()) {
+                    KomgaSortedSearchPagingSource(
+                        sourceId,
+                        source.sortedSearchSession(request.listing.query.orEmpty(), filters),
+                    )
+                } else {
+                    getRemoteManga(sourceId, request.listing.query ?: "", filters)
+                }
             }.flow.map { pagingData ->
                 pagingData.map { remoteManga ->
                     getManga.subscribe(remoteManga.url, remoteManga.source)
@@ -408,6 +420,7 @@ class KomgaLibraryScreenModel(
 
     fun setListing(listing: Listing) {
         listingBeforeSearch = null
+        filtersBeforeSearch = null
         mutableState.update { it.copy(listing = listing, toolbarQuery = null, searchType = TYPE_ALL_INDEX) }
     }
 
@@ -437,14 +450,20 @@ class KomgaLibraryScreenModel(
             )
 
         val nextFilters = when {
-            filters != null -> filters
+            filters != null -> (source as? KomgaSource)?.snapshotFilters(filters) ?: filters
             query != null -> buildSearchFilters(state.value.filters, state.value.searchType)
             else -> state.value.filters.takeIf { it.isNotEmpty() } ?: input.filters
         }
         if (!query.isNullOrEmpty() && input.query.isNullOrEmpty() && listingBeforeSearch == null) {
-            listingBeforeSearch = currentListing
+            filtersBeforeSearch = (source as? KomgaSource)?.snapshotFilters(state.value.filters) ?: state.value.filters
+            listingBeforeSearch = if (currentListing is Listing.Search) {
+                currentListing.copy(filters = checkNotNull(filtersBeforeSearch))
+            } else {
+                currentListing
+            }
         }
         if (filters != null) {
+            filtersBeforeDialog = null
             (source as? KomgaSource)?.saveSessionFilterState(nextFilters, libraryScope)
             (source as? KomgaSource)?.savePersistentFilterState(nextFilters, libraryScope)
         }
@@ -455,6 +474,8 @@ class KomgaLibraryScreenModel(
                     query = query ?: input.query,
                     filters = nextFilters,
                 ),
+                filters = nextFilters,
+                searchType = nextFilters.filterIsInstance<TypeSelect>().firstOrNull()?.state ?: it.searchType,
                 toolbarQuery = query ?: input.query,
             )
         }
@@ -470,10 +491,12 @@ class KomgaLibraryScreenModel(
         mutableState.update {
             it.copy(
                 listing = restoredListing,
+                filters = filtersBeforeSearch ?: restoredListing.filters,
                 toolbarQuery = null,
                 searchType = TYPE_ALL_INDEX,
             )
         }
+        filtersBeforeSearch = null
     }
 
     fun setPersistentFilteringEnabled(enabled: Boolean) {
@@ -548,13 +571,26 @@ class KomgaLibraryScreenModel(
         }
     }
 
+    fun selectSearchSort(index: Int, ascending: Boolean) {
+        val komga = source as? KomgaSource ?: return
+        val current = state.value
+        if (!current.isUserQuery || index !in availableKomgaSortIndices(current.searchType)) return
+        val filters = komga.snapshotFilters(current.listing.filters)
+        val sort = filters.filterIsInstance<SeriesSort>().firstOrNull() ?: return
+        sort.state = Filter.Sort.Selection(index, ascending)
+        search(filters = filters)
+    }
+
     fun openFilterSheet() {
+        (source as? KomgaSource)?.let { komga ->
+            filtersBeforeDialog = state.value.filters
+            mutableState.update { it.copy(filters = komga.snapshotFilters(it.filters)) }
+        }
         if (basePreferences.downloadedOnly.get()) {
             val filters = state.value.filters.withCachedMetadataOptions(latestCachedManga)
             mutableState.update { current ->
                 current.copy(
                     filters = filters,
-                    listing = Listing.Search(current.listing.query, filters),
                 )
             }
         }
@@ -562,7 +598,9 @@ class KomgaLibraryScreenModel(
     }
 
     fun setDialog(dialog: Dialog?) {
-        mutableState.update { it.copy(dialog = dialog) }
+        val restoredFilters = filtersBeforeDialog.takeIf { dialog == null && state.value.dialog == Dialog.Filter }
+        mutableState.update { it.copy(dialog = dialog, filters = restoredFilters ?: it.filters) }
+        if (dialog == null) filtersBeforeDialog = null
     }
 
     fun setToolbarQuery(query: String?) {
@@ -592,6 +630,7 @@ class KomgaLibraryScreenModel(
         mutableState.update {
             it.copy(
                 listing = listing,
+                filters = if (activeQuery != null) listing.filters else it.filters,
                 searchType = type,
             )
         }
@@ -599,12 +638,7 @@ class KomgaLibraryScreenModel(
 
     private fun buildSearchFilters(filters: FilterList, searchType: Int): FilterList {
         val komgaSource = source as? KomgaSource ?: return filters
-        return komgaSource.buildFilterListForLibrary(
-            libraryId = state.value.selectedKomgaLibraryId,
-            allowedLibraryIds = currentAllowedLibraryIds(),
-            libraryScope = libraryScope,
-            currentFilters = filters,
-        ).apply {
+        return komgaSource.snapshotFilters(filters).apply {
             selectContentType(searchType)
         }
     }
@@ -1196,14 +1230,28 @@ internal fun Manga.matchesCachedAdvancedFilters(
     return true
 }
 
+internal fun KomgaLibraryScreenModel.Listing.requiresSortedSearchSession(): Boolean =
+    this is KomgaLibraryScreenModel.Listing.Search &&
+        filters.filterIsInstance<TypeSelect>().firstOrNull()?.state == TYPE_ALL_INDEX &&
+        filters.filterIsInstance<SeriesSort>().firstOrNull()?.state?.index in 2..3
+
 internal fun List<Manga>.sortedForCachedFilters(
     filters: CachedAdvancedFilterSelection,
     randomSeed: Int,
 ): List<Manga> {
+    if (filters.sortIndex in 2..3) {
+        return sortedWith { a, b ->
+            koharia.komga.domain.repository.compareKomgaSearchTime(
+                a.memo.komgaSearchTimestamp(filters.sortIndex),
+                a.url,
+                b.memo.komgaSearchTimestamp(filters.sortIndex),
+                b.url,
+                filters.sortAscending,
+            )
+        }
+    }
     val sorted = when (filters.sortIndex) {
         1 -> sortedWith(compareBy<Manga> { it.cachedTitleSort().lowercase() }.thenBy { it.id })
-        2 -> sortedWith(compareBy<Manga> { it.cachedCreatedTimestamp() }.thenBy { it.id })
-        3 -> sortedWith(compareBy<Manga> { it.cachedModifiedTimestamp() }.thenBy { it.id })
         4 -> sortedWith(compareBy<Manga> { cachedRandomKey(it.id, randomSeed) }.thenBy { it.id })
         else -> this
     }
@@ -1293,14 +1341,6 @@ private fun Manga.cachedPublisher(metadata: KomgaOfflineFilterMetadata?): String
 
 private fun Manga.cachedTitleSort(): String =
     memo.offlineFilterMetadata()?.titleSort ?: title
-
-private fun Manga.cachedCreatedTimestamp(): Long =
-    memo.offlineFilterMetadata()?.createdDate?.let { KomgaRepository.parseDateTime(it) }?.takeIf { it > 0L }
-        ?: dateAdded
-
-private fun Manga.cachedModifiedTimestamp(): Long =
-    memo.offlineFilterMetadata()?.lastModifiedDate?.let { KomgaRepository.parseDateTime(it) }?.takeIf { it > 0L }
-        ?: lastModifiedAt
 
 private fun List<Chapter>.cachedReadingStatus(): String? = when {
     isEmpty() -> null

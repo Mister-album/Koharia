@@ -1,6 +1,7 @@
 package koharia.source.komga
 
 import eu.kanade.tachiyomi.source.model.Filter
+import eu.kanade.tachiyomi.source.model.FilterList
 import koharia.komga.api.dto.AuthorDto
 import koharia.komga.api.dto.LibraryDto
 
@@ -81,3 +82,36 @@ internal const val TYPE_SERIES_INDEX = 0
 internal const val TYPE_READ_LISTS_INDEX = 1
 internal const val TYPE_BOOKS_INDEX = 2
 internal const val TYPE_ALL_INDEX = 3
+
+/** Copy the current options as well as their selections, including options known only offline. */
+internal fun FilterList.snapshotKomgaFilters(): FilterList = FilterList(
+    map { filter ->
+        when (filter) {
+            is TypeSelect -> TypeSelect().apply { state = filter.state }
+            is SeriesSort -> SeriesSort(filter.state?.copy())
+            is CollectionSelect -> CollectionSelect(filter.collections.toList()).apply { state = filter.state }
+            is LibraryFilter -> LibraryFilter(
+                filter.state.map { LibraryDto(it.id, it.name) },
+                filter.state.filter { it.state }.mapTo(mutableSetOf()) { it.id },
+            )
+            is UriMultiSelectFilter -> UriMultiSelectFilter(
+                filter.name,
+                filter.state.map { option ->
+                    UriMultiSelectOption(option.name, option.id).apply { state = option.state }
+                },
+            )
+            is ReadingStateGroup -> ReadingStateGroup().apply {
+                state.zip(filter.state).forEach { (copy, original) -> copy.state = original.state }
+            }
+            is AuthorGroup -> AuthorGroup(
+                filter.name,
+                filter.state.map { option ->
+                    AuthorFilter(option.author).apply { state = option.state }
+                },
+            )
+            is Filter.Header -> Filter.Header(filter.name)
+            is Filter.Separator -> Filter.Separator(filter.name)
+            else -> error("Unsupported Komga filter: ${filter.name}")
+        }
+    },
+)

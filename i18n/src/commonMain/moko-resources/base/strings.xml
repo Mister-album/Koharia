@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="reader_moire_reduction">Reduce moiré</string>
+    <string name="reader_moire_reduction_summary">Reduce screen-tone interference below the selected display scale. Uses more processing and may soften fine details.</string>
+    <string name="reader_moire_threshold">Moiré reduction threshold</string>
+    <string name="reader_moire_threshold_percent">%1$d%%</string>
+    <string name="reader_moire_threshold_summary">Apply when the display scale is at most %1$d%% of the original. 100%% covers all downscaling.</string>
     <string name="app_name" translatable="false">Koharia</string>
 
     <!-- Generic strings -->
@@ -1894,4 +1899,24 @@
     <string name="smanga_descending">Descending order</string>
     <string name="smanga_downloaded">Downloaded content in this connection</string>
     <string name="reader_remote_mapping_message">The page order or page count has changed. Positions cannot be matched automatically. Local: page %1$d of %2$d (%3$d%%). Server: page %4$d of %5$d (%6$d%%). Confirm which position to use; an unavailable server page cannot be selected.</string>
+    <string name="pref_cleanup_removed_custom_covers">Custom covers for removed local directories or files</string>
+    <string name="pref_cleanup_removed_custom_covers_summary">Deletes the saved cover images. Adding the directory again will no longer restore them. Covers with unknown ownership or temporarily inaccessible configured directories are kept.</string>
+    <string name="local_library_detached_directories">Previously removed directories</string>
+    <string name="local_library_reconnect_directory">Choose this directory or its new location to restore its identity and saved covers</string>
+    <string name="custom_cover_choose_saved">Use a saved custom cover</string>
+    <string name="custom_cover_saved_empty">No saved custom covers in the current storage directory.</string>
+    <string name="merged_export_layout">Merged image layout</string>
+    <string name="merged_export_match_height">Match page heights</string>
+    <string name="merged_export_original_pixels">Keep original pixels</string>
+    <string name="merged_export_match_height_hint">The shorter page is enlarged to match the taller page.</string>
+    <string name="merged_export_original_pixels_hint">Pages are not resized. Shorter pages are centered with white padding.</string>
+    <string name="merged_export_format">Merged image format</string>
+    <string name="merged_export_lossless">Lossless (automatic)</string>
+    <string name="merged_export_png">PNG (compatible)</string>
+    <string name="merged_export_jpeg">JPEG (high quality)</string>
+    <string name="merged_export_jpeg_hint">Lossy encoding at quality 95; dimensions are unchanged. File size depends on the image.</string>
+    <string name="merged_export_lossless_hint">No additional encoding loss. Automatic mode chooses the smaller PNG or supported lossless WebP.</string>
+    <string name="pref_double_page_save_mode">Saving a double-page spread</string>
+    <string name="pref_double_page_save_merged">Save as one merged image</string>
+    <string name="pref_double_page_save_separate">Save both pages as separate images</string>
 </resources>

@@ -235,7 +235,7 @@ class SmangaSource(private val context: Context, override val connectionProfile:
     override val usesSharedDownloadStorage = false
     override val mangaBehavior =
         ConnectionMangaBehavior(
-            allowsTagSearch = false,
+            allowsTagSearch = true,
             providerManagedLibrary = true,
             allowsLocalLibraryManagement = false,
             allowsCategoryManagement = false,

@@ -8,6 +8,9 @@ import androidx.compose.ui.platform.LocalView
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.tachiyomi.ui.reader.setting.DoublePageSaveMode
+import eu.kanade.tachiyomi.ui.reader.setting.MergedPageFormat
+import eu.kanade.tachiyomi.ui.reader.setting.MergedPageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderEInkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
@@ -19,11 +22,13 @@ import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.connection.ConnectionConfigMode
 import koharia.connection.ConnectionPreferences
 import koharia.connection.NO_ACTIVE_CONNECTION
+import koharia.connection.SharedAppPreferences
 import koharia.epub.settings.ComicBackgroundSettingsPreference
 import koharia.epub.settings.EpubBackgroundSettingsPreference
 import koharia.epub.settings.EpubFontPreference
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
+import koharia.reader.resampling.MoireReductionPolicy
 import koharia.tts.ui.settings.TtsSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
@@ -134,7 +139,24 @@ object SettingsReaderScreen : SearchableSettings {
 
     @Composable
     internal fun comicPreferences(readerPreferences: ReaderPreferences): List<Preference> {
+        val moireEnabled by readerPreferences.moireReduction.collectAsState()
         return listOf(
+            Preference.PreferenceItem.SwitchPreference(
+                preference = readerPreferences.moireReduction,
+                title = stringResource(MR.strings.reader_moire_reduction),
+                subtitle = stringResource(MR.strings.reader_moire_reduction_summary),
+            ),
+            Preference.PreferenceItem.ListPreference(
+                preference = readerPreferences.moireReductionThreshold,
+                title = stringResource(MR.strings.reader_moire_threshold),
+                enabled = moireEnabled,
+                entries = MoireReductionPolicy.thresholds.associateWith {
+                    stringResource(MR.strings.reader_moire_threshold_percent, it)
+                }.toImmutableMap(),
+                subtitleProvider = { value, _ ->
+                    stringResource(MR.strings.reader_moire_threshold_summary, MoireReductionPolicy.normalize(value))
+                },
+            ),
             Preference.PreferenceItem.ListPreference(
                 preference = readerPreferences.defaultReadingMode,
                 entries = ReadingMode.entries.drop(1)
@@ -990,6 +1012,10 @@ object SettingsReaderScreen : SearchableSettings {
 
     @Composable
     private fun getActionsGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+        val exportPreferences = remember { Injekt.get<SharedAppPreferences>().readerPreferences() }
+        val saveMode by exportPreferences.doublePageSaveMode.collectAsState()
+        val layout by exportPreferences.mergedPageLayout.collectAsState()
+        val format by exportPreferences.mergedPageFormat.collectAsState()
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_reader_actions),
             preferenceItems = persistentListOf(
@@ -1001,6 +1027,47 @@ object SettingsReaderScreen : SearchableSettings {
                     preference = readerPreferences.folderPerManga,
                     title = stringResource(MR.strings.pref_create_folder_per_manga),
                     subtitle = stringResource(MR.strings.pref_create_folder_per_manga_summary),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = exportPreferences.doublePageSaveMode,
+                    title = stringResource(MR.strings.pref_double_page_save_mode),
+                    entries = persistentMapOf(
+                        DoublePageSaveMode.MERGED to stringResource(MR.strings.pref_double_page_save_merged),
+                        DoublePageSaveMode.SEPARATE to stringResource(MR.strings.pref_double_page_save_separate),
+                    ),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = exportPreferences.mergedPageLayout,
+                    title = stringResource(MR.strings.merged_export_layout),
+                    subtitle = "%s\n" + stringResource(
+                        if (layout == MergedPageLayout.MATCH_HEIGHT) {
+                            MR.strings.merged_export_match_height_hint
+                        } else {
+                            MR.strings.merged_export_original_pixels_hint
+                        },
+                    ),
+                    enabled = saveMode == DoublePageSaveMode.MERGED,
+                    entries = persistentMapOf(
+                        MergedPageLayout.MATCH_HEIGHT to stringResource(MR.strings.merged_export_match_height),
+                        MergedPageLayout.ORIGINAL_PIXELS to stringResource(MR.strings.merged_export_original_pixels),
+                    ),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = exportPreferences.mergedPageFormat,
+                    title = stringResource(MR.strings.merged_export_format),
+                    subtitle = "%s\n" + stringResource(
+                        if (format == MergedPageFormat.JPEG) {
+                            MR.strings.merged_export_jpeg_hint
+                        } else {
+                            MR.strings.merged_export_lossless_hint
+                        },
+                    ),
+                    enabled = saveMode == DoublePageSaveMode.MERGED,
+                    entries = persistentMapOf(
+                        MergedPageFormat.LOSSLESS_AUTO to stringResource(MR.strings.merged_export_lossless),
+                        MergedPageFormat.PNG to stringResource(MR.strings.merged_export_png),
+                        MergedPageFormat.JPEG to stringResource(MR.strings.merged_export_jpeg),
+                    ),
                 ),
             ),
         )

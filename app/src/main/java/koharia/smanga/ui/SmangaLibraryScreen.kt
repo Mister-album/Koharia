@@ -47,6 +47,8 @@ import koharia.connection.ConnectionBrowseScreen
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.ConnectionLibraryTabs
 import koharia.connection.ui.ConnectionLibraryToolbar
+import koharia.connection.ui.ConnectionSearchResults
+import koharia.connection.ui.ConnectionSearchSortOption
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.source.smanga.SmangaSettingsScreen
 import koharia.source.smanga.SmangaSource
@@ -82,7 +84,9 @@ class SmangaLibraryScreen(
     override suspend fun search(query: String) {
         runtimeModel?.search(query)
     }
-    override suspend fun searchGenre(name: String) = Unit
+    override suspend fun searchGenre(name: String) {
+        runtimeModel?.search(name)
+    }
     override suspend fun refresh() {
         runtimeModel?.refresh()
     }
@@ -168,15 +172,39 @@ class SmangaLibraryScreen(
                         onSettings = { navigator.push(SmangaSettingsScreen(sourceId)) },
                         navigateUp = if (showNavigationUp) ({ navigator.pop() }) else null,
                     )
-                    ConnectionLibraryTabs(
-                        entries = state.media,
-                        key = { it.id },
-                        label = { it.name },
-                        isSelected = { it.id == state.selectedMedia },
-                        onSelect = { model.selectMedia(it.id) },
-                        allSelected = state.selectedMedia == 0L,
-                        onSelectAll = { model.selectMedia(0) },
-                    )
+                    if (state.query.isNotBlank()) {
+                        ConnectionSearchResults(
+                            options = if (state.downloadedOnly) {
+                                emptyList()
+                            } else {
+                                listOf(
+                                    "mangaName" to MR.strings.smanga_sort_name,
+                                    "updateTime" to MR.strings.smanga_sort_updated,
+                                    "createTime" to MR.strings.smanga_sort_created,
+                                ).map { (field, label) ->
+                                    ConnectionSearchSortOption(
+                                        value = field,
+                                        label = stringResource(label),
+                                        defaultAscending = field == "mangaName",
+                                    )
+                                }
+                            },
+                            selected = state.order.substringBefore(' '),
+                            ascending = !state.order.endsWith("desc"),
+                            onSelect = model::selectSearchSort,
+                        )
+                    }
+                    if (state.toolbarQuery == null) {
+                        ConnectionLibraryTabs(
+                            entries = state.media,
+                            key = { it.id },
+                            label = { it.name },
+                            isSelected = { it.id == state.selectedMedia },
+                            onSelect = { model.selectMedia(it.id) },
+                            allSelected = state.selectedMedia == 0L,
+                            onSelectAll = { model.selectMedia(0) },
+                        )
+                    }
                     HorizontalDivider()
                 }
             },

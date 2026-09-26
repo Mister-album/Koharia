@@ -1,6 +1,7 @@
 package koharia.epub
 
 import android.graphics.Rect
+import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
@@ -20,6 +21,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.readium.r2.shared.publication.Locator
 import tachiyomi.core.common.preference.Preference
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -27,6 +29,7 @@ import java.io.File
 import java.lang.reflect.Proxy
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -38,7 +41,12 @@ class EpubContinuousReadingDeviceTest {
     @Test
     fun embeddedFootnotesResolveInTheirOwnChapter() = verifyReading(true)
 
-    private fun verifyReading(footnotesOnly: Boolean): Unit = runBlocking(Dispatchers.IO) {
+    @Test
+    fun backgroundProgressCaptureEvaluatesLoadedReadiumWebViewOnMain() = verifyReading(false, captureOnly = true)
+
+    private fun verifyReading(footnotesOnly: Boolean, captureOnly: Boolean = false): Unit = runBlocking(
+        Dispatchers.IO,
+    ) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         assertEquals("app.koharia.dev.devicefixture", context.packageName)
@@ -115,6 +123,37 @@ class EpubContinuousReadingDeviceTest {
                     throw AssertionError("Short chapter did not get continuous content")
                 }
                 awaitInstalled(0)
+                if (captureOnly) {
+                    val captured = AtomicReference<Locator>()
+                    scenario.onActivity {
+                        val host = Proxy.newProxyInstance(
+                            EpubReaderFragment.Host::class.java.classLoader,
+                            arrayOf(EpubReaderFragment.Host::class.java),
+                        ) { _, method, arguments ->
+                            if (method.name == "onLocatorChanged") {
+                                assertEquals(Looper.getMainLooper(), Looper.myLooper())
+                                captured.set(arguments[0] as Locator)
+                            }
+                            if (method.returnType == Boolean::class.javaPrimitiveType) false else null
+                        }
+                        EpubReaderFragment::class.java.getDeclaredField("host")
+                            .apply { isAccessible = true }.set(fragment, host)
+                    }
+                    for (progression in listOf(0.42, 0.57)) {
+                        // Freeze the snapshot to distinguish explicit capture from scroll bridge notifications.
+                        evaluate(
+                            "window.__kohariaContinuousScroll.currentLocation = function() { " +
+                                "return {resourceIndex: 2, progression: $progression}; };",
+                        )
+                        captured.set(null)
+                        assertTrue(Looper.myLooper() != Looper.getMainLooper())
+                        fragment.captureContinuousScrollProgress()
+                        val locator = checkNotNull(captured.get()) { "Background capture did not deliver a locator" }
+                        assertEquals(session.publication.readingOrder[2].href.toString(), locator.href.toString())
+                        assertEquals(progression, checkNotNull(locator.locations.progression), 0.000001)
+                    }
+                    return@use
+                }
                 val wrongDocument = buildEpubContinuousScrollInstallScript(
                     listOf(EpubContinuousScrollResource(0, "wrong.xhtml", "https://example.invalid/wrong.xhtml")),
                     0,

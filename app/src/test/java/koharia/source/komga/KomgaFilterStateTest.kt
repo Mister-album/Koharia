@@ -5,6 +5,26 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class KomgaFilterStateTest {
+    @Test
+    fun `snapshot preserves offline options and isolates nested mutable selections`() {
+        val original = eu.kanade.tachiyomi.source.model.FilterList(
+            TypeSelect(),
+            SeriesSort(eu.kanade.tachiyomi.source.model.Filter.Sort.Selection(3, false)),
+            LibraryFilter(listOf(koharia.komga.api.dto.LibraryDto("library", "Offline library")), setOf("library")),
+            UriMultiSelectFilter("Tags", listOf(UriMultiSelectOption("Offline tag").apply { state = true })),
+            ReadingStateGroup(),
+        )
+        val copy = original.snapshotKomgaFilters()
+        copy.filterIsInstance<LibraryFilter>().single().state.single().state = false
+        copy.filterIsInstance<UriMultiSelectFilter>().first { it.name == "Tags" }.state.single().state = false
+        copy.filterIsInstance<SeriesSort>().single().state =
+            eu.kanade.tachiyomi.source.model.Filter.Sort.Selection(2, true)
+        copy.filterIsInstance<ReadingStateGroup>().single().state.first().state = true
+        assertTrue(original.filterIsInstance<LibraryFilter>().single().state.single().state)
+        assertTrue(original.filterIsInstance<UriMultiSelectFilter>().first { it.name == "Tags" }.state.single().state)
+        assertEquals(3, original.filterIsInstance<SeriesSort>().single().state?.index)
+        assertEquals(false, original.filterIsInstance<ReadingStateGroup>().single().state.first().state)
+    }
 
     @Test
     fun `legacy series selection and sort remain unchanged after version migration`() {

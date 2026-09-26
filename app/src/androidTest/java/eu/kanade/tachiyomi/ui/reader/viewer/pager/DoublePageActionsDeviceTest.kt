@@ -1,11 +1,13 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ContentUris
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Build
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.MotionEvent
@@ -20,6 +22,10 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.setting.DoublePageSaveMode
+import eu.kanade.tachiyomi.ui.reader.setting.MergedPageExportOptions
+import eu.kanade.tachiyomi.ui.reader.setting.MergedPageFormat
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -74,7 +80,8 @@ class DoublePageActionsDeviceTest {
                     bitmap.recycle()
                 }
             }
-            MergedPageImage.write({ left.inputStream() }, { right.inputStream() }, output)
+            val options = MergedPageExportOptions(format = MergedPageFormat.PNG)
+            MergedPageImage.write({ left.inputStream() }, { right.inputStream() }, output, options)
             val bitmap = checkNotNull(BitmapFactory.decodeFile(output.path))
             try {
                 assertEquals(400, bitmap.width)
@@ -87,7 +94,7 @@ class DoublePageActionsDeviceTest {
             left.writeText("invalid image")
             var rejected = false
             try {
-                MergedPageImage.write({ left.inputStream() }, { right.inputStream() }, output)
+                MergedPageImage.write({ left.inputStream() }, { right.inputStream() }, output, options)
             } catch (_: IllegalArgumentException) {
                 rejected = true
             }
@@ -97,7 +104,13 @@ class DoublePageActionsDeviceTest {
         }
     }
 
-    private fun verify(mode: ReadingMode, inverted: Boolean): Unit = runBlocking(Dispatchers.IO) {
+    @Test fun filteredLeftToRight() = verify(ReadingMode.LEFT_TO_RIGHT, false, true)
+
+    @Test fun filteredInvertedRightToLeft() = verify(ReadingMode.RIGHT_TO_LEFT, true, true)
+
+    private fun verify(mode: ReadingMode, inverted: Boolean, filtering: Boolean = false): Unit = runBlocking(
+        Dispatchers.IO,
+    ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val connections = Injekt.get<ConnectionPreferences>()
         val previousProfiles = connections.getProfiles()
@@ -124,6 +137,12 @@ class DoublePageActionsDeviceTest {
             }
             check(Injekt.get<SourceManager>().get(sourceId) != null)
             override(preferences.persistReaderSettingsChanges, false)
+            override(preferences.moireReduction, filtering)
+            override(preferences.moireReductionThreshold, 100)
+            override(preferences.doublePageSaveMode, DoublePageSaveMode.MERGED)
+            preferences.doublePageSaveMode.delete()
+            override(preferences.mergedPageLayout, eu.kanade.tachiyomi.ui.reader.setting.MergedPageLayout.MATCH_HEIGHT)
+            override(preferences.mergedPageFormat, eu.kanade.tachiyomi.ui.reader.setting.MergedPageFormat.LOSSLESS_AUTO)
             override(preferences.dualPageSplitPaged, false)
             override(preferences.dualPageInvertPaged, false)
             override(preferences.dualPageRotateToFit, false)
@@ -246,8 +265,7 @@ class DoublePageActionsDeviceTest {
                     )
                 }
                 awaitCondition {
-                    val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow
-                    var node = findText(root, context.stringResource(MR.strings.action_save_merged_page))
+                    var node = findFixtureText(context.stringResource(MR.strings.action_save))
                     while (node != null && !node.isClickable) node = node.parent
                     node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
                 }
@@ -313,6 +331,9 @@ class DoublePageActionsDeviceTest {
                 } finally {
                     saved?.let { context.contentResolver.delete(it, null, null) }
                 }
+                preferences.doublePageSaveMode.set(DoublePageSaveMode.SEPARATE)
+                verifyOriginalSave(scenario, holder.slot.pages, sessionId)
+                verifyOriginalSave(scenario, listOf(holder.slot.first), sessionId)
                 var initialLeft = 0f
                 var initialRight = 0f
                 scenario.onActivity {
@@ -405,6 +426,75 @@ class DoublePageActionsDeviceTest {
             connections.activeConnectionId.set(previousActiveConnection)
             check(directory.canonicalFile.parentFile == IncomingMediaSessionLocator.cacheRoot(context).canonicalFile)
             directory.deleteRecursively()
+        }
+    }
+
+    private fun verifyOriginalSave(
+        scenario: ActivityScenario<ReaderActivity>,
+        pages: List<ReaderPage>,
+        sessionId: String,
+    ) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val expected = pages.map { checkNotNull(it.stream).invoke().use { stream -> stream.readBytes() } }
+        val saved = mutableSetOf<android.net.Uri>()
+        try {
+            scenario.onActivity { activity ->
+                activity.viewModel.openPageDialog(pages.first(), pages.takeIf { it.size == 2 })
+            }
+            awaitCondition {
+                var node = findFixtureText(context.stringResource(MR.strings.action_save))
+                while (node != null && !node.isClickable) node = node.parent
+                node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+            }
+            awaitCondition {
+                context.contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    arrayOf(MediaStore.Images.Media._ID),
+                    "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?",
+                    arrayOf("%$sessionId%"),
+                    null,
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        saved += ContentUris.withAppendedId(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            cursor.getLong(0),
+                        )
+                    }
+                }
+                saved.size == pages.size && saved.map { uri ->
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }.let { actual -> expected.all { original -> actual.any { it?.contentEquals(original) == true } } }
+            }
+            assertEquals(pages.size, saved.size)
+        } finally {
+            saved.forEach { context.contentResolver.delete(it, null, null) }
+        }
+    }
+
+    private fun findFixtureText(text: String): AccessibilityNodeInfo? {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val automation = instrumentation.uiAutomation
+        val previousFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        return try {
+            val roots = buildList {
+                add(automation.rootInActiveWindow)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val displays = automation.windowsOnAllDisplays
+                    for (index in 0 until displays.size()) {
+                        displays.valueAt(index).forEach { add(it.root) }
+                    }
+                } else {
+                    automation.windows.forEach { add(it.root) }
+                }
+            }
+            roots.filterNotNull()
+                .filter { it.packageName?.toString() == instrumentation.targetContext.packageName }
+                .firstNotNullOfOrNull { findText(it, text) }
+        } finally {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = previousFlags }
         }
     }
 

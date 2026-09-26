@@ -23,7 +23,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -73,6 +72,8 @@ import koharia.connection.ConnectionPreferences
 import koharia.connection.EntryOpenMode
 import koharia.connection.EntryOpenPreferences
 import koharia.connection.SharedAppPreferences
+import koharia.connection.ui.ConnectionSearchResults
+import koharia.connection.ui.ConnectionSearchSortOption
 import koharia.connection.ui.LibraryConnectionSetupPrompt
 import koharia.epub.EpubReaderLauncher
 import koharia.epub.cache.EpubCacheManager
@@ -81,6 +82,7 @@ import koharia.lanraragi.ui.LanraragiArchivePreviewScreen
 import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLibraryScope
 import koharia.source.komga.KomgaServerSettingsScreen
+import koharia.source.komga.SeriesSort
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
@@ -299,26 +301,29 @@ data class KomgaLibraryScreen(
                         onSearchTypeSelect = screenModel::setSearchType,
                     )
 
-                    Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = MaterialTheme.padding.small),
-                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                    ) {
-                        if (state.isUserQuery) {
-                            Surface(
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                shape = MaterialTheme.shapes.small,
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                            ) {
-                                Text(
-                                    text = stringResource(MR.strings.search_results),
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                                    style = MaterialTheme.typography.labelLarge,
-                                )
-                            }
-                        } else if (state.komgaLibraries.isNotEmpty()) {
+                    if (state.isUserQuery) {
+                        val sort = state.listing.filters.filterIsInstance<SeriesSort>().firstOrNull()
+                        ConnectionSearchResults(
+                            options = availableKomgaSortIndices(state.searchType).mapNotNull { index ->
+                                sort?.values?.getOrNull(index)?.let { label ->
+                                    ConnectionSearchSortOption(
+                                        value = index,
+                                        label = komgaFilterLabel(label),
+                                        supportsDirection = index in 1..3,
+                                        defaultAscending = index !in 2..3,
+                                    )
+                                }
+                            },
+                            selected = sort?.state?.index ?: 0,
+                            ascending = sort?.state?.ascending ?: true,
+                            onSelect = screenModel::selectSearchSort,
+                        )
+                    } else if (state.komgaLibraries.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState())
+                                .padding(horizontal = MaterialTheme.padding.small),
+                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                        ) {
                             FilterChip(
                                 selected = state.selectedKomgaLibraryId == null,
                                 onClick = {

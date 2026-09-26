@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material3.AlertDialog
@@ -438,6 +440,7 @@ object SettingsDataScreen : SearchableSettings {
         val scope = rememberCoroutineScope()
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
         val localCacheCleaner = remember { Injekt.get<LocalCacheCleaner>() }
+        val customCovers = remember { Injekt.get<koharia.cover.CustomCoverStore>() }
         val getFavorites = remember { Injekt.get<GetFavorites>() }
         val mangaRepository = remember { Injekt.get<MangaRepository>() }
         val sourceManager = remember { Injekt.get<SourceManager>() }
@@ -470,6 +473,9 @@ object SettingsDataScreen : SearchableSettings {
                                 }
                                 if (CleanupTarget.CoverCache in selections) {
                                     count += localCacheCleaner.clearCoverCache()
+                                }
+                                if (CleanupTarget.RemovedCustomCovers in selections) {
+                                    count += customCovers.clearRemovedLocalCovers()
                                 }
                                 if (CleanupTarget.AllTemporaryCache in selections) {
                                     count += localCacheCleaner.clearAllTemporaryCache()
@@ -667,12 +673,14 @@ object SettingsDataScreen : SearchableSettings {
         var clearChapterCache by rememberSaveable { mutableStateOf(false) }
         var clearCoverCache by rememberSaveable { mutableStateOf(false) }
         var clearAllTemporaryCache by rememberSaveable { mutableStateOf(false) }
+        var clearRemovedCustomCovers by rememberSaveable { mutableStateOf(false) }
 
         val selections = buildSet {
             if (removeDeletedMangaCache) add(CleanupTarget.RemovedMangaCache)
             if (clearChapterCache) add(CleanupTarget.ChapterCache)
             if (clearCoverCache) add(CleanupTarget.CoverCache)
             if (clearAllTemporaryCache) add(CleanupTarget.AllTemporaryCache)
+            if (clearRemovedCustomCovers) add(CleanupTarget.RemovedCustomCovers)
         }
 
         AlertDialog(
@@ -681,7 +689,7 @@ object SettingsDataScreen : SearchableSettings {
                 Text(text = stringResource(MR.strings.pref_manage_local_cache))
             },
             text = {
-                Column {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     CacheCleanupOptionRow(
                         label = stringResource(MR.strings.pref_manage_local_cache_removed_manga),
                         checked = removeDeletedMangaCache,
@@ -702,6 +710,14 @@ object SettingsDataScreen : SearchableSettings {
                         checked = clearAllTemporaryCache,
                         onCheckedChange = { clearAllTemporaryCache = it },
                     )
+                    CacheCleanupOptionRow(
+                        label = stringResource(MR.strings.pref_cleanup_removed_custom_covers),
+                        checked = clearRemovedCustomCovers,
+                        onCheckedChange = { clearRemovedCustomCovers = it },
+                    )
+                    if (clearRemovedCustomCovers) {
+                        Text(stringResource(MR.strings.pref_cleanup_removed_custom_covers_summary))
+                    }
                 }
             },
             confirmButton = {
@@ -745,5 +761,6 @@ object SettingsDataScreen : SearchableSettings {
         ChapterCache,
         CoverCache,
         AllTemporaryCache,
+        RemovedCustomCovers,
     }
 }

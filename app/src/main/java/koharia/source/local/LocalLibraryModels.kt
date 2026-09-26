@@ -71,6 +71,7 @@ data class ResolvedLocalLibraryRoot(
 @OptIn(ExperimentalSerializationApi::class)
 data class LocalLibraryConfig(
     val roots: List<LocalLibraryRootConfig> = emptyList(),
+    val detachedRoots: List<LocalLibraryRootConfig> = emptyList(),
     val bookshelves: List<LocalBookshelf> = emptyList(),
     val enabledContentTypes: Set<LocalLibraryContentType> = setOf(
         LocalLibraryContentType.COMICS,
@@ -202,7 +203,7 @@ class LocalLibraryPreferences(
         return migrated
     }
 
-    fun setConfig(config: LocalLibraryConfig) {
+    fun setConfig(config: LocalLibraryConfig) = synchronized(preferences) {
         val lockedModes = preferences.getString(KEY_CONFIG, null)
             ?.let { runCatching { json.decodeFromString<LocalLibraryConfig>(it) }.getOrNull() }
             ?.takeIf { it.setupCompleted }
@@ -216,6 +217,27 @@ class LocalLibraryPreferences(
         )
         preferences.edit().putString(KEY_CONFIG, json.encodeToString(modeSafeConfig.migrate(sourceId))).apply()
     }
+
+    internal fun coverMaintenanceConfig(): LocalLibraryConfig? = synchronized(preferences) {
+        val stored = preferences.getString(KEY_CONFIG, null) ?: return@synchronized null
+        runCatching { json.decodeFromString<LocalLibraryConfig>(stored) }.getOrNull()
+            ?.takeIf { it.setupCompleted }
+    }
+
+    internal fun withUnchangedConfig(config: LocalLibraryConfig, action: () -> Unit): Boolean =
+        synchronized(preferences) {
+            if (coverMaintenanceConfig() != config) return@synchronized false
+            action()
+            true
+        }
+
+    internal fun rememberCustomCover(url: String) = synchronized(preferences) {
+        val urls = customCoverUrls()
+        if (url !in urls) preferences.edit().putStringSet(KEY_CUSTOM_COVER_URLS, urls + url).apply()
+    }
+
+    internal fun customCoverUrls(): Set<String> =
+        preferences.getStringSet(KEY_CUSTOM_COVER_URLS, emptySet()).orEmpty().toSet()
 
     fun configChanges(): Flow<LocalLibraryConfig> = callbackFlow {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -305,11 +327,22 @@ class LocalLibraryPreferences(
 
     @Synchronized
     internal fun saveLibraryDraft(config: LocalLibraryConfig, assignments: Map<String, String>) {
-        val removedRoots = getConfig().roots.filter { old -> config.roots.none { it.id == old.id } }
+        val previousRoots = getConfig().roots
+        val removedRoots = previousRoots.filter { old -> config.roots.none { it.id == old.id } }
+        val reboundIds = previousRoots.filter { old ->
+            config.roots.any { it.id == old.id && it.directoryKey() != old.directoryKey() }
+        }.mapTo(mutableSetOf(), LocalLibraryRootConfig::id)
         val removedKeys = getIndex().items.filter { item -> removedRoots.any { it.id == item.rootId } }
             .mapTo(mutableSetOf(), LocalLibraryItem::itemKey)
         removedRoots.forEach { removeRoot(it.id) }
-        setConfig(config)
+        if (reboundIds.isNotEmpty()) {
+            val index = getIndex()
+            setIndex(index.copy(items = index.items.filterNot { it.rootId in reboundIds }))
+        }
+        val detached = (getConfig().detachedRoots + config.detachedRoots)
+            .distinctBy(LocalLibraryRootConfig::id)
+            .filterNot { old -> config.roots.any { it.id == old.id } }
+        setConfig(config.copy(detachedRoots = detached))
         preferences.edit()
             .putString(KEY_BOOKSHELF_ASSIGNMENTS, json.encodeToString(assignments - removedKeys))
             .apply()
@@ -365,6 +398,7 @@ class LocalLibraryPreferences(
         setConfig(
             config.copy(
                 roots = remaining,
+                detachedRoots = (config.detachedRoots.filterNot { it.id == removed.id } + removed),
                 managedBaseTreeUri = config.managedBaseTreeUri.takeIf { keepManagedBase }.orEmpty(),
                 managedBaseDisplayPath = config.managedBaseDisplayPath.takeIf { keepManagedBase }.orEmpty(),
             ),
@@ -388,6 +422,7 @@ class LocalLibraryPreferences(
 
     companion object {
         private const val KEY_CONFIG = "local_library_config"
+        private const val KEY_CUSTOM_COVER_URLS = "local_custom_cover_urls"
         private const val KEY_INDEX = "local_library_index"
         private const val KEY_METADATA_OVERRIDES = "local_library_metadata_overrides"
         private const val KEY_BOOKSHELF_ASSIGNMENTS = "local_library_bookshelf_assignments"

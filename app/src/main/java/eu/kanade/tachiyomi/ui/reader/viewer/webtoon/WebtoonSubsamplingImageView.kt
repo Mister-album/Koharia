@@ -14,6 +14,15 @@ class WebtoonSubsamplingImageView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : SubsamplingScaleImageView(context, attrs) {
 
+    override fun getExternalScale(): Float {
+        var ancestor = parent
+        while (ancestor != null) {
+            if (ancestor is WebtoonRecyclerView) return ancestor.scaleX
+            ancestor = ancestor.parent
+        }
+        return 1f
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         return false
     }

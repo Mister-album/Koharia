@@ -112,11 +112,7 @@ fun MangaCoverDialog(
                                 var expanded by remember { mutableStateOf(false) }
                                 IconButton(
                                     onClick = {
-                                        if (isCustomCover || canUseFirstItemAsCover) {
-                                            expanded = true
-                                        } else {
-                                            onEditClick(EditCoverAction.EDIT)
-                                        }
+                                        expanded = true
                                     },
                                 ) {
                                     Icon(
@@ -133,6 +129,13 @@ fun MangaCoverDialog(
                                         text = { Text(text = stringResource(MR.strings.file_select_cover)) },
                                         onClick = {
                                             onEditClick(EditCoverAction.EDIT)
+                                            expanded = false
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(MR.strings.custom_cover_choose_saved)) },
+                                        onClick = {
+                                            onEditClick(EditCoverAction.SAVED)
                                             expanded = false
                                         },
                                     )

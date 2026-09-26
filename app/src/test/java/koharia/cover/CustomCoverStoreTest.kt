@@ -12,6 +12,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
+import koharia.source.local.LocalFolderSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,7 +44,9 @@ class CustomCoverStoreTest {
     private val storageManager = mockk<StorageManager>()
     private val storagePreferences = mockk<StoragePreferences>()
     private val mangaRepository = mockk<MangaRepository>()
-    private val sourceManager = mockk<SourceManager>()
+    private val sourceManager = mockk<SourceManager>().also { manager ->
+        every { manager.get(any()) } returns null
+    }
     private val store = CustomCoverStore(context, storageManager, storagePreferences, mangaRepository, sourceManager) {
         true
     }
@@ -106,6 +109,55 @@ class CustomCoverStoreTest {
     }
 
     @Test
+    fun `cleanup deletes only confirmed removed covers within the owning source`() = runBlocking {
+        val directory = InMemoryCoverDirectory()
+        val source = mockk<LocalFolderSource>()
+        every { source.id } returns 42
+        val store = storeFor(source)
+        coEvery { source.customCoverCandidates() } returns setOf("removed", "active", "offline", "restored")
+        coEvery { source.removeCustomCoverIfMissing(any(), any()) } coAnswers {
+            if (firstArg<String>() == "removed") {
+                secondArg<() -> Unit>().invoke()
+                true
+            } else {
+                false
+            }
+        }
+        val removed = "${SharedCoverFiles.key(42, "removed")}.img"
+        val preserved = listOf("active", "offline", "restored", "unknown").map {
+            "${SharedCoverFiles.key(42, it)}.img"
+        } + "${SharedCoverFiles.key(43, "removed")}.img"
+        (preserved + removed).forEach { directory.put(it, "cover") }
+        every { storageManager.getCustomCoversDirectory() } returns directory.directory
+
+        assertEquals(1, store.clearRemovedLocalCovers())
+        assertEquals(preserved.toSet(), directory.names())
+        assertEquals(1L, store.changes.value)
+    }
+
+    @Test
+    fun `cleanup invalidates cover cache even when provider deletion fails`() {
+        val directory = InMemoryCoverDirectory()
+        val source = mockk<LocalFolderSource>()
+        every { source.id } returns 42
+        val store = storeFor(source)
+        coEvery { source.customCoverCandidates() } returns setOf("removed")
+        coEvery { source.removeCustomCoverIfMissing(any(), any()) } coAnswers {
+            secondArg<() -> Unit>().invoke()
+            true
+        }
+        val key = SharedCoverFiles.key(42, "removed")
+        directory.put("$key.img", "current")
+        directory.put("$key.previous", "previous")
+        directory.failDelete = { it.endsWith(".img") }
+        every { storageManager.getCustomCoversDirectory() } returns directory.directory
+
+        assertThrows(IOException::class.java) { runBlocking { store.clearRemovedLocalCovers() } }
+        assertEquals(setOf("$key.img"), directory.names())
+        assertEquals(1L, store.changes.value)
+    }
+
+    @Test
     fun `legacy private cover migrates once and is removed after verified publication`() = runBlocking {
         val directory = InMemoryCoverDirectory()
         every { storageManager.getCustomCoversDirectory(create = true) } returns directory.directory
@@ -165,6 +217,19 @@ class CustomCoverStoreTest {
             directory.readBytes("${SharedCoverFiles.key(providerManga.source, providerManga.url)}.img")?.toList(),
         )
         assertEquals(false, legacy.exists())
+    }
+
+    private fun storeFor(source: CatalogueSource): CustomCoverStore {
+        val manager = object : SourceManager {
+            override val isInitialized: StateFlow<Boolean> = MutableStateFlow(true)
+            override val catalogueSources: Flow<List<CatalogueSource>> = MutableStateFlow(listOf(source))
+            override fun get(sourceKey: Long): Source? = source.takeIf { it.id == sourceKey }
+            override fun getOrStub(sourceKey: Long): Source = source
+            override fun getOnlineSources(): List<HttpSource> = emptyList()
+            override fun getCatalogueSources(): List<CatalogueSource> = listOf(source)
+            override fun getStubSources(): List<StubSource> = emptyList()
+        }
+        return CustomCoverStore(context, storageManager, storagePreferences, mangaRepository, manager) { true }
     }
 
     private companion object {

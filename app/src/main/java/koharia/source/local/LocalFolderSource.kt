@@ -135,6 +135,21 @@ class LocalFolderSource(
     private val xml: XML by injectLazy()
     private val preferences by lazy { LocalLibraryPreferences(id, json) }
 
+    internal fun rememberCustomCover(url: String) = preferences.rememberCustomCover(url)
+
+    internal suspend fun customCoverCandidates(): Set<String> =
+        preferences.customCoverUrls() + mangaRepository.getMangaBySourceId(id).map(Manga::url)
+
+    internal suspend fun removeCustomCoverIfMissing(url: String, delete: () -> Unit): Boolean =
+        refreshMutex.withLock {
+            val config = preferences.coverMaintenanceConfig() ?: return@withLock false
+            val removed = isRemovedLocalCover(id, url, config) { root, path ->
+                preferences.resolveRoot(context, root)?.let { localCoverEntryExists(context, it, path) }
+            }
+            if (!removed) return@withLock false
+            preferences.withUnchangedConfig(config, delete)
+        }
+
     override fun seriesSettingsAvailable() = preferences.configChanges().map { config ->
         config.roots.any { config.organizationMode(it) == LocalLibraryOrganizationMode.SERIES }
     }
@@ -272,6 +287,7 @@ class LocalFolderSource(
                         }
                         existingMangas.filter { it.url in urls }.forEach { manga ->
                             coverCache.deleteFromCache(manga)
+                            preferences.rememberCustomCover(manga.url)
                             mangaRepository.deleteMangaById(manga.id)
                         }
                         preferences.removeDeletedItems(removedItems.mapTo(mutableSetOf()) { it.itemKey })

@@ -164,6 +164,16 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
         search(value.query)
     }
 
+    fun selectSearchSort(index: Int, ascending: Boolean) {
+        if (index !in 0..3) return
+        val current = state.value
+        applyFilters(
+            current.filter.copy(sort = index, descending = !ascending, randomSeed = kotlin.random.Random.nextInt()),
+            current.downloadedOnly,
+            current.rememberFilters,
+        )
+    }
+
     fun applyFilters(value: LanraragiFilter, downloaded: Boolean, rememberFilters: Boolean) {
         mutableState.update { it.copy(downloadedOnly = downloaded) }
         source.preferences.saveFilter(value, rememberFilters)

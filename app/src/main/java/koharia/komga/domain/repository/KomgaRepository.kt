@@ -72,7 +72,7 @@ class KomgaRepository(
         val supportsSeriesFilters = type == KomgaApiClient.SearchType.SERIES
         return apiClient.searchRequest(
             page = page,
-            query = query,
+            query = if (supportsBookFilters) titleAndTagSearchQuery(normalizeSearchQuery(query)) else query,
             type = type,
             defaultLibraries = defaultLibraries,
             selectedLibraries = filters.selectedLibraries(),
@@ -150,6 +150,28 @@ class KomgaRepository(
         }
     }
 
+    internal fun sortedSearchSession(
+        query: String,
+        filters: FilterList,
+        defaultLibraries: Set<String>,
+        cachePolicy: KomgaCachePolicy,
+        validate: () -> Unit,
+    ): KomgaSortedSearchSession {
+        val (index, ascending) = filters.sortSelection()
+        require(index in 2..3)
+        return KomgaSortedSearchSession(index, ascending, validate) { type, page ->
+            validate()
+            val normalized = normalizeSearchQuery(query)
+            val result = if (query.isNotBlank() && normalized.isBlank()) {
+                MangasPage(emptyList(), false)
+            } else {
+                getSearchMangaPage(page, normalized, type, filters, defaultLibraries, false, cachePolicy)
+            }
+            validate()
+            result
+        }
+    }
+
     private suspend fun getSearchMangaPage(
         page: Int,
         query: String,
@@ -170,9 +192,10 @@ class KomgaRepository(
         val authors = filters.selectedAuthors()
         val oneshot = filters.oneshot()
         val collectionId = filters.collectionId().takeIf { isSeries }
+        val searchQuery = if (type == KomgaApiClient.SearchType.READ_LISTS) query else titleAndTagSearchQuery(query)
         val modernRequest = apiClient.searchListRequest(
             page = page,
-            query = query,
+            query = searchQuery,
             type = type,
             defaultLibraries = defaultLibraries,
             selectedLibraries = selectedLibraries,
@@ -190,7 +213,7 @@ class KomgaRepository(
         )
         val legacyRequest = apiClient.searchRequest(
             page = page,
-            query = query,
+            query = searchQuery,
             type = type,
             defaultLibraries = defaultLibraries,
             selectedLibraries = selectedLibraries,
@@ -430,6 +453,16 @@ internal fun normalizeSearchQuery(query: String): String {
         .replace(SEARCH_DELIMITERS, " ")
         .replace(REPEATED_WHITESPACE, " ")
         .trim()
+}
+
+/** Let Komga union matches before sorting/paging, so a title/tag hit has one stable resource identity. */
+internal fun titleAndTagSearchQuery(query: String): String {
+    if (query.isBlank() || ADVANCED_FIELD_QUERY.containsMatchIn(query) ||
+        Regex("\\b(?:AND|OR|NOT)\\b").containsMatchIn(query)
+    ) {
+        return query
+    }
+    return "($query) OR tag:($query)"
 }
 
 internal fun mergeSearchPages(books: MangasPage, series: MangasPage): MangasPage {

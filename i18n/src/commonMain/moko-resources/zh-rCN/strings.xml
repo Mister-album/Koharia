@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="reader_moire_reduction">抗摩尔纹</string>
+    <string name="reader_moire_reduction_summary">在选定的显示比例下减少漫画网点干扰。会增加处理开销，细节可能略微柔和。</string>
+    <string name="reader_moire_threshold">抗摩尔纹启用阈值</string>
+    <string name="reader_moire_threshold_percent">%1$d%%</string>
+    <string name="reader_moire_threshold_summary">显示比例不超过原图的 %1$d%% 时启用；100%% 表示所有缩小比例。</string>
     <string name="name">名称</string>
     <string name="categories">分类</string>
     <string name="manga">书架中的作品</string>
@@ -1755,4 +1760,24 @@
     <string name="smanga_descending">降序</string>
     <string name="smanga_downloaded">此连接中已下载的内容</string>
     <string name="reader_remote_mapping_message">页序或页数已变化，无法自动匹配阅读位置。本地：第 %1$d / %2$d 页（%3$d%%）；服务器：第 %4$d / %5$d 页（%6$d%%）。请确认使用哪个位置，超出当前页数的远端位置不可选择。</string>
+    <string name="pref_cleanup_removed_custom_covers">已移除本地目录、文件的自定义封面</string>
+    <string name="pref_cleanup_removed_custom_covers_summary">删除这些永久保存的封面后，重新添加目录将无法自动恢复它们。归属不明或仍配置但暂时无法访问的目录所对应的封面会保留。</string>
+    <string name="local_library_detached_directories">曾移除的目录</string>
+    <string name="local_library_reconnect_directory">重新选择此目录或迁移后的位置，恢复原有身份和已保存的封面</string>
+    <string name="custom_cover_choose_saved">使用已保存的自定义封面</string>
+    <string name="custom_cover_saved_empty">当前存储目录中没有已保存的自定义封面。</string>
+    <string name="merged_export_layout">合并图片布局</string>
+    <string name="merged_export_match_height">统一高度</string>
+    <string name="merged_export_original_pixels">原始像素</string>
+    <string name="merged_export_match_height_hint">较矮的页面会被放大至另一页的高度。</string>
+    <string name="merged_export_original_pixels_hint">不缩放页面；较矮的页面垂直居中，空白区域填白。</string>
+    <string name="merged_export_format">合并图片格式</string>
+    <string name="merged_export_lossless">无损自动</string>
+    <string name="merged_export_png">PNG（兼容性优先）</string>
+    <string name="merged_export_jpeg">JPEG（高质量）</string>
+    <string name="merged_export_jpeg_hint">使用质量 95 的有损编码，不降低尺寸；文件大小取决于图片内容。</string>
+    <string name="merged_export_lossless_hint">编码不增加画质损失；自动模式在 PNG 与支持的无损 WebP 中选择较小文件。</string>
+    <string name="pref_double_page_save_mode">双页图片保存方式</string>
+    <string name="pref_double_page_save_merged">保存为合并页面</string>
+    <string name="pref_double_page_save_separate">分别保存当前的双页图片</string>
 </resources>

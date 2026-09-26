@@ -74,6 +74,8 @@ internal fun buildEpubContinuousScrollInstallScript(
             const failedResources = new Set();
             let activeIndex = currentIndex;
             let locationFrame = 0;
+            let locationTimer = 0;
+            let restored = false;
             let lastLocationSentAt = 0;
             let contentPreparationScript = requestedContentPreparationScript;
             let imageInteractionScript = requestedImageInteractionScript;
@@ -99,6 +101,8 @@ internal fun buildEpubContinuousScrollInstallScript(
             style.textContent = `
                 html { height: auto !important; min-height: 100% !important; overflow-y: auto !important; }
                 body { height: auto !important; min-height: 100% !important; overflow: visible !important; }
+                /* Resource height compensation is owned by updateSectionHeight, not Chromium. */
+                html, body { overflow-anchor: none !important; }
                 #koharia-continuous-before, #koharia-continuous-after {
                     display: block !important;
                     width: 100% !important;
@@ -199,6 +203,7 @@ internal fun buildEpubContinuousScrollInstallScript(
                 const iframe = liveFrames.get(index);
                 if (iframe) iframe.style.height = safeHeight + 'px';
                 if (wasAboveViewport) scrolling.scrollTop += safeHeight - oldHeight;
+                scheduleLocation();
             }
 
             function measureFrame(index, iframe) {
@@ -232,6 +237,7 @@ internal fun buildEpubContinuousScrollInstallScript(
                         viewportHeight,
                     );
                     updateSectionHeight(index, height);
+                    scheduleLocation();
                 } catch (_) {
                     // A publication with mixed origins cannot be stitched safely. Its placeholder
                     // remains available and native navigation continues to work as a fallback.
@@ -344,16 +350,16 @@ internal fun buildEpubContinuousScrollInstallScript(
             }
 
             function visibleResource() {
-                const viewportCenter = scrolling.scrollTop + viewportHeight * 0.5;
+                const viewportTop = scrolling.scrollTop + 1;
                 let bestIndex = activeIndex;
                 let bestDistance = Number.POSITIVE_INFINITY;
                 for (let index = 0; index < resources.length; index += 1) {
                     const bounds = sectionBounds(index);
                     if (!bounds) continue;
-                    if (viewportCenter >= bounds.top && viewportCenter < bounds.bottom) return index;
-                    const distance = viewportCenter < bounds.top
-                        ? bounds.top - viewportCenter
-                        : viewportCenter - bounds.bottom;
+                    if (viewportTop >= bounds.top && viewportTop < bounds.bottom) return index;
+                    const distance = viewportTop < bounds.top
+                        ? bounds.top - viewportTop
+                        : viewportTop - bounds.bottom;
                     if (distance < bestDistance) {
                         bestDistance = distance;
                         bestIndex = index;
@@ -364,8 +370,15 @@ internal fun buildEpubContinuousScrollInstallScript(
 
             function notifyLocation(force) {
                 locationFrame = 0;
+                if (!restored) return;
+                clearTimeout(locationTimer);
+                locationTimer = 0;
                 const now = performance.now();
-                if (!force && now - lastLocationSentAt < 90) return;
+                const remaining = 90 - (now - lastLocationSentAt);
+                if (!force && remaining > 0) {
+                    locationTimer = setTimeout(function() { notifyLocation(true); }, remaining);
+                    return;
+                }
                 lastLocationSentAt = now;
                 const nextIndex = visibleResource();
                 if (nextIndex !== activeIndex) {
@@ -378,14 +391,27 @@ internal fun buildEpubContinuousScrollInstallScript(
                     }
                     return;
                 }
-                const bounds = sectionBounds(activeIndex);
-                if (!bounds) return;
-                const localOffset = scrolling.scrollTop - bounds.top;
-                const scrollableHeight = Math.max(1, bounds.height - viewportHeight);
-                const progression = Math.max(0, Math.min(1, localOffset / scrollableHeight));
+                const location = currentLocation();
+                if (!location) return;
                 if (window.KohariaContinuousScroll && window.KohariaContinuousScroll.onLocationChanged) {
-                    window.KohariaContinuousScroll.onLocationChanged(activeIndex, progression);
+                    window.KohariaContinuousScroll.onLocationChanged(location.resourceIndex, location.progression);
                 }
+            }
+
+            function currentLocation() {
+                if (!restored) return null;
+                const index = visibleResource();
+                if (index !== currentIndex) {
+                    const frame = liveFrames.get(index);
+                    if (!frame || frame.style.visibility === 'hidden') return null;
+                }
+                const bounds = sectionBounds(index);
+                if (!bounds) return null;
+                // Readium measures resource progression against its full height, including the viewport.
+                return {
+                    resourceIndex: index,
+                    progression: Math.max(0, Math.min(1, (scrolling.scrollTop - bounds.top) / bounds.height)),
+                };
             }
 
             function scheduleLocation() {
@@ -399,6 +425,7 @@ internal fun buildEpubContinuousScrollInstallScript(
                 currentIndex: currentIndex,
                 resources: resources,
                 notifyLocation: notifyLocation,
+                currentLocation: currentLocation,
                 refresh: function(nextContentPreparationScript, nextImageInteractionScript) {
                     const nextReadingStyleSignature = JSON.stringify(readingStyles());
                     if (contentPreparationScript === nextContentPreparationScript &&
@@ -419,9 +446,12 @@ internal fun buildEpubContinuousScrollInstallScript(
             requestAnimationFrame(function() {
                 const currentBounds = sectionBounds(currentIndex);
                 if (currentBounds) {
-                    scrolling.scrollTop = currentBounds.top +
-                        initialProgression * Math.max(0, currentBounds.height - viewportHeight);
+                    const offset = initialProgression === 1
+                        ? Math.max(0, currentBounds.height - viewportHeight)
+                        : initialProgression * currentBounds.height;
+                    scrolling.scrollTop = currentBounds.top + offset;
                 }
+                restored = true;
                 notifyLocation(true);
             });
             return 'installed';
