@@ -6,7 +6,7 @@
 
 # Koharia
 
-An Android comic and book reader for Komga, LANraragi, smanga, and local media libraries
+An Android comic and book reader for Komga, Kavita, LANraragi, smanga, and local media libraries
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0877d2?labelColor=27303D)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Mister-album/Koharia?label=release)](https://github.com/Mister-album/Koharia/releases/latest)
@@ -15,7 +15,7 @@ An Android comic and book reader for Komga, LANraragi, smanga, and local media l
 
 ## Overview
 
-Koharia is a third-party Android client and reader for [Komga](https://komga.org/), [LANraragi](https://github.com/Difegue/LANraragi), and [smanga](https://github.com/lkw199711/smanga) servers, as well as local media libraries. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, MOBI, and Markdown. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app. Supported formats and synchronization features vary by source, as described below.
+Koharia is a third-party Android client and reader for [Komga](https://komga.org/), [Kavita](https://www.kavitareader.com/), [LANraragi](https://github.com/Difegue/LANraragi), and [smanga](https://github.com/lkw199711/smanga) servers, as well as local media libraries. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, MOBI, and Markdown. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app. Supported formats and synchronization features vary by source, as described below.
 
 The project is built on the mature Android reading foundation of [Mihon](https://github.com/mihonapp/mihon). Koharia does not provide or host any content. What you can browse depends on the servers you connect to, your account permissions, and the local directories you explicitly grant the app access to.
 
@@ -59,6 +59,18 @@ Koharia focuses on reading from personal media libraries. It does not provide pu
 - Read comics in paged, continuous scrolling, or dual-page modes, and EPUB books in the reflowable reader.
 - Online reading, manual downloads, offline access, and synchronization of supported reading progress and history with the server.
 - Shelf data is cached locally and shown first; manual refresh and server update events retrieve changes.
+
+### Kavita libraries
+
+- Built-in integration without a Mihon extension, targeting **Kavita 0.8.0 and later**. Available features depend on the server version and account permissions.
+- Multiple servers and accounts, reverse-proxy subpaths, and an optional LAN address for the same server. Account data, caches, and reading records are isolated by connection.
+- Separate comics and books according to the server library type, retain series, volumes, and chapters, and browse covers, details, and search results.
+- A bottom sheet separates sorting from common filters: library, format, publication status, genre, tags, collections, language, age rating, and Want to Read.
+- Comics use the paged or scrolling reader; EPUB uses the native reflowable reader; PDF offers page rendering and a reflow entry point. Online EPUB reading uses the server reading API without requiring original-file download permission.
+- Reading progress is saved locally before asynchronous synchronization, with history, pending offline updates, and progress conflict selection. EPUB synchronization uses content locations rather than device-dependent visual page counts.
+- Access Want to Read, collections, cross-series reading lists, and Smart Filters, along with comic page bookmarks, personal table-of-contents bookmarks, and EPUB highlights and notes, subject to server version and permissions.
+- Custom shelves in connection settings let you change the visibility and order of shelves on your Kavita homepage. Changes sync immediately; removing a custom shelf does not delete books or its saved filter.
+- Manual downloads and explicit offline saving respect server permissions. Cached shelf metadata does not mean the content has been downloaded. Basic reading does not require Kavita+; subscription features are supplied by the server.
 
 ### LANraragi libraries
 
@@ -141,7 +153,7 @@ Xiaomi MiMo TTS is **currently available for a free, limited-time trial**. You c
 
 ### Progress, offline access, and data management
 
-- Komga, LANraragi, and smanga shelves show existing local cache first. Missing data is fetched on demand, with manual refresh available afterward; Komga also responds to server update events.
+- Komga, Kavita, LANraragi, and smanga shelves show existing local cache first. Missing data is fetched on demand, with manual refresh available afterward; Komga and Kavita also respond to server update events.
 - Saves local reading positions, history, and bookmarks, and synchronizes supported reading progress with the server.
 - Manual downloads, book cache, and comic page cache use separate policies; cached content is never incorrectly marked as downloaded.
 - Cache size limits, on-demand resource loading, offline access, and server-specific download directories.
@@ -165,7 +177,15 @@ Common validation commands:
 
 ```powershell
 .\gradlew.bat spotlessCheck
+.\gradlew.bat verifyEInkMotion
 .\gradlew.bat :app:compileDebugKotlin
+```
+
+For CI-aligned validation, also run unit tests and database migration checks:
+
+```powershell
+.\gradlew.bat testDebugUnitTest
+.\gradlew.bat verifySqlDelightMigration
 ```
 
 Build a release APK:
@@ -180,7 +200,7 @@ Release signing reads the local `keystore.properties` file. You normally do not 
 
 Koharia is based on [Mihon](https://github.com/mihonapp/mihon) and is distributed under the Apache License 2.0. License and attribution details are available in [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for contribution guidelines. If you redistribute Koharia or create a derivative project, retain the required attribution and do not describe it as an official Mihon, Komga, LANraragi, or smanga release.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for contribution guidelines. If you redistribute Koharia or create a derivative project, retain the required attribution and do not describe it as an official Mihon, Komga, Kavita, LANraragi, or smanga release.
 
 ## Acknowledgements
 

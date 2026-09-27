@@ -6,7 +6,7 @@
 
 # Koharia
 
-面向 Komga、LANraragi、smanga 与本地媒体库的 Android 漫画和书籍阅读器
+面向 Komga、Kavita、LANraragi、smanga 与本地媒体库的 Android 漫画和书籍阅读器
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0877d2?labelColor=27303D)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Mister-album/Koharia?label=release)](https://github.com/Mister-album/Koharia/releases/latest)
@@ -15,7 +15,7 @@
 
 ## 项目简介
 
-Koharia 是一款面向 [Komga](https://komga.org/)、[LANraragi](https://github.com/Difegue/LANraragi)、[smanga](https://github.com/lkw199711/smanga) 服务器与本地媒体库的第三方 Android 客户端和阅读器。它为漫画、扫描图像内容、PDF 以及 EPUB、TXT、MOBI、Markdown 等可重排书籍提供对应的阅读体验，并将内容浏览、作品详情、阅读进度、离线访问与阅读设置整合在同一个应用中。不同来源的格式与同步能力见下方说明。
+Koharia 是一款面向 [Komga](https://komga.org/)、[Kavita](https://www.kavitareader.com/)、[LANraragi](https://github.com/Difegue/LANraragi)、[smanga](https://github.com/lkw199711/smanga) 服务器与本地媒体库的第三方 Android 客户端和阅读器。它为漫画、扫描图像内容、PDF 以及 EPUB、TXT、MOBI、Markdown 等可重排书籍提供对应的阅读体验，并将内容浏览、作品详情、阅读进度、离线访问与阅读设置整合在同一个应用中。不同来源的格式与同步能力见下方说明。
 
 项目基于 [Mihon](https://github.com/mihonapp/mihon) 的成熟 Android 阅读基础持续开发。Koharia 不提供或托管内容，你能浏览的作品取决于所连接的服务器、账号权限以及主动授权给应用的本地目录。
 
@@ -59,6 +59,18 @@ Koharia 专注于个人媒体库阅读，不提供公共在线内容源，也不
 - 漫画使用分页、连续滚动或双页阅读；EPUB 使用可重排书籍阅读器。
 - 支持在线阅读、手动下载和离线访问，并与服务器同步支持的阅读进度及历史记录。
 - 书架数据缓存到本地，优先显示已有内容；可手动刷新，也可响应服务器更新事件。
+
+### Kavita 书库
+
+- 内置 Kavita 接入，无需安装 Mihon 扩展；以 **Kavita 0.8.0 及以上版本**为兼容目标，按服务器版本和账号权限提供功能。
+- 支持多个服务器和账号、反向代理子路径，以及同一服务器的可选内网地址；账号、缓存与阅读记录按连接隔离。
+- 根据服务器媒体库类型区分漫画与书籍，保留系列、卷和章节结构，支持封面浏览、作品详情及搜索。
+- 筛选和排序使用底部面板，提供媒体库、格式、出版状态、题材、标签、合集、语言、年龄分级和想读等常用筛选。
+- 漫画使用分页或连续滚动阅读器，EPUB 使用原生可重排阅读器，PDF 支持按页阅读及重排入口。在线 EPUB 通过阅读接口加载，不要求原文件下载权限。
+- 阅读进度先保存在本地，再异步同步；支持历史记录、离线待同步记录和进度冲突选择。EPUB 使用内容位置同步，不将设备排版产生的视觉页数上传为服务器页码。
+- 提供想读、合集、跨系列阅读列表及智能筛选相关入口；支持漫画页收藏、个人目录书签和 EPUB 高亮、注释，具体能力受版本与权限限制。
+- 连接编辑中的“自定义书架”可调整 Kavita 首页书架的显示和顺序，修改立即同步到服务器；移除自定义书架不会删除书籍或对应筛选。
+- 手动下载与主动离线保存遵守服务器权限；书架元数据缓存不等于正文已下载。无 Kavita+ 订阅也可使用基础阅读功能，订阅相关内容由服务器提供。
 
 ### LANraragi 书库
 
@@ -141,7 +153,7 @@ DJVU 解码器由系统 WebView 的 JavaScript / WebAssembly 运行时执行，�
 
 ### 进度、离线与数据管理
 
-- Komga、LANraragi 与 smanga 书架优先显示已有本地缓存；缺少所请求的数据时按需获取，后续可手动刷新，Komga 还可响应服务器更新事件。
+- Komga、Kavita、LANraragi 与 smanga 书架优先显示已有本地缓存；缺少所请求的数据时按需获取，后续可手动刷新，Komga 与 Kavita 还可响应服务器更新事件。
 - 保存本地阅读位置、历史记录和书签，并与服务器同步支持的阅读进度。
 - 手动下载、书籍缓存和漫画页面缓存使用独立策略，缓存不会被误标记为已下载内容。
 - 支持缓存容量限制、按需资源读取、离线访问，以及按服务器组织下载目录。
@@ -165,7 +177,15 @@ DJVU 解码器由系统 WebView 的 JavaScript / WebAssembly 运行时执行，�
 
 ```powershell
 .\gradlew.bat spotlessCheck
+.\gradlew.bat verifyEInkMotion
 .\gradlew.bat :app:compileDebugKotlin
+```
+
+与 CI 对齐时，还需执行单元测试和数据库迁移检查：
+
+```powershell
+.\gradlew.bat testDebugUnitTest
+.\gradlew.bat verifySqlDelightMigration
 ```
 
 生成发布包：
@@ -180,7 +200,7 @@ DJVU 解码器由系统 WebView 的 JavaScript / WebAssembly 运行时执行，�
 
 Koharia 基于 [Mihon](https://github.com/mihonapp/mihon) 开发，并遵循 Apache License 2.0。许可证与署名信息见 [LICENSE](./LICENSE) 和 [NOTICE](./NOTICE)。
 
-贡献相关说明见 [CONTRIBUTING.md](./CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)。再分发或制作衍生版本时，请保留必要署名，并避免将其描述为 Mihon、Komga、LANraragi 或 smanga 的官方版本。
+贡献相关说明见 [CONTRIBUTING.md](./CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)。再分发或制作衍生版本时，请保留必要署名，并避免将其描述为 Mihon、Komga、Kavita、LANraragi 或 smanga 的官方版本。
 
 ## 致谢
 
