@@ -447,6 +447,15 @@ class Downloader(
      * @param download the chapter to be downloaded.
      */
     private suspend fun downloadChapter(download: Download) {
+        try {
+            (download.source as? koharia.connection.ConnectionDownloadAuthorizationAdapter)
+                ?.authorizeDownload(download.chapter.url)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            download.status = Download.State.ERROR
+            notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
+            return
+        }
         val mangaDir = provider.getMangaDir(download.manga.title, download.source).getOrElse { e ->
             download.status = Download.State.ERROR
             notifier.onError(e.message, download.chapter.name, download.manga.title, download.manga.id)

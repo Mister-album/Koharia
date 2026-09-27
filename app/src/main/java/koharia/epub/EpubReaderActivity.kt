@@ -153,6 +153,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     companion object {
         const val EXTRA_PDF_REFLOW_REQUESTED = "pdf_reflow_requested"
+        const val EXTRA_REMOTE_BOOKMARK_LOCATOR = "remote_bookmark_locator"
         private const val READER_EDGE_PADDING_DP = 8
         private const val PAGINATION_SETTINGS_DEBOUNCE_MS = 250L
         private const val PAGINATION_VIEWPORT_DEBOUNCE_MS = 250L
@@ -299,6 +300,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private var lastTouchYFraction: Float? = null
     private var lastTouchPositionTimeMs = 0L
 
+    private val readingQueue by lazy { koharia.connection.ConnectionReadingQueueController(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (needsSharedConfigSelection()) {
             configStartupDeferred = true
@@ -315,6 +318,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         super.onCreate(savedInstanceState)
+        readingQueue.start()
         removeRestoredReaderWithoutSession(savedInstanceState)
 
         viewModel.setPublisherStylesOverride(
@@ -360,6 +364,40 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             val scope = rememberCoroutineScope()
             var activePanel by rememberSaveable { mutableStateOf(EpubBottomPanel.NONE) }
             var showBookInfoDialog by rememberSaveable { mutableStateOf(false) }
+            var showAnnotations by remember { mutableStateOf(false) }
+            var showRemoteToc by remember { mutableStateOf(false) }
+            var remoteBookmarkLocator by remember { mutableStateOf<Locator?>(null) }
+            val bookmarkAdapter = if (state.isReady) viewModel.remoteBookmarks() else null
+            LaunchedEffect(state.isReady, state.sessionToken) {
+                if (!state.isReady || bookmarkAdapter == null) return@LaunchedEffect
+                val raw = intent.getStringExtra(EXTRA_REMOTE_BOOKMARK_LOCATOR) ?: return@LaunchedEffect
+                val target = runCatching { Locator.fromJSON(org.json.JSONObject(raw)) }.getOrNull()
+                    ?: return@LaunchedEffect
+                kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                    while (epubReaderFragment()?.goTo(target) != true) kotlinx.coroutines.delay(50)
+                    intent.removeExtra(EXTRA_REMOTE_BOOKMARK_LOCATOR)
+                }
+            }
+            var annotationSelection by remember {
+                mutableStateOf<koharia.connection.ConnectionTextSelection?>(null)
+            }
+            val annotationAdapter = if (state.isReady) viewModel.remoteAnnotations() else null
+            LaunchedEffect(annotationAdapter, state.sessionToken) {
+                val (adapter, url) = annotationAdapter ?: return@LaunchedEffect
+                suspend fun updateHighlights() {
+                    try {
+                        val highlights = withContext(Dispatchers.IO) { adapter.annotationHighlights(url) }
+                        kotlinx.coroutines.withTimeoutOrNull(5_000) {
+                            while (epubReaderFragment() == null) kotlinx.coroutines.delay(50)
+                            epubReaderFragment()?.setRemoteHighlights(highlights)
+                        }
+                    } catch (failure: Exception) {
+                        if (failure is kotlinx.coroutines.CancellationException) throw failure
+                    }
+                }
+                updateHighlights()
+                adapter.annotationChanges(url).collect { updateHighlights() }
+            }
             var showFontPicker by rememberSaveable(state.chapterId) { mutableStateOf(false) }
             var showTtsDisclosureDialog by rememberSaveable { mutableStateOf(false) }
             val currentTheme by epubLayoutPreferences.theme.changes().collectAsState(epubLayoutPreferences.theme.get())
@@ -663,9 +701,23 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                             state.paginationPhase.hasAccuratePageCount
                                     },
                                 enabledPreviousChapter = adjacentTocEntries.first != null ||
-                                    state.previousBookChapterId != null,
+                                    (
+                                        if (readingQueue.active) {
+                                            readingQueue.position?.previous != null
+                                        } else {
+                                            state.previousBookChapterId !=
+                                                null
+                                        }
+                                        ),
                                 enabledNextChapter = adjacentTocEntries.second != null ||
-                                    state.nextBookChapterId != null,
+                                    (
+                                        if (readingQueue.active) {
+                                            readingQueue.position?.next != null
+                                        } else {
+                                            state.nextBookChapterId !=
+                                                null
+                                        }
+                                        ),
                                 onPositionChange = { index ->
                                     viewModel.locatorAtPosition(index)?.let { locator ->
                                         epubReaderFragment()?.goTo(locator)
@@ -795,6 +847,28 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                 morePanel = {
                                     EpubReaderMorePanel(
                                         state = state,
+                                        onRemoteBookmarks = bookmarkAdapter?.takeIf {
+                                            it.first.supportsPersonalToc(it.second)
+                                        }?.let {
+                                            {
+                                                scope.launch {
+                                                    remoteBookmarkLocator =
+                                                        epubReaderFragment()?.captureRemoteBookmarkLocator()
+                                                    activePanel = EpubBottomPanel.NONE
+                                                    showRemoteToc = true
+                                                }
+                                            }
+                                        },
+                                        onAnnotations = annotationAdapter?.let {
+                                            {
+                                                scope.launch {
+                                                    annotationSelection =
+                                                        epubReaderFragment()?.captureAnnotationSelection()
+                                                    activePanel = EpubBottomPanel.NONE
+                                                    showAnnotations = true
+                                                }
+                                            }
+                                        },
                                         isPdfReflow = intent.getStringExtra("pdf_reflow_revision") != null ||
                                             intent.getBooleanExtra(EXTRA_PDF_REFLOW_REQUESTED, false),
                                         onOpenAsPages = {
@@ -1082,6 +1156,15 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     onDismissRequest = { showBookInfoDialog = false },
                 )
             }
+            if (showAnnotations && annotationAdapter != null) {
+                annotationAdapter.first.AnnotationsDialog(
+                    chapterUrl = annotationAdapter.second,
+                    selection = annotationSelection,
+                    readOnly = state.isIncognito,
+                    onNavigate = { epubReaderFragment()?.goTo(it) },
+                    onDismiss = { showAnnotations = false },
+                )
+            }
 
             EpubImageOverlay(
                 state = imageState,
@@ -1094,7 +1177,29 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 onShare = { viewModel.shareSelectedImage(copyToClipboard = false) },
                 onCopy = { viewModel.shareSelectedImage(copyToClipboard = true) },
                 onSetAsCover = viewModel::setSelectedImageAsCover,
+                remoteBookmark = bookmarkAdapter?.let { adapter ->
+                    imageState.reference?.takeIf { it.serverImageOffset >= 0 }?.let { reference ->
+                        {
+                            adapter.first.BookmarkAction(
+                                adapter.second,
+                                reference.resourceIndex,
+                                reference.serverImageOffset,
+                                reference.serverAnchor,
+                                state.isIncognito,
+                            )
+                        }
+                    }
+                },
             )
+            if (showRemoteToc && bookmarkAdapter != null) {
+                bookmarkAdapter.first.PersonalTocDialog(
+                    bookmarkAdapter.second,
+                    remoteBookmarkLocator,
+                    state.isIncognito,
+                    { epubReaderFragment()?.goTo(it) },
+                    { showRemoteToc = false },
+                )
+            }
 
             EpubFootnotePopup(
                 state = footnoteState,
@@ -1269,6 +1374,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     override fun onTap(positionX: Float, positionY: Float): Boolean {
         if (viewModel.imageState.value.isVisible || viewModel.footnoteState.value != null) return true
+        if (viewModel.state.value.menuVisible) {
+            viewModel.showMenus(false)
+            return true
+        }
         val turnOrigin = PageTurnOrigin(positionX, positionY, PageTurnCause.TAP).normalized()
         val isRightToLeft = epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
             epubLayoutPreferences.pageDirection.get() == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
@@ -1305,6 +1414,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onManualReadingNavigation(dragging: Boolean) {
+        viewModel.onManualReadingNavigation()
         val session = ttsProgressNotifier.progress.value.session ?: return
         if (!viewModel.isCurrentTtsSession(session) ||
             viewModel.state.value.ttsPlaybackState == koharia.tts.TtsPlaybackState.STOPPED
@@ -1345,12 +1455,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             startActivity(
                 IncomingMediaNavigation.inheritTemporaryMediaUri(
                     from = intent,
-                    target = ReaderActivity.newIntent(
-                        this@EpubReaderActivity,
-                        state.mangaId,
-                        state.chapterId,
-                        sourceId,
-                        pageIndex = viewModel.currentOriginalPdfPage(),
+                    target = readingQueue.inherit(
+                        ReaderActivity.newIntent(
+                            this@EpubReaderActivity,
+                            state.mangaId,
+                            state.chapterId,
+                            sourceId,
+                            pageIndex = viewModel.currentOriginalPdfPage(),
+                        ),
                     ),
                 ),
             )
@@ -1937,6 +2049,13 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             return
         }
 
+        if (readingQueue.active) {
+            readingQueue.navigate(forward) {
+                epubReaderFragment()?.captureContinuousScrollProgress()
+                viewModel.saveCurrentProgress()
+            }
+            return
+        }
         val adjacentBookChapterId = if (forward) state.nextBookChapterId else state.previousBookChapterId
         adjacentBookChapterId?.let(::openAdjacentBook)
     }

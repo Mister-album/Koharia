@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.data.backup.models.BackupEpubBookmark
 import eu.kanade.tachiyomi.data.backup.models.BackupEpubProgress
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupTtsProgress
+import eu.kanade.tachiyomi.data.backup.providers.BackupKavitaState
 import eu.kanade.tachiyomi.data.backup.providers.BackupLanraragiState
 import eu.kanade.tachiyomi.data.backup.providers.BackupSmangaHistoryEvent
 import eu.kanade.tachiyomi.data.backup.providers.BackupSmangaReadState
@@ -20,6 +21,25 @@ class BackupReadingStateTest {
             epubBookmarks = listOf(BackupEpubBookmark("chapter/1", "bookmark", "Section", 0.25, "note", 80))
             ttsProgress = listOf(BackupTtsProgress("chapter/1", 12, 70))
             lanraragiState = listOf(BackupLanraragiState("chapter/1", 4, 12, 60, pending = true))
+            kavitaState = listOf(
+                BackupKavitaState("/kavita/42/account/chapter/1/2/3/4.epub", """{"anchor":"//body/p[2]"}""", 7, true),
+                BackupKavitaState(
+                    "/kavita/42/account/chapter/1/2/3/4.epub",
+                    """{"desired":false}""",
+                    8,
+                    true,
+                    "bookmark/IMAGE/4/0/0",
+                ),
+            )
+            kavitaAnnotations = listOf(
+                eu.kanade.tachiyomi.data.backup.providers.BackupKavitaAnnotation(
+                    "/kavita/42/account/chapter/1/2/3/4.epub",
+                    "local-id",
+                    """{"deleted":true,"conflict":true,"submittedCreate":{"id":0}}""",
+                    3,
+                    true,
+                ),
+            )
             smangaState = listOf(
                 BackupSmangaState(
                     "chapter/1",
@@ -40,5 +60,7 @@ class BackupReadingStateTest {
         assertEquals(manga.ttsProgress, restored.ttsProgress)
         assertEquals(manga.lanraragiState, restored.lanraragiState)
         assertEquals(manga.smangaState, restored.smangaState)
+        assertEquals(manga.kavitaState, restored.kavitaState)
+        assertEquals(manga.kavitaAnnotations, restored.kavitaAnnotations)
     }
 }

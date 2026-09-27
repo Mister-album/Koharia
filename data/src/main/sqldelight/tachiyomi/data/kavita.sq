@@ -1,0 +1,88 @@
+import kotlin.Boolean;
+
+CREATE TABLE kavita_cache (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    group_key TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    stale INTEGER AS Boolean NOT NULL DEFAULT 0,
+    PRIMARY KEY (connection_id, account_key, group_key, cache_key)
+);
+
+CREATE TABLE kavita_operation (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    operation_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    pending INTEGER AS Boolean NOT NULL,
+    PRIMARY KEY (connection_id, account_key, operation_key)
+);
+
+CREATE TABLE kavita_annotation (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    annotation_key TEXT NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    remote_id INTEGER,
+    payload TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    pending INTEGER AS Boolean NOT NULL,
+    PRIMARY KEY (connection_id, account_key, annotation_key),
+    UNIQUE (connection_id, account_key, remote_id)
+);
+
+getAnnotations:
+SELECT annotation_key, chapter_id, remote_id, payload, revision, pending FROM kavita_annotation
+WHERE connection_id = :connectionId AND account_key = :account
+AND (:chapterId IS NULL OR chapter_id = :chapterId);
+
+putAnnotation:
+INSERT INTO kavita_annotation
+VALUES (:connectionId, :account, :key, :chapterId, :remoteId, :payload, :revision, :pending)
+ON CONFLICT(connection_id, account_key, annotation_key) DO UPDATE SET
+chapter_id = excluded.chapter_id, remote_id = excluded.remote_id, payload = excluded.payload,
+revision = excluded.revision, pending = excluded.pending;
+
+removeConnectionAnnotations:
+DELETE FROM kavita_annotation WHERE connection_id = :connectionId;
+
+getCache:
+SELECT cache_key, payload, generation, stale FROM kavita_cache
+WHERE connection_id = :connectionId AND account_key = :account AND group_key = :groupKey AND cache_key = :key;
+
+getEntries:
+SELECT cache_key, payload, generation, stale FROM kavita_cache
+WHERE connection_id = :connectionId AND account_key = :account AND group_key = :groupKey;
+
+putCache:
+INSERT OR REPLACE INTO kavita_cache VALUES (:connectionId, :account, :groupKey, :key, :payload, :generation, :stale);
+
+removeGroup:
+DELETE FROM kavita_cache WHERE connection_id = :connectionId AND account_key = :account AND group_key = :groupKey;
+
+invalidate:
+UPDATE kavita_cache SET stale = 1 WHERE connection_id = :connectionId AND account_key = :account;
+
+getOperations:
+SELECT operation_key, payload, revision, pending FROM kavita_operation
+WHERE connection_id = :connectionId AND account_key = :account;
+
+invalidateGroup:
+UPDATE kavita_cache SET stale = 1
+WHERE connection_id = :connectionId AND account_key = :account AND group_key LIKE :pattern ESCAPE '\';
+
+putOperation:
+INSERT OR REPLACE INTO kavita_operation VALUES (:connectionId, :account, :key, :payload, :revision, :pending);
+
+acknowledge:
+UPDATE kavita_operation SET pending = 0
+WHERE connection_id = :connectionId AND account_key = :account AND operation_key = :key AND revision = :revision;
+
+removeConnectionCache:
+DELETE FROM kavita_cache WHERE connection_id = :connectionId;
+
+removeConnectionOperations:
+DELETE FROM kavita_operation WHERE connection_id = :connectionId;

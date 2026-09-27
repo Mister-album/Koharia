@@ -63,6 +63,7 @@ internal fun EpubImageOverlay(
     onShare: () -> Unit,
     onCopy: () -> Unit,
     onSetAsCover: () -> Unit,
+    remoteBookmark: (@Composable () -> Unit)? = null,
 ) {
     if (state.previewVisible) {
         BackHandler(enabled = !state.actionsVisible, onBack = onClosePreview)
@@ -83,6 +84,7 @@ internal fun EpubImageOverlay(
             onShare = onShare,
             onCopy = onCopy,
             onSetAsCover = onSetAsCover,
+            remoteBookmark = remoteBookmark,
         )
     }
 }
@@ -220,6 +222,7 @@ private fun EpubImageActionsSheet(
     onShare: () -> Unit,
     onCopy: () -> Unit,
     onSetAsCover: () -> Unit,
+    remoteBookmark: (@Composable () -> Unit)?,
 ) {
     var showSetCoverDialog by remember { mutableStateOf(false) }
 
@@ -242,6 +245,7 @@ private fun EpubImageActionsSheet(
                 modifier = Modifier.padding(vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
             ) {
+                remoteBookmark?.invoke()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),

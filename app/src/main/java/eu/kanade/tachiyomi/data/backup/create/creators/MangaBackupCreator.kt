@@ -96,6 +96,10 @@ class MangaBackupCreator(
                     }
                 }
             mangaObject.lanraragiState = lanraragiStateBackupAdapter.capture(manga.id, chapterUrlsById)
+            mangaObject.kavitaState = eu.kanade.tachiyomi.data.backup.providers.KavitaStateBackupAdapter()
+                .capture(manga.id, chapterUrlsById)
+            mangaObject.kavitaAnnotations = eu.kanade.tachiyomi.data.backup.providers.KavitaStateBackupAdapter()
+                .captureAnnotations(manga.id, chapterUrlsById)
             mangaObject.smangaState = smangaStateBackupAdapter.capture(manga.id, chapterUrlsById)
                 .map { if (options.history) it else it.copy(pendingHistoryEvents = emptyList()) }
                 .filter {

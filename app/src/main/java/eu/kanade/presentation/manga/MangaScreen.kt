@@ -365,6 +365,7 @@ private fun MangaScreenSmallImpl(
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
                 onClickEditSeriesDetails = onEditSeriesDetailsClicked,
+                onClickConnectionActions = connectionSeriesActions(state.source, state.manga),
                 onClickEditCategory = onEditCategoryClicked,
                 editCategoryAsLibraryShelf = state.source is ConnectionLibraryShelfAdapter,
                 onClickRefresh = onRefresh,
@@ -625,6 +626,7 @@ fun MangaScreenLargeImpl(
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
                 onClickEditSeriesDetails = onEditSeriesDetailsClicked,
+                onClickConnectionActions = connectionSeriesActions(state.source, state.manga),
                 onClickEditCategory = onEditCategoryClicked,
                 editCategoryAsLibraryShelf = state.source is ConnectionLibraryShelfAdapter,
                 onClickRefresh = onRefresh,
@@ -1406,4 +1408,11 @@ private fun onChapterItemClick(
         isAnyChapterSelected -> onToggleSelection(true)
         else -> onChapterClicked(chapterItem.chapter)
     }
+}
+
+@Composable
+private fun connectionSeriesActions(source: Source, manga: Manga): (() -> Unit)? {
+    val adapter = source as? koharia.connection.ConnectionSeriesActionsAdapter ?: return null
+    val navigator = cafe.adriel.voyager.navigator.LocalNavigator.current ?: return null
+    return { navigator.push(adapter.seriesActionsScreen(manga)) }
 }

@@ -65,6 +65,47 @@ interface ConnectionCatalogAdapter {
     suspend fun getChapterList(manga: SManga, forceNetwork: Boolean): List<SChapter>
 }
 
+data class ConnectionTextSelection(
+    val locator: Locator,
+    val startAnchor: String,
+    val endAnchor: String,
+    val text: String,
+)
+
+/** Optional provider UI keeps remote annotation contracts outside the public Source ABI. */
+interface ConnectionRemoteAnnotationsAdapter {
+    fun supportsRemoteAnnotations(chapterUrl: String): Boolean
+    fun annotationChanges(chapterUrl: String): Flow<Unit> = flowOf()
+    suspend fun annotationHighlights(chapterUrl: String): List<ConnectionTextHighlight> = emptyList()
+
+    @Composable
+    fun AnnotationsDialog(
+        chapterUrl: String,
+        selection: ConnectionTextSelection?,
+        readOnly: Boolean,
+        onNavigate: (Locator) -> Unit,
+        onDismiss: () -> Unit,
+    )
+}
+
+data class ConnectionTextHighlight(val selection: ConnectionTextSelection, val slot: Int, val color: String? = null)
+
+interface ConnectionRemoteBookmarksAdapter {
+    fun supportsPersonalToc(chapterUrl: String): Boolean = false
+
+    @Composable
+    fun BookmarkAction(chapterUrl: String, page: Int, imageOffset: Int, anchor: String, readOnly: Boolean)
+
+    @Composable
+    fun PersonalTocDialog(
+        chapterUrl: String,
+        locator: Locator?,
+        readOnly: Boolean,
+        onNavigate: (Locator) -> Unit,
+        onDismiss: () -> Unit,
+    )
+}
+
 @Serializable
 data class ConnectionPageMetadata(
     val width: Int? = null,
@@ -355,6 +396,11 @@ interface ConnectionRawDownloadAdapter {
     suspend fun validateRawDownload(file: UniFile) = Unit
 }
 
+/** Recheck server permissions when an explicit download starts, including restored queue items. */
+interface ConnectionDownloadAuthorizationAdapter {
+    suspend fun authorizeDownload(resourceUrl: String)
+}
+
 interface ConnectionDownloadStorageAdapter {
     val usesSharedDownloadStorage: Boolean
 
@@ -541,3 +587,34 @@ data class RemoteEpubProgression(
     val locator: Locator,
     val modifiedAt: java.util.Date,
 )
+
+/** An optional durable queue, independent of whether the server is currently reachable. */
+interface ConnectionLocalEpubProgressAdapter {
+    suspend fun recordLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: java.util.Date)
+    suspend fun acceptRemoteEpubProgress(resourceId: String, locator: Locator, modifiedAt: java.util.Date)
+    suspend fun confirmLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: java.util.Date)
+}
+
+/** Opt in when original PDF pages can use the provider's ordinary progress negotiation. */
+interface ConnectionReflowProgressAdapter : ConnectionPageProgressAdapter, ConnectionLocalPageProgressAdapter
+
+/** A persisted ordered context; chapter ownership and progress remain with their original series. */
+interface ConnectionReadingQueueAdapter {
+    suspend fun readingQueuePosition(context: String, chapterUrl: String): ConnectionReadingQueuePosition
+    suspend fun resolveReadingQueueChapter(context: String, chapterUrl: String): ConnectionReadingQueueChapter
+}
+
+/** Provider-specific personal organization and reading actions exposed from a canonical series. */
+interface ConnectionSeriesActionsAdapter {
+    fun seriesActionsScreen(manga: Manga): cafe.adriel.voyager.core.screen.Screen
+}
+
+data class ConnectionReadingQueuePosition(
+    val title: String,
+    val index: Int,
+    val size: Int,
+    val previous: String?,
+    val next: String?,
+)
+
+data class ConnectionReadingQueueChapter(val mangaId: Long, val chapterId: Long, val chapterUrl: String)

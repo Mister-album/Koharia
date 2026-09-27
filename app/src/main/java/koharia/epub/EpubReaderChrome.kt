@@ -439,8 +439,26 @@ internal fun EpubReaderMorePanel(
     onReload: () -> Unit,
     onOpenExternal: () -> Unit,
     onShowBookInfo: () -> Unit,
+    onAnnotations: (() -> Unit)? = null,
+    onRemoteBookmarks: (() -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
+        if (onRemoteBookmarks != null) {
+            MoreActionRow(
+                icon = Icons.Outlined.Bookmark,
+                title = stringResource(MR.strings.kavita_personal_toc),
+                enabled = state.isReady,
+                onClick = onRemoteBookmarks,
+            )
+        }
+        if (onAnnotations != null) {
+            MoreActionRow(
+                icon = Icons.Outlined.Bookmark,
+                title = stringResource(MR.strings.connection_annotations),
+                enabled = state.isReady,
+                onClick = onAnnotations,
+            )
+        }
         MoreActionRow(
             icon = Icons.Outlined.Refresh,
             title = stringResource(MR.strings.epub_reader_reload_current_chapter),

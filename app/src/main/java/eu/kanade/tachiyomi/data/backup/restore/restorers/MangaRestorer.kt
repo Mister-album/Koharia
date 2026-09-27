@@ -97,6 +97,8 @@ class MangaRestorer(
                 ttsProgress = backupManga.ttsProgress,
                 lanraragiState = backupManga.lanraragiState,
                 smangaState = backupManga.smangaState,
+                kavitaState = backupManga.kavitaState,
+                kavitaAnnotations = backupManga.kavitaAnnotations,
             )
         }
     }
@@ -302,15 +304,29 @@ class MangaRestorer(
         ttsProgress: List<BackupTtsProgress>,
         lanraragiState: List<BackupLanraragiState>,
         smangaState: List<BackupSmangaState>,
+        kavitaState: List<eu.kanade.tachiyomi.data.backup.providers.BackupKavitaState>,
+        kavitaAnnotations: List<eu.kanade.tachiyomi.data.backup.providers.BackupKavitaAnnotation>,
     ): Manga {
         restoreCategories(manga, categories, backupCategories)
         restoreChapters(manga, chapters)
         restoreEpubState(manga, epubProgress, epubBookmarks)
         restoreTtsProgress(manga, ttsProgress)
-        if (lanraragiState.isNotEmpty() || smangaState.isNotEmpty()) {
+        if (lanraragiState.isNotEmpty() || smangaState.isNotEmpty() ||
+            kavitaState.isNotEmpty() || kavitaAnnotations.isNotEmpty()
+        ) {
             val chapterIdByUrl = restoredChapterIdsByUrl(manga.id)
             lanraragiStateBackupAdapter.restore(manga.id, chapterIdByUrl, lanraragiState)
             smangaStateBackupAdapter.restore(manga.id, chapterIdByUrl, smangaState)
+            eu.kanade.tachiyomi.data.backup.providers.KavitaStateBackupAdapter().restore(
+                manga.id,
+                chapterIdByUrl,
+                kavitaState,
+            )
+            eu.kanade.tachiyomi.data.backup.providers.KavitaStateBackupAdapter().restoreAnnotations(
+                manga.id,
+                chapterIdByUrl,
+                kavitaAnnotations,
+            )
         }
         restoreTracking(manga, tracks)
         restoreHistory(manga, history)

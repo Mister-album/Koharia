@@ -22,4 +22,6 @@ interface HistoryRepository {
     suspend fun deleteAllHistory(sourceId: Long? = null): Boolean
 
     suspend fun upsertHistory(historyUpdate: HistoryUpdate)
+
+    suspend fun upsertRemoteHistory(chapterId: Long, readAt: java.util.Date)
 }

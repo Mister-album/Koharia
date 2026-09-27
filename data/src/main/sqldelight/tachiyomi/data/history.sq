@@ -82,3 +82,10 @@ WHERE chapter_id = :chapterId;
 getReadDuration:
 SELECT coalesce(sum(time_read), 0)
 FROM history;
+
+upsertRemote:
+INSERT INTO history(chapter_id, last_read, time_read)
+VALUES (:chapterId, :readAt, 0)
+ON CONFLICT(chapter_id)
+DO UPDATE SET last_read = :readAt
+WHERE coalesce(history.last_read, 0) < :readAt;

@@ -10,4 +10,8 @@ class UpsertHistory(
     suspend fun await(historyUpdate: HistoryUpdate) {
         historyRepository.upsertHistory(historyUpdate)
     }
+
+    suspend fun awaitRemote(chapterId: Long, readAt: java.util.Date) {
+        historyRepository.upsertRemoteHistory(chapterId, readAt)
+    }
 }

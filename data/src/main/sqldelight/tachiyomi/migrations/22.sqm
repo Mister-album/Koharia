@@ -1,0 +1,12 @@
+CREATE TABLE kavita_annotation (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    annotation_key TEXT NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    remote_id INTEGER,
+    payload TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    pending INTEGER NOT NULL,
+    PRIMARY KEY (connection_id, account_key, annotation_key),
+    UNIQUE (connection_id, account_key, remote_id)
+);

@@ -59,6 +59,7 @@ fun MangaToolbar(
     titleAlphaProvider: () -> Float,
     backgroundAlphaProvider: () -> Float,
     modifier: Modifier = Modifier,
+    onClickConnectionActions: (() -> Unit)? = null,
 ) {
     val isActionMode = actionModeCounter > 0
     AppBar(
@@ -149,6 +150,14 @@ fun MangaToolbar(
                             onClick = onClickRefresh,
                         ),
                     )
+                    if (onClickConnectionActions != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.connection_series_actions),
+                                onClick = onClickConnectionActions,
+                            ),
+                        )
+                    }
                     if (onClickEditSeriesDetails != null) {
                         add(
                             AppBar.OverflowAction(

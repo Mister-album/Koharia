@@ -252,6 +252,8 @@ internal fun buildEpubImageInteractionInstallScript(
                 rawSource,
                 image.getAttribute('alt') || '',
                 image.getAttribute('title') || '',
+                parseInt(image.getAttribute('data-koharia-kavita-image-index') || '-1', 10),
+                image.getAttribute('data-koharia-kavita-path') || '',
             );
             return true;
         }

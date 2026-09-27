@@ -34,6 +34,7 @@ fun ReaderPageActionsDialog(
     onSetAsCover: () -> Unit,
     onShare: (Boolean) -> Unit,
     onSave: () -> Unit,
+    remoteBookmark: (@Composable () -> Unit)? = null,
 ) {
     var showSetCoverDialog by remember { mutableStateOf(false) }
 
@@ -43,6 +44,7 @@ fun ReaderPageActionsDialog(
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         )
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            remoteBookmark?.invoke()
             Row(
                 modifier = Modifier.padding(vertical = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),

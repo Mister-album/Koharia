@@ -142,6 +142,7 @@ class EpubCacheManager(
                 return@withLock file
             }
             val generationAtStart = clearGeneration.get()
+            (source as? koharia.connection.ConnectionDownloadAuthorizationAdapter)?.authorizeDownload(bookUrl)
             val target = completeBookTarget(source.id, publicationKey)
             target.parentFile?.mkdirs()
             val temporary = File(target.parentFile, "${target.name}.part")
@@ -169,6 +170,9 @@ class EpubCacheManager(
                         }
                     }
                     check(temporary.length() > 0L) { "Empty EPUB cache response" }
+                    rawDownloadAdapter.validateRawDownload(
+                        requireNotNull(com.hippo.unifile.UniFile.fromFile(temporary)),
+                    )
                     if (generationAtStart != clearGeneration.get()) {
                         temporary.delete()
                         null

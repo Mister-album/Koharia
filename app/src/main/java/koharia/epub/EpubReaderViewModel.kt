@@ -208,6 +208,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var currentSourceId: Long = -1L
     private var currentProviderId: String? = null
     private var currentEpubProgressAdapter: ConnectionEpubProgressAdapter? = null
+    private var localReadingRevision = 0L
+    private var recordedReadingRevision = 0L
+    private var navigationBaseline: Locator? = null
+
+    internal fun onManualReadingNavigation() {
+        localReadingRevision++
+        navigationBaseline = latestLocator
+    }
     private var currentProgress: EpubProgress? = null
     private var latestLocator: Locator? = null
     private var publicationPositions: List<Locator> = emptyList()
@@ -275,6 +283,18 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var layoutChangeRevision = 0L
     private var preserveLocalProgressAfterLayoutChange = false
     private var currentChapter: tachiyomi.domain.chapter.model.Chapter? = null
+    fun remoteBookmarks(): Pair<koharia.connection.ConnectionRemoteBookmarksAdapter, String>? {
+        val chapter = currentChapter ?: return null
+        val adapter = sourceManager.get(currentSourceId) as? koharia.connection.ConnectionRemoteBookmarksAdapter
+            ?: return null
+        return adapter to chapter.url
+    }
+    fun remoteAnnotations(): Pair<koharia.connection.ConnectionRemoteAnnotationsAdapter, String>? {
+        val chapter = currentChapter ?: return null
+        val adapter = sourceManager.get(currentSourceId) as? koharia.connection.ConnectionRemoteAnnotationsAdapter
+            ?: return null
+        return (adapter to chapter.url).takeIf { adapter.supportsRemoteAnnotations(chapter.url) }
+    }
     private var currentChapterUrl: String? = null
     private var currentChapterRead = false
     private var currentChapterBookmark = false
@@ -438,8 +458,20 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 visiblePdfBlockId = null
                 val publicationAdapter = source as? ConnectionPublicationAdapter
 
-                currentEpubProgressAdapter =
+                currentEpubProgressAdapter = if (pdfReflowArtifact != null &&
+                    source is koharia.connection.ConnectionReflowProgressAdapter
+                ) {
+                    koharia.epub.service.PdfReflowProgressAdapter(
+                        source,
+                        chapter,
+                        checkNotNull(pdfReflowArtifact).manifest,
+                    )
+                } else {
                     (source as? ConnectionEpubProgressAdapter).takeIf { pdfReflowArtifact == null }
+                }
+                localReadingRevision = 0
+                recordedReadingRevision = 0
+                navigationBaseline = null
                 epubReaderPreferences = sharedAppPreferences.epubReaderPreferences()
                 basePreferences = sharedAppPreferences.basePreferences()
                 incognitoSession = basePreferences.incognitoMode.get()
@@ -1539,6 +1571,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
         remoteProgressWriteBaseline = locator
         remoteProgressWriteAllowed = true
         viewModelScope.launch {
+            (currentEpubProgressAdapter as? koharia.connection.ConnectionLocalEpubProgressAdapter)?.let { adapter ->
+                currentChapterUrl?.let { adapter.acceptRemoteEpubProgress(it, locator, modifiedAt) }
+            }
             upsertEpubProgress.await(syncedProgress)
         }
         return locator
@@ -1551,6 +1586,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
         val localProgress = currentProgress ?: return
         val localLocator = latestLocator ?: return
         viewModelScope.launch {
+            (currentEpubProgressAdapter as? koharia.connection.ConnectionLocalEpubProgressAdapter)?.let { adapter ->
+                currentChapterUrl?.let { adapter.confirmLocalEpubProgress(it, localLocator, localProgress.updatedAt) }
+            }
             syncPersistedProgress(localProgress, localLocator)
         }
     }
@@ -2352,7 +2390,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
     ) {
         if (!remoteProgressWriteAllowed) return
         val progressAdapter = currentEpubProgressAdapter ?: return
-        val bookUrl = localProgress.bookUrl ?: currentBookUrl ?: return
+        val bookUrl = localProgress.bookUrl ?: currentBookUrl ?: currentChapterUrl.takeIf {
+            progressAdapter is koharia.epub.service.PdfReflowProgressAdapter
+        } ?: return
         val positions = authoritativePublicationPositions() ?: return
         runCatching {
             progressAdapter.pushEpubProgress(
@@ -2403,6 +2443,26 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
         upsertEpubProgress.await(persistedProgress)
         currentProgress = persistedProgress
+        val localAdapter = currentEpubProgressAdapter as? koharia.connection.ConnectionLocalEpubProgressAdapter
+        val resourceId = currentChapterUrl
+        val revision = localReadingRevision
+        if (!isIncognito() && epubReaderPreferences.syncRemoteProgression.get() && localAdapter != null &&
+            resourceId != null && revision > recordedReadingRevision &&
+            navigationBaseline?.isSamePaginationLocation(locator) != true
+        ) {
+            val mapped = if (pdfBlock != null) {
+                locator.copy(locations = locator.locations.copy(fragments = listOf(pdfBlock.id)))
+            } else {
+                locator
+            }
+            try {
+                localAdapter.recordLocalEpubProgress(resourceId, mapped, progressUpdatedAt)
+                recordedReadingRevision = revision
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                logcat(LogPriority.WARN, error) { "Failed to queue local reading progress chapterId=$chapterId" }
+            }
+        }
         persistPaginationCache(
             isComplete = mutableState.value.paginationPhase in setOf(
                 EpubPaginationPhase.CACHED,
@@ -2411,7 +2471,9 @@ class EpubReaderViewModel @JvmOverloads constructor(
         )
         markChapterCompletedIfNeeded(locator)
 
-        val bookUrl = progress.bookUrl
+        val bookUrl = progress.bookUrl ?: currentChapterUrl.takeIf {
+            currentEpubProgressAdapter is koharia.epub.service.PdfReflowProgressAdapter
+        }
         if (bookUrl != null && epubReaderPreferences.syncRemoteProgression.get() && remoteProgressWriteAllowed) {
             val writeBaseline = remoteProgressWriteBaseline
             if (writeBaseline != null && locator.isSamePaginationLocation(writeBaseline)) return@withLock
@@ -2425,7 +2487,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     positions = positions,
                     modifiedAt = progressUpdatedAt,
                 )
-                val syncedProgress = progress.copy(lastSyncedAt = progressUpdatedAt)
+                val syncedProgress = persistedProgress.copy(lastSyncedAt = progressUpdatedAt)
                 upsertEpubProgress.await(syncedProgress)
                 currentProgress = syncedProgress
             }.onFailure { error ->
@@ -2593,6 +2655,12 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private fun Locator.isSamePaginationLocation(other: Locator?): Boolean {
         other ?: return false
         if (!href.toString().isSameResourceHref(other.href.toString())) return false
+
+        if (href.toString().contains("koharia-epub/")) {
+            val anchor = toJSON().optJSONObject("locations")?.optString("kavitaXPath").orEmpty()
+            val otherAnchor = other.toJSON().optJSONObject("locations")?.optString("kavitaXPath").orEmpty()
+            if (anchor.isNotBlank() && otherAnchor.isNotBlank()) return anchor == otherAnchor
+        }
 
         val progression = resourceProgressionValue()
         val otherProgression = other.resourceProgressionValue()

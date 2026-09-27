@@ -12,6 +12,8 @@ data class EpubImageReference(
     val rawSource: String,
     val altText: String?,
     val title: String?,
+    val serverImageOffset: Int = -1,
+    val serverAnchor: String = "",
 )
 
 @Immutable

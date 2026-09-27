@@ -212,9 +212,12 @@ class ReaderViewModel @JvmOverloads constructor(
     private val remoteProgressVersionsHandled = mutableSetOf<String>()
     private val remoteProgressOpeningPages = mutableMapOf<Long, Int>()
 
+    private val usesReadingQueue =
+        savedState.get<String>(koharia.connection.ConnectionReadingQueueController.CONTEXT) != null
     private val unfilteredChapterList by lazy {
         val manga = manga!!
         runBlocking { getChaptersByMangaId.await(manga.id, applyScanlatorFilter = false) }
+            .filter { !usesReadingQueue || it.id == chapterId }
     }
 
     /**
@@ -229,6 +232,7 @@ class ReaderViewModel @JvmOverloads constructor(
             ?: error("Requested chapter of id $chapterId not found in chapter list")
 
         val chaptersForReader = when {
+            usesReadingQueue -> listOf(selectedChapter)
             (readerPreferences.skipRead.get() || readerPreferences.skipFiltered.get()) -> {
                 val filteredChapters = chapters.filterNot {
                     when {
@@ -304,6 +308,7 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     private val incognitoMode: Boolean by lazy { basePreferences.incognitoMode.get() }
+    val isIncognitoSession get() = incognitoMode
     private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading.get()
     private val cacheCurrentChapterWhileReading = downloadPreferences.cacheCurrentChapterWhileReading.get()
 

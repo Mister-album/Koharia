@@ -53,6 +53,9 @@ class BackupManga(
     @ProtoNumber(115) var ttsProgress: List<BackupTtsProgress> = emptyList(),
     @ProtoNumber(116) var lanraragiState: List<BackupLanraragiState> = emptyList(),
     @ProtoNumber(117) var smangaState: List<BackupSmangaState> = emptyList(),
+    @ProtoNumber(118) var kavitaState: List<eu.kanade.tachiyomi.data.backup.providers.BackupKavitaState> = emptyList(),
+    @ProtoNumber(119) var kavitaAnnotations:
+    List<eu.kanade.tachiyomi.data.backup.providers.BackupKavitaAnnotation> = emptyList(),
 ) {
     fun getMangaImpl(): Manga {
         return Manga.create().copy(

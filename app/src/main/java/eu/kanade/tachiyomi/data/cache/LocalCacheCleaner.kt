@@ -22,7 +22,8 @@ class LocalCacheCleaner(
     fun temporaryCacheReadableSize(): String {
         return Formatter.formatFileSize(
             context,
-            LocalTempCacheDirectoryProvider.temporaryCacheSize(context) + koharia.smanga.SmangaPdfCache.size(context),
+            LocalTempCacheDirectoryProvider.temporaryCacheSize(context) + koharia.smanga.SmangaPdfCache.size(context) +
+                koharia.kavita.KavitaPdfCache.size(context),
         )
     }
 
@@ -49,6 +50,7 @@ class LocalCacheCleaner(
         deleted += epubCacheManager.clear()
         deleted += pdfReflowCacheManager.clear()
         deleted += koharia.smanga.SmangaPdfCache.clear(context)
+        deleted += koharia.kavita.KavitaPdfCache.clear(context)
         return deleted
     }
 }

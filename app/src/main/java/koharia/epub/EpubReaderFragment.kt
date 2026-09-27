@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
+import eu.kanade.tachiyomi.util.system.toast
 import koharia.connection.SharedAppPreferences
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
@@ -130,6 +131,9 @@ class EpubReaderFragment : Fragment() {
     private var currentTransitionPageCount = 0
     private var currentTransitionHref: String? = null
     private var pdfAnchorCaptureJob: Job? = null
+    private var kavitaCaptureJob: Job? = null
+    private var kavitaRestoreAttempted = false
+    private var pendingKavitaLocator: Locator? = null
     private var lastReadingInteraction = SystemClock.uptimeMillis()
     private var paragraphIndentDebugGeneration = 0L
     private var paragraphIndentOverrideEnabled = false
@@ -201,6 +205,15 @@ class EpubReaderFragment : Fragment() {
             currentTransitionPageCount = totalPages
             currentTransitionHref = locator.href.toString()
             host?.onPageChanged(pageIndex, totalPages, locator)
+            if (locator.href.toString().contains("koharia-epub/")) {
+                kavitaCaptureJob?.cancel()
+                kavitaCaptureJob = viewLifecycleOwner.lifecycleScope.launch {
+                    delay(150)
+                    val navigator = readyNavigatorFragment() ?: return@launch
+                    val captured = koharia.kavita.captureKavitaLocator(navigator, locator)
+                    if (navigator.currentLocator.value.href == locator.href) host?.onLocatorChanged(captured)
+                }
+            }
             if (sessionRepository.get(chapterId)?.pdfReflow != null) {
                 pdfAnchorCaptureJob?.cancel()
                 pdfAnchorCaptureJob = viewLifecycleOwner.lifecycleScope.launch {
@@ -387,6 +400,8 @@ class EpubReaderFragment : Fragment() {
     override fun onDestroyView() {
         pdfAnchorCaptureJob?.cancel()
         pdfAnchorCaptureJob = null
+        kavitaCaptureJob?.cancel()
+        kavitaCaptureJob = null
         pageTransitionController?.cancel()
         pageTransitionController = null
         pageTransitionOverlay = null
@@ -486,6 +501,21 @@ class EpubReaderFragment : Fragment() {
         host?.onPdfSourceAnchorChanged(id, before.href.toString())
     }
 
+    suspend fun captureAnnotationSelection(): koharia.connection.ConnectionTextSelection? {
+        val navigator = readyNavigatorFragment() ?: return null
+        return koharia.kavita.captureKavitaSelection(navigator)
+    }
+    suspend fun captureRemoteBookmarkLocator(): Locator? {
+        val navigator = readyNavigatorFragment() ?: return null
+        return koharia.kavita.captureKavitaLocator(navigator, navigator.currentLocator.value)
+    }
+
+    private var remoteHighlights = emptyList<koharia.connection.ConnectionTextHighlight>()
+    suspend fun setRemoteHighlights(highlights: List<koharia.connection.ConnectionTextHighlight>) {
+        remoteHighlights = highlights
+        readyNavigatorFragment()?.let { koharia.kavita.renderKavitaHighlights(it, remoteHighlights) }
+    }
+
     suspend fun captureContinuousScrollProgress() = withUIContext {
         val installedHref = continuousScrollInstalledHref ?: return@withUIContext
         val navigator = readyNavigatorFragment() ?: return@withUIContext
@@ -529,7 +559,23 @@ class EpubReaderFragment : Fragment() {
         val publication = sessionRepository.get(chapterId)?.publication ?: return false
         clearContinuousScrollState()
         if (userInitiated) host?.onManualReadingNavigation()
+        if (locator.href.toString().contains("koharia-epub/")) {
+            pendingKavitaLocator = locator
+            viewLifecycleOwner.lifecycleScope.launch {
+                delay(200)
+                restorePendingKavitaLocator(navigator, navigator.currentLocator.value)
+            }
+        }
         return navigator.go(publication.toNavigatorLocator(locator))
+    }
+
+    private suspend fun restorePendingKavitaLocator(navigator: EpubNavigatorFragment, location: Locator) {
+        val pending = pendingKavitaLocator ?: return
+        if (!pending.href.toString().sameEpubResource(location.href.toString())) return
+        pendingKavitaLocator = null
+        if (koharia.kavita.restoreKavitaLocator(navigator, pending) == false) {
+            context?.toast(tachiyomi.i18n.MR.strings.kavita_approximate_location)
+        }
     }
 
     fun goForward(origin: PageTurnOrigin? = null): Boolean {
@@ -931,11 +977,27 @@ class EpubReaderFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 navigator.currentLocator.collect { locator ->
+                    if (locator.href.toString().contains("koharia-epub/")) {
+                        navigator.evaluateJavascript(koharia.kavita.KAVITA_SELECTION_SCRIPT)
+                        koharia.kavita.renderKavitaHighlights(navigator, remoteHighlights)
+                    }
+                    if (!kavitaRestoreAttempted && locator.href.toString().contains("koharia-epub/")) {
+                        val initial = sessionRepository.get(chapterId)?.initialLocator
+                        if (initial != null && initial.href.toString().sameEpubResource(locator.href.toString())) {
+                            kavitaRestoreAttempted = true
+                            pendingKavitaLocator = initial
+                        }
+                    }
+                    restorePendingKavitaLocator(navigator, locator)
                     val installedHref = continuousScrollInstalledHref
                     if (installedHref == null || !locator.href.toString().sameEpubResource(installedHref)) {
                         continuousScrollLocator = null
                         continuousScrollInstalledHref = null
-                        host?.onLocatorChanged(locator)
+                        if (locator.href.toString().contains("koharia-epub/")) {
+                            host?.onLocatorChanged(koharia.kavita.captureKavitaLocator(navigator, locator))
+                        } else {
+                            host?.onLocatorChanged(locator)
+                        }
                         scheduleContinuousScrollInstall(navigator, locator)
                     }
                     scheduleImageInteractionsInstall(navigator)
@@ -1416,6 +1478,8 @@ class EpubReaderFragment : Fragment() {
             rawSource: String,
             altText: String,
             title: String,
+            serverImageOffset: Int,
+            serverAnchor: String,
         ) {
             view?.post {
                 if (!isAdded || view == null || (currentSource.isBlank() && rawSource.isBlank())) return@post
@@ -1443,6 +1507,8 @@ class EpubReaderFragment : Fragment() {
                         rawSource = rawSource,
                         altText = altText.takeIf(String::isNotBlank),
                         title = title.takeIf(String::isNotBlank),
+                        serverImageOffset = serverImageOffset,
+                        serverAnchor = serverAnchor,
                     ),
                     interaction = interaction,
                 )

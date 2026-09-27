@@ -64,9 +64,10 @@ fun AdaptiveSheet(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     enableImplicitDismiss: Boolean = true,
+    forceBottomSheet: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val isTabletUi = isTabletUi()
+    val isTabletUi = isTabletUi() && !forceBottomSheet
 
     Dialog(
         onDismissRequest = onDismissRequest,

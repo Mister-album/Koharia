@@ -224,6 +224,7 @@ class AppModule(val app: Application) : InjektModule {
                     LocalFolderConnectionProvider(app),
                     koharia.source.lanraragi.LanraragiConnectionProvider(app),
                     koharia.source.smanga.SmangaConnectionProvider(app),
+                    koharia.source.kavita.KavitaConnectionProvider(app),
                 ),
             )
         }

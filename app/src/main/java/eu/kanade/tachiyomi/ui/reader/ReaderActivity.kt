@@ -191,14 +191,16 @@ class ReaderActivity : BaseActivity() {
                     bookSizeBytes = file?.length(), pdfReflowRevision = artifact.manifest.revision,
                 )
                 startActivity(
-                    EpubReaderActivity.newIntent(
-                        this@ReaderActivity,
-                        manga.id,
-                        checkNotNull(chapter.chapter.id),
-                        manga.source,
-                        resolution,
-                    )
-                        .putExtra("pdf_reflow_initial_page", targetPage),
+                    readingQueue.inherit(
+                        EpubReaderActivity.newIntent(
+                            this@ReaderActivity,
+                            manga.id,
+                            checkNotNull(chapter.chapter.id),
+                            manga.source,
+                            resolution,
+                        )
+                            .putExtra("pdf_reflow_initial_page", targetPage),
+                    ),
                 )
                 finish()
             } catch (error: CancellationException) {
@@ -272,6 +274,7 @@ class ReaderActivity : BaseActivity() {
     lateinit var binding: ReaderActivityBinding
 
     val viewModel by viewModels<ReaderViewModel>()
+    private val readingQueue by lazy { koharia.connection.ConnectionReadingQueueController(this) }
     private var assistUrl: String? = null
 
     /**
@@ -333,6 +336,7 @@ class ReaderActivity : BaseActivity() {
         windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         super.onCreate(savedInstanceState)
+        readingQueue.start()
         if (intent.getBooleanExtra("auto_pdf_reflow", false)) {
             startActivity(
                 IncomingMediaNavigation.inheritTemporaryMediaUri(
@@ -581,7 +585,7 @@ class ReaderActivity : BaseActivity() {
             )
         }
         val onDismissRequest = viewModel::closeDialog
-        when (state.dialog) {
+        when (val dialog = state.dialog) {
             is ReaderViewModel.Dialog.Loading -> {
                 AlertDialog(
                     onDismissRequest = {},
@@ -625,6 +629,20 @@ class ReaderActivity : BaseActivity() {
                     onSetAsCover = viewModel::setAsCover,
                     onShare = viewModel::shareImage,
                     onSave = viewModel::saveImage,
+                    remoteBookmark = (
+                        viewModel.getSource() as?
+                            koharia.connection.ConnectionRemoteBookmarksAdapter
+                        )?.let {
+                        {
+                            it.BookmarkAction(
+                                dialog.page.chapter.chapter.url,
+                                dialog.page.index,
+                                0,
+                                "",
+                                viewModel.isIncognitoSession,
+                            )
+                        }
+                    },
                 )
             }
             null -> {}
@@ -933,9 +951,23 @@ class ReaderActivity : BaseActivity() {
                 }
             },
             onNextChapter = ::loadNextChapter,
-            enabledNext = state.viewerChapters?.nextChapter != null,
+            enabledNext = (
+                if (readingQueue.active) {
+                    readingQueue.position?.next != null
+                } else {
+                    state.viewerChapters?.nextChapter !=
+                        null
+                }
+                ),
             onPreviousChapter = ::loadPreviousChapter,
-            enabledPrevious = state.viewerChapters?.prevChapter != null,
+            enabledPrevious = (
+                if (readingQueue.active) {
+                    readingQueue.position?.previous != null
+                } else {
+                    state.viewerChapters?.prevChapter !=
+                        null
+                }
+                ),
             currentPage = state.currentPage,
             visiblePageStart = state.visiblePageStart,
             visiblePageEnd = state.visiblePageEnd.takeIf { it > 0 } ?: state.currentPage,
@@ -1077,8 +1109,22 @@ class ReaderActivity : BaseActivity() {
                     .takeIf {
                         currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED
                     },
-                enabledPreviousChapter = state.viewerChapters?.prevChapter != null,
-                enabledNextChapter = state.viewerChapters?.nextChapter != null,
+                enabledPreviousChapter = (
+                    if (readingQueue.active) {
+                        readingQueue.position?.previous != null
+                    } else {
+                        state.viewerChapters?.prevChapter !=
+                            null
+                    }
+                    ),
+                enabledNextChapter = (
+                    if (readingQueue.active) {
+                        readingQueue.position?.next != null
+                    } else {
+                        state.viewerChapters?.nextChapter !=
+                            null
+                    }
+                    ),
                 onPositionChange = { index ->
                     isScrollingThroughPages = true
                     moveToPageIndex(index)
@@ -1377,6 +1423,10 @@ class ReaderActivity : BaseActivity() {
      * should be automatically shown.
      */
     private fun loadNextChapter() {
+        if (readingQueue.active) {
+            readingQueue.navigate(true)
+            return
+        }
         lifecycleScope.launch {
             viewModel.loadNextChapter()
             moveToPageIndex(0)
@@ -1388,6 +1438,10 @@ class ReaderActivity : BaseActivity() {
      * should be automatically shown.
      */
     private fun loadPreviousChapter() {
+        if (readingQueue.active) {
+            readingQueue.navigate(false)
+            return
+        }
         lifecycleScope.launch {
             viewModel.loadPreviousChapter()
             moveToPageIndex(0)

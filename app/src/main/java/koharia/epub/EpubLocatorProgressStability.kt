@@ -66,6 +66,7 @@ private fun String.canonicalEpubResourcePath(): String {
         .substringBefore('?')
         .trim()
     if (resourceHref.isBlank()) return ""
+    if ("koharia-epub/" in resourceHref) return "koharia-epub/" + resourceHref.substringAfterLast("koharia-epub/")
 
     val uri = runCatching { URI(resourceHref) }.getOrNull()
     val servedPath = if (uri?.rawAuthority.equals(READIUM_PACKAGE_AUTHORITY, ignoreCase = true)) {

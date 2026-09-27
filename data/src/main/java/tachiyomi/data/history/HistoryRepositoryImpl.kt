@@ -82,4 +82,8 @@ class HistoryRepositoryImpl(
             logcat(LogPriority.ERROR, throwable = e)
         }
     }
+
+    override suspend fun upsertRemoteHistory(chapterId: Long, readAt: java.util.Date) {
+        database.historyQueries.upsertRemote(chapterId, readAt)
+    }
 }

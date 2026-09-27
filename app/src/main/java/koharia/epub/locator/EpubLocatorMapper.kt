@@ -34,6 +34,7 @@ private fun Link.toResourceHref(): ResourceHref {
     val linkHref = href.toString().normalizedHref()
     val navigatorAlias = navigatorHref.toString().normalizedHref()
     val persistentHref = when {
+        "koharia-epub/" in linkHref -> "koharia-epub/" + linkHref.substringAfterLast("koharia-epub/")
         "/resource/" in linkHref -> linkHref.substringAfter("/resource/")
         !linkHref.hasScheme() -> linkHref
         "/resource/" in navigatorAlias -> navigatorAlias.substringAfter("/resource/")

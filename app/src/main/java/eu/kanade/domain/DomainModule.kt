@@ -107,6 +107,9 @@ import uy.kohesive.injekt.api.get
 class DomainModule : InjektModule {
 
     override fun InjektRegistrar.registerInjectables() {
+        addSingletonFactory<koharia.domain.kavita.KavitaRepository> {
+            koharia.data.kavita.KavitaRepositoryImpl(get())
+        }
         addSingletonFactory<koharia.domain.smanga.SmangaRepository> {
             koharia.data.smanga.SmangaRepositoryImpl(get())
         }
