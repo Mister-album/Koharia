@@ -51,6 +51,7 @@ class ChapterLoader(
         initialPageIndex: Int? = null,
         beforePageActivation: (suspend (ReaderChapter, List<ReaderPage>) -> Unit)? = null,
         allowPdfDownload: Boolean = true,
+        onArchiveLoadingStage: ((ArchiveLoadingStage) -> Unit)? = null,
     ) {
         val previousError = chapter.state as? ReaderChapter.State.Error
         chapterLoadMutexes.getOrPut(chapter) { Mutex() }.withLock {
@@ -59,7 +60,7 @@ class ChapterLoader(
             if (error != null && error !== previousError && error.error !is CancellationException) {
                 throw error.error
             }
-            loadChapterLocked(chapter, initialPageIndex, beforePageActivation, allowPdfDownload)
+            loadChapterLocked(chapter, initialPageIndex, beforePageActivation, allowPdfDownload, onArchiveLoadingStage)
         }
     }
 
@@ -68,6 +69,7 @@ class ChapterLoader(
         initialPageIndex: Int?,
         beforePageActivation: (suspend (ReaderChapter, List<ReaderPage>) -> Unit)?,
         allowPdfDownload: Boolean,
+        onArchiveLoadingStage: ((ArchiveLoadingStage) -> Unit)?,
     ) {
         if (chapterIsReady(chapter)) {
             if (beforePageActivation != null) {
@@ -90,7 +92,12 @@ class ChapterLoader(
                     return@withIOContext
                 }
                 chapter.pageLoader = initialLoader
-                val (loader, loadedPages) = loadPagesWithCacheFallback(chapter, initialLoader)
+                val (loader, loadedPages) = try {
+                    initialLoader.onArchiveLoadingStage = onArchiveLoadingStage
+                    loadPagesWithCacheFallback(chapter, initialLoader)
+                } finally {
+                    initialLoader.onArchiveLoadingStage = null
+                }
                 chapter.pageLoader = loader
 
                 val pages = loadedPages

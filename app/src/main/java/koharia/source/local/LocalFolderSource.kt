@@ -60,6 +60,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -78,7 +80,9 @@ import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.storage.nameWithoutExtension
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.ImageUtil
+import tachiyomi.core.common.util.system.imageEntries
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.core.common.util.system.readCoverImage
 import tachiyomi.core.metadata.comicinfo.COMIC_INFO_FILE
 import tachiyomi.core.metadata.comicinfo.ComicInfo
 import tachiyomi.core.metadata.comicinfo.copyFromComicInfo
@@ -183,6 +187,7 @@ class LocalFolderSource(
         val file = localChapterFile(chapterUrl) ?: return@withIOContext null
         runCatching { firstImageBytes(file) }
             .onFailure { error ->
+                if (error is CancellationException) throw error
                 logcat(LogPriority.WARN, error) { "Unable to read local chapter thumbnail" }
             }
             .getOrNull()
@@ -952,6 +957,7 @@ class LocalFolderSource(
             if (indexedLibraryItem(resource)?.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
                 return@withIOContext runCatching { firstImageBytes(resource.file) }
                     .onFailure { error ->
+                        if (error is CancellationException) throw error
                         logcat(LogPriority.WARN, error) { "Unable to read suggested local item cover" }
                     }
                     .getOrNull()
@@ -966,6 +972,7 @@ class LocalFolderSource(
         try {
             firstImageBytes(firstChapter)
         } catch (error: Exception) {
+            if (error is CancellationException) throw error
             logcat(LogPriority.WARN, error) { "Unable to read suggested local series cover" }
             null
         }
@@ -974,7 +981,17 @@ class LocalFolderSource(
     override fun setupPreferenceScreen(screen: PreferenceScreen) = Unit
 
     internal fun isIndividualFileEntry(mangaUrl: String): Boolean {
-        val location = LocalLibraryLocator.location(mangaUrl, id) ?: return false
+        return individualFileEntry(mangaUrl) != null
+    }
+
+    internal fun isIndividualBookEntry(mangaUrl: String): Boolean {
+        val item = individualFileEntry(mangaUrl) ?: return false
+        return item.contentType == LocalLibraryContentType.BOOKS ||
+            (item.contentType == LocalLibraryContentType.MIXED && item.format in BOOK_FILE_EXTENSIONS)
+    }
+
+    private fun individualFileEntry(mangaUrl: String): LocalLibraryItem? {
+        val location = LocalLibraryLocator.location(mangaUrl, id) ?: return null
         val index = preferences.getIndex()
         val item = if (location.rootId != null) {
             index.libraryItemsByKey[LocalLibraryLocator.itemKey(location.rootId, location.relativePath)]
@@ -986,7 +1003,7 @@ class LocalFolderSource(
                     .filter(String::isNotBlank).joinToString("/")
             }
         }
-        return item?.kind == LocalLibraryItem.Kind.FILE_ENTRY
+        return item?.takeIf { it.kind == LocalLibraryItem.Kind.FILE_ENTRY }
     }
 
     internal suspend fun documentPageCount(chapterUrl: String): Int? = withIOContext {
@@ -999,14 +1016,9 @@ class LocalFolderSource(
                 }
                 LocalMediaFormats.isImage(file.extension) -> 1
                 LocalMediaFormats.isArchive(file.extension) -> {
-                    file.archiveReader(context).use { reader ->
-                        reader.useEntries { entries ->
-                            entries.count { entry ->
-                                entry.isFile && ImageUtil.isImage(entry.name) {
-                                    reader.getInputStream(entry.name)!!
-                                }
-                            }
-                        }
+                    val coroutineContext = currentCoroutineContext()
+                    file.archiveReader(context) { coroutineContext.ensureActive() }.use { reader ->
+                        reader.imageEntries { coroutineContext.ensureActive() }.size
                     }
                 }
                 file.extension.equals("pdf", ignoreCase = true) -> {
@@ -1016,7 +1028,7 @@ class LocalFolderSource(
                 }
                 else -> 0
             }
-        }.getOrNull()?.takeIf { it > 0 }
+        }.onFailure { if (it is CancellationException) throw it }.getOrNull()?.takeIf { it > 0 }
     }
 
     private fun documentPageMemo(
@@ -1364,7 +1376,8 @@ class LocalFolderSource(
         return file.extension.orEmpty().lowercase() in SUPPORTED_FILE_EXTENSIONS
     }
 
-    private fun firstImageBytes(file: UniFile): ByteArray? {
+    private suspend fun firstImageBytes(file: UniFile): ByteArray? {
+        val coroutineContext = currentCoroutineContext()
         if (file.isDirectory) {
             return file.listFiles().orEmpty()
                 .filter { !it.isDirectory && ImageUtil.isImage(it.name) { it.openInputStream() } }
@@ -1390,15 +1403,8 @@ class LocalFolderSource(
             DocumentEngines.forExtension(extension) != null -> {
                 renderFirstDocumentPage(file)
             }
-            else -> file.archiveReader(context).use { reader ->
-                val entry = reader.useEntries { entries ->
-                    entries
-                        .filter { it.isFile && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
-                        .minWithOrNull { first, second ->
-                            first.name.compareToCaseInsensitiveNaturalOrder(second.name)
-                        }
-                }
-                entry?.let { reader.getInputStream(it.name)?.use { input -> input.readBytes() } }
+            else -> file.archiveReader(context) { coroutineContext.ensureActive() }.use { reader ->
+                reader.readCoverImage { coroutineContext.ensureActive() }
             }
         }
     }

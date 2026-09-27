@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$LibraryPath,
 
-    [string]$Package = "app.koharia.dev",
+    [string]$Package = "app.koharia.dev.devicefixture",
 
     [ValidateSet("Inventory", "StepByStep")]
     [string]$Mode = "StepByStep",
@@ -18,9 +18,13 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+if ($Package -ne "app.koharia.dev.devicefixture") {
+    throw "Local-library verification may run only against app.koharia.dev.devicefixture."
+}
+
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $library = (Resolve-Path $LibraryPath).Path
-$caseDefinitionPath = Join-Path $PSScriptRoot "test-cases.json"
+$caseDefinitionPath = Join-Path $root ".test-artifacts\local-library-format-check\test-cases.json"
 $generatedFixture = Join-Path $root "app\build\local-media-fixtures\standalone-image-regression.epub"
 $deviceRoot = "/sdcard/Download/KohariaLocalLibraryTest"
 $resultRoot = Join-Path $root ".test-artifacts\local-media-runs"

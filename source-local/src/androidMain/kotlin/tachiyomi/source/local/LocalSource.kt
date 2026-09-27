@@ -27,6 +27,7 @@ import tachiyomi.core.common.storage.nameWithoutExtension
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.core.common.util.system.readCoverImage
 import tachiyomi.core.metadata.comicinfo.COMIC_INFO_FILE
 import tachiyomi.core.metadata.comicinfo.ComicInfo
 import tachiyomi.core.metadata.comicinfo.copyFromComicInfo
@@ -346,13 +347,7 @@ actual class LocalSource(
                 }
                 is Format.Archive -> {
                     format.file.archiveReader(context).use { reader ->
-                        val entry = reader.useEntries { entries ->
-                            entries
-                                .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
-                                .find { it.isFile && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
-                        }
-
-                        entry?.let { coverManager.update(manga, reader.getInputStream(it.name)!!) }
+                        reader.readCoverImage()?.let { coverManager.update(manga, it.inputStream()) }
                     }
                 }
                 is Format.Epub -> {

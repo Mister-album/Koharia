@@ -39,6 +39,7 @@ import koharia.connection.ConnectionRegistry
 import koharia.connection.EntryOpenMode
 import koharia.connection.EntryOpenPreferences
 import koharia.source.komga.KomgaConnectionProvider
+import koharia.source.local.LocalFolderConnectionProvider
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.flow.flowOf
@@ -89,7 +90,8 @@ object SettingsLibraryScreen : SearchableSettings {
         return providerSettings + listOfNotNull(
             getDisplayGroup(libraryPreferences),
             getEntryOpeningGroup(
-                isLocal = activeConnectionId == ConnectionPreferences.LOCAL_CONNECTION_ID,
+                isLocal = activeConnectionId == ConnectionPreferences.LOCAL_CONNECTION_ID ||
+                    activeProvider?.id == LocalFolderConnectionProvider.ID,
                 isKomga = activeProvider?.id == KomgaConnectionProvider.ID,
             ),
             if (showSeriesSettings) getChapterSettingsGroup(libraryPreferences) else null,
@@ -117,7 +119,22 @@ object SettingsLibraryScreen : SearchableSettings {
                         if (isLocal) MR.strings.entry_open_local_single else MR.strings.entry_open_komga_book,
                     ),
                 ),
-            ),
+            ).let { items ->
+                if (isLocal) {
+                    items.add(
+                        Preference.PreferenceItem.ListPreference(
+                            preference = preferences.localSingleBook,
+                            entries = persistentMapOf(
+                                EntryOpenMode.READER.name to stringResource(MR.strings.entry_open_reader),
+                                EntryOpenMode.DETAILS.name to stringResource(MR.strings.entry_open_details),
+                            ),
+                            title = stringResource(MR.strings.entry_open_local_single_book),
+                        ),
+                    )
+                } else {
+                    items
+                }
+            },
         )
     }
 

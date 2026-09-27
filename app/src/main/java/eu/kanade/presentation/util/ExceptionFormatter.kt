@@ -3,6 +3,8 @@ package eu.kanade.presentation.util
 import android.content.Context
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.util.system.isOnline
+import koharia.core.archive.ArchiveReadException
+import koharia.core.archive.ArchiveSpaceException
 import koharia.lanraragi.LanraragiException
 import koharia.lanraragi.ui.lanraragiError
 import koharia.smanga.SmangaException
@@ -18,6 +20,8 @@ context(context: Context)
 val Throwable.formattedMessage: String
     get() {
         when (this) {
+            is ArchiveSpaceException -> return context.stringResource(MR.strings.archive_space_error)
+            is ArchiveReadException -> return context.stringResource(MR.strings.archive_read_error)
             is LanraragiException -> return context.lanraragiError(this)
             is SmangaException, is SmangaShelfException -> return context.smangaError(this)
             is HttpException -> return context.stringResource(MR.strings.exception_http, code)

@@ -4,7 +4,9 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import koharia.core.archive.ArchiveReader
-import tachiyomi.core.common.util.system.ImageUtil
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import tachiyomi.core.common.util.system.imageEntries
 
 /**
  * Loader used to load a chapter from an archive file.
@@ -12,9 +14,9 @@ import tachiyomi.core.common.util.system.ImageUtil
 internal class ArchivePageLoader(private val reader: ArchiveReader) : PageLoader() {
     override var isLocal: Boolean = true
 
-    override suspend fun getPages(): List<ReaderPage> = reader.useEntries { entries ->
-        entries
-            .filter { it.isFile && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
+    override suspend fun getPages(): List<ReaderPage> {
+        val context = currentCoroutineContext()
+        return reader.imageEntries { context.ensureActive() }
             .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
             .mapIndexed { i, entry ->
                 ReaderPage(i).apply {
@@ -22,7 +24,6 @@ internal class ArchivePageLoader(private val reader: ArchiveReader) : PageLoader
                     status = Page.State.Ready
                 }
             }
-            .toList()
     }
 
     override suspend fun loadPage(page: ReaderPage) {

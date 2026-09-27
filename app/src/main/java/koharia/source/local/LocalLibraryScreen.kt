@@ -435,13 +435,13 @@ data class LocalLibraryScreen(
                                 } else if (selectedIds.isNotEmpty()) {
                                     screenModel.toggleSelection(it)
                                 } else {
-                                    val individualComic = scope != LibraryContentScope.BOOK &&
-                                        (screenModel.source as? LocalFolderSource)
-                                            ?.isIndividualFileEntry(it.url) == true
-                                    val mode = if (individualComic) {
-                                        entryOpenPreferences.localMode()
-                                    } else {
-                                        EntryOpenMode.DETAILS
+                                    val localSource = screenModel.source as? LocalFolderSource
+                                    val mode = when {
+                                        localSource?.isIndividualBookEntry(it.url) == true ->
+                                            entryOpenPreferences.localBookMode()
+                                        localSource?.isIndividualFileEntry(it.url) == true ->
+                                            entryOpenPreferences.localMode()
+                                        else -> EntryOpenMode.DETAILS
                                     }
                                     when (mode) {
                                         EntryOpenMode.READER -> screenModel.openLibraryEntry(it)

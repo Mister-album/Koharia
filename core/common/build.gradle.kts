@@ -20,6 +20,7 @@ kotlin {
 
 dependencies {
     implementation(projects.i18n)
+    implementation(projects.core.archive)
 
     api(libs.logcat)
 

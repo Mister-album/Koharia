@@ -15,7 +15,14 @@ class EntryOpenPreferences(preferenceStore: PreferenceStore) {
         EntryOpenMode.DETAILS.name,
     )
 
+    val localSingleBook: Preference<String> = preferenceStore.getString(
+        "entry_open_mode_local_single_book",
+        EntryOpenMode.DETAILS.name,
+    )
+
     fun localMode(): EntryOpenMode = localSingleComic.get().toEntryOpenMode(EntryOpenMode.READER)
+    fun localBookMode(): EntryOpenMode = localSingleBook.get().toEntryOpenMode(EntryOpenMode.DETAILS)
+        .takeUnless { it == EntryOpenMode.PAGE_PREVIEW } ?: EntryOpenMode.DETAILS
     fun komgaMode(): EntryOpenMode = komgaSingleBook.get().toEntryOpenMode(EntryOpenMode.DETAILS)
 }
 

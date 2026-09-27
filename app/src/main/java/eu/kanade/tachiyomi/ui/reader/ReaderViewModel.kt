@@ -523,7 +523,18 @@ class ReaderViewModel @JvmOverloads constructor(
                     ?.beginReadingSession(chapter.chapter.url)
             }
         }
-        loader.loadChapter(chapter, initialPageIndex, ::resolveConnectionProgressBeforePageActivation)
+        try {
+            loader.loadChapter(
+                chapter,
+                initialPageIndex,
+                ::resolveConnectionProgressBeforePageActivation,
+                onArchiveLoadingStage = { stage ->
+                    mutableState.update { it.copy(archiveLoadingStage = stage) }
+                },
+            )
+        } finally {
+            mutableState.update { it.copy(archiveLoadingStage = null) }
+        }
         persistDocumentPageCount(chapter)
 
         val chapterPos = chapterList.indexOf(chapter)
@@ -1818,6 +1829,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val viewerChapters: ViewerChapters? = null,
         val bookmarked: Boolean = false,
         val isLoadingAdjacentChapter: Boolean = false,
+        val archiveLoadingStage: eu.kanade.tachiyomi.ui.reader.loader.ArchiveLoadingStage? = null,
         val currentPage: Int = -1,
 
         /**

@@ -643,6 +643,7 @@
     <string name="entry_open_page_preview">Page preview</string>
     <string name="entry_open_details">Standard details</string>
     <string name="entry_open_local_single">Local single-file comics</string>
+    <string name="entry_open_local_single_book">Local single-file books</string>
     <string name="entry_open_komga_book">Single books</string>
     <string name="local_library_sort_added">Date added</string>
     <string name="local_library_sort_modified">Last modified</string>
@@ -2113,4 +2114,8 @@
     <string name="kavita_dashboard_title_bookmarks">Bookmarks</string>
     <string name="kavita_dashboard_title_all">All series</string>
     <string name="kavita_dashboard_title_authors">Browse authors</string>
+    <string name="archive_preparing">Preparing archive…</string>
+    <string name="archive_enumerating">Reading archive page list…</string>
+    <string name="archive_space_error">Not enough free space to prepare this archive.</string>
+    <string name="archive_read_error">Cannot read this archive. It may be damaged, encrypted, or use an unsupported format.</string>
 </resources>

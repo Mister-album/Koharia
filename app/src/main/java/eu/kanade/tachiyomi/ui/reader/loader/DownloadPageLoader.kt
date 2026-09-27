@@ -16,6 +16,8 @@ import koharia.document.DocumentEngines
 import koharia.document.DocumentHeading
 import koharia.document.DocumentRenderSettings
 import koharia.media.LocalMediaFormats
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
@@ -93,8 +95,18 @@ internal class DownloadPageLoader(
     }
 
     private suspend fun getPagesFromArchive(file: UniFile): List<ReaderPage> {
-        val loader = ArchivePageLoader(file.archiveReader(context)).also { archivePageLoader = it }
-        return loader.getPages()
+        val coroutineContext = currentCoroutineContext()
+        onArchiveLoadingStage?.invoke(ArchiveLoadingStage.PREPARING)
+        val loader = ArchivePageLoader(file.archiveReader(context) { coroutineContext.ensureActive() })
+            .also { archivePageLoader = it }
+        try {
+            onArchiveLoadingStage?.invoke(ArchiveLoadingStage.ENUMERATING)
+            return loader.getPages()
+        } catch (error: Throwable) {
+            loader.recycle()
+            archivePageLoader = null
+            throw error
+        }
     }
 
     private suspend fun getPagesFromEpub(file: UniFile): List<ReaderPage> {

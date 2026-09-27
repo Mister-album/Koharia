@@ -250,6 +250,7 @@
     <string name="entry_open_page_preview">页面预览</string>
     <string name="entry_open_details">标准详情</string>
     <string name="entry_open_local_single">本地单文件漫画</string>
+    <string name="entry_open_local_single_book">本地单文件书籍</string>
     <string name="entry_open_komga_book">单册作品</string>
     <string name="local_library_sort_added">添加时间</string>
     <string name="local_library_sort_modified">最近修改</string>
@@ -1974,4 +1975,8 @@
     <string name="kavita_dashboard_title_bookmarks">书签</string>
     <string name="kavita_dashboard_title_all">全部系列</string>
     <string name="kavita_dashboard_title_authors">浏览作者</string>
+    <string name="archive_preparing">正在准备压缩包…</string>
+    <string name="archive_enumerating">正在读取压缩包页列表…</string>
+    <string name="archive_space_error">可用空间不足，无法准备此压缩包。</string>
+    <string name="archive_read_error">无法读取此压缩包，文件可能已损坏、已加密或采用了不支持的格式。</string>
 </resources>

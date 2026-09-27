@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
  * method [recycle] is called.
  */
 abstract class PageLoader {
+    var onArchiveLoadingStage: ((ArchiveLoadingStage) -> Unit)? = null
 
     open val bufferingState: StateFlow<ReaderBufferingState> = EmptyReaderBufferingState
 
@@ -88,3 +89,5 @@ abstract class PageLoader {
         isRecycled = true
     }
 }
+
+enum class ArchiveLoadingStage { PREPARING, ENUMERATING }
