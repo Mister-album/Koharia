@@ -8,7 +8,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -47,6 +46,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkLinearProgressIndicator
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
@@ -110,7 +110,7 @@ class KavitaDashboardScreen(private val sourceId: Long) : Screen() {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 item { Text(stringResource(MR.strings.kavita_dashboard_help), Modifier.padding(16.dp)) }
-                if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                if (busy) item { EInkLinearProgressIndicator(Modifier.fillMaxWidth()) }
                 if (loaded && rows.isEmpty()) {
                     item {
                         Text(stringResource(MR.strings.kavita_dashboard_empty), Modifier.padding(16.dp))

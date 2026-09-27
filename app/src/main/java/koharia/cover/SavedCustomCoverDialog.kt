@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.CancellationException
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.components.material.TextButton
 import tachiyomi.presentation.core.i18n.stringResource
 import uy.kohesive.injekt.Injekt
@@ -50,7 +50,7 @@ fun SavedCustomCoverDialog(onSelect: (Uri) -> Unit, onDismissRequest: () -> Unit
             val images = covers
             when {
                 failed -> Text(stringResource(MR.strings.notification_cover_update_failed))
-                images == null -> CircularProgressIndicator()
+                images == null -> EInkCircularProgressIndicator()
                 images.isEmpty() -> Text(stringResource(MR.strings.custom_cover_saved_empty))
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(80.dp),
