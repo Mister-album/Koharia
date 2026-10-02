@@ -56,7 +56,7 @@ internal fun LocalLibraryConfig.withBookshelfDirectory(
     )
     require(
         roots.none {
-            it.id != replacingRootId && it.directoryKey() == directory.directoryKey()
+            it.id != replacingRootId && localDirectoriesOverlap(it.directoryKey(), directory.directoryKey())
         },
     ) { "Directory already belongs to a library" }
     if (roots.any { it.id == replacingRootId && it.directoryKey() == directory.directoryKey() }) return this
@@ -89,8 +89,14 @@ internal fun LocalLibraryConfig.withoutRoot(rootId: String): LocalLibraryConfig 
 internal fun LocalLibraryRootConfig.directoryKey(): String {
     val uri = URI(treeUri)
     val base = if (uri.scheme == "content" && uri.rawPath.orEmpty().startsWith("/tree/")) {
+        val path = uri.rawPath
+        val encodedDocumentId = if ("/document/" in path) {
+            path.substringAfter("/document/").substringBefore('/')
+        } else {
+            path.substringAfter("/tree/").substringBefore('/')
+        }
         val documentId = URLDecoder.decode(
-            uri.rawPath.substringAfter("/tree/").substringBefore('/'),
+            encodedDocumentId.replace("+", "%2B"),
             StandardCharsets.UTF_8.name(),
         )
         "${uri.authority}:$documentId"
@@ -100,3 +106,7 @@ internal fun LocalLibraryRootConfig.directoryKey(): String {
     return listOf(base.trimEnd('/'), LocalLibraryLocator.normalize(relativePath))
         .filter(String::isNotBlank).joinToString("/")
 }
+
+internal fun localDirectoriesOverlap(first: String, second: String): Boolean =
+    first == second || first.startsWith("$second/") || second.startsWith("$first/") ||
+        (first.endsWith(':') && second.startsWith(first)) || (second.endsWith(':') && first.startsWith(second))

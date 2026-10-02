@@ -18,6 +18,13 @@ internal class LocalFileDeletion private constructor(
 
     fun delete() {
         check(localDeletionIdentity(root) == rootIdentity)
+        // Verify the complete confirmed tree before deleting even its first file.
+        val expectedPaths = (files + directories).mapTo(mutableSetOf()) { it.path }
+        directories.forEach { target ->
+            val directory = checkNotNull(resolve(root, target.path))
+            check(directory.uri.toString() == target.uri)
+            check(children(directory).all { childPath(target.path, checkNotNull(it.name)) in expectedPaths })
+        }
         files.forEach { target ->
             val file = resolve(root, target.path) ?: return@forEach
             check(!file.isDirectory && file.uri.toString() == target.uri)

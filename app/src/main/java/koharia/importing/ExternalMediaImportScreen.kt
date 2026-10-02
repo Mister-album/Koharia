@@ -85,6 +85,7 @@ data class ExternalMediaImportScreen(
     private val preferredShelfId: String? = null,
     private val returnToCallerAfterImport: Boolean = false,
     private val generatedComicPath: String? = null,
+    private val targetFolderUrl: String? = null,
 ) : Screen() {
 
     @Composable
@@ -103,6 +104,7 @@ data class ExternalMediaImportScreen(
                 preferredShelfId,
                 returnToCallerAfterImport,
                 generatedComicPath,
+                targetFolderUrl,
             ).joinToString("|"),
         ) {
             ExternalMediaImportScreenModel(
@@ -126,6 +128,7 @@ data class ExternalMediaImportScreen(
                 allowCrossConnectionForEpub = allowCrossConnectionForEpub,
                 preferredShelfId = preferredShelfId,
                 generatedComicPath = generatedComicPath,
+                targetFolderUrl = targetFolderUrl,
                 initialStep = when {
                     openImmediately -> ExternalMediaImportScreenModel.Step.OPENING
                     startAtImportConfiguration -> ExternalMediaImportScreenModel.Step.IMPORT_CONFIGURATION
@@ -369,7 +372,9 @@ data class ExternalMediaImportScreen(
                                 TextPreferenceWidget(
                                     title = stringResource(MR.strings.external_media_action_import),
                                     subtitle = stringResource(
-                                        if (state.items.any { LocalMediaFormats.isImage(it.extension) }) {
+                                        if (state.items.any { LocalMediaFormats.isImage(it.extension) } &&
+                                            state.connections.isEmpty()
+                                        ) {
                                             MR.strings.external_media_images_use_merge
                                         } else {
                                             MR.strings.external_media_action_import_summary
@@ -416,7 +421,9 @@ data class ExternalMediaImportScreen(
                                         it.id == state.selectedShelfId
                                     }?.name,
                                     placeholder = stringResource(MR.strings.import_choose_shelf),
-                                    enabled = !state.isImporting && state.selectableShelves.isNotEmpty(),
+                                    enabled =
+                                    targetFolderUrl == null && !state.isImporting &&
+                                        state.selectableShelves.isNotEmpty(),
                                     onClick = { dialog = SelectionDialog.Shelf },
                                 )
                             }
@@ -426,7 +433,9 @@ data class ExternalMediaImportScreen(
                                         label = stringResource(MR.strings.import_step_directory),
                                         value = state.selectedDestination?.name,
                                         placeholder = stringResource(MR.strings.import_choose_directory),
-                                        enabled = !state.isImporting && state.selectableDestinations.isNotEmpty(),
+                                        enabled =
+                                        targetFolderUrl == null && !state.isImporting &&
+                                            state.selectableDestinations.isNotEmpty(),
                                         onClick = { dialog = SelectionDialog.Destination },
                                     )
                                 }

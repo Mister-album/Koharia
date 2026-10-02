@@ -59,6 +59,7 @@ internal class LocalLibraryScreenModel(
     private val updateManga: UpdateManga,
     private val coverCache: CoverCache,
     private val itemActions: LocalLibraryItemActions,
+    private val parentUrl: String? = null,
 ) : StateScreenModel<LocalLibraryScreenModel.State>(
     State(
         toolbarQuery = initialQuery,
@@ -81,6 +82,16 @@ internal class LocalLibraryScreenModel(
     val events = eventChannel.receiveAsFlow()
     val readProgressByUrl: StateFlow<Map<String, MangaReadProgress>> = localReadProgress.asStateFlow()
 
+    private val showReadProgress = if (parentUrl == null) {
+        libraryPreferences.showLibraryReadProgress
+    } else {
+        libraryPreferences.showChapterReadProgress
+    }
+
+    val parentManga = mangaRepository.getMangaBySourceIdAsFlow(sourceId).map { mangas ->
+        mangas.firstOrNull { it.url == parentUrl }
+    }
+
     init {
         filterPreferences?.read().takeIf { filterPreferences?.enabled == true }?.let { saved ->
             appliedFilters.value = saved.filters
@@ -98,12 +109,12 @@ internal class LocalLibraryScreenModel(
                 refreshLocalReadProgress()
             }
         }
-        if (libraryPreferences.showLibraryReadProgress.get()) {
+        if (parentUrl != null || showReadProgress.get()) {
             refreshReadProgress()
         }
         screenModelScope.launchIO {
-            libraryPreferences.showLibraryReadProgress.changes().collect { enabled ->
-                if (enabled) {
+            showReadProgress.changes().collect { enabled ->
+                if (parentUrl != null || enabled) {
                     refreshReadProgress()
                 } else {
                     localReadProgress.value = emptyMap()
@@ -114,7 +125,7 @@ internal class LocalLibraryScreenModel(
             screenModelScope.launchIO {
                 refreshAdapter.libraryRefreshes.collect {
                     refreshSignal.value += 1
-                    if (libraryPreferences.showLibraryReadProgress.get()) {
+                    if (parentUrl != null || showReadProgress.get()) {
                         refreshReadProgress()
                     }
                 }
@@ -142,7 +153,7 @@ internal class LocalLibraryScreenModel(
 
     private suspend fun refreshLocalReadProgress() {
         val localSource = source as? LocalFolderSource ?: return
-        if (!libraryPreferences.showLibraryReadProgress.get()) return
+        if (parentUrl == null && !showReadProgress.get()) return
 
         val mangas = mangaRepository.getMangaBySourceId(sourceId)
         val chaptersByMangaId = getChaptersByMangaId.await(mangas.map(Manga::id))
@@ -178,7 +189,7 @@ internal class LocalLibraryScreenModel(
                 entry.manga.url.trimEnd('/') to progress
             }
         }.toMap()
-        if (libraryPreferences.showLibraryReadProgress.get()) {
+        if (parentUrl != null || showReadProgress.get()) {
             localReadProgress.value = progressByUrl
         }
     }
@@ -202,7 +213,8 @@ internal class LocalLibraryScreenModel(
                 query = request.query,
                 scope = scope,
                 filters = request.filters,
-                bookshelfId = request.bookshelfId,
+                bookshelfId = request.bookshelfId.takeIf { parentUrl == null },
+                parentUrl = parentUrl,
             ).orEmpty()
             mangaStates.update(filteredMangas)
         }

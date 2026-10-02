@@ -56,6 +56,9 @@ internal class LocalScanDirectoryReader(private val context: Context) {
             if (cursor.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) {
                 throw IOException("Local directory listing is still loading")
             }
+            if (cursor.extras.getString(DocumentsContract.EXTRA_ERROR) != null) {
+                throw IOException("Local directory provider reported an error")
+            }
             val expectedCount = cursor.count
             val files = buildList {
                 while (cursor.moveToNext()) {

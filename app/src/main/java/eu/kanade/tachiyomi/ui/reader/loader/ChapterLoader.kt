@@ -202,7 +202,7 @@ class ChapterLoader(
                 downloadProvider,
                 documentSettingsProvider,
             )
-            pdfAdapter?.isPdfChapter(dbChapter.url) == true -> {
+            pdfAdapter?.isPdfChapter(dbChapter) == true -> {
                 val file = pdfAdapter.findCompletePdfFile(dbChapter.url)
                     ?: if (allowPdfDownload) pdfAdapter.preparePdfFile(dbChapter.url) else return null
                 LocalPageLoader(

@@ -76,6 +76,7 @@ fun ChapterNavigator(
     displayCurrentPage: Int = currentPage,
     displayTotalPages: Int = totalPages,
     sliderProgress: Float? = null,
+    onProgressChange: ((Float) -> Unit)? = null,
     onProgressChangeFinished: ((Float) -> Unit)? = null,
     displayCurrentText: String? = null,
     displayTotalText: String? = null,
@@ -107,12 +108,11 @@ fun ChapterNavigator(
         }
     }
     state.onValueChange = { value ->
+        state.value = value
         if (usesProgress) {
-            state.value = value
-        } else if (onPageIndexChangeFinished == null) {
-            onPageIndexChange(value.roundToInt() - 1)
+            onProgressChange?.invoke(state.value.coerceIn(0f, 1f))
         } else {
-            state.value = value
+            onPageIndexChange(state.value.roundToInt() - 1)
         }
     }
     state.onValueChangeFinished = if (usesProgress) {
@@ -127,8 +127,8 @@ fun ChapterNavigator(
 
     val displayedCurrentText = when {
         usesProgress && state.isDragging -> "${(state.value * 100).roundToInt()}%"
-        displayCurrentText != null -> displayCurrentText
         state.isDragging -> state.value.roundToInt().toString()
+        displayCurrentText != null -> displayCurrentText
         else -> displayCurrentPage.toString()
     }
     val displayedTotalText = when {

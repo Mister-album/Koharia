@@ -52,6 +52,9 @@ abstract class PageLoader {
      */
     open suspend fun loadPage(page: ReaderPage) {}
 
+    /** Allows cached pages to render while slider movement defers new network requests. */
+    open fun setNetworkRequestsDeferred(deferred: Boolean) {}
+
     /** Marks the page that must be loaded ahead of all speculative work. */
     open fun setActivePage(page: ReaderPage) {}
 

@@ -3,11 +3,16 @@ package koharia.kavita
 import eu.kanade.tachiyomi.data.backup.providers.KavitaStateBackupAdapter
 import io.mockk.coEvery
 import io.mockk.mockk
+import koharia.connection.ConnectionRestoreState
 import koharia.domain.kavita.KavitaAnnotationEntry
 import koharia.domain.kavita.KavitaOperation
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -25,6 +30,45 @@ class KavitaBackupTest {
     private val mangas = mockk<MangaRepository> { coEvery { getMangaById(7) } returns manga }
     private val chapters = mockk<ChapterRepository> { coEvery { getChapterByMangaId(7) } returns listOf(chapter) }
     private val adapter = KavitaStateBackupAdapter(repository, mangas, chapters)
+
+    @Test fun restoringOlderBackupPreservesNewerAndUnrelatedPendingProgress() = runTest {
+        val old =
+            KavitaReadingState(
+                ref,
+                KavitaProgress(chapterId = 4, pageNum = 1, lastModifiedUtc = "2026-01-01T00:00:00Z"),
+                10,
+            )
+        repository.putOperation(42, "account", KavitaOperation("progress/4", Json.encodeToString(old), 1, true))
+        val backup = adapter.capture(7, mapOf(8L to chapter.url))
+        assertEquals(1, backup.size)
+        val newer = KavitaOperation(
+            "progress/4",
+            Json.encodeToString(
+                old.copy(progress = old.progress.copy(pageNum = 5, lastModifiedUtc = "2026-01-02T00:00:00Z")),
+            ),
+            2,
+            true,
+        )
+        val unrelated = KavitaOperation(
+            "progress/5",
+            Json.encodeToString(
+                old.copy(ref = ref.copy(chapterId = 5), progress = old.progress.copy(chapterId = 5, pageNum = 7)),
+            ),
+            3,
+            true,
+        )
+        repository.putOperation(42, "account", newer)
+        repository.putOperation(42, "account", unrelated)
+        val scope = CoroutineScope(SupervisorJob()).apply { cancel() }
+        KavitaApiClient(OkHttpClient(), "https://example.invalid/", "fixture", "account").use { api ->
+            val reading = KavitaReadingCoordinator(42, "account", repository, api, scope, {}, {})
+            ConnectionRestoreState.duringRestore {
+                reading.prepareRestore()
+                adapter.restore(7, mapOf(chapter.url to 8L), backup)
+            }
+        }
+        assertEquals(setOf(newer, unrelated), repository.operations(42, "account").toSet())
+    }
 
     @Test fun bookmarkBackupsRequireConfirmationAndCannotOverwriteCurrentWork() = runTest {
         val state = KavitaBookmarkState(ref, KavitaBookmarkKind.TOC, 2, title = "Section", desired = false)

@@ -9,21 +9,27 @@ import tachiyomi.core.common.util.system.ImageUtil
 /**
  * Loader used to load a chapter from a directory given on [file].
  */
-internal class DirectoryPageLoader(val file: UniFile) : PageLoader() {
+internal class DirectoryPageLoader(val file: UniFile, private val excludeAuxiliary: Boolean = false) : PageLoader() {
 
     override var isLocal: Boolean = true
 
     override suspend fun getPages(): List<ReaderPage> {
-        return file.listFiles()
-            ?.filter { !it.isDirectory && ImageUtil.isImage(it.name) { it.openInputStream() } }
-            ?.sortedWith { f1, f2 -> f1.name.orEmpty().compareToCaseInsensitiveNaturalOrder(f2.name.orEmpty()) }
-            ?.mapIndexed { i, file ->
-                val streamFn = { file.openInputStream() }
+        val files = file.listFiles().orEmpty().mapNotNull { child ->
+            val name = child.name.orEmpty()
+            child.takeIf {
+                !it.isDirectory &&
+                    (!excludeAuxiliary || !koharia.source.local.isLocalAuxiliaryFile(name)) &&
+                    ImageUtil.isImage(it.name) { it.openInputStream() }
+            }?.let { it to name }
+        }
+        return files
+            .sortedWith { f1, f2 -> f1.second.compareToCaseInsensitiveNaturalOrder(f2.second) }
+            .mapIndexed { i, file ->
+                val streamFn = { file.first.openInputStream() }
                 ReaderPage(i).apply {
                     stream = streamFn
                     status = Page.State.Ready
                 }
             }
-            .orEmpty()
     }
 }

@@ -80,6 +80,13 @@ internal fun LocalLibraryFilterDialog(
                 )
             }
             item {
+                tachiyomi.presentation.core.components.CheckboxItem(
+                    label = stringResource(MR.strings.local_library_folders_first),
+                    checked = draft.foldersFirst,
+                    onClick = { draft = draft.copy(foldersFirst = !draft.foldersFirst) },
+                )
+            }
+            item {
                 CollapsibleBox(heading = stringResource(MR.strings.action_sort)) {
                     androidx.compose.foundation.layout.Column {
                         listOf(

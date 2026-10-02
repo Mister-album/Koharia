@@ -136,15 +136,17 @@ class KavitaReadingCoordinator(
             checkSession()
             val old = operation(ref.chapterId)
             val progress =
-                baselines[ref.chapterId]
-                    ?: KavitaProgress(
+                (
+                    baselines[ref.chapterId] ?: KavitaProgress(
                         ref.libraryId,
                         ref.seriesId,
                         ref.volumeId,
                         ref.chapterId,
-                        page,
-                        lastModifiedUtc = Instant.ofEpochMilli(readAt.coerceAtLeast(0)).toString(),
                     )
+                    ).copy(
+                    pageNum = page,
+                    lastModifiedUtc = Instant.ofEpochMilli(readAt.coerceAtLeast(0)).toString(),
+                )
             val state = KavitaReadingState(ref, progress, total)
             repository.putOperation(
                 connectionId,
@@ -256,15 +258,16 @@ class KavitaReadingCoordinator(
     suspend fun prepareRestore() {
         restoring = true
         job?.cancel()
-        flushMutex.withLock {
-            mutex.withLock {
-                repository.operations(connectionId, account).filter { it.key.startsWith("progress/") }.forEach {
-                    repository.acknowledge(connectionId, account, it.key, it.revision)
+        try {
+            flushMutex.withLock {
+                mutex.withLock {
+                    // The backup merge decides which progress records are replaced; keep pending local work.
+                    baselines.clear()
                 }
-                baselines.clear()
             }
+        } finally {
+            restoring = false
         }
-        restoring = false
     }
 }
 

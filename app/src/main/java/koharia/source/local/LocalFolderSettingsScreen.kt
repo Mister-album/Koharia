@@ -840,6 +840,7 @@ private fun MetadataStorageOption(
 @Composable
 internal fun organizationModeLabel(mode: LocalLibraryOrganizationMode): String = stringResource(
     when (mode) {
+        LocalLibraryOrganizationMode.FOLDER -> MR.strings.local_library_mode_folder
         LocalLibraryOrganizationMode.SERIES -> MR.strings.local_library_mode_series
         LocalLibraryOrganizationMode.INDIVIDUAL_FILES -> MR.strings.local_library_mode_individual
     },
@@ -849,6 +850,7 @@ internal fun organizationModeLabel(mode: LocalLibraryOrganizationMode): String =
 private fun metadataSummary(storage: LocalMetadataStorage): String {
     return stringResource(
         when (storage) {
+            LocalMetadataStorage.FOLDER_DIRECTORY -> MR.strings.local_library_metadata_folder_summary
             LocalMetadataStorage.DATABASE -> MR.strings.local_library_metadata_database_summary
             LocalMetadataStorage.ADJACENT_SIDECAR -> MR.strings.local_library_metadata_adjacent_summary
             LocalMetadataStorage.UNIFIED_DIRECTORY -> MR.strings.local_library_metadata_unified_summary
@@ -858,6 +860,7 @@ private fun metadataSummary(storage: LocalMetadataStorage): String {
 
 private fun metadataLabel(context: Context, storage: LocalMetadataStorage): String {
     return when (storage) {
+        LocalMetadataStorage.FOLDER_DIRECTORY -> context.contextStringResource(MR.strings.local_library_metadata_folder)
         LocalMetadataStorage.DATABASE -> context.contextStringResource(MR.strings.local_library_metadata_database)
         LocalMetadataStorage.ADJACENT_SIDECAR -> context.contextStringResource(
             MR.strings.local_library_metadata_adjacent,

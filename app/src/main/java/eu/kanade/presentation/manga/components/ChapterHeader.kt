@@ -24,6 +24,7 @@ fun ChapterHeader(
     missingChapterCount: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    countLabel: String? = null,
 ) {
     Column(
         modifier = modifier
@@ -36,7 +37,7 @@ fun ChapterHeader(
         verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
     ) {
         Text(
-            text = if (chapterCount == null) {
+            text = countLabel ?: if (chapterCount == null) {
                 stringResource(MR.strings.chapters)
             } else {
                 pluralStringResource(MR.plurals.manga_num_chapters, count = chapterCount, chapterCount)

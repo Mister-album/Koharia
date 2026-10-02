@@ -17,6 +17,51 @@ import tachiyomi.domain.chapter.model.Chapter
 class LocalLibraryModelsTest {
 
     @Test
+    fun `folder containers are not classifiable while virtual image series are`() {
+        val container = LocalLibraryItem(
+            itemKey = "folder",
+            relativePath = "Folder",
+            kind = LocalLibraryItem.Kind.FOLDER,
+            format = "directory",
+            sizeBytes = 0,
+            modifiedAt = 0,
+        )
+        val imageSeries = LocalLibraryItem(
+            itemKey = "images",
+            relativePath = ".koharia-image-series-Folder",
+            locatorPath = ".koharia/nodes/virtual",
+            kind = LocalLibraryItem.Kind.FILE_ENTRY,
+            format = "directory",
+            sizeBytes = 0,
+            modifiedAt = 0,
+        )
+
+        assertEquals(LocalMetadataRole.FOLDER_CONTAINER, container.metadataRole(LocalLibraryOrganizationMode.FOLDER))
+        assertFalse(container.metadataRole(LocalLibraryOrganizationMode.FOLDER).isClassifiable())
+        assertEquals(
+            LocalMetadataRole.FOLDER_IMAGE_SERIES,
+            imageSeries.metadataRole(LocalLibraryOrganizationMode.FOLDER),
+        )
+        assertTrue(imageSeries.metadataRole(LocalLibraryOrganizationMode.FOLDER).isClassifiable())
+        assertFalse(LocalMetadataRole.FOLDER_CONTAINER.isMetadataReadable())
+        assertFalse(LocalMetadataRole.CHAPTER.isMetadataReadable())
+        assertTrue(LocalMetadataRole.FOLDER_CONTAINER.isMetadataSuggestionSupported())
+    }
+
+    @Test
+    fun `folder display settings remain backwards compatible and infer legacy locks`() {
+        val settings = Json.decodeFromString<LocalFolderDisplaySettings>(
+            "{\"displayName\":\"Legacy title\",\"description\":\"Legacy summary\",\"tags\":[\"legacy\"]}",
+        )
+
+        assertEquals(
+            setOf("title", "description", "genres"),
+            settings.effectiveLockedFields(),
+        )
+        assertTrue(settings.author == null)
+    }
+
+    @Test
     fun `local read progress uses indexed series count and chapter read state`() {
         val chapters = listOf(
             Chapter.create().copy(id = 1L, mangaId = 7L, read = true),
@@ -573,7 +618,7 @@ class LocalLibraryModelsTest {
 
         val restored = Json.decodeFromString<LocalLibraryIndex>(Json.encodeToString(index))
 
-        assertEquals(5, restored.schemaVersion)
+        assertEquals(6, restored.schemaVersion)
         assertEquals(LocalLibraryItem.Kind.FILE_ENTRY, restored.items.single().kind)
         assertEquals("Nested/Book.epub", restored.items.single().relativePath)
     }

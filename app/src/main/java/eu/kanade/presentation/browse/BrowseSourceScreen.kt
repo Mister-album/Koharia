@@ -54,6 +54,9 @@ fun BrowseSourceContent(
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
     onRefresh: (() -> Unit)? = null,
+    entryLabel: ((Manga) -> String)? = null,
+    contentHeader: (@Composable () -> Unit)? = null,
+    entryBadge: (@Composable (Manga) -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -127,6 +130,9 @@ fun BrowseSourceContent(
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
+                entryLabel = entryLabel,
+                contentHeader = contentHeader,
+                entryBadge = entryBadge,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )
@@ -140,6 +146,9 @@ fun BrowseSourceContent(
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
+                entryLabel = entryLabel,
+                contentHeader = contentHeader,
+                entryBadge = entryBadge,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )
@@ -155,6 +164,9 @@ fun BrowseSourceContent(
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
+                entryLabel = entryLabel,
+                contentHeader = contentHeader,
+                entryBadge = entryBadge,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )

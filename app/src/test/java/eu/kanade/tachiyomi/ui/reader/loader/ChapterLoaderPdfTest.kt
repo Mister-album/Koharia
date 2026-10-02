@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import io.mockk.every
 import io.mockk.mockk
@@ -15,6 +16,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -26,6 +29,17 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class ChapterLoaderPdfTest {
+    @Test
+    fun `PDF routing receives the reader chapter metadata`() = runBlocking {
+        val source = PdfSource()
+        val memo = buildJsonObject { put("kavitaFileCount", 1) }
+        val chapter = ReaderChapter(Chapter.create().copy(id = 1, mangaId = 2, url = "chapter.pdf", memo = memo))
+
+        assertTrue(runCatching { loader(source).loadChapter(chapter) }.exceptionOrNull() is IOException)
+        assertEquals(memo, source.selectedChapter?.memo)
+        assertEquals(1, source.prepareCalls)
+    }
+
     @Test
     fun `adjacent preload leaves an uncached PDF untouched`() = runBlocking {
         val source = PdfSource()
@@ -153,7 +167,12 @@ class ChapterLoaderPdfTest {
         val failure = IOException("Incomplete PDF")
         var prepareCalls = 0
         var cacheLookups = 0
+        var selectedChapter: SChapter? = null
         override fun isPdfChapter(chapterUrl: String) = true
+        override fun isPdfChapter(chapter: SChapter): Boolean {
+            selectedChapter = chapter
+            return isPdfChapter(chapter.url)
+        }
         override fun findCompletePdfFile(chapterUrl: String): UniFile? {
             cacheLookups++
             onCacheLookup(cacheLookups)

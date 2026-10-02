@@ -94,6 +94,42 @@ class KavitaReadingCoordinatorTest {
         }
     }
 
+    @Test fun acceptingMappedRemotePositionReplacesBaselinePageAndTimestamp() = runBlocking {
+        val repository = MemoryKavitaRepository()
+        val scope = CoroutineScope(SupervisorJob()).apply { cancel() }
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/") { exchange ->
+                val body = when {
+                    exchange.requestURI.path.endsWith("authenticate") ||
+                        exchange.requestURI.path.endsWith("refresh-account") ->
+                        """{"username":"a","token":"fixture","kavitaVersion":"0.9.1.4","roles":["Login"]}"""
+                    exchange.requestURI.path.endsWith("get-progress") ->
+                        """{"libraryId":1,"seriesId":2,"volumeId":3,"chapterId":4,"pageNum":9,"bookScrollId":"remote-anchor","lastModifiedUtc":"2026-01-01T00:00:00Z"}"""
+                    else -> "{}"
+                }
+                val bytes = body.toByteArray()
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }
+            start()
+        }
+        val api = KavitaApiClient(OkHttpClient(), "http://127.0.0.1:${server.address.port}/", "fixture", "a")
+        try {
+            val reading = KavitaReadingCoordinator(1, "a", repository, api, scope, {}, {})
+            val ref = KavitaChapterRef(1, 2, 3, 4, 1)
+            reading.pull(ref, 8)
+            reading.accept(ref, 7, 8, 2_000)
+
+            val accepted = requireNotNull(reading.cached(4))
+            assertEquals(7, accepted.progress.pageNum)
+            assertEquals("remote-anchor", accepted.progress.bookScrollId)
+            assertEquals("1970-01-01T00:00:02Z", accepted.progress.lastModifiedUtc)
+        } finally {
+            api.close()
+            server.stop(0)
+        }
+    }
+
     @Test fun continuedOfflineReadingPreservesAnUnresolvedRemoteConflict() = runBlocking {
         val repository = MemoryKavitaRepository()
         val scope = CoroutineScope(SupervisorJob()).apply { cancel() }

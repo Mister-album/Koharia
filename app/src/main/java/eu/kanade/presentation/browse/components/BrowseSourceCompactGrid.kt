@@ -35,6 +35,9 @@ fun BrowseSourceCompactGrid(
     showLibraryBadges: Boolean,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
     showPagingLoadingIndicator: Boolean = true,
+    entryLabel: ((Manga) -> String)? = null,
+    contentHeader: (@Composable () -> Unit)? = null,
+    entryBadge: (@Composable (Manga) -> Unit)? = null,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
 ) {
@@ -45,6 +48,7 @@ fun BrowseSourceCompactGrid(
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
+        contentHeader?.let { header -> item(span = { GridItemSpan(maxLineSpan) }) { header() } }
         if (showPagingLoadingIndicator && mangaList.loadState.prepend is LoadState.Loading) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 BrowseSourceLoadingItem()
@@ -55,6 +59,8 @@ fun BrowseSourceCompactGrid(
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceCompactGridItem(
                 manga = manga,
+                label = entryLabel?.invoke(manga) ?: manga.title,
+                entryBadge = { entryBadge?.invoke(manga) },
                 showTitle = showTitle,
                 isSelected = manga.id in selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
@@ -78,6 +84,8 @@ fun BrowseSourceCompactGrid(
 @Composable
 private fun BrowseSourceCompactGridItem(
     manga: Manga,
+    label: String,
+    entryBadge: @Composable () -> Unit,
     isSelected: Boolean,
     showTitle: Boolean,
     showLibraryBadges: Boolean,
@@ -89,7 +97,7 @@ private fun BrowseSourceCompactGridItem(
     val readProgressText = readProgress?.displayText()
     val hasReadProgress = readProgressText != null
     MangaCompactGridItem(
-        title = manga.title.takeIf { showTitle },
+        title = label.takeIf { showTitle },
         coverData = MangaCover(
             mangaId = manga.id,
             sourceId = manga.source,
@@ -101,6 +109,7 @@ private fun BrowseSourceCompactGridItem(
         coverAlpha = if (isLibraryManga) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         coverBadgeStart = {
             InLibraryBadge(enabled = isLibraryManga)
+            entryBadge()
         },
         coverBadgeEndModifier = if (hasReadProgress) Modifier.padding(top = 32.dp) else Modifier,
         coverOverlay = if (hasReadProgress) {

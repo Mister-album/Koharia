@@ -165,11 +165,14 @@ class MangaScreen(
             onCoverClicked = screenModel::showCoverDialog,
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
             onDownloadActionClicked = screenModel::runDownloadAction.takeIf { allowsChapterDownloads },
-            onEditSeriesDetailsClicked = {
-                navigator.push(SeriesMetadataEditScreen(successState.manga.id))
-            }.takeIf { successState.source is ConnectionMetadataAdapter },
+            onEditSeriesDetailsClicked = (successState.source as? ConnectionMetadataAdapter)
+                ?.takeIf { it.isMetadataEditable(successState.manga.url) }
+                ?.let {
+                    { navigator.push(SeriesMetadataEditScreen(successState.manga.id)) }
+                },
             onEditCategoryClicked = when {
-                successState.source is ConnectionLibraryShelfAdapter -> {
+                successState.source is ConnectionLibraryShelfAdapter &&
+                    successState.source.isLibraryShelfAssignable(successState.manga.url) -> {
                     screenModel::showChangeConnectionLibraryShelfDialog
                 }
                 mangaBehavior.isLibraryEntry(successState.manga) && mangaBehavior.allowsCategoryManagement -> {

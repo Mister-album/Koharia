@@ -40,6 +40,8 @@ class LocalLibraryOrganizationModeGuideScreen : Screen() {
 @Composable
 internal fun LocalLibraryOrganizationGuide() {
     Column {
+        PreferenceGroupHeader(title = stringResource(MR.strings.local_library_mode_folder))
+        GuideText(stringResource(MR.strings.local_library_mode_folder_summary))
         PreferenceGroupHeader(title = stringResource(MR.strings.local_library_mode_series))
         GuideText(stringResource(MR.strings.local_library_mode_series_guide))
         PreferenceGroupHeader(title = stringResource(MR.strings.local_library_mode_individual))

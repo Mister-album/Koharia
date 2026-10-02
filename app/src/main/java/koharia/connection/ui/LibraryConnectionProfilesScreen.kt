@@ -124,6 +124,8 @@ class LibraryConnectionProfilesScreen(
         var profileToDelete by remember { mutableStateOf<LibraryConnectionProfile?>(null) }
         var profileActions by remember { mutableStateOf<LibraryConnectionProfile?>(null) }
         var refreshingConnectionIds by remember { mutableStateOf(emptySet<Long>()) }
+        val localRefreshIds by remember { Injekt.get<koharia.source.local.LocalLibraryRefreshTasks>() }
+            .activeIds.collectAsState()
         val addConnectionTitle = stringResource(MR.strings.connection_settings_add_title)
         val editConnectionTitle = stringResource(MR.strings.connection_settings_edit_title)
 
@@ -135,11 +137,14 @@ class LibraryConnectionProfilesScreen(
 
         fun refreshProfile(profile: LibraryConnectionProfile) {
             val refreshAdapter = sourceManager.get(profile.id) as? ConnectionLibraryRefreshAdapter ?: return
-            if (profile.id in refreshingConnectionIds) return
+            if (profile.id in refreshingConnectionIds || profile.id in localRefreshIds) return
             refreshingConnectionIds += profile.id
             scope.launch {
-                val result = refreshAdapter.refreshLibrary()
-                refreshingConnectionIds -= profile.id
+                val result = try {
+                    refreshAdapter.refreshLibrary()
+                } finally {
+                    refreshingConnectionIds -= profile.id
+                }
                 result.fold(
                     onSuccess = { refreshResult ->
                         context.toast(
@@ -264,7 +269,7 @@ class LibraryConnectionProfilesScreen(
                             onLongClick = { profileActions = profile },
                             onEdit = { editProfile(profile) },
                             canRefresh = refreshAdapter != null,
-                            isRefreshing = profile.id in refreshingConnectionIds,
+                            isRefreshing = profile.id in refreshingConnectionIds || profile.id in localRefreshIds,
                             onRefresh = { refreshProfile(profile) },
                             onDelete = { profileToDelete = profile },
                         )
@@ -296,7 +301,8 @@ class LibraryConnectionProfilesScreen(
                             },
                         ) { Text(stringResource(MR.strings.connection_set_active)) }
                         TextButton(
-                            enabled = canRefresh && profile.id !in refreshingConnectionIds,
+                            enabled =
+                            canRefresh && profile.id !in refreshingConnectionIds && profile.id !in localRefreshIds,
                             onClick = {
                                 refreshProfile(profile)
                                 profileActions = null

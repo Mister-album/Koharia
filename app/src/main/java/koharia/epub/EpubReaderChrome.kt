@@ -230,6 +230,7 @@ internal fun EpubReaderBottomArea(
                     onPageIndexChange = {},
                     onPageIndexChangeFinished = onPositionChange,
                     sliderProgress = progression.toFloat().coerceIn(0f, 1f),
+                    onProgressChange = { onProgressionChange(it.toDouble()) },
                     onProgressChangeFinished = { onProgressionChange(it.toDouble()) },
                     displayCurrentText = visualPagePair?.first?.toString()
                         ?: "${(progression * 100).roundToInt().coerceIn(0, 100)}%",

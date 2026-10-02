@@ -125,6 +125,7 @@ fun MangaInfoBox(
     doSearch: (query: String, global: Boolean) -> Unit,
     backdropHorizontalBleed: Dp = 0.dp,
     modifier: Modifier = Modifier,
+    showComicMetadata: Boolean = true,
 ) {
     Box(modifier = modifier) {
         // Backdrop
@@ -162,6 +163,7 @@ fun MangaInfoBox(
                     isStubSource = isStubSource,
                     onCoverClick = onCoverClick,
                     doSearch = doSearch,
+                    showComicMetadata = showComicMetadata,
                 )
             } else {
                 MangaAndSourceTitlesLarge(
@@ -171,6 +173,7 @@ fun MangaInfoBox(
                     isStubSource = isStubSource,
                     onCoverClick = onCoverClick,
                     doSearch = doSearch,
+                    showComicMetadata = showComicMetadata,
                 )
             }
         }
@@ -345,6 +348,7 @@ private fun MangaAndSourceTitlesLarge(
     isStubSource: Boolean,
     onCoverClick: () -> Unit,
     doSearch: (query: String, global: Boolean) -> Unit,
+    showComicMetadata: Boolean,
 ) {
     Column(
         modifier = Modifier
@@ -372,6 +376,7 @@ private fun MangaAndSourceTitlesLarge(
             doSearch = doSearch,
             textAlign = TextAlign.Center,
             memo = manga.memo,
+            showComicMetadata = showComicMetadata,
         )
     }
 }
@@ -384,6 +389,7 @@ private fun MangaAndSourceTitlesSmall(
     isStubSource: Boolean,
     onCoverClick: () -> Unit,
     doSearch: (query: String, global: Boolean) -> Unit,
+    showComicMetadata: Boolean,
 ) {
     Row(
         modifier = Modifier
@@ -415,6 +421,7 @@ private fun MangaAndSourceTitlesSmall(
                 isStubSource = isStubSource,
                 doSearch = doSearch,
                 memo = manga.memo,
+                showComicMetadata = showComicMetadata,
             )
         }
     }
@@ -431,6 +438,7 @@ private fun ColumnScope.MangaContentInfo(
     doSearch: (query: String, global: Boolean) -> Unit,
     textAlign: TextAlign? = LocalTextStyle.current.textAlign,
     memo: JsonObject = JsonObject(emptyMap()),
+    showComicMetadata: Boolean = true,
 ) {
     val context = LocalContext.current
     Text(
@@ -451,6 +459,8 @@ private fun ColumnScope.MangaContentInfo(
     )
 
     Spacer(modifier = Modifier.height(2.dp))
+
+    if (!showComicMetadata) return
 
     Row(
         modifier = Modifier.secondaryItemAlpha(),

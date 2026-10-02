@@ -22,13 +22,16 @@ internal fun LocalLibraryToolbar(
     onConnectionSelect: (Long) -> Unit,
     hasActiveFilters: Boolean,
     onImportClick: () -> Unit,
-    onMergeImagesClick: () -> Unit,
+    onMergeImagesClick: (() -> Unit)?,
     onFilterClick: () -> Unit,
     onSettingsClick: () -> Unit,
     navigateUp: (() -> Unit)?,
     onSearch: (String) -> Unit,
     onClickCloseSearch: () -> Unit,
     scrollBehavior: TopAppBarScrollBehavior? = null,
+    folderTitle: String? = null,
+    onReadAsComicClick: (() -> Unit)? = null,
+    onRecoverOperation: (() -> Unit)? = null,
 ) {
     ConnectionLibraryToolbar(
         searchQuery = searchQuery,
@@ -40,7 +43,8 @@ internal fun LocalLibraryToolbar(
         connectionProfiles = connectionProfiles,
         activeConnectionId = activeConnectionId,
         onConnectionSelect = onConnectionSelect,
-        showConnectionAction = connectionProfiles.size > 1,
+        showConnectionAction = folderTitle == null && connectionProfiles.size > 1,
+        title = folderTitle,
         hasActiveFilters = hasActiveFilters,
         onFilterClick = onFilterClick,
         navigateUp = navigateUp,
@@ -51,14 +55,32 @@ internal fun LocalLibraryToolbar(
                 icon = Icons.Outlined.UploadFile,
                 onClick = onImportClick,
             ),
-            AppBar.OverflowAction(
-                title = stringResource(MR.strings.image_comic_merge),
-                onClick = onMergeImagesClick,
-            ),
-            AppBar.OverflowAction(
-                title = stringResource(MR.strings.local_library_manage_bookshelves),
-                onClick = onSettingsClick,
-            ),
-        ),
+            onMergeImagesClick?.let {
+                AppBar.OverflowAction(
+                    title = stringResource(MR.strings.image_comic_merge),
+                    onClick = it,
+                )
+            },
+            onReadAsComicClick?.let {
+                AppBar.OverflowAction(
+                    title = stringResource(MR.strings.local_library_show_as_comic),
+                    onClick = it,
+                )
+            },
+            onRecoverOperation?.let {
+                AppBar.OverflowAction(
+                    title = stringResource(MR.strings.local_library_pending_operation),
+                    onClick = it,
+                )
+            },
+            if (folderTitle == null) {
+                AppBar.OverflowAction(
+                    title = stringResource(MR.strings.local_library_manage_bookshelves),
+                    onClick = onSettingsClick,
+                )
+            } else {
+                null
+            },
+        ).filterNotNull(),
     )
 }

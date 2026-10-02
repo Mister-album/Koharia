@@ -19,6 +19,7 @@ import eu.kanade.presentation.manga.SeriesMetadataEditScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.connection.ConnectionMetadataAdapter
+import koharia.connection.ConnectionMetadataConflictAdapter
 import koharia.connection.ConnectionMetadataGenerationAdapter
 import koharia.connection.LibraryMetadata
 import koharia.connection.LibraryMetadataField
@@ -75,12 +76,19 @@ class SeriesMetadataEditScreen(
             LaunchedEffect(Unit) { navigator.pop() }
             return
         }
+        if (!adapter.isMetadataEditable(manga.url)) {
+            LaunchedEffect(Unit) { navigator.pop() }
+            return
+        }
+        val editableFields = remember(adapter, manga.url) { adapter.editableMetadataFields(manga.url) }
 
         val screenModel = rememberScreenModel {
             SeriesMetadataEditScreenModel(
                 manga = manga,
                 metadataAdapter = adapter,
-                metadataGenerationAdapter = source as? ConnectionMetadataGenerationAdapter,
+                metadataGenerationAdapter = (source as? ConnectionMetadataGenerationAdapter)
+                    ?.takeIf { LibraryMetadataField.TITLE in editableFields },
+                editableFields = editableFields,
             )
         }
         val state by screenModel.state.collectAsState()
@@ -98,12 +106,33 @@ class SeriesMetadataEditScreen(
             onDescriptionChange = screenModel::updateDescription,
             onGenresChange = screenModel::updateGenres,
             onOpenMetadataGeneration = screenModel::openMetadataGeneration,
+            onImportLegacyMetadata = screenModel::previewLegacyMetadata,
             onDismissMetadataGeneration = screenModel::dismissMetadataGeneration,
             onFilenameTemplateChange = screenModel::selectFilenameTemplate,
             onGenerateMetadataPreview = screenModel::generateMetadataPreview,
             onApplyGeneratedMetadata = screenModel::applyGeneratedMetadata,
             onSave = screenModel::save,
         )
+
+        if (state.metadataConflict) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = screenModel::dismissMetadataConflict,
+                title = { androidx.compose.material3.Text(stringResource(MR.strings.local_library_metadata_conflict)) },
+                text = {
+                    androidx.compose.material3.Text(stringResource(MR.strings.local_library_metadata_conflict_detail))
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = screenModel::overwriteExternalMetadata) {
+                        androidx.compose.material3.Text(stringResource(MR.strings.local_library_metadata_keep_local))
+                    }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = screenModel::useExternalMetadata) {
+                        androidx.compose.material3.Text(stringResource(MR.strings.local_library_metadata_use_external))
+                    }
+                },
+            )
+        }
 
         LaunchedEffect(screenModel) {
             screenModel.events.receiveAsFlow().collect { event ->
@@ -128,9 +157,14 @@ class SeriesMetadataEditScreenModel(
     private val manga: Manga,
     private val metadataAdapter: ConnectionMetadataAdapter,
     private val metadataGenerationAdapter: ConnectionMetadataGenerationAdapter?,
+    private val editableFields: Set<LibraryMetadataField> = LibraryMetadataField.entries.toSet(),
     private val updateManga: UpdateManga = Injekt.get(),
 ) : StateScreenModel<SeriesMetadataEditScreenModel.State>(
-    State.from(manga, supportsMetadataGeneration = metadataGenerationAdapter != null),
+    State.from(
+        manga,
+        supportsMetadataGeneration = metadataGenerationAdapter != null,
+        editableFields = editableFields,
+    ),
 ) {
 
     private var storedMetadata: LibraryMetadata? = null
@@ -139,7 +173,8 @@ class SeriesMetadataEditScreenModel(
     init {
         screenModelScope.launchIO {
             storedMetadata = runCatching { metadataAdapter.readMetadata(manga.url) }.getOrNull()
-            mutableState.update { it.copy(isLoading = false) }
+            val legacy = runCatching { metadataGenerationAdapter?.legacyMetadataSuggestion(manga.url) }.getOrNull()
+            mutableState.update { it.copy(isLoading = false, legacyMetadata = legacy) }
         }
     }
 
@@ -202,7 +237,10 @@ class SeriesMetadataEditScreenModel(
 
     fun applyGeneratedMetadata() {
         val suggestion = state.value.generatedMetadata ?: return
-        val fields = suggestion.fieldSources.keys
+        val protected = storedMetadata?.lockedFields.orEmpty() + state.value.changedFields
+        val fields = suggestion.fieldSources.keys.filterTo(mutableSetOf()) {
+            it in editableFields && metadataFieldKey(it) !in protected
+        }
         if (fields.isEmpty()) return
         mutableState.update { current ->
             current.copy(
@@ -227,24 +265,78 @@ class SeriesMetadataEditScreenModel(
         }
     }
 
-    fun save() {
+    fun previewLegacyMetadata() {
+        val preview = state.value.legacyMetadata ?: return
+        mutableState.update { it.copy(showMetadataGeneration = true, generatedMetadata = preview) }
+    }
+
+    fun save() = saveInternal(false)
+
+    fun dismissMetadataConflict() = mutableState.update { it.copy(metadataConflict = false) }
+
+    fun overwriteExternalMetadata() = saveInternal(true)
+
+    fun useExternalMetadata() {
+        val conflictAdapter = metadataAdapter as? ConnectionMetadataConflictAdapter ?: return
+        mutableState.update { it.copy(metadataConflict = false, isSaving = true) }
+        screenModelScope.launchIO {
+            if (conflictAdapter.useExternalMetadata(manga.url).isSuccess) {
+                events.send(Event.Saved)
+            } else {
+                mutableState.update { it.copy(isSaving = false) }
+                events.send(Event.SaveFailed)
+            }
+        }
+    }
+
+    private fun saveInternal(overwriteExternal: Boolean) {
         val snapshot = state.value
         if (!snapshot.canSave) return
-        mutableState.update { it.copy(isSaving = true) }
+        mutableState.update { it.copy(isSaving = true, metadataConflict = false) }
 
         screenModelScope.launchIO {
             val existing = storedMetadata
             val metadata = LibraryMetadata(
-                title = snapshot.title.trim(),
-                author = snapshot.author.trim(),
-                artist = snapshot.artist.trim(),
-                description = snapshot.description.trim(),
-                genres = parseGenres(snapshot.genres),
-                status = snapshot.status,
+                title = if (FIELD_TITLE in snapshot.changedFields) {
+                    snapshot.title.trim().takeIf(String::isNotEmpty)
+                } else {
+                    existing?.title
+                },
+                author = if (FIELD_AUTHOR in snapshot.changedFields) {
+                    snapshot.author.trim().takeIf(String::isNotEmpty)
+                } else {
+                    existing?.author
+                },
+                artist = if (FIELD_ARTIST in snapshot.changedFields) {
+                    snapshot.artist.trim().takeIf(String::isNotEmpty)
+                } else {
+                    existing?.artist
+                },
+                description = if (FIELD_DESCRIPTION in snapshot.changedFields) {
+                    snapshot.description.trim().takeIf(String::isNotEmpty)
+                } else {
+                    existing?.description
+                },
+                genres = if (FIELD_GENRES in snapshot.changedFields) {
+                    parseGenres(snapshot.genres)
+                } else {
+                    existing?.genres.orEmpty()
+                },
+                status = if (FIELD_STATUS in snapshot.changedFields) snapshot.status else existing?.status,
                 lockedFields = existing?.lockedFields.orEmpty() + snapshot.changedFields,
                 source = "user",
+                editedFields = snapshot.changedFields.mapNotNull(::metadataField).toSet(),
             )
-            val saved = metadataAdapter.updateMetadata(manga.url, metadata).isSuccess
+            val result = if (overwriteExternal && metadataAdapter is ConnectionMetadataConflictAdapter) {
+                metadataAdapter.overwriteMetadata(manga.url, metadata)
+            } else {
+                metadataAdapter.updateMetadata(manga.url, metadata)
+            }
+            if (result.exceptionOrNull() is koharia.source.local.LocalMetadataConflictException) {
+                mutableState.update { it.copy(isSaving = false, metadataConflict = true) }
+                return@launchIO
+            }
+            val saved = result.isSuccess
             val updated = saved && updateManga.await(
                 MangaUpdate(
                     id = manga.id,
@@ -268,6 +360,7 @@ class SeriesMetadataEditScreenModel(
     }
 
     private fun updateField(field: String, transform: State.() -> State) {
+        if (field.toMetadataField() !in editableFields) return
         mutableState.update { state ->
             state.transform().copy(changedFields = state.changedFields + field)
         }
@@ -285,17 +378,25 @@ class SeriesMetadataEditScreenModel(
         val changedFields: Set<String> = emptySet(),
         val isLoading: Boolean = true,
         val isSaving: Boolean = false,
+        val metadataConflict: Boolean = false,
         val supportsMetadataGeneration: Boolean,
+        val editableFields: Set<LibraryMetadataField>,
         val showMetadataGeneration: Boolean = false,
         val filenameTemplate: MetadataFilenameTemplate = MetadataFilenameTemplate.AUTO,
         val generatedMetadata: LibraryMetadataSuggestion? = null,
+        val legacyMetadata: LibraryMetadataSuggestion? = null,
         val isGeneratingMetadata: Boolean = false,
     ) {
         val canSave: Boolean
-            get() = title.isNotBlank() && changedFields.isNotEmpty() && !isLoading && !isSaving
+            get() = (LibraryMetadataField.TITLE !in editableFields || title.isNotBlank()) &&
+                changedFields.isNotEmpty() && !isLoading && !isSaving
 
         companion object {
-            fun from(manga: Manga, supportsMetadataGeneration: Boolean) = State(
+            fun from(
+                manga: Manga,
+                supportsMetadataGeneration: Boolean,
+                editableFields: Set<LibraryMetadataField>,
+            ) = State(
                 originalTitle = manga.title,
                 title = manga.title,
                 author = manga.author.orEmpty(),
@@ -304,6 +405,7 @@ class SeriesMetadataEditScreenModel(
                 genres = manga.genre.orEmpty().joinToString(", "),
                 status = manga.status.toInt(),
                 supportsMetadataGeneration = supportsMetadataGeneration,
+                editableFields = editableFields,
             )
         }
     }
@@ -328,6 +430,18 @@ class SeriesMetadataEditScreenModel(
                 .filter(String::isNotEmpty)
                 .distinct()
         }
+
+        fun String.toMetadataField(): LibraryMetadataField? = when (this) {
+            FIELD_TITLE -> LibraryMetadataField.TITLE
+            FIELD_AUTHOR -> LibraryMetadataField.AUTHOR
+            FIELD_ARTIST -> LibraryMetadataField.ARTIST
+            FIELD_DESCRIPTION -> LibraryMetadataField.DESCRIPTION
+            FIELD_GENRES -> LibraryMetadataField.GENRES
+            FIELD_STATUS -> LibraryMetadataField.STATUS
+            else -> null
+        }
+
+        fun metadataField(field: String): LibraryMetadataField? = field.toMetadataField()
 
         fun metadataFieldKey(field: LibraryMetadataField): String? = when (field) {
             LibraryMetadataField.TITLE -> FIELD_TITLE

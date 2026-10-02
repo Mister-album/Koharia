@@ -5,7 +5,9 @@ import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import koharia.source.local.LocalLibraryConfig
+import koharia.source.local.LocalLibraryIndex
 import koharia.source.local.LocalLibraryLayout
+import koharia.source.local.rebindFolderLocations
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -20,8 +22,23 @@ internal object BackupDirectoryRemapper {
         bindings: Map<String, String>,
     ): List<BackupSourcePreferences> = preferences.map { source ->
         source.copy(
-            prefs = source.prefs.map { preference ->
-                if (preference.key != LOCAL_CONFIG_KEY || preference.value !is StringPreferenceValue) {
+            prefs = source.prefs.filterNot { it.key == "local_folder_operation" }.map { preference ->
+                if (preference.key == "local_library_index" && preference.value is StringPreferenceValue) {
+                    val index = runCatching {
+                        json.decodeFromString<LocalLibraryIndex>(preference.value.value)
+                    }.getOrDefault(LocalLibraryIndex())
+                    BackupPreference(
+                        preference.key,
+                        StringPreferenceValue(
+                            json.encodeToString(
+                                index.rebindFolderLocations(
+                                    index.items.mapTo(mutableSetOf()) { it.rootId },
+                                    markMissing = false,
+                                ),
+                            ),
+                        ),
+                    )
+                } else if (preference.key != LOCAL_CONFIG_KEY || preference.value !is StringPreferenceValue) {
                     preference
                 } else {
                     val config = json.decodeFromString<LocalLibraryConfig>(preference.value.value)

@@ -60,6 +60,7 @@ fun MangaToolbar(
     backgroundAlphaProvider: () -> Float,
     modifier: Modifier = Modifier,
     onClickConnectionActions: (() -> Unit)? = null,
+    additionalActions: List<AppBar.AppBarAction> = emptyList(),
 ) {
     val isActionMode = actionModeCounter > 0
     AppBar(
@@ -108,6 +109,7 @@ fun MangaToolbar(
                         )
                         return@apply
                     }
+                    addAll(additionalActions)
                     if (chapterCoverDisplayMode != null) {
                         add(
                             AppBar.Action(

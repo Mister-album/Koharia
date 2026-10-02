@@ -1,7 +1,9 @@
 package koharia.source.local
 
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.connection.LibraryMetadata
 import koharia.connection.LibraryMetadataField
+import koharia.connection.LibraryMetadataSuggestion
 import koharia.connection.MetadataFilenameTemplate
 import koharia.connection.MetadataSuggestionSource
 import org.jsoup.Jsoup
@@ -9,25 +11,81 @@ import org.jsoup.parser.Parser
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class LocalMetadataGeneratorTest {
 
     @Test
-    fun `embedded book title does not replace folder series name without collection metadata`() {
-        val embeddedBook = LocalEmbeddedMetadata(title = "Volume title")
+    fun `chapter metadata cannot provide any automatic series fields`() {
+        val embeddedBook =
+            LocalEmbeddedMetadata(
+                title = "Volume title",
+                authors = listOf("Chapter author"),
+                subjects = listOf("Chapter tag"),
+            )
         val embeddedSeries = LocalEmbeddedMetadata(title = "Volume title", series = "Series title")
         val directoryMetadata = LocalEmbeddedMetadata(title = "Directory title")
 
         assertNull(embeddedBook.forSeriesDisplay(isDirectoryMetadata = false).title)
-        assertEquals(
-            "Series title",
-            embeddedSeries.forSeriesDisplay(isDirectoryMetadata = false).title,
-        )
+        assertEquals(LocalEmbeddedMetadata(), embeddedSeries.forSeriesDisplay(isDirectoryMetadata = false))
+        assertEquals(LocalEmbeddedMetadata(), embeddedBook.forSeriesDisplay(isDirectoryMetadata = false))
         assertEquals(
             "Directory title",
             directoryMetadata.forSeriesDisplay(isDirectoryMetadata = true).title,
         )
+    }
+
+    @Test
+    fun `object sidecars outrank embedded metadata and local edits outrank sidecars`() {
+        val result = LibraryMetadataSuggestion(
+            LibraryMetadata(title = "Filename"),
+            mapOf(LibraryMetadataField.TITLE to MetadataSuggestionSource.ITEM_FILENAME),
+            1,
+            1,
+        )
+            .withLocalMetadata(
+                listOf(
+                    LocalMetadataCandidate(
+                        LibraryMetadata(title = "Embedded", author = "Own author"),
+                        MetadataSuggestionSource.COMICINFO_EMBEDDED,
+                    ),
+                    LocalMetadataCandidate(
+                        LibraryMetadata(title = "Dedicated", description = "Own summary"),
+                        MetadataSuggestionSource.SIDECAR,
+                    ),
+                    LocalMetadataCandidate(LibraryMetadata(title = "Edited"), MetadataSuggestionSource.LOCAL_OVERRIDE),
+                ),
+            )
+        assertEquals("Edited", result.metadata.title)
+        assertEquals("Own author", result.metadata.author)
+        assertEquals(MetadataSuggestionSource.LOCAL_OVERRIDE, result.fieldSources[LibraryMetadataField.TITLE])
+        assertEquals(MetadataSuggestionSource.COMICINFO_EMBEDDED, result.fieldSources[LibraryMetadataField.AUTHOR])
+        assertEquals(MetadataSuggestionSource.SIDECAR, result.fieldSources[LibraryMetadataField.DESCRIPTION])
+    }
+
+    @Test
+    fun `locked fields including cleared genres cannot be replaced by suggestions`() {
+        val result = LibraryMetadataSuggestion(
+            LibraryMetadata(title = "Suggested", genres = listOf("New genre")),
+            mapOf(
+                LibraryMetadataField.TITLE to MetadataSuggestionSource.FOLDER,
+                LibraryMetadataField.GENRES to MetadataSuggestionSource.ITEM_FILENAME,
+            ),
+            1,
+            1,
+        )
+            .withLocalMetadata(
+                listOf(
+                    LocalMetadataCandidate(
+                        LibraryMetadata(genres = emptyList(), lockedFields = setOf("genres")),
+                        MetadataSuggestionSource.LOCAL_OVERRIDE,
+                    ),
+                ),
+                setOf("title", "genres"),
+            )
+        assertTrue(result.fieldSources.isEmpty())
+        assertEquals(emptyList<String>(), result.metadata.genres)
     }
 
     @Test

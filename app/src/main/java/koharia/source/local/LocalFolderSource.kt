@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.system.Os
 import androidx.preference.PreferenceScreen
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.manga.model.toSManga
@@ -39,14 +40,17 @@ import koharia.connection.ConnectionMediaImportResult
 import koharia.connection.ConnectionMediaImportSeries
 import koharia.connection.ConnectionMediaType
 import koharia.connection.ConnectionMetadataAdapter
+import koharia.connection.ConnectionMetadataConflictAdapter
 import koharia.connection.ConnectionMetadataGenerationAdapter
 import koharia.connection.ConnectionSeriesCoverAdapter
 import koharia.connection.ConnectionSource
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryContentScope
 import koharia.connection.LibraryMetadata
+import koharia.connection.LibraryMetadataField
 import koharia.connection.LibraryMetadataSuggestion
 import koharia.connection.MetadataFilenameTemplate
+import koharia.connection.MetadataSuggestionSource
 import koharia.connection.SharedAppPreferences
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
@@ -69,6 +73,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import logcat.LogPriority
 import nl.adaptivity.xmlutil.core.AndroidXmlReader
@@ -133,6 +138,7 @@ class LocalFolderSource(
     koharia.connection.ConnectionReaderRoutingAdapter,
     ConnectionSeriesCoverAdapter,
     ConnectionMetadataGenerationAdapter,
+    ConnectionMetadataConflictAdapter,
     ConnectionMetadataAdapter {
 
     private val json = Injekt.get<kotlinx.serialization.json.Json>()
@@ -147,6 +153,8 @@ class LocalFolderSource(
     internal suspend fun removeCustomCoverIfMissing(url: String, delete: () -> Unit): Boolean =
         refreshMutex.withLock {
             val config = preferences.coverMaintenanceConfig() ?: return@withLock false
+            val location = LocalLibraryLocator.location(url, id)
+            if (location?.relativePath?.startsWith(".koharia/nodes/") == true) return@withLock false
             val removed = isRemovedLocalCover(id, url, config) { root, path ->
                 preferences.resolveRoot(context, root)?.let { localCoverEntryExists(context, it, path) }
             }
@@ -184,6 +192,9 @@ class LocalFolderSource(
     override fun chapterThumbnailUrl(chapterUrl: String): String = chapterUrl
 
     override suspend fun loadChapterThumbnail(chapterUrl: String): ByteArray? = withIOContext {
+        indexedEntry(chapterUrl)?.takeIf { it.kind == LocalLibraryItem.Kind.FOLDER }?.let {
+            return@withIOContext folderCover(it, mutableSetOf())
+        }
         val file = localChapterFile(chapterUrl) ?: return@withIOContext null
         runCatching { firstImageBytes(file) }
             .onFailure { error ->
@@ -213,13 +224,11 @@ class LocalFolderSource(
     )
 
     override suspend fun refreshLibrary(): Result<ConnectionLibraryRefreshResult> {
-        val result = runCatching {
+        return Injekt.get<LocalLibraryRefreshTasks>().refresh(id) {
             refreshMutex.withLock {
-                scanLibrary()
+                scanLibrary().also { mutableLibraryRefreshes.emit(it) }
             }
         }
-        result.getOrNull()?.let { mutableLibraryRefreshes.emit(it) }
-        return result
     }
 
     suspend fun needsInitialScan(): Boolean = withIOContext {
@@ -227,10 +236,14 @@ class LocalFolderSource(
         if (index.scannedAt <= 0L || index.schemaVersion < 5) return@withIOContext true
         val indexedUrls = index.items.asSequence()
             .filter {
-                it.kind in setOf(LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.FILE_ENTRY) &&
+                it.kind in setOf(
+                    LocalLibraryItem.Kind.SERIES,
+                    LocalLibraryItem.Kind.FILE_ENTRY,
+                    LocalLibraryItem.Kind.FOLDER,
+                ) &&
                     it.rootId.isNotBlank()
             }
-            .map { item -> LocalLibraryLocator.entryUrl(id, item.rootId, item.relativePath) }
+            .map { item -> LocalLibraryLocator.entryUrl(id, item.rootId, item.locatorPath) }
             .toSet()
         if (indexedUrls.isEmpty()) return@withIOContext false
         val storedUrls = mangaRepository.getMangaBySourceId(id).mapTo(mutableSetOf(), Manga::url)
@@ -247,7 +260,7 @@ class LocalFolderSource(
                 require(manga.source == id)
                 val item = index.items.firstOrNull {
                     it.kind != LocalLibraryItem.Kind.CHAPTER &&
-                        LocalLibraryLocator.entryUrl(id, it.rootId, it.relativePath) == manga.url
+                        LocalLibraryLocator.entryUrl(id, it.rootId, it.locatorPath) == manga.url
                 } ?: error("Local library entry is no longer available")
                 val root = roots.first { it.id == item.rootId }
                 LocalLibraryDeletionEntry(
@@ -256,8 +269,8 @@ class LocalFolderSource(
                     item = item,
                     deletion = LocalFileDeletion.prepare(
                         root = checkNotNull(directories[root]),
-                        path = item.relativePath,
-                        series = item.kind == LocalLibraryItem.Kind.SERIES,
+                        path = localImageSeriesPhysicalPath(item.relativePath) ?: item.relativePath,
+                        series = item.kind != LocalLibraryItem.Kind.FILE_ENTRY && !item.imageComic,
                         protectedDirectories = protectedDirectories,
                     ),
                 )
@@ -282,13 +295,13 @@ class LocalFolderSource(
                             item.rootId == entry.root.id && (
                                 item.itemKey == entry.item.itemKey ||
                                     (
-                                        entry.item.kind == LocalLibraryItem.Kind.SERIES &&
+                                        entry.item.kind != LocalLibraryItem.Kind.FILE_ENTRY &&
                                             item.relativePath.startsWith("${entry.item.relativePath}/")
                                         )
                                 )
                         }
                         val urls = removedItems.mapTo(mutableSetOf()) {
-                            LocalLibraryLocator.entryUrl(id, it.rootId, it.relativePath)
+                            LocalLibraryLocator.entryUrl(id, it.rootId, it.locatorPath)
                         }
                         existingMangas.filter { it.url in urls }.forEach { manga ->
                             coverCache.deleteFromCache(manga)
@@ -331,7 +344,7 @@ class LocalFolderSource(
         )
 
     override suspend fun filterLibraryEntries(mangas: List<Manga>): List<Manga> {
-        return browseIndexedLibrary(mangas = mangas, query = "")
+        return browseIndexedLibrary(mangas = mangas, query = "", hierarchical = false)
     }
 
     internal suspend fun browseIndexedLibrary(
@@ -353,6 +366,8 @@ class LocalFolderSource(
         scope: LibraryContentScope? = null,
         filters: LocalLibraryFilters = LocalLibraryFilters(),
         bookshelfId: String? = null,
+        parentUrl: String? = null,
+        hierarchical: Boolean = true,
     ): List<Manga> = withIOContext {
         val index = preferences.getIndex()
         val assignments = preferences.getBookshelfAssignments()
@@ -361,6 +376,25 @@ class LocalFolderSource(
         val libraryItems = index.libraryItemsByKey
         val chapterNames = index.chapterNamesBySeriesKey
         val chapterFormats = index.chapterFormatsBySeriesKey
+        val shelfDescendantKeys = if (bookshelfId == null) {
+            emptySet()
+        } else {
+            libraryItems.values
+                .asSequence()
+                .filter { item ->
+                    val root = rootsById[item.rootId] ?: return@filter false
+                    item.metadataRole(config.organizationMode(root)).isClassifiable() &&
+                        config.effectiveBookshelfId(
+                            root = root,
+                            itemKey = item.itemKey,
+                            assignments = assignments,
+                            contentType = item.contentType,
+                        ) == bookshelfId
+                }
+                .mapTo(mutableSetOf(), LocalLibraryItem::itemKey)
+        }
+        val parent = parentUrl?.let(::indexedEntry)
+        if (parentUrl != null && parent == null) return@withIOContext emptyList()
 
         val filtered = mangas
             .mapNotNull { manga ->
@@ -369,16 +403,39 @@ class LocalFolderSource(
                 val itemKey = LocalLibraryLocator.itemKey(rootId, location.relativePath)
                 val indexedItem = libraryItems[itemKey] ?: return@mapNotNull null
                 val root = rootsById[rootId] ?: return@mapNotNull null
-                if (!indexedItem.contentType.matches(scope)) return@mapNotNull null
-                if (
-                    bookshelfId != null && config.effectiveBookshelfId(
-                        root = root,
-                        itemKey = itemKey,
-                        assignments = assignments,
-                        contentType = indexedItem.contentType,
-                    ) != bookshelfId
-                ) {
+                if (hierarchical && config.organizationMode(root) == LocalLibraryOrganizationMode.FOLDER) {
+                    if (!indexedItem.isInFolder(
+                            parent?.rootId,
+                            parent?.relativePath,
+                            query.isNotBlank(),
+                        )
+                    ) {
+                        return@mapNotNull null
+                    }
+                } else if (parentUrl != null) {
                     return@mapNotNull null
+                }
+                if (!indexedItem.contentType.matches(scope)) return@mapNotNull null
+                if (bookshelfId != null) {
+                    val role = indexedItem.metadataRole(config.organizationMode(root))
+                    if (role.isClassifiable()) {
+                        if (config.effectiveBookshelfId(
+                                root = root,
+                                itemKey = itemKey,
+                                assignments = assignments,
+                                contentType = indexedItem.contentType,
+                            ) != bookshelfId
+                        ) {
+                            return@mapNotNull null
+                        }
+                    } else if (shelfDescendantKeys.none { descendantKey ->
+                            val descendant = libraryItems[descendantKey] ?: return@none false
+                            descendant.rootId == indexedItem.rootId &&
+                                descendant.relativePath.startsWith("${indexedItem.relativePath}/")
+                        }
+                    ) {
+                        return@mapNotNull null
+                    }
                 }
                 manga.takeIf {
                     it.matchesIndexedLibrary(
@@ -411,7 +468,14 @@ class LocalFolderSource(
                 first.title.compareToCaseInsensitiveNaturalOrder(second.title)
             }
         }
-        if (filters.descending) sorted.reversed() else sorted
+        val ordered = if (filters.descending) sorted.reversed() else sorted
+        if (filters.foldersFirst) {
+            ordered.sortedBy {
+                indexedEntry(it.url)?.kind != LocalLibraryItem.Kind.FOLDER
+            }
+        } else {
+            ordered
+        }
     }
 
     private suspend fun indexedMangaPage(
@@ -424,7 +488,13 @@ class LocalFolderSource(
         val mangas = browseIndexedLibrary(query, scope, filters, bookshelfId)
         val sorted = if (latestFirst) {
             val modifiedByItemKey = preferences.getIndex().items
-                .filter { it.kind in setOf(LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.FILE_ENTRY) }
+                .filter {
+                    it.kind in setOf(
+                        LocalLibraryItem.Kind.SERIES,
+                        LocalLibraryItem.Kind.FILE_ENTRY,
+                        LocalLibraryItem.Kind.FOLDER,
+                    )
+                }
                 .associate { it.itemKey to it.modifiedAt }
             mangas.sortedByDescending { manga ->
                 val location = LocalLibraryLocator.location(manga.url, id)
@@ -441,13 +511,27 @@ class LocalFolderSource(
     override suspend fun currentLibraryShelfId(mangaUrl: String): String? {
         val resource = resolveResource(mangaUrl) ?: return null
         val indexedItem = indexedLibraryItem(resource) ?: return null
-        val itemKey = LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath)
+        if (!indexedItem.metadataRole(preferences.getConfig().organizationMode(resource.root)).isClassifiable()) {
+            return null
+        }
+        val itemKey = indexedLibraryItem(resource)?.itemKey
+            ?: LocalLibraryLocator.itemKey(
+                resource.root.id,
+                resource.relativePath,
+            )
         return preferences.getConfig().effectiveBookshelfId(
             root = resource.root,
             itemKey = itemKey,
             assignments = preferences.getBookshelfAssignments(),
             contentType = indexedItem.contentType,
         )
+    }
+
+    override fun isLibraryShelfAssignable(mangaUrl: String): Boolean {
+        val item = indexedEntry(mangaUrl) ?: return false
+        val config = preferences.getConfig()
+        val root = config.roots.firstOrNull { it.id == item.rootId } ?: return false
+        return item.metadataRole(config.organizationMode(root)).isClassifiable()
     }
 
     override suspend fun readerContentScope(
@@ -466,6 +550,9 @@ class LocalFolderSource(
     override suspend fun compatibleLibraryShelves(mangaUrl: String): List<ConnectionLibraryShelf> {
         val resource = resolveResource(mangaUrl) ?: return emptyList()
         val item = indexedLibraryItem(resource) ?: return emptyList()
+        if (!item.metadataRole(preferences.getConfig().organizationMode(resource.root)).isClassifiable()) {
+            return emptyList()
+        }
         val mode = item.organizationMode()
         return preferences.getConfig().bookshelvesFor(item.contentType)
             .filter { it.organizationMode == mode }
@@ -475,13 +562,20 @@ class LocalFolderSource(
     override suspend fun moveMangaToLibraryShelf(mangaUrl: String, shelfId: String): Result<Unit> = runCatching {
         val resource = resolveResource(mangaUrl) ?: error("Invalid local manga URL")
         val item = indexedLibraryItem(resource) ?: error("Local library entry is not indexed")
+        require(item.metadataRole(preferences.getConfig().organizationMode(resource.root)).isClassifiable()) {
+            "Local folder entries cannot be assigned to a bookshelf"
+        }
         val validShelfIds = preferences.getConfig()
             .bookshelvesFor(item.contentType)
             .filter { it.organizationMode == item.organizationMode() }
             .mapTo(mutableSetOf()) { it.id }
         require(shelfId in validShelfIds) { "Bookshelf does not match local content type or organization mode" }
         preferences.setBookshelfAssignment(
-            itemKey = LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath),
+            itemKey = indexedLibraryItem(resource)?.itemKey
+                ?: LocalLibraryLocator.itemKey(
+                    resource.root.id,
+                    resource.relativePath,
+                ),
             bookshelfId = shelfId,
         )
     }
@@ -506,6 +600,7 @@ class LocalFolderSource(
                     bookshelfName,
                     context.stringResource(
                         when (organizationMode) {
+                            LocalLibraryOrganizationMode.FOLDER -> MR.strings.local_library_mode_folder
                             LocalLibraryOrganizationMode.SERIES -> MR.strings.local_library_mode_series
                             LocalLibraryOrganizationMode.INDIVIDUAL_FILES ->
                                 MR.strings.local_library_mode_individual
@@ -513,16 +608,23 @@ class LocalFolderSource(
                     ),
                 ).joinToString(" · "),
                 mediaType = root.contentType.toConnectionMediaType(),
-                supportedExtensions = when (root.contentType) {
-                    LocalLibraryContentType.COMICS -> LocalMediaFormats.comicImportExtensions
-                    LocalLibraryContentType.BOOKS -> BOOK_LIBRARY_EXTENSIONS
-                    LocalLibraryContentType.MIXED -> LocalMediaFormats.documentImportExtensions
+                supportedExtensions = if (organizationMode == LocalLibraryOrganizationMode.FOLDER) {
+                    supportedExtensions(root.contentType)
+                } else {
+                    when (root.contentType) {
+                        LocalLibraryContentType.COMICS -> LocalMediaFormats.comicImportExtensions
+                        LocalLibraryContentType.BOOKS -> BOOK_LIBRARY_EXTENSIONS
+                        LocalLibraryContentType.MIXED -> LocalMediaFormats.documentImportExtensions
+                    }
                 },
                 defaultShelfId = root.bookshelfId.ifBlank { config.defaultBookshelfId(root.contentType) }
                     .ifBlank { null },
                 grouping = when (organizationMode) {
                     LocalLibraryOrganizationMode.SERIES -> ConnectionMediaGrouping.SERIES
-                    LocalLibraryOrganizationMode.INDIVIDUAL_FILES -> ConnectionMediaGrouping.INDIVIDUAL
+                    LocalLibraryOrganizationMode.INDIVIDUAL_FILES,
+                    LocalLibraryOrganizationMode.FOLDER,
+                    ->
+                        ConnectionMediaGrouping.INDIVIDUAL
                 },
                 compatibleShelfIds = config.bookshelvesFor(root.contentType)
                     .filter { it.organizationMode == organizationMode }
@@ -541,9 +643,9 @@ class LocalFolderSource(
         val mangasByUrl = mangaRepository.getMangaBySourceId(id).associateBy(Manga::url)
         preferences.getIndex().items
             .asSequence()
-            .filter { it.kind == LocalLibraryItem.Kind.SERIES && it.rootId == root.id }
+            .filter { it.kind == LocalLibraryItem.Kind.SERIES && it.rootId == root.id && !it.missing }
             .map { item ->
-                val resourceUrl = LocalLibraryLocator.seriesUrl(id, root.id, item.relativePath)
+                val resourceUrl = entryUrl(item)
                 ConnectionMediaImportSeries(
                     id = resourceUrl,
                     name = mangasByUrl[resourceUrl]?.title
@@ -562,6 +664,22 @@ class LocalFolderSource(
             .toList()
     }
 
+    internal suspend fun folderImportDestination(url: String): ConnectionMediaImportDestination? = withIOContext {
+        val entry = indexedEntry(url)?.takeIf { !it.missing && it.kind == LocalLibraryItem.Kind.FOLDER }
+            ?: return@withIOContext null
+        if (resolveResource(url)?.file?.canWrite() != true) return@withIOContext null
+        mediaImportDestinations().firstOrNull {
+            it.id == entry.rootId &&
+                it.grouping == ConnectionMediaGrouping.INDIVIDUAL
+        }
+            ?.let { destination ->
+                destination.copy(
+                    name = entry.relativePath,
+                    compatibleShelfIds = setOfNotNull(destination.defaultShelfId),
+                )
+            }
+    }
+
     override suspend fun importMedia(request: ConnectionMediaImportRequest): Result<ConnectionMediaImportResult> {
         return try {
             Result.success(
@@ -569,21 +687,31 @@ class LocalFolderSource(
                     val config = preferences.getConfig()
                     val root = config.roots.firstOrNull { it.id == request.destinationId }
                         ?: error("Local import destination no longer exists")
-                    val destination = preferences.resolveRoot(context, root)
+                    val organizationMode = config.organizationMode(root)
+                    val target = request.targetFolderUrl?.let { url ->
+                        require(organizationMode == LocalLibraryOrganizationMode.FOLDER)
+                        val entry = checkNotNull(indexedEntry(url))
+                        require(entry.rootId == root.id && !entry.missing && entry.kind == LocalLibraryItem.Kind.FOLDER)
+                        checkNotNull(resolveResource(url)).also { require(it.file.isDirectory) }
+                    }
+                    val destination = target?.file ?: preferences.resolveRoot(context, root)
                         ?: error("Local import destination is unavailable")
-                    val supportedExtensions = when (root.contentType) {
-                        LocalLibraryContentType.COMICS -> LocalMediaFormats.comicImportExtensions
-                        LocalLibraryContentType.BOOKS -> BOOK_LIBRARY_EXTENSIONS
-                        LocalLibraryContentType.MIXED -> LocalMediaFormats.documentImportExtensions
+                    val supportedExtensions = if (organizationMode == LocalLibraryOrganizationMode.FOLDER) {
+                        supportedExtensions(root.contentType)
+                    } else {
+                        when (root.contentType) {
+                            LocalLibraryContentType.COMICS -> LocalMediaFormats.comicImportExtensions
+                            LocalLibraryContentType.BOOKS -> BOOK_LIBRARY_EXTENSIONS
+                            LocalLibraryContentType.MIXED -> LocalMediaFormats.documentImportExtensions
+                        }
                     }
                     require(request.items.isNotEmpty()) { "No media selected for import" }
-                    require(request.items.all { it.extension.lowercase() in supportedExtensions }) {
+                    require(request.items.all { it.extension.orEmpty().lowercase() in supportedExtensions }) {
                         "Imported media does not match the destination type"
                     }
-                    val organizationMode = config.organizationMode(root)
                     val importContentType = when (root.contentType) {
                         LocalLibraryContentType.MIXED -> if (
-                            request.items.all { it.extension.lowercase() in BOOK_LIBRARY_EXTENSIONS }
+                            request.items.all { it.extension.orEmpty().lowercase() in BOOK_LIBRARY_EXTENSIONS }
                         ) {
                             LocalLibraryContentType.BOOKS
                         } else {
@@ -600,11 +728,12 @@ class LocalFolderSource(
                             "Bookshelf does not match imported media type or organization mode"
                         }
                     }
-                    if (organizationMode == LocalLibraryOrganizationMode.INDIVIDUAL_FILES) {
+                    if (organizationMode != LocalLibraryOrganizationMode.SERIES) {
                         return@withIOContext importIndividualMedia(
                             root = root,
                             destination = destination,
                             request = request,
+                            parentPath = target?.relativePath.orEmpty(),
                         )
                     }
                     val existingResource = request.existingSeriesId?.let { existingSeriesId ->
@@ -627,7 +756,8 @@ class LocalFolderSource(
                         ?: error("Unable to create series directory")
                     val importedFiles = mutableListOf<UniFile>()
                     val importedNames = mutableListOf<String>()
-                    val itemKey = LocalLibraryLocator.itemKey(root.id, seriesName)
+                    var itemKey = existingResource?.let(::indexedLibraryItem)?.itemKey
+                        ?: LocalLibraryLocator.itemKey(root.id, seriesName)
                     val previousShelfId = preferences.getBookshelfAssignments()[itemKey]
 
                     fun rollBackImport() {
@@ -673,13 +803,21 @@ class LocalFolderSource(
                             preferences.setBookshelfAssignment(itemKey, shelfId)
                         }
                         refreshAfterImport(root.id)
+                        val scannedKey = preferences.getIndex().itemsByLocation[root.id to seriesName]?.itemKey
+                        if (scannedKey != null && scannedKey != itemKey) {
+                            val assigned = preferences.getBookshelfAssignments()[itemKey]
+                            preferences.clearBookshelfAssignment(itemKey)
+                            itemKey = scannedKey
+                            assigned?.let { preferences.setBookshelfAssignment(itemKey, it) }
+                        }
                     } catch (error: Throwable) {
                         rollBackImport()
                         throw error
                     }
                     ConnectionMediaImportResult(
                         resourceUrls = listOf(
-                            existingResource?.let { request.existingSeriesId }
+                            preferences.getIndex().itemsByLocation[root.id to seriesName]?.let(::entryUrl)
+                                ?: existingResource?.let { request.existingSeriesId }
                                 ?: LocalLibraryLocator.seriesUrl(id, root.id, seriesName),
                         ),
                         importedFileNames = importedNames,
@@ -697,6 +835,7 @@ class LocalFolderSource(
         root: LocalLibraryRootConfig,
         destination: UniFile,
         request: ConnectionMediaImportRequest,
+        parentPath: String = "",
     ): ConnectionMediaImportResult {
         require(request.existingSeriesId == null) { "Individual-file libraries do not accept a series target" }
         val importedFiles = mutableListOf<UniFile>()
@@ -734,17 +873,19 @@ class LocalFolderSource(
                         ?: error("Imported media is unavailable after copy")
                     importedFiles += imported
                     importedNames += fileName
-                    val itemKey = LocalLibraryLocator.itemKey(root.id, fileName)
-                    previousAssignments[itemKey] = preferences.getBookshelfAssignments()[itemKey]
-                    request.shelfId?.takeIf(String::isNotBlank)?.let { shelfId ->
-                        preferences.setBookshelfAssignment(itemKey, shelfId)
-                    }
                 } catch (error: Throwable) {
                     temporary.delete()
                     throw error
                 }
             }
             refreshAfterImport(root.id)
+            importedNames.forEach { fileName ->
+                val path = listOf(parentPath, fileName).filter(String::isNotBlank).joinToString("/")
+                val itemKey = preferences.getIndex().itemsByLocation[root.id to path]?.itemKey
+                    ?: LocalLibraryLocator.itemKey(root.id, path)
+                previousAssignments[itemKey] = preferences.getBookshelfAssignments()[itemKey]
+                request.shelfId?.takeIf(String::isNotBlank)?.let { preferences.setBookshelfAssignment(itemKey, it) }
+            }
         } catch (error: Throwable) {
             rollBackImport()
             throw error
@@ -752,16 +893,30 @@ class LocalFolderSource(
 
         return ConnectionMediaImportResult(
             resourceUrls = importedNames.map { fileName ->
-                LocalLibraryLocator.entryUrl(id, root.id, fileName)
+                val path = listOf(parentPath, fileName).filter(String::isNotBlank).joinToString("/")
+                preferences.getIndex().itemsByLocation[root.id to path]?.let(::entryUrl)
+                    ?: LocalLibraryLocator.entryUrl(id, root.id, path)
             },
             importedFileNames = importedNames,
         )
     }
 
     override suspend fun getMangaDetails(manga: SManga): SManga = withIOContext {
+        val indexedItem = indexedEntry(manga.url)
+        indexedEntry(manga.url)?.takeIf { it.kind == LocalLibraryItem.Kind.FOLDER }?.let {
+            applyFolderDisplay(manga, it)
+            manga.thumbnail_url = manga.url
+            manga.initialized = true
+            return@withIOContext manga
+        }
         resolveResource(manga.url)?.let { resource ->
-            if (indexedLibraryItem(resource)?.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
-                applyIndividualMetadata(manga, resource, preferences.getMetadataOverrides())
+            if (indexedItem?.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
+                applyIndividualMetadata(
+                    manga,
+                    resource,
+                    preferences.getMetadataOverrides(),
+                    role = metadataRole(resource),
+                )
             } else {
                 val files = resource.file.listFiles().orEmpty()
                     .filterNot { it.name.orEmpty().startsWith('.') }
@@ -772,11 +927,27 @@ class LocalFolderSource(
                     relativePath = resource.relativePath,
                     files = files,
                     metadataOverrides = preferences.getMetadataOverrides(),
+                    itemKey = indexedItem?.itemKey,
                 )
             }
+            applyStoredMetadata(manga, resource)
         }
         manga.initialized = true
         manga
+    }
+
+    private fun applyStoredMetadata(manga: SManga, resource: ResolvedLocalResource) {
+        val item = indexedLibraryItem(resource) ?: return
+        val role = metadataRole(resource)
+        if (!role.isMetadataReadable()) return
+        metadataStore.externalMetadata(
+            item.itemKey,
+            metadataDirectory(resource),
+            item.contentType,
+            resource.file.takeUnless(UniFile::isDirectory)?.name,
+            role = role,
+        )?.applyTo(manga)
+        preferences.getMetadataOverrides()[item.itemKey]?.applyTo(manga)
     }
 
     override suspend fun getChapterList(manga: SManga): List<SChapter> = withIOContext {
@@ -797,12 +968,23 @@ class LocalFolderSource(
                     }
             }
         val resource = resolveResource(manga.url) ?: return@withIOContext emptyList()
+        val indexedItem = indexedLibraryItem(resource)
+        if (indexedItem?.kind == LocalLibraryItem.Kind.FOLDER && !indexedItem.imageComic) {
+            return@withIOContext emptyList()
+        }
         val existingChaptersByUrl = mangaRepository.getMangaByUrlAndSourceId(manga.url, id)
             ?.let { storedManga -> getChaptersByMangaId.await(storedManga.id) }
             .orEmpty()
             .associateBy(Chapter::url)
-        if (indexedLibraryItem(resource)?.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
-            val chapterUrl = LocalLibraryLocator.chapterUrl(id, resource.root.id, resource.relativePath)
+        if (indexedItem?.kind == LocalLibraryItem.Kind.FILE_ENTRY ||
+            (indexedItem?.kind == LocalLibraryItem.Kind.FOLDER && indexedItem.imageComic)
+        ) {
+            val chapterUrl = LocalLibraryLocator.chapterUrl(
+                id,
+                resource.root.id,
+                indexedLibraryItem(resource)?.locatorPath
+                    ?: resource.relativePath,
+            )
             val modifiedAt = resource.file.lastModified()
             return@withIOContext listOf(
                 SChapter.create().apply {
@@ -830,7 +1012,9 @@ class LocalFolderSource(
             .filter(::isSupportedChapter)
             .map { file ->
                 val relative = "${resource.relativePath}/${file.name.orEmpty()}"
-                val chapterUrl = LocalLibraryLocator.chapterUrl(id, resource.root.id, relative)
+                val chapterLocator = preferences.getIndex().itemsByLocation[resource.root.id to relative]?.locatorPath
+                    ?: relative
+                val chapterUrl = LocalLibraryLocator.chapterUrl(id, resource.root.id, chapterLocator)
                 val modifiedAt = file.lastModified()
                 SChapter.create().apply {
                     url = chapterUrl
@@ -855,7 +1039,7 @@ class LocalFolderSource(
                 second.name.compareToCaseInsensitiveNaturalOrder(first.name)
             }
         preferences.clearPendingChapterRefresh(
-            LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath),
+            indexedItem?.itemKey ?: LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath),
         )
         chapters
     }
@@ -875,18 +1059,189 @@ class LocalFolderSource(
 
     override suspend fun readMetadata(resourceUrl: String): LibraryMetadata? {
         val resource = resolveResource(resourceUrl) ?: return null
+        val entry = indexedLibraryItem(resource)
+        val role = metadataRole(resource)
+        if (role == LocalMetadataRole.FOLDER_CONTAINER) {
+            val settings = preferences.folderDisplaySettings(
+                entry?.itemKey ?: LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath),
+            )
+            return LibraryMetadata(
+                title = settings.displayName,
+                author = settings.author,
+                description = settings.description,
+                genres = settings.tags,
+                lockedFields = settings.effectiveLockedFields(),
+                source = "user",
+            )
+        }
+        if (!role.isMetadataReadable()) return null
+        val external = metadataStore.externalMetadata(
+            entry?.itemKey
+                ?: LocalLibraryLocator.itemKey(
+                    resource.root.id,
+                    resource.relativePath,
+                ),
+            metadataDirectory(resource),
+            entry?.contentType
+                ?: resource.root.contentType,
+            resource.file.takeUnless(UniFile::isDirectory)?.name,
+            role = role,
+            observe = true,
+        )
         val overrides = preferences.getMetadataOverrides()
         return (
-            overrides[LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath)]
+            overrides[
+                indexedLibraryItem(resource)?.itemKey
+                    ?: LocalLibraryLocator.itemKey(
+                        resource.root.id,
+                        resource.relativePath,
+                    ),
+            ]
                 ?: overrides[LocalLibraryLocator.legacyItemKey(legacyRelativePath(resource))]
+                ?: external
             )?.toLibraryMetadata()
     }
 
-    override suspend fun updateMetadata(resourceUrl: String, metadata: LibraryMetadata): Result<Unit> {
+    override fun isMetadataEditable(resourceUrl: String): Boolean {
+        return editableMetadataFields(resourceUrl).isNotEmpty()
+    }
+
+    override fun editableMetadataFields(resourceUrl: String): Set<LibraryMetadataField> {
+        val item = indexedEntry(resourceUrl) ?: return emptySet()
+        val config = preferences.getConfig()
+        val root = config.roots.firstOrNull { it.id == item.rootId } ?: return emptySet()
+        return when (item.metadataRole(config.organizationMode(root))) {
+            LocalMetadataRole.FOLDER_CONTAINER -> setOf(
+                LibraryMetadataField.TITLE,
+                LibraryMetadataField.AUTHOR,
+                LibraryMetadataField.DESCRIPTION,
+                LibraryMetadataField.GENRES,
+            )
+            LocalMetadataRole.CHAPTER -> emptySet()
+            else -> LibraryMetadataField.entries.toSet()
+        }
+    }
+
+    override suspend fun updateMetadata(resourceUrl: String, metadata: LibraryMetadata): Result<Unit> =
+        saveMetadata(resourceUrl, metadata)
+
+    override suspend fun overwriteMetadata(resourceUrl: String, metadata: LibraryMetadata): Result<Unit> =
+        saveMetadata(resourceUrl, metadata, overwriteExternal = true)
+
+    internal suspend fun saveMetadata(
+        resourceUrl: String,
+        metadata: LibraryMetadata,
+        overwriteExternal: Boolean = false,
+    ): Result<Unit> {
         val resource = resolveResource(resourceUrl)
             ?: return Result.failure(IllegalArgumentException("Invalid local resource URL"))
-        val itemKey = LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath)
-        val value = metadata.toLocalMetadataOverride()
+        val indexedItem = indexedLibraryItem(resource)
+        val itemKey = indexedItem?.itemKey
+            ?: LocalLibraryLocator.itemKey(
+                resource.root.id,
+                resource.relativePath,
+            )
+        val role = metadataRole(resource)
+        if (role == LocalMetadataRole.FOLDER_CONTAINER) {
+            return runCatching {
+                withIOContext {
+                    refreshMutex.withLock {
+                        val current = preferences.folderDisplaySettings(itemKey)
+                        val editedFields = metadata.editedFields.ifEmpty {
+                            buildSet {
+                                if (metadata.title != null) add(LibraryMetadataField.TITLE)
+                                if (metadata.author != null) add(LibraryMetadataField.AUTHOR)
+                                if (metadata.description != null) add(LibraryMetadataField.DESCRIPTION)
+                                if (metadata.genres.isNotEmpty()) add(LibraryMetadataField.GENRES)
+                            }
+                        }
+                        val lockedFields = current.effectiveLockedFields() +
+                            metadata.lockedFields +
+                            editedFields.mapTo(mutableSetOf()) { it.name.lowercase() }
+                        preferences.setFolderDisplaySettings(
+                            itemKey,
+                            current.copy(
+                                displayName = if (LibraryMetadataField.TITLE in editedFields) {
+                                    metadata.title?.trim()?.takeIf(String::isNotEmpty)
+                                } else {
+                                    current.displayName
+                                },
+                                author = if (LibraryMetadataField.AUTHOR in editedFields) {
+                                    metadata.author?.trim()?.takeIf(String::isNotEmpty)
+                                } else {
+                                    current.author
+                                },
+                                description = if (LibraryMetadataField.DESCRIPTION in editedFields) {
+                                    metadata.description?.trim()?.takeIf(String::isNotEmpty)
+                                } else {
+                                    current.description
+                                },
+                                tags = if (LibraryMetadataField.GENRES in editedFields) {
+                                    metadata.genres.map(String::trim).filter(String::isNotEmpty).distinct()
+                                } else {
+                                    current.tags
+                                },
+                                lockedFields = lockedFields,
+                            ),
+                        )
+                        val item = checkNotNull(indexedItem) { "Local folder is no longer indexed" }
+                        val mangaUrl = entryUrl(item)
+                        mangaRepository.getMangaByUrlAndSourceId(mangaUrl, id)?.let { manga ->
+                            val updated = manga.toSManga().also { applyFolderDisplay(it, item) }
+                            check(
+                                mangaRepository.update(
+                                    MangaUpdate(
+                                        id = manga.id,
+                                        title = updated.title,
+                                        author = updated.author.orEmpty(),
+                                        artist = updated.artist.orEmpty(),
+                                        description = updated.description.orEmpty(),
+                                        genre = updated.genre.orEmpty()
+                                            .split(',')
+                                            .map(String::trim)
+                                            .filter(String::isNotEmpty),
+                                        status = updated.status.toLong(),
+                                        initialized = true,
+                                    ),
+                                ),
+                            ) { "Unable to refresh local folder metadata" }
+                        }
+                        emitLibraryRefresh()
+                    }
+                }
+            }
+        }
+        if (!role.isMetadataEditable()) {
+            return Result.failure(IllegalArgumentException("This local entry does not support metadata editing"))
+        }
+        val editedFields = metadata.editedFields.ifEmpty {
+            buildSet {
+                if (metadata.title != null) add(LibraryMetadataField.TITLE)
+                if (metadata.author != null) add(LibraryMetadataField.AUTHOR)
+                if (metadata.artist != null) add(LibraryMetadataField.ARTIST)
+                if (metadata.description != null) add(LibraryMetadataField.DESCRIPTION)
+                if (metadata.genres.isNotEmpty()) add(LibraryMetadataField.GENRES)
+                if (metadata.status != null) add(LibraryMetadataField.STATUS)
+            }
+        }
+        val current = readMetadata(resourceUrl)
+        val merged = metadata.copy(
+            title = if (LibraryMetadataField.TITLE in editedFields) metadata.title else current?.title,
+            author = if (LibraryMetadataField.AUTHOR in editedFields) metadata.author else current?.author,
+            artist = if (LibraryMetadataField.ARTIST in editedFields) metadata.artist else current?.artist,
+            description = if (LibraryMetadataField.DESCRIPTION in editedFields) {
+                metadata.description
+            } else {
+                current?.description
+            },
+            genres = if (LibraryMetadataField.GENRES in editedFields) metadata.genres else current?.genres.orEmpty(),
+            status = if (LibraryMetadataField.STATUS in editedFields) metadata.status else current?.status,
+            editedFields = editedFields,
+            lockedFields = current?.lockedFields.orEmpty() +
+                metadata.lockedFields +
+                editedFields.mapTo(mutableSetOf()) { it.name.lowercase() },
+        )
+        val value = merged.toLocalMetadataOverride()
         return runCatching {
             val metadataDirectory = metadataDirectory(resource)
             val adjacentFileStem = resource.file.takeUnless(UniFile::isDirectory)?.nameWithoutExtension
@@ -895,11 +1250,37 @@ class LocalFolderSource(
                     itemKey = itemKey,
                     metadata = value,
                     itemDirectory = metadataDirectory,
-                    contentType = resource.root.contentType,
+                    contentType = indexedLibraryItem(resource)?.contentType ?: resource.root.contentType,
                     adjacentFileStem = adjacentFileStem,
+                    entryName = resource.file.takeUnless(UniFile::isDirectory)?.name,
+                    role = role,
+                    overwriteExternal = overwriteExternal,
                 ),
             ) {
                 "Unable to save local metadata"
+            }
+        }
+    }
+
+    override suspend fun useExternalMetadata(resourceUrl: String): Result<Unit> = runCatching {
+        withIOContext {
+            refreshMutex.withLock {
+                val resource = checkNotNull(resolveResource(resourceUrl))
+                val entry = checkNotNull(indexedLibraryItem(resource))
+                val role = metadataRole(resource)
+                check(role.isMetadataReadable()) { "This local entry has no external metadata" }
+                val external = checkNotNull(
+                    metadataStore.externalMetadata(
+                        entry.itemKey,
+                        metadataDirectory(resource),
+                        entry.contentType,
+                        resource.file.takeUnless(UniFile::isDirectory)?.name,
+                        role = role,
+                        acceptExternalChanges = true,
+                    ),
+                )
+                preferences.setMetadataOverride(entry.itemKey, external)
+                scanLibrary().also { mutableLibraryRefreshes.emit(it) }
             }
         }
     }
@@ -911,35 +1292,74 @@ class LocalFolderSource(
         withIOContext {
             val resource = resolveResource(resourceUrl)
                 ?: error("Invalid local resource URL")
-            if (indexedLibraryItem(resource)?.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
-                val embeddedMetadata = if (
-                    !resource.file.isDirectory && resource.file.extension.equals("epub", ignoreCase = true)
-                ) {
-                    listOfNotNull(readEpubMetadata(resource.file))
+            val role = metadataRole(resource)
+            if (!role.isMetadataSuggestionSupported()) {
+                error("Metadata suggestions are not supported for this local entry")
+            }
+            val items = when (role) {
+                LocalMetadataRole.INDIVIDUAL_FILE -> listOf(resource.file)
+                LocalMetadataRole.FOLDER_IMAGE_SERIES -> resource.file.listFiles().orEmpty()
+                    .filter {
+                        !isLocalAuxiliaryFile(it.name.orEmpty()) && !it.isDirectory &&
+                            ImageUtil.isImage(it.name) { it.openInputStream() }
+                    }
+                else -> resource.file.listFiles().orEmpty()
+                    .filterNot { it.name.orEmpty().startsWith('.') }.filter(::isSupportedChapter)
+            }
+            val item = checkNotNull(indexedLibraryItem(resource))
+            val override = preferences.getMetadataOverrides()[item.itemKey]
+            val localOverride = override.takeUnless { role == LocalMetadataRole.FOLDER_CONTAINER }
+            val candidates = buildList {
+                addAll(objectMetadataCandidates(resource, role))
+                metadataStore.externalMetadata(
+                    item.itemKey,
+                    metadataDirectory(resource),
+                    item.contentType,
+                    resource.file.takeUnless(UniFile::isDirectory)?.name,
+                    role,
+                )?.let { add(LocalMetadataCandidate(it.toLibraryMetadata(), MetadataSuggestionSource.SIDECAR)) }
+                localOverride?.let {
+                    add(LocalMetadataCandidate(it.toLibraryMetadata(), MetadataSuggestionSource.LOCAL_OVERRIDE))
+                }
+            }
+            val displayName = if (resource.file.isDirectory) {
+                resource.file.name.orEmpty()
+            } else {
+                resource.file.nameWithoutExtension.orEmpty()
+            }
+            generateLocalMetadataSuggestion(
+                folderName = displayName,
+                itemNames = items.map { file -> file.name.orEmpty() },
+                embeddedMetadata = if (role == LocalMetadataRole.SERIES) {
+                    items.mapNotNull(::readFileEmbeddedMetadata)
+                        .map { it.copy(source = MetadataSuggestionSource.CHAPTER_EMBEDDED) }
                 } else {
                     emptyList()
-                }
-                return@withIOContext generateLocalMetadataSuggestion(
-                    folderName = if (resource.file.isDirectory) {
-                        resource.file.name.orEmpty()
-                    } else {
-                        resource.file.nameWithoutExtension.orEmpty()
-                    },
-                    itemNames = listOf(resource.file.name.orEmpty()),
-                    embeddedMetadata = embeddedMetadata,
-                    filenameTemplate = filenameTemplate,
-                )
-            }
-            val items = resource.file.listFiles().orEmpty()
-                .filterNot { it.name.orEmpty().startsWith('.') }
-                .filter(::isSupportedChapter)
-            generateLocalMetadataSuggestion(
-                folderName = resource.file.name.orEmpty(),
-                itemNames = items.map { file -> file.name.orEmpty() },
-                embeddedMetadata = readEmbeddedMetadata(resource.file, items),
+                },
                 filenameTemplate = filenameTemplate,
-            )
+            ).withLocalMetadata(candidates, localOverride?.lockedFields.orEmpty())
         }
+    }
+
+    override suspend fun legacyMetadataSuggestion(resourceUrl: String): LibraryMetadataSuggestion? = withIOContext {
+        val resource = resolveResource(resourceUrl) ?: return@withIOContext null
+        if (metadataRole(resource) != LocalMetadataRole.FOLDER_IMAGE_SERIES) return@withIOContext null
+        val item = indexedLibraryItem(resource) ?: return@withIOContext null
+        if (preferences.getMetadataOverrides()[item.itemKey] != null || metadataStore.externalMetadata(
+                item.itemKey,
+                resource.file,
+                item.contentType,
+                null,
+                LocalMetadataRole.FOLDER_IMAGE_SERIES,
+            ) != null
+        ) {
+            return@withIOContext null
+        }
+        val metadata = metadataStore.legacyImageMetadata(resource.file) ?: return@withIOContext null
+        LibraryMetadataSuggestion(LibraryMetadata(), emptyMap(), 0, 0).withLocalMetadata(
+            listOf(LocalMetadataCandidate(metadata.toLibraryMetadata(), MetadataSuggestionSource.LEGACY_SIDECAR)),
+            preferences.getMetadataOverrides()[indexedLibraryItem(resource)?.itemKey]?.lockedFields.orEmpty(),
+        )
     }
 
     override fun localChapterFile(chapterUrl: String): UniFile? {
@@ -949,6 +1369,9 @@ class LocalFolderSource(
     }
 
     override suspend fun loadSuggestedSeriesCover(mangaUrl: String): ByteArray? = withIOContext {
+        indexedEntry(mangaUrl)?.takeIf { it.kind == LocalLibraryItem.Kind.FOLDER }?.let {
+            return@withIOContext folderCover(it, mutableSetOf())
+        }
         val incomingDirectory = IncomingMediaSessionLocator.location(mangaUrl, id)
             ?.takeIf { it.fileName == null }
             ?.let { IncomingMediaSessionLocator.sessionDirectory(context, it.sessionId) }
@@ -981,7 +1404,388 @@ class LocalFolderSource(
     override fun setupPreferenceScreen(screen: PreferenceScreen) = Unit
 
     internal fun isIndividualFileEntry(mangaUrl: String): Boolean {
-        return individualFileEntry(mangaUrl) != null
+        val item = indexedEntry(mangaUrl) ?: return false
+        return item.kind == LocalLibraryItem.Kind.FILE_ENTRY ||
+            (item.kind == LocalLibraryItem.Kind.FOLDER && item.imageComic)
+    }
+
+    internal fun indexedEntry(url: String): LocalLibraryItem? {
+        val location = LocalLibraryLocator.location(url, id) ?: return null
+        return location.rootId?.let {
+            preferences.getIndex().libraryItemsByKey[
+                LocalLibraryLocator.itemKey(
+                    it,
+                    location.relativePath,
+                ),
+            ]
+        }
+    }
+
+    internal fun folderRoots(): List<LocalLibraryRootConfig> = preferences.getConfig().let { config ->
+        config.roots.filter { config.organizationMode(it) == LocalLibraryOrganizationMode.FOLDER }
+    }
+
+    internal fun hasPendingFolderOperation(): Boolean = preferences.pendingFolderOperation() != null
+
+    internal suspend fun canReadAsImageComic(url: String): Boolean = withIOContext {
+        runCatching {
+            val item = indexedEntry(url) ?: return@runCatching false
+            if (item.kind == LocalLibraryItem.Kind.FILE_ENTRY) return@runCatching item.imageComic
+            val resource = resolveResource(url) ?: return@runCatching false
+            val scan = scanFolderImages(resource.file, LocalScanDirectoryReader(context))
+            item.imageComic || (scan.pureImages && scan.entries.none(LocalScanFile::directory))
+        }.getOrDefault(false)
+    }
+
+    internal suspend fun canMergeImageSeries(url: String): Boolean = withIOContext {
+        runCatching {
+            val item = indexedEntry(url) ?: return@runCatching false
+            if (item.kind != LocalLibraryItem.Kind.FOLDER) return@runCatching false
+            resolveResource(url)?.let {
+                scanFolderImages(it.file, LocalScanDirectoryReader(context)).pureImages
+            } == true
+        }.getOrDefault(false)
+    }
+
+    internal suspend fun canMoveEntry(url: String): Boolean = withIOContext {
+        runCatching {
+            val item = indexedEntry(url)
+            item?.imageComic != true && resolveResource(url)?.file?.let { canMoveLocalFile(context, it) } == true
+        }.getOrDefault(false)
+    }
+
+    internal suspend fun invalidateFolderAncestorCovers(url: String) {
+        val item = indexedEntry(url) ?: return
+        val ancestors = preferences.getIndex().libraryItemsByKey.values.filter {
+            it.rootId == item.rootId && it.kind == LocalLibraryItem.Kind.FOLDER &&
+                item.relativePath.startsWith("${it.relativePath}/")
+        }.mapTo(mutableSetOf(), ::entryUrl)
+        val mangas = mangaRepository.getMangaBySourceId(id).filter { it.url in ancestors }
+        mangas.forEach(coverCache::deleteFromCache)
+        mangaRepository.updateAll(
+            mangas.map {
+                MangaUpdate(id = it.id, coverLastModified = System.currentTimeMillis())
+            },
+        )
+    }
+
+    internal fun folderEntries(rootId: String): List<LocalLibraryItem> = preferences.getIndex().libraryItemsByKey.values
+        .filter { it.rootId == rootId && it.kind == LocalLibraryItem.Kind.FOLDER }
+
+    internal fun entryUrl(item: LocalLibraryItem): String = LocalLibraryLocator.entryUrl(
+        id,
+        item.rootId,
+        item.locatorPath,
+    )
+
+    internal suspend fun createFolder(rootId: String, parentPath: String, name: String): Result<Unit> = runCatching {
+        withIOContext {
+            refreshMutex.withLock {
+                validateLocalName(name)
+                val root = folderRoots().first { it.id == rootId }
+                val directory = resolveLocalChild(checkNotNull(preferences.resolveRoot(context, root)), parentPath)
+                check(directory.findFile(name) == null)
+                checkNotNull(directory.createDirectory(name))
+                scanLibrary().also { mutableLibraryRefreshes.emit(it) }
+            }
+        }
+    }
+
+    internal suspend fun setImageComic(url: String, enabled: Boolean): Result<Unit> = runCatching {
+        withIOContext {
+            refreshMutex.withLock {
+                val entry = checkNotNull(indexedEntry(url))
+                check(
+                    entry.kind == LocalLibraryItem.Kind.FOLDER &&
+                        entry.format == "directory" &&
+                        entry.rootId in folderRoots().map { it.id },
+                )
+                val resource = checkNotNull(resolveResource(url))
+                if (enabled) {
+                    val scan = scanFolderImages(resource.file, LocalScanDirectoryReader(context))
+                    check(scan.pureImages)
+                }
+                if (preferences.getConfig().metadataStorage == LocalMetadataStorage.FOLDER_DIRECTORY) {
+                    val marker = metadataStore.folderMarker(
+                        resource.file,
+                        true,
+                    )
+                        ?: error("Unable to save directory mode")
+                    check(
+                        metadataStore.saveFolderMarker(
+                            resource.file,
+                            marker.copy(imageComic = enabled, imageComicOverride = enabled),
+                        ),
+                    )
+                }
+                preferences.setIndex(
+                    preferences.getIndex().let { index ->
+                        index.copy(
+                            items = index.items.map {
+                                if (it.itemKey == entry.itemKey) {
+                                    it.copy(imageComic = enabled, imageComicOverride = enabled)
+                                } else {
+                                    it
+                                }
+                            },
+                        )
+                    },
+                )
+                scanLibrary().also { mutableLibraryRefreshes.emit(it) }
+            }
+        }
+    }
+
+    internal suspend fun relocateEntry(
+        url: String,
+        newName: String? = null,
+        destination: String? = null,
+    ): Result<Unit> = runCatching {
+        withIOContext {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                refreshMutex.withLock {
+                    check(preferences.pendingFolderOperation() == null) { "Complete the pending operation first" }
+                    val item = checkNotNull(indexedEntry(url))
+                    check(!item.imageComic)
+                    val root = folderRoots().first { it.id == item.rootId }
+                    val base = checkNotNull(preferences.resolveRoot(context, root))
+                    val file = resolveLocalChild(base, item.relativePath)
+                    val parentPath = item.relativePath.substringBeforeLast('/', "")
+                    val from = resolveLocalChild(base, parentPath)
+                    val targetPath = destination ?: parentPath
+                    check(targetPath != item.relativePath && !targetPath.startsWith("${item.relativePath}/"))
+                    val to = resolveLocalChild(base, targetPath)
+                    val name = newName ?: checkNotNull(file.name)
+                    validateLocalName(name)
+                    if (!file.isDirectory) {
+                        val targetStem = name.substringBeforeLast('.')
+                        val targetMetadata = to.findFile(".koharia")?.findFile("metadata")
+                        check(
+                            listOf("metadata.opf", "ComicInfo.xml").none { suffix ->
+                                targetMetadata?.findFile("$name.$suffix") != null
+                            },
+                        )
+                        check(
+                            listOf("metadata.opf", "ComicInfo.xml").none { suffix ->
+                                to.findFile("$targetStem.$suffix") != null
+                            },
+                        )
+                    }
+                    fun joined(
+                        parent: String,
+                        child: String,
+                    ) = listOf(
+                        parent,
+                        child,
+                    ).filter(String::isNotBlank).joinToString("/")
+                    val newPath = joined(targetPath, name)
+                    val steps = mutableListOf(localMutationStep(base, item.relativePath, newPath))
+                    if (!file.isDirectory) {
+                        val oldName = item.relativePath.substringAfterLast('/')
+                        val oldStem = oldName.substringBeforeLast('.')
+                        val newStem = name.substringBeforeLast('.')
+                        val unambiguous = from.listFiles().orEmpty().none {
+                            it.name != oldName && it.name.orEmpty().substringBeforeLast('.') == oldStem &&
+                                it.extension.orEmpty().lowercase() in SUPPORTED_FILE_EXTENSIONS
+                        }
+                        if (unambiguous) {
+                            for (suffix in listOf("metadata.opf", "ComicInfo.xml")) {
+                                if (from.findFile("$oldStem.$suffix") != null) {
+                                    steps += localMutationStep(
+                                        base,
+                                        joined(
+                                            parentPath,
+                                            "$oldStem.$suffix",
+                                        ),
+                                        joined(
+                                            targetPath,
+                                            "$newStem.$suffix",
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                        val oldMetadata = from.findFile(".koharia")?.findFile("metadata")
+                        for (suffix in listOf("metadata.opf", "ComicInfo.xml")) {
+                            if (oldMetadata?.findFile("$oldName.$suffix") != null) {
+                                val hidden = to.findFile(".koharia") ?: checkNotNull(to.createDirectory(".koharia"))
+                                checkNotNull(hidden.findFile("metadata") ?: hidden.createDirectory("metadata"))
+                                steps += localMutationStep(
+                                    base,
+                                    joined(
+                                        parentPath,
+                                        ".koharia/metadata/$oldName.$suffix",
+                                    ),
+                                    joined(
+                                        targetPath,
+                                        ".koharia/metadata/$name.$suffix",
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                    if (destination != null) {
+                        steps.forEach {
+                            check(
+                                canMoveLocalFile(
+                                    context,
+                                    resolveLocalChild(
+                                        base,
+                                        it.from,
+                                    ),
+                                ),
+                            )
+                        }
+                    }
+                    val operation = LocalFolderMutation(
+                        root.id,
+                        root.directoryKey(),
+                        item.itemKey,
+                        file.isDirectory,
+                        steps,
+                    )
+                    preferences.recordFolderOperation(json.encodeToString(operation))
+                    completeFolderMutation(operation)
+                }
+            }
+        }
+    }
+
+    internal suspend fun resumeFolderOperation(): Result<Unit> = runCatching {
+        withIOContext {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                refreshMutex.withLock {
+                    val pending = checkNotNull(preferences.pendingFolderOperation())
+                    completeFolderMutation(json.decodeFromString<LocalFolderMutation>(pending))
+                }
+            }
+        }
+    }
+
+    internal suspend fun acceptCurrentFolderState(): Result<Unit> = runCatching {
+        withIOContext {
+            refreshMutex.withLock {
+                scanLibrary().also { mutableLibraryRefreshes.emit(it) }
+                preferences.recordFolderOperation(null)
+            }
+        }
+    }
+
+    private suspend fun completeFolderMutation(initial: LocalFolderMutation) {
+        val root = folderRoots().first { it.id == initial.rootId && it.directoryKey() == initial.rootKey }
+        val base = checkNotNull(preferences.resolveRoot(context, root))
+        var operation = initial
+        operation.steps.indices.forEach { position ->
+            val step = operation.steps[position]
+            if (step.completed) return@forEach
+            val changed = executeLocalMutationStep(context, base, step)
+            val index = preferences.getIndex()
+            val updatedIndex = if (position == 0) {
+                index.copy(
+                    items = index.items.map { entry ->
+                        if (entry.rootId == root.id && (
+                                entry.itemKey == operation.itemKey ||
+                                    (operation.directory && entry.relativePath.startsWith("${step.from}/"))
+                                )
+                        ) {
+                            entry.copy(
+                                relativePath = step.to + entry.relativePath.removePrefix(step.from),
+                                documentIdentity = if (entry.itemKey == operation.itemKey &&
+                                    changed.uri.scheme == "content"
+                                ) {
+                                    "${changed.uri.authority}:${DocumentsContract.getDocumentId(changed.uri)}"
+                                } else {
+                                    null
+                                },
+                            )
+                        } else {
+                            entry
+                        }
+                    },
+                )
+            } else {
+                index
+            }
+            operation = operation.copy(
+                steps = operation.steps.mapIndexed {
+                        i,
+                        value,
+                    ->
+                    if (i == position) value.copy(completed = true) else value
+                },
+            )
+            preferences.commitFolderOperation(updatedIndex, json.encodeToString(operation))
+        }
+        scanLibrary().also { mutableLibraryRefreshes.emit(it) }
+        preferences.recordFolderOperation(null)
+    }
+
+    internal fun containingFolder(url: String): LocalLibraryItem? {
+        val entry = indexedEntry(url) ?: return null
+        val parentPath = entry.relativePath.substringBeforeLast('/', "")
+        return preferences.getIndex().libraryItemsByKey.values.firstOrNull {
+            it.rootId == entry.rootId &&
+                it.relativePath == parentPath
+        }
+    }
+
+    private suspend fun folderCover(item: LocalLibraryItem, visited: MutableSet<String>): ByteArray? {
+        currentCoroutineContext().ensureActive()
+        if (!visited.add(item.itemKey)) return null
+        val customCovers = Injekt.get<koharia.cover.CustomCoverStore>()
+        mangaRepository.getMangaByUrlAndSourceId(entryUrl(item), id)?.let { manga ->
+            customCovers.open(manga)?.use { return it.readBytes() }
+        }
+        val resource = resolveResource(entryUrl(item)) ?: return null
+        val custom = resource.file.listFiles().orEmpty().firstOrNull {
+            !it.isDirectory &&
+                it.name.orEmpty().substringBeforeLast('.').lowercase() in setOf(
+                    "cover",
+                    "folder",
+                    "poster",
+                    "!cover",
+                ) &&
+                LocalMediaFormats.isImage(it.extension.orEmpty().lowercase())
+        }
+        if (custom != null) return custom.openInputStream().use { it.readBytes() }
+        val children =
+            preferences.getIndex().childrenByLocation[item.rootId to item.relativePath].orEmpty().sortedWith {
+                    a,
+                    b,
+                ->
+                a.relativePath.substringAfterLast(
+                    '/',
+                ).compareToCaseInsensitiveNaturalOrder(b.relativePath.substringAfterLast('/'))
+            }
+        for (child in children) {
+            currentCoroutineContext().ensureActive()
+            val bytes = try {
+                val manga = mangaRepository.getMangaByUrlAndSourceId(entryUrl(child), id)
+                val customBytes = manga?.let { customCovers.open(it)?.use { input -> input.readBytes() } }
+                if (customBytes != null) return customBytes
+                if (child.kind == LocalLibraryItem.Kind.FOLDER) {
+                    folderCover(
+                        child,
+                        visited,
+                    )
+                } else {
+                    resolveResource(entryUrl(child))?.file?.let {
+                        firstImageBytes(it)
+                    }
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                null
+            }
+            if (bytes != null) return bytes
+        }
+        return resource.file.listFiles().orEmpty().filter {
+            !it.isDirectory &&
+                !isLocalAuxiliaryFile(it.name.orEmpty()) &&
+                LocalMediaFormats.isImage(it.extension.orEmpty().lowercase())
+        }
+            .sortedWith { a, b -> a.name.orEmpty().compareToCaseInsensitiveNaturalOrder(b.name.orEmpty()) }
+            .firstOrNull()?.openInputStream()?.use { it.readBytes() }
     }
 
     internal fun isIndividualBookEntry(mangaUrl: String): Boolean {
@@ -1041,11 +1845,13 @@ class LocalFolderSource(
         existing = existingChapter,
         modifiedAt = modifiedAt,
         sizeBytes = if (file.isDirectory) 0L else file.length(),
-        fingerprint = preferences.getIndex().itemsByKey[LocalLibraryLocator.itemKey(rootId, relativePath)]?.fingerprint,
+        fingerprint = preferences.getIndex().itemsByLocation[rootId to relativePath]?.fingerprint,
     )
 
     private suspend fun refreshAfterImport(destinationRootId: String) {
-        val error = refreshLibrary().exceptionOrNull() ?: return
+        val error = runCatching {
+            refreshMutex.withLock { scanLibrary().also { mutableLibraryRefreshes.emit(it) } }
+        }.exceptionOrNull() ?: return
         if (error is LocalLibraryPartialScanException && destinationRootId !in error.failedRootIds) return
         throw error
     }
@@ -1072,7 +1878,9 @@ class LocalFolderSource(
                     .filter(String::isNotBlank).joinToString("/")
             }?.itemKey ?: return@mapNotNull null
             val item = indexedItems[itemKey] ?: return@mapNotNull null
-            val progress = if (item.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
+            val progress = if (item.kind == LocalLibraryItem.Kind.FILE_ENTRY ||
+                (item.kind == LocalLibraryItem.Kind.FOLDER && item.imageComic)
+            ) {
                 LocalReadProgressIndex(indexedChapterCount = 1, isIndividualFile = true)
             } else {
                 LocalReadProgressIndex(
@@ -1085,15 +1893,30 @@ class LocalFolderSource(
     }
 
     private fun indexedLibraryItem(resource: ResolvedLocalResource): LocalLibraryItem? {
-        val itemKey = LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath)
-        return preferences.getIndex().itemsByKey[itemKey]?.takeIf {
-            it.kind in setOf(LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.FILE_ENTRY)
+        return preferences.getIndex().itemsByLocation[resource.root.id to resource.indexedPath]?.takeIf {
+            it.kind in setOf(
+                LocalLibraryItem.Kind.SERIES,
+                LocalLibraryItem.Kind.FILE_ENTRY,
+                LocalLibraryItem.Kind.FOLDER,
+            )
         }
     }
 
-    private fun LocalLibraryItem.organizationMode(): LocalLibraryOrganizationMode = when (kind) {
-        LocalLibraryItem.Kind.FILE_ENTRY -> LocalLibraryOrganizationMode.INDIVIDUAL_FILES
-        LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.CHAPTER -> LocalLibraryOrganizationMode.SERIES
+    private fun LocalLibraryItem.organizationMode(): LocalLibraryOrganizationMode {
+        val config = preferences.getConfig()
+        return config.roots.firstOrNull { it.id == rootId }?.let(config::organizationMode)
+            ?: LocalLibraryOrganizationMode.SERIES
+    }
+
+    private fun metadataRole(resource: ResolvedLocalResource): LocalMetadataRole {
+        val item = indexedLibraryItem(resource) ?: return LocalMetadataRole.INDIVIDUAL_FILE
+        // A physical file entry is always an individual file. In folder mode the
+        // virtual image-series entry also uses FILE_ENTRY, but resolves to its
+        // backing directory; use that physical distinction when resolving URLs.
+        if (item.kind == LocalLibraryItem.Kind.FILE_ENTRY && !resource.file.isDirectory) {
+            return LocalMetadataRole.INDIVIDUAL_FILE
+        }
+        return item.metadataRole(preferences.getConfig().organizationMode(resource.root))
     }
 
     private fun applyIndividualMetadata(
@@ -1101,65 +1924,41 @@ class LocalFolderSource(
         resource: ResolvedLocalResource,
         metadataOverrides: Map<String, LocalMetadataOverride>,
         scannedFiles: List<UniFile>? = null,
+        role: LocalMetadataRole = LocalMetadataRole.INDIVIDUAL_FILE,
     ) {
         val file = resource.file
+        clearComicMetadata(manga)
         manga.title = if (file.isDirectory) file.name.orEmpty() else file.nameWithoutExtension.orEmpty()
         manga.thumbnail_url = if (file.isDirectory) {
             findCover(scannedFiles ?: file.listFiles().orEmpty().toList())?.uri?.toString()
-                ?: LocalLibraryLocator.chapterUrl(id, resource.root.id, resource.relativePath)
+                ?: LocalLibraryLocator.chapterUrl(
+                    id,
+                    resource.root.id,
+                    indexedLibraryItem(resource)?.locatorPath
+                        ?: resource.relativePath,
+                )
         } else {
-            LocalLibraryLocator.chapterUrl(id, resource.root.id, resource.relativePath)
+            LocalLibraryLocator.chapterUrl(
+                id,
+                resource.root.id,
+                indexedLibraryItem(resource)?.locatorPath
+                    ?: resource.relativePath,
+            )
         }
-        applyComicInfoMetadata(manga, file)
-        if (!file.isDirectory && file.extension.equals("epub", ignoreCase = true)) {
-            readEpubMetadata(file)?.let { metadata ->
-                metadata.title?.let { manga.title = it }
-                metadata.authors.takeIf(List<String>::isNotEmpty)?.let { manga.author = it.joinToString(", ") }
-                metadata.contributors.takeIf(List<String>::isNotEmpty)?.let { manga.artist = it.joinToString(", ") }
-                metadata.description?.let { manga.description = it }
-                metadata.subjects.takeIf(List<String>::isNotEmpty)?.let { manga.genre = it.joinToString(", ") }
-            }
-        } else if (!file.isDirectory && isMobiFile(file)) {
-            readMobiMetadata(file)?.let { metadata ->
-                metadata.title?.let { manga.title = it }
-                metadata.authors.takeIf(List<String>::isNotEmpty)?.let { manga.author = it.joinToString(", ") }
-            }
-        }
-        if (!file.isDirectory) {
-            val directory = if (scannedFiles == null) metadataDirectory(resource) else null
-            val stem = file.nameWithoutExtension.orEmpty()
-            fun scannedSidecar(suffix: String, fallback: String): UniFile? = scannedFiles?.firstOrNull {
-                it.name.equals("$stem.$suffix", ignoreCase = true)
-            } ?: scannedFiles?.firstOrNull { it.name.equals(fallback, ignoreCase = true) }
-            if (resource.root.contentType == LocalLibraryContentType.BOOKS) {
-                val sidecar =
-                    scannedSidecar("metadata.opf", "metadata.opf") ?: directory?.findFile("$stem.metadata.opf")
-                        ?: directory?.takeIf { hasSingleSupportedMedia(it, resource.root.contentType) }
-                            ?.findFile("metadata.opf")
-                sidecar?.let(::readOpfFile)?.let { metadata ->
-                    metadata.title?.let { manga.title = it }
-                    metadata.authors.takeIf(List<String>::isNotEmpty)?.let { manga.author = it.joinToString(", ") }
-                    metadata.contributors.takeIf(List<String>::isNotEmpty)?.let {
-                        manga.artist = it.joinToString(", ")
-                    }
-                    metadata.description?.let { manga.description = it }
-                    metadata.subjects.takeIf(List<String>::isNotEmpty)?.let { manga.genre = it.joinToString(", ") }
-                }
-            } else {
-                val sidecar =
-                    scannedSidecar("ComicInfo.xml", COMIC_INFO_FILE) ?: directory?.findFile("$stem.ComicInfo.xml")
-                        ?: directory?.takeIf { hasSingleSupportedMedia(it, resource.root.contentType) }
-                            ?.findFile(COMIC_INFO_FILE)
-                sidecar?.let { sidecar ->
-                    applyComicInfoFile(manga, sidecar)
-                }
-            }
+        objectMetadataCandidates(resource, role, scannedFiles).forEach {
+            it.metadata.toLocalMetadataOverride().applyTo(manga)
         }
 
         val legacyRelativePath = listOf(resource.root.relativePath, resource.relativePath)
             .filter(String::isNotBlank)
             .joinToString("/")
-        val override = metadataOverrides[LocalLibraryLocator.itemKey(resource.root.id, resource.relativePath)]
+        val override = metadataOverrides[
+            indexedLibraryItem(resource)?.itemKey
+                ?: LocalLibraryLocator.itemKey(
+                    resource.root.id,
+                    resource.relativePath,
+                ),
+        ]
             ?: metadataOverrides[LocalLibraryLocator.legacyItemKey(legacyRelativePath)]
         override?.let {
             it.title?.let { value -> manga.title = value }
@@ -1173,10 +1972,6 @@ class LocalFolderSource(
     }
 
     private fun applyComicInfoMetadata(manga: SManga, file: UniFile) {
-        if (file.isDirectory) {
-            file.findFile(COMIC_INFO_FILE)?.let { applyComicInfoFile(manga, it) }
-            return
-        }
         if (file.extension.orEmpty().lowercase() !in COMIC_FILE_EXTENSIONS) return
         runCatching {
             file.archiveReader(context).use { archive ->
@@ -1196,25 +1991,6 @@ class LocalFolderSource(
         }
     }
 
-    private fun applyComicInfoFile(manga: SManga, file: UniFile) {
-        runCatching {
-            AndroidXmlReader(file.openInputStream(), StandardCharsets.UTF_8.name()).use { reader ->
-                manga.copyFromComicInfo(xml.decodeFromReader<ComicInfo>(reader))
-            }
-        }.onFailure { error ->
-            logcat(LogPriority.WARN, error) { "Unable to read ComicInfo.xml sidecar" }
-        }
-    }
-
-    private fun hasSingleSupportedMedia(
-        directory: UniFile,
-        contentType: LocalLibraryContentType,
-    ): Boolean {
-        return directory.listFiles().orEmpty().count {
-            !it.isDirectory && it.extension.orEmpty().lowercase() in supportedExtensions(contentType)
-        } == 1
-    }
-
     private fun applySeriesMetadata(
         manga: SManga,
         root: LocalLibraryRootConfig,
@@ -1222,35 +1998,28 @@ class LocalFolderSource(
         relativePath: String,
         files: List<UniFile>,
         metadataOverrides: Map<String, LocalMetadataOverride>,
+        itemKey: String? = null,
     ) {
+        clearComicMetadata(manga)
+        manga.title = directory.name.orEmpty()
         manga.thumbnail_url = findCover(files)?.uri?.toString()
             ?: findFirstChapter(files)?.let { chapter ->
                 val chapterPath = listOf(relativePath, chapter.name.orEmpty())
                     .filter(String::isNotBlank)
                     .joinToString("/")
-                LocalLibraryLocator.chapterUrl(id, root.id, chapterPath)
+                LocalLibraryLocator.chapterUrl(
+                    id,
+                    root.id,
+                    preferences.getIndex().itemsByLocation[root.id to chapterPath]?.locatorPath ?: chapterPath,
+                )
             }
-        directory.findFile(COMIC_INFO_FILE)?.let { file ->
-            runCatching {
-                AndroidXmlReader(file.openInputStream(), StandardCharsets.UTF_8.name()).use { reader ->
-                    manga.copyFromComicInfo(xml.decodeFromReader<ComicInfo>(reader))
-                }
-            }
-        }
-        if (root.contentType != LocalLibraryContentType.COMICS) {
-            readBookMetadata(directory, files)?.let { metadata ->
-                metadata.title?.let { manga.title = it }
-                metadata.authors.takeIf(List<String>::isNotEmpty)?.let { manga.author = it.joinToString(", ") }
-                metadata.contributors.takeIf(List<String>::isNotEmpty)?.let { manga.artist = it.joinToString(", ") }
-                metadata.description?.let { manga.description = it }
-                metadata.subjects.takeIf(List<String>::isNotEmpty)?.let { manga.genre = it.joinToString(", ") }
-            }
-        }
+        objectMetadataCandidates(ResolvedLocalResource(root, directory, relativePath), LocalMetadataRole.SERIES, files)
+            .forEach { it.metadata.toLocalMetadataOverride().applyTo(manga) }
 
         val legacyRelativePath = listOf(root.relativePath, relativePath)
             .filter(String::isNotBlank)
             .joinToString("/")
-        val override = metadataOverrides[LocalLibraryLocator.itemKey(root.id, relativePath)]
+        val override = metadataOverrides[itemKey ?: LocalLibraryLocator.itemKey(root.id, relativePath)]
             ?: metadataOverrides[LocalLibraryLocator.legacyItemKey(legacyRelativePath)]
         override?.let {
             override.title?.let { manga.title = it }
@@ -1264,30 +2033,70 @@ class LocalFolderSource(
         }
     }
 
-    private fun readBookMetadata(directory: UniFile, files: List<UniFile>): LocalEmbeddedMetadata? {
-        directory.findFile("metadata.opf")?.let { file ->
-            readOpfFile(file)?.let { return it.forSeriesDisplay(isDirectoryMetadata = true) }
-        }
-
-        val epubFile = files
-            .firstOrNull { !it.isDirectory && it.extension.equals("epub", ignoreCase = true) }
-        if (epubFile != null) {
-            return readEpubMetadata(epubFile)?.forSeriesDisplay(isDirectoryMetadata = false)
-        }
-
-        val mobiFile = files.firstOrNull { !it.isDirectory && isMobiFile(it) } ?: return null
-        return readMobiMetadata(mobiFile)?.forSeriesDisplay(isDirectoryMetadata = false)
+    private fun readFileEmbeddedMetadata(file: UniFile): LocalEmbeddedMetadata? {
+        if (file.isDirectory) return null
+        if (file.extension.equals("epub", true)) return readEpubMetadata(file)
+        if (isMobiFile(file)) return readMobiMetadata(file)?.copy(source = MetadataSuggestionSource.MOBI_EMBEDDED)
+        if (file.extension.orEmpty().lowercase() !in COMIC_FILE_EXTENSIONS) return null
+        val manga = SManga.create().apply { title = "" }
+        applyComicInfoMetadata(manga, file)
+        return LocalEmbeddedMetadata(
+            title = manga.title.takeIf(String::isNotBlank),
+            authors = listOfNotNull(manga.author),
+            contributors = listOfNotNull(manga.artist),
+            description = manga.description,
+            subjects = manga.genre?.split(',')?.map(String::trim).orEmpty(),
+            status = manga.status.takeUnless {
+                it == SManga.UNKNOWN
+            },
+            source = MetadataSuggestionSource.COMICINFO_EMBEDDED,
+        )
     }
 
-    private fun readEmbeddedMetadata(
-        directory: UniFile,
-        items: List<UniFile>,
-    ): List<LocalEmbeddedMetadata> = buildList {
-        directory.findFile("metadata.opf")?.let(::readOpfFile)?.let(::add)
-        items.filter { !it.isDirectory && it.extension.equals("epub", ignoreCase = true) }
-            .mapNotNullTo(this, ::readEpubMetadata)
-        items.filter { !it.isDirectory && isMobiFile(it) }
-            .mapNotNullTo(this, ::readMobiMetadata)
+    private fun objectMetadataCandidates(
+        resource: ResolvedLocalResource,
+        role: LocalMetadataRole,
+        scannedFiles: List<UniFile>? = null,
+    ): List<LocalMetadataCandidate> = buildList {
+        if (!role.isMetadataReadable()) return@buildList
+        if (role == LocalMetadataRole.INDIVIDUAL_FILE) {
+            readFileEmbeddedMetadata(resource.file)?.let {
+                add(LocalMetadataCandidate(it.toLibraryMetadata(), it.source))
+            }
+        }
+        val directory = if (resource.file.isDirectory) resource.file else metadataDirectory(resource)
+        fun sidecar(suffix: String): UniFile? {
+            val name = when (role) {
+                LocalMetadataRole.SERIES -> suffix
+                LocalMetadataRole.FOLDER_IMAGE_SERIES -> ".koharia-image-series.$suffix"
+                else -> if (resource.file.isDirectory) return null else "${resource.file.nameWithoutExtension}.$suffix"
+            }
+            return scannedFiles?.firstOrNull { it.name.equals(name, true) } ?: directory?.findFile(name)
+        }
+        sidecar(COMIC_INFO_FILE)?.let { metadataStore.readStandard(it, LocalLibraryContentType.COMICS) }
+            ?.let { add(LocalMetadataCandidate(it.toLibraryMetadata(), MetadataSuggestionSource.SIDECAR)) }
+        sidecar("metadata.opf")?.let(::readOpfFile)?.let {
+            val value = if (role == LocalMetadataRole.SERIES) it.forSeriesDisplay(true) else it
+            add(LocalMetadataCandidate(value.toLibraryMetadata(), MetadataSuggestionSource.SIDECAR))
+        }
+    }
+
+    private fun clearComicMetadata(manga: SManga) {
+        manga.author = null
+        manga.artist = null
+        manga.description = null
+        manga.genre = null
+        manga.status = SManga.UNKNOWN
+    }
+
+    private fun applyFolderDisplay(manga: SManga, item: LocalLibraryItem) {
+        clearComicMetadata(manga)
+        val settings = preferences.folderDisplaySettings(item.itemKey)
+        manga.title = settings.displayName?.takeIf(String::isNotBlank)
+            ?: item.relativePath.substringAfterLast('/')
+        manga.author = settings.author?.takeIf(String::isNotBlank)
+        manga.description = settings.description
+        manga.genre = settings.tags.takeIf(List<String>::isNotEmpty)?.joinToString(", ")
     }
 
     private fun readOpfFile(file: UniFile): LocalEmbeddedMetadata? = runCatching {
@@ -1453,6 +2262,7 @@ class LocalFolderSource(
     private fun candidateResources(root: ResolvedLocalLibraryRoot): List<ScanCandidate> {
         val reader = LocalScanDirectoryReader(context)
         return when (preferences.getConfig().organizationMode(root.config)) {
+            LocalLibraryOrganizationMode.FOLDER -> candidateFolderEntries(root, reader)
             LocalLibraryOrganizationMode.SERIES -> candidateSeriesDirectories(root, reader)
             LocalLibraryOrganizationMode.INDIVIDUAL_FILES -> candidateIndividualEntries(root, reader)
         }
@@ -1472,6 +2282,131 @@ class LocalFolderSource(
                         }
                     )
             )
+
+    private fun scanFolderImages(
+        directory: UniFile,
+        reader: LocalScanDirectoryReader,
+    ): FolderImageScan {
+        val entries = reader.list(directory)
+            .filterNot { isLocalAuxiliaryFile(it.name) }
+        val files = entries.filterNot { it.directory }
+        val images = files.filter(::scanImage)
+        return FolderImageScan(
+            entries = entries,
+            images = images,
+            pureImages = images.size >= 2 && images.size == files.size,
+        )
+    }
+
+    private fun candidateFolderEntries(
+        root: ResolvedLocalLibraryRoot,
+        reader: LocalScanDirectoryReader,
+    ): List<ScanCandidate> {
+        val result = mutableListOf<ScanCandidate>()
+        val visited = mutableSetOf<String>()
+        val createMarkers = preferences.getConfig().metadataStorage == LocalMetadataStorage.FOLDER_DIRECTORY
+        fun visit(directory: UniFile, path: String) {
+            check(visited.add(localDeletionIdentity(directory))) { "Cyclic local directory" }
+            if (root.directory.uri.scheme == "file") {
+                val base = File(checkNotNull(root.directory.uri.path)).canonicalFile.toPath()
+                check(File(checkNotNull(directory.uri.path)).canonicalFile.toPath().startsWith(base))
+            }
+            val children = reader.list(directory).filterNot { it.name.startsWith('.') || ".importing-" in it.name }
+            val content = children.filterNot { isLocalAuxiliaryFile(it.name) }
+            val folderImages = scanFolderImages(directory, reader)
+            val marker = path.takeIf(String::isNotEmpty)?.let {
+                runCatching { metadataStore.folderMarker(directory, createMarkers) }.getOrNull()
+            }
+            val storedOverride = marker?.imageComicOverride
+                ?: preferences.getIndex().itemsByLocation[root.config.id to path]?.imageComicOverride
+            val imageSeriesEnabled = path.isNotEmpty() && storedOverride != false
+            if (path.isNotEmpty()) {
+                val hasDirectories = folderImages.entries.any(LocalScanFile::directory)
+                val imageSeriesMarker = marker?.copy(id = "${marker.id}:image-series")
+                if (!folderImages.pureImages || hasDirectories || !imageSeriesEnabled) {
+                    result += ScanCandidate(
+                        root.config,
+                        directory,
+                        path,
+                        root.config.contentType,
+                        LocalLibraryItem.Kind.FOLDER,
+                        folderImages.entries.map { it.file }, folderImages.images.map { it.file }, reader.attributes,
+                        marker = marker,
+                        pureImages = folderImages.pureImages && !hasDirectories,
+                    )
+                }
+                if (folderImages.pureImages && imageSeriesEnabled) {
+                    val parentPath = path.substringBeforeLast('/', "")
+                    val name = path.substringAfterLast('/')
+                    val imagePath = if (hasDirectories) {
+                        "$path/.koharia-image-series"
+                    } else {
+                        listOf(parentPath, ".koharia-image-series-$name")
+                            .filter(String::isNotBlank)
+                            .joinToString("/")
+                    }
+                    result += ScanCandidate(
+                        root.config,
+                        directory,
+                        imagePath,
+                        root.config.contentType,
+                        LocalLibraryItem.Kind.FILE_ENTRY,
+                        folderImages.entries.map { it.file },
+                        folderImages.images.map { it.file },
+                        reader.attributes,
+                        marker = imageSeriesMarker,
+                        pureImages = true,
+                    )
+                }
+            }
+            content.filter {
+                !it.directory &&
+                    it.extension in supportedExtensions(root.config.contentType) &&
+                    !(folderImages.pureImages && imageSeriesEnabled && scanImage(it))
+            }
+                .forEach { file ->
+                    val sidecars = children.filter {
+                        it.name.equals(
+                            "${file.name.substringBeforeLast('.')}.metadata.opf",
+                            true,
+                        ) ||
+                            it.name.equals(
+                                "${file.name.substringBeforeLast('.')}.ComicInfo.xml",
+                                true,
+                            )
+                    }
+                    result += ScanCandidate(
+                        root.config,
+                        file.file,
+                        listOf(
+                            path,
+                            file.name,
+                        ).filter(String::isNotBlank).joinToString("/"),
+                        root.config.contentType,
+                        LocalLibraryItem.Kind.FILE_ENTRY,
+                        listOf(file.file) + sidecars.map {
+                            it.file
+                        },
+                        listOf(file.file),
+                        reader.attributes,
+                    )
+                }
+            children.filter {
+                it.directory
+            }
+                .forEach {
+                    visit(
+                        it.file,
+                        listOf(
+                            path,
+                            it.name,
+                        ).filter(String::isNotBlank).joinToString("/"),
+                    )
+                }
+        }
+        visit(root.directory, "")
+        return result
+    }
 
     private fun candidateSeriesDirectories(
         root: ResolvedLocalLibraryRoot,
@@ -1503,6 +2438,12 @@ class LocalFolderSource(
                 files = files.map { it.file },
                 chapterFiles = chapters.map { it.file },
                 attributes = reader.attributes,
+                marker = runCatching {
+                    metadataStore.folderMarker(
+                        directory.file,
+                        preferences.getConfig().metadataStorage == LocalMetadataStorage.FOLDER_DIRECTORY,
+                    )
+                }.getOrNull(),
             )
         }
 
@@ -1540,10 +2481,6 @@ class LocalFolderSource(
                 val sidecarNames = buildList {
                     add("$stem.metadata.opf")
                     add("$stem.ComicInfo.xml")
-                    if (supportedMedia.size == 1) {
-                        add("metadata.opf")
-                        add(COMIC_INFO_FILE)
-                    }
                 }
                 val sidecars = sidecarNames.mapNotNull { filesByName[it.lowercase()] }.distinctBy { it.file.uri }
                 entries += ScanCandidate(
@@ -1605,15 +2542,24 @@ class LocalFolderSource(
             } else {
                 location.relativePath
             }
+            val indexed = preferences.getIndex().itemsByKey[LocalLibraryLocator.itemKey(root.id, relative)]
+            if (indexed?.missing == true) return@forEach
+            val resolvedPath = indexed?.physicalPath() ?: relative
+            if (relative.startsWith(".koharia/nodes/") && indexed == null) return@forEach
             val base = preferences.resolveRoot(context, root) ?: return@forEach
-            if (relative == LocalLibraryLocator.ROOT_DIRECTORY_ENTRY) {
-                return ResolvedLocalResource(root, base, relative)
+            if (resolvedPath == LocalLibraryLocator.ROOT_DIRECTORY_ENTRY) {
+                return ResolvedLocalResource(root, base, relative, indexed?.relativePath ?: relative)
             }
-            val file = LocalLibraryLocator.normalize(relative)
+            val file = LocalLibraryLocator.normalize(resolvedPath)
                 .split('/')
                 .filter(String::isNotBlank)
                 .fold(base) { parent, segment -> parent.findFile(segment) ?: return@forEach }
-            return ResolvedLocalResource(root, file, LocalLibraryLocator.normalize(relative))
+            return ResolvedLocalResource(
+                root = root,
+                file = file,
+                relativePath = LocalLibraryLocator.normalize(resolvedPath),
+                indexedPath = indexed?.relativePath ?: LocalLibraryLocator.normalize(resolvedPath),
+            )
         }
         return null
     }
@@ -1632,6 +2578,21 @@ class LocalFolderSource(
         return listOf(resource.root.relativePath, resource.relativePath)
             .filter(String::isNotBlank)
             .joinToString("/")
+    }
+
+    private suspend fun emitLibraryRefresh() {
+        mutableLibraryRefreshes.emit(
+            ConnectionLibraryRefreshResult(
+                itemCount = preferences.getIndex().items.count {
+                    it.kind in setOf(
+                        LocalLibraryItem.Kind.SERIES,
+                        LocalLibraryItem.Kind.FILE_ENTRY,
+                        LocalLibraryItem.Kind.FOLDER,
+                    )
+                },
+                refreshedAt = System.currentTimeMillis(),
+            ),
+        )
     }
 
     private suspend fun scanLibrary(): ConnectionLibraryRefreshResult = withIOContext {
@@ -1677,7 +2638,13 @@ class LocalFolderSource(
             successfulRootIds = successfulRootIds,
         )
         val previousEntriesByKey = effectivePreviousIndex.items
-            .filter { it.kind in setOf(LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.FILE_ENTRY) }
+            .filter {
+                it.kind in setOf(
+                    LocalLibraryItem.Kind.SERIES,
+                    LocalLibraryItem.Kind.FILE_ENTRY,
+                    LocalLibraryItem.Kind.FOLDER,
+                )
+            }
             .associateBy { it.itemKey }
 
         val changedManga = candidates.chunked(SCAN_METADATA_BATCH_SIZE).flatMap { batch ->
@@ -1685,21 +2652,33 @@ class LocalFolderSource(
                 batch.map { candidate ->
                     async {
                         try {
-                            val url = LocalLibraryLocator.entryUrl(id, candidate.root.id, candidate.relativePath)
+                            val scannedItem =
+                                refreshedIndex.itemsByLocation.getValue(candidate.root.id to candidate.relativePath)
+                            val url = LocalLibraryLocator.entryUrl(id, candidate.root.id, scannedItem.locatorPath)
                             val existing = existingByUrl[url]
-                            val itemKey = LocalLibraryLocator.itemKey(candidate.root.id, candidate.relativePath)
-                            val unchanged = existing?.initialized == true &&
-                                previousEntriesByKey[itemKey]?.fingerprint == candidate.fingerprint
-                            if (unchanged) return@async null
+                            val itemKey = scannedItem.itemKey
+                            val unchanged = previousIndex.schemaVersion >= 7 && existing?.initialized == true &&
+                                previousEntriesByKey[itemKey]?.fingerprint == scannedItem.fingerprint
+                            if (unchanged &&
+                                config.metadataStorage == LocalMetadataStorage.DATABASE &&
+                                config.organizationMode(candidate.root) != LocalLibraryOrganizationMode.FOLDER
+                            ) {
+                                return@async null
+                            }
 
-                            SManga.create().apply {
-                                title = if (candidate.resource.isDirectory) {
-                                    candidate.resource.name.orEmpty()
-                                } else {
-                                    candidate.resource.nameWithoutExtension.orEmpty()
+                            (existing?.toSManga()?.takeIf { unchanged } ?: SManga.create()).apply {
+                                if (!unchanged) {
+                                    title = if (candidate.resource.isDirectory) {
+                                        candidate.resource.name.orEmpty()
+                                    } else {
+                                        candidate.resource.nameWithoutExtension.orEmpty()
+                                    }
                                 }
                                 this.url = url
-                                if (candidate.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
+                                val metadataRole = scannedItem.metadataRole(config.organizationMode(candidate.root))
+                                if (scannedItem.kind == LocalLibraryItem.Kind.FILE_ENTRY &&
+                                    (!unchanged || scannedItem.isVirtualImageSeries())
+                                ) {
                                     applyIndividualMetadata(
                                         manga = this,
                                         resource = ResolvedLocalResource(
@@ -1709,8 +2688,12 @@ class LocalFolderSource(
                                         ),
                                         metadataOverrides = metadataOverrides,
                                         scannedFiles = candidate.files,
+                                        role = metadataRole,
                                     )
-                                } else {
+                                } else if (scannedItem.kind == LocalLibraryItem.Kind.FOLDER) {
+                                    applyFolderDisplay(this, scannedItem)
+                                    thumbnail_url = url
+                                } else if (!unchanged && scannedItem.kind == LocalLibraryItem.Kind.SERIES) {
                                     applySeriesMetadata(
                                         manga = this,
                                         root = candidate.root,
@@ -1718,10 +2701,49 @@ class LocalFolderSource(
                                         relativePath = candidate.relativePath,
                                         files = candidate.files,
                                         metadataOverrides = metadataOverrides,
+                                        itemKey = scannedItem.itemKey,
                                     )
+                                }
+                                if (config.organizationMode(candidate.root) == LocalLibraryOrganizationMode.FOLDER &&
+                                    metadataRole != LocalMetadataRole.FOLDER_CONTAINER
+                                ) {
+                                    thumbnail_url =
+                                        url
+                                }
+                                val metadataDirectory =
+                                    if (candidate.resource.isDirectory) {
+                                        candidate.resource
+                                    } else {
+                                        metadataDirectory(
+                                            ResolvedLocalResource(
+                                                candidate.root,
+                                                candidate.resource,
+                                                candidate.relativePath,
+                                            ),
+                                        )
+                                    }
+                                metadataStore.readAndMigrate(
+                                    scannedItem.itemKey,
+                                    metadataDirectory,
+                                    scannedItem.contentType,
+                                    candidate.resource.takeUnless(UniFile::isDirectory)?.name,
+                                    role = metadataRole,
+                                    legacyImageOwnership = metadataRole == LocalMetadataRole.FOLDER_IMAGE_SERIES &&
+                                        candidate.files.none(UniFile::isDirectory) && candidate.pureImages,
+                                )?.applyTo(this)
+                                if (metadataRole.isMetadataReadable()) {
+                                    metadataOverrides[scannedItem.itemKey]?.applyTo(this)
                                 }
                                 initialized = true
                             }.toDomainManga(id).let { manga ->
+                                if (unchanged &&
+                                    existing.title == manga.title && existing.author == manga.author &&
+                                    existing.artist == manga.artist && existing.description == manga.description &&
+                                    existing.genre == manga.genre && existing.status == manga.status &&
+                                    existing.thumbnailUrl == manga.thumbnailUrl
+                                ) {
+                                    return@async null
+                                }
                                 if (existing == null) manga.copy(chapterFlags = defaultChapterFlags) else manga
                             }
                         } catch (error: CancellationException) {
@@ -1757,7 +2779,11 @@ class LocalFolderSource(
         }
         ConnectionLibraryRefreshResult(
             itemCount = refreshedIndex.items.count {
-                it.kind in setOf(LocalLibraryItem.Kind.SERIES, LocalLibraryItem.Kind.FILE_ENTRY)
+                it.kind in setOf(
+                    LocalLibraryItem.Kind.SERIES,
+                    LocalLibraryItem.Kind.FILE_ENTRY,
+                    LocalLibraryItem.Kind.FOLDER,
+                )
             },
             refreshedAt = refreshedAt,
         )
@@ -1772,14 +2798,25 @@ class LocalFolderSource(
     ): LocalLibraryIndex {
         val scannedItems = candidates.flatMap { candidate ->
             val resource = candidate.attributes.getValue(candidate.resource.uri)
-            if (candidate.kind == LocalLibraryItem.Kind.FILE_ENTRY) {
+            if (candidate.kind != LocalLibraryItem.Kind.SERIES) {
                 return@flatMap listOf(
                     LocalLibraryItem(
                         itemKey = LocalLibraryLocator.itemKey(candidate.root.id, candidate.relativePath),
                         rootId = candidate.root.id,
                         relativePath = candidate.relativePath,
                         contentType = candidate.contentType,
-                        kind = LocalLibraryItem.Kind.FILE_ENTRY,
+                        kind = candidate.kind,
+                        documentIdentity = localDocumentIdentity(candidate.resource)?.let {
+                            if (localImageSeriesPhysicalPath(candidate.relativePath) != null) "$it:image-series" else it
+                        },
+                        folderIdentity = candidate.marker?.id,
+                        virtualType = LocalLibraryItem.VirtualType.IMAGE_SERIES.takeIf {
+                            localImageSeriesPhysicalPath(candidate.relativePath) !=
+                                null
+                        },
+                        backingPath = localImageSeriesPhysicalPath(candidate.relativePath),
+                        imageComic = candidate.marker?.imageComic == true,
+                        imageComicOverride = candidate.marker?.imageComicOverride,
                         format = if (resource.directory) {
                             "directory"
                         } else {
@@ -1806,6 +2843,8 @@ class LocalFolderSource(
                 sizeBytes = candidate.chapterFiles.sumOf { candidate.attributes.getValue(it.uri).sizeBytes },
                 modifiedAt = resource.modifiedAt,
                 fingerprint = candidate.fingerprint,
+                documentIdentity = localDocumentIdentity(candidate.resource),
+                folderIdentity = candidate.marker?.id,
             )
             val chapterItems = candidate.chapterFiles
                 .map { file ->
@@ -1825,12 +2864,43 @@ class LocalFolderSource(
                         sizeBytes = attributes.sizeBytes,
                         modifiedAt = attributes.modifiedAt,
                         fingerprint = fingerprint(listOf(attributes)),
+                        documentIdentity = localDocumentIdentity(file),
                     )
                 }
             listOf(seriesItem) + chapterItems
         }
+        val candidatesByLocation = candidates.associateBy { it.root.id to it.relativePath }
+        val stableRoots = configuredRootIds
+        val folderItems = withLocalFolderFingerprints(
+            reconcileLocalFolders(
+                scannedItems.filter {
+                    it.rootId in stableRoots
+                },
+                previousIndex.items.filter {
+                    it.rootId in stableRoots
+                },
+            ),
+        )
+            .map { item ->
+                val candidate = candidatesByLocation[item.rootId to item.relativePath] ?: return@map item
+                val imageComic = when (item.imageComicOverride) {
+                    true -> candidate.pureImages
+                    false -> false
+                    null -> candidate.pureImages
+                }
+                item.copy(imageComic = imageComic)
+            }
+        val folderKeys = folderItems.mapTo(mutableSetOf()) { it.itemKey }
+        val missing = previousIndex.items.filter {
+            it.rootId in stableRoots &&
+                it.rootId in successfulRootIds &&
+                it.itemKey !in folderKeys
+        }
+            .map {
+                it.copy(missing = true)
+            }
         val items = mergeLocalLibraryScanItems(
-            scannedItems = scannedItems,
+            scannedItems = folderItems + missing,
             previousItems = previousIndex.items,
             configuredRootIds = configuredRootIds,
             successfulRootIds = successfulRootIds,
@@ -1838,13 +2908,13 @@ class LocalFolderSource(
 
         val previousChapterSignatures = previousIndex.chapterSignatures()
         val currentIndex = LocalLibraryIndex(
-            schemaVersion = 5,
+            schemaVersion = 7,
             scannedAt = scannedAt,
             items = items,
         )
         val currentChapterSignatures = currentIndex.chapterSignatures()
         val currentSeriesKeys = items
-            .filter { it.kind == LocalLibraryItem.Kind.SERIES }
+            .filter { it.kind == LocalLibraryItem.Kind.SERIES && !it.missing }
             .mapTo(mutableSetOf(), LocalLibraryItem::itemKey)
         val changedSeriesKeys = currentSeriesKeys.filterTo(mutableSetOf()) { itemKey ->
             previousChapterSignatures[itemKey] != currentChapterSignatures[itemKey]
@@ -1857,27 +2927,26 @@ class LocalFolderSource(
     }
 
     private fun LocalLibraryIndex.chapterSignatures(): Map<String, List<String>> {
-        return items.asSequence()
-            .filter { it.kind == LocalLibraryItem.Kind.CHAPTER }
-            .groupBy(
-                keySelector = { item ->
-                    LocalLibraryLocator.itemKey(
-                        item.rootId,
-                        item.relativePath.substringBeforeLast('/', missingDelimiterValue = ""),
-                    )
-                },
-                valueTransform = { item ->
-                    listOf(
-                        item.relativePath,
-                        item.format,
-                        item.sizeBytes.toString(),
-                        item.modifiedAt.toString(),
-                        item.fingerprint.orEmpty(),
-                    ).joinToString("\u0000")
-                },
-            )
-            .mapValues { (_, values) -> values.sorted() }
+        return chaptersBySeriesKey.mapValues { (_, chapters) ->
+            chapters.map { item ->
+                listOf(
+                    item.relativePath,
+                    item.format,
+                    item.sizeBytes.toString(),
+                    item.modifiedAt.toString(),
+                    item.fingerprint.orEmpty(),
+                ).joinToString("\u0000")
+            }.sorted()
+        }
     }
+
+    private fun localDocumentIdentity(file: UniFile): String? = runCatching {
+        when (file.uri.scheme) {
+            "content" -> "${file.uri.authority}:${DocumentsContract.getDocumentId(file.uri)}"
+            "file" -> Os.stat(checkNotNull(file.uri.path)).let { "file:${it.st_dev}:${it.st_ino}" }
+            else -> null
+        }
+    }.getOrNull()
 
     private fun sanitizeImportName(value: String): String {
         return value
@@ -1943,14 +3012,30 @@ class LocalFolderSource(
         val files: List<UniFile>,
         val chapterFiles: List<UniFile>,
         val attributes: Map<Uri, LocalScanFile>,
+        val marker: LocalFolderMarker? = null,
+        val pureImages: Boolean = false,
     ) {
-        val fingerprint = fingerprint(files.map { attributes.getValue(it.uri) })
+        val fingerprint = relativePath + ":" + fingerprint(
+            (files + resource).distinctBy {
+                it.uri
+            }
+                .map {
+                    attributes.getValue(it.uri)
+                },
+        )
     }
+
+    private data class FolderImageScan(
+        val entries: List<LocalScanFile>,
+        val images: List<LocalScanFile>,
+        val pureImages: Boolean,
+    )
 
     private data class ResolvedLocalResource(
         val root: LocalLibraryRootConfig,
         val file: UniFile,
         val relativePath: String,
+        val indexedPath: String = relativePath,
     )
 }
 
@@ -2032,6 +3117,9 @@ private fun LocalMetadataOverride.toLibraryMetadata() = LibraryMetadata(
     description = description,
     genres = genres,
     status = status,
+    editedFields = editedFields.mapNotNull { value ->
+        runCatching { LibraryMetadataField.valueOf(value.uppercase()) }.getOrNull()
+    }.toSet(),
     lockedFields = lockedFields,
     source = source,
 )
@@ -2043,6 +3131,7 @@ private fun LibraryMetadata.toLocalMetadataOverride() = LocalMetadataOverride(
     description = description,
     genres = genres,
     status = status,
+    editedFields = editedFields.mapTo(mutableSetOf()) { it.name.lowercase() },
     lockedFields = lockedFields,
     source = source,
 )

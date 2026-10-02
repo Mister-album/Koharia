@@ -17,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -72,6 +74,9 @@ internal class HttpPageLoader(
     private val activeLoads = mutableSetOf<ActivePageLoad>()
     private var cachedPageList: ConnectionPageList? = null
 
+    @Volatile
+    private var networkRequestsDeferred = false
+
     private val domainChapter
         get() = checkNotNull(chapter.chapter.toDomainChapter())
 
@@ -101,7 +106,14 @@ internal class HttpPageLoader(
                         job = loadJob,
                     )
                     val shouldStart = synchronized(schedulerLock) {
-                        if (queuedPage.page.status == Page.State.Queue) {
+                        if (
+                            queuedPage.page.status == Page.State.Queue &&
+                            (
+                                queuedPage.priority != PriorityPage.DEFAULT || pageLoadGate.isActive(
+                                    queuedPage.page.index,
+                                )
+                                )
+                        ) {
                             activeLoads += newActiveLoad
                             true
                         } else {
@@ -123,6 +135,7 @@ internal class HttpPageLoader(
                             // The user may select a prefetch after it was cancelled but before this cleanup.
                             if (
                                 scope.isActive &&
+                                !networkRequestsDeferred &&
                                 queuedPage.page.status == Page.State.Queue &&
                                 pageLoadGate.isActive(queuedPage.page.index)
                             ) {
@@ -222,6 +235,18 @@ internal class HttpPageLoader(
         setActivePages(listOf(page))
     }
 
+    override fun setNetworkRequestsDeferred(deferred: Boolean) {
+        synchronized(schedulerLock) {
+            if (networkRequestsDeferred == deferred) return
+            networkRequestsDeferred = deferred
+            if (deferred) removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT }
+        }
+        if (!deferred && !isRecycled) {
+            val activePages = chapter.pages.orEmpty().filter { pageLoadGate.isActive(it.index) }
+            setActivePages(activePages)
+        }
+    }
+
     override fun setActivePages(pages: List<ReaderPage>) {
         val activePages = pages.distinctBy { it.index }
         val chapterPages = activePages.firstOrNull()?.chapter?.pages ?: return
@@ -287,8 +312,8 @@ internal class HttpPageLoader(
             activeLoads.filter {
                 val outsideActiveWindow = it.page.index < firstActiveIndex - maxDistance ||
                     it.page.index > lastActiveIndex + maxDistance
-                it.page !in activePages && it.job.isActive &&
-                    outsideActiveWindow &&
+                it.page !in activePages && !it.job.isCompleted &&
+                    (outsideActiveWindow || networkRequestsDeferred) &&
                     it.priority != PriorityPage.RETRY
             }
         }
@@ -327,6 +352,7 @@ internal class HttpPageLoader(
     }
 
     private fun enqueuePageLocked(page: ReaderPage, priority: Int): PriorityPage? {
+        if (networkRequestsDeferred && priority == PriorityPage.ADJACENT) return null
         if (page.status != Page.State.Queue) return null
         val queuedPage = queue.firstOrNull { it.page === page }
         if (queuedPage != null) {
@@ -455,11 +481,14 @@ internal class HttpPageLoader(
     private suspend fun internalLoadPage(page: ReaderPage, force: Boolean, isPrefetch: Boolean) {
         val startedAt = System.nanoTime()
         try {
+            if (!force && !isPrefetch && !pageLoadGate.isActive(page.index)) return
             logcat {
                 "MangaStartup: page request start chapterId=${chapter.chapter.id} " +
                     "page=${page.number} prefetch=$isPrefetch"
             }
             if (page.imageUrl.isNullOrEmpty()) {
+                currentCoroutineContext().ensureActive()
+                if (networkRequestsDeferred) return
                 page.status = Page.State.LoadPage
                 page.imageUrl = source.getImageUrl(page)
             }
@@ -488,6 +517,11 @@ internal class HttpPageLoader(
                 }
             }
             if (force || !imageInCache) {
+                currentCoroutineContext().ensureActive()
+                if (networkRequestsDeferred) {
+                    page.status = Page.State.Queue
+                    return
+                }
                 page.status = Page.State.DownloadImage
                 val imageResponse = source.getImage(page).let { response ->
                     if (isPrefetch) response else response.withTransferMeter(transferMeter)

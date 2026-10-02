@@ -35,12 +35,23 @@ enum class LocalLibraryLayout {
 enum class LocalLibraryOrganizationMode {
     SERIES,
     INDIVIDUAL_FILES,
+    FOLDER,
+}
+
+/** The object represented by a local-library entry for metadata and classification purposes. */
+enum class LocalMetadataRole {
+    FOLDER_CONTAINER,
+    FOLDER_IMAGE_SERIES,
+    INDIVIDUAL_FILE,
+    SERIES,
+    CHAPTER,
 }
 
 enum class LocalMetadataStorage {
     DATABASE,
     ADJACENT_SIDECAR,
     UNIFIED_DIRECTORY,
+    FOLDER_DIRECTORY,
 }
 
 @Serializable
@@ -101,18 +112,92 @@ data class LocalLibraryItem(
     val sizeBytes: Long,
     val modifiedAt: Long,
     val fingerprint: String? = null,
+    val locatorPath: String = relativePath,
+    val documentIdentity: String? = null,
+    val folderIdentity: String? = null,
+    val missing: Boolean = false,
+    val imageComic: Boolean = false,
+    val imageComicOverride: Boolean? = null,
+    val virtualType: VirtualType? = null,
+    val backingPath: String? = null,
 ) {
+    @Serializable
+    enum class VirtualType { IMAGE_SERIES, }
+
     @Serializable
     enum class Kind {
         SERIES,
         CHAPTER,
         FILE_ENTRY,
+        FOLDER,
     }
+}
+
+internal fun LocalLibraryItem.metadataRole(
+    organizationMode: LocalLibraryOrganizationMode,
+): LocalMetadataRole = when {
+    kind == LocalLibraryItem.Kind.FOLDER -> LocalMetadataRole.FOLDER_CONTAINER
+    kind == LocalLibraryItem.Kind.SERIES -> LocalMetadataRole.SERIES
+    kind == LocalLibraryItem.Kind.CHAPTER -> LocalMetadataRole.CHAPTER
+    isVirtualImageSeries() -> LocalMetadataRole.FOLDER_IMAGE_SERIES
+    else -> LocalMetadataRole.INDIVIDUAL_FILE
+}
+
+internal fun LocalLibraryItem.isVirtualImageSeries(): Boolean =
+    virtualType == LocalLibraryItem.VirtualType.IMAGE_SERIES ||
+        (
+            kind == LocalLibraryItem.Kind.FILE_ENTRY && format == "directory" &&
+                localImageSeriesPhysicalPath(relativePath) != null
+            )
+
+internal fun LocalLibraryItem.physicalPath(): String = backingPath
+    ?: localImageSeriesPhysicalPath(relativePath).takeIf { isVirtualImageSeries() }
+    ?: relativePath
+
+internal fun LocalMetadataRole.isClassifiable(): Boolean = when (this) {
+    LocalMetadataRole.FOLDER_CONTAINER,
+    LocalMetadataRole.CHAPTER,
+    -> false
+    LocalMetadataRole.FOLDER_IMAGE_SERIES,
+    LocalMetadataRole.INDIVIDUAL_FILE,
+    LocalMetadataRole.SERIES,
+    -> true
+}
+
+internal fun LocalMetadataRole.isMetadataReadable(): Boolean = when (this) {
+    LocalMetadataRole.FOLDER_CONTAINER,
+    LocalMetadataRole.CHAPTER,
+    -> false
+    LocalMetadataRole.FOLDER_IMAGE_SERIES,
+    LocalMetadataRole.INDIVIDUAL_FILE,
+    LocalMetadataRole.SERIES,
+    -> true
+}
+
+internal fun LocalMetadataRole.isMetadataEditable(): Boolean = when (this) {
+    LocalMetadataRole.FOLDER_CONTAINER,
+    LocalMetadataRole.CHAPTER,
+    -> false
+    LocalMetadataRole.FOLDER_IMAGE_SERIES,
+    LocalMetadataRole.INDIVIDUAL_FILE,
+    LocalMetadataRole.SERIES,
+    -> true
+}
+
+internal fun LocalMetadataRole.isMetadataSuggestionSupported(): Boolean = when (this) {
+    LocalMetadataRole.CHAPTER -> false
+    LocalMetadataRole.FOLDER_CONTAINER,
+    -> true
+    LocalMetadataRole.FOLDER_IMAGE_SERIES,
+    LocalMetadataRole.INDIVIDUAL_FILE,
+    LocalMetadataRole.SERIES,
+    -> true
 }
 
 @Serializable
 data class LocalLibraryIndex(
-    val schemaVersion: Int = 5,
+    // Version 6 was omitted by older serializers; keep its decoding default for the first upgraded scan.
+    val schemaVersion: Int = 6,
     val scannedAt: Long = 0L,
     val items: List<LocalLibraryItem> = emptyList(),
     val pendingChapterRefreshItemKeys: Set<String> = emptySet(),
@@ -120,12 +205,21 @@ data class LocalLibraryIndex(
     val itemsByKey: Map<String, LocalLibraryItem> by lazy { items.associateBy(LocalLibraryItem::itemKey) }
 
     val libraryItemsByKey: Map<String, LocalLibraryItem> by lazy {
-        itemsByKey.filterValues { it.kind != LocalLibraryItem.Kind.CHAPTER }
+        itemsByKey.filterValues { it.kind != LocalLibraryItem.Kind.CHAPTER && !it.missing }
+    }
+
+    val itemsByLocation: Map<Pair<String, String>, LocalLibraryItem> by lazy {
+        items.filterNot { it.missing }.associateBy { it.rootId to it.relativePath }
+    }
+
+    val childrenByLocation: Map<Pair<String, String>, List<LocalLibraryItem>> by lazy {
+        libraryItemsByKey.values.groupBy { it.rootId to it.relativePath.substringBeforeLast('/', "") }
     }
 
     val chaptersBySeriesKey: Map<String, List<LocalLibraryItem>> by lazy {
-        items.filter { it.kind == LocalLibraryItem.Kind.CHAPTER }.groupBy {
-            LocalLibraryLocator.itemKey(it.rootId, it.relativePath.substringBeforeLast('/', ""))
+        items.filter { it.kind == LocalLibraryItem.Kind.CHAPTER && !it.missing }.groupBy {
+            itemsByLocation[it.rootId to it.relativePath.substringBeforeLast('/', "")]?.itemKey
+                ?: LocalLibraryLocator.itemKey(it.rootId, it.relativePath.substringBeforeLast('/', ""))
         }
     }
 
@@ -174,10 +268,27 @@ data class LocalMetadataOverride(
     val description: String? = null,
     val genres: List<String> = emptyList(),
     val status: Int? = null,
+    val editedFields: Set<String> = emptySet(),
     val lockedFields: Set<String> = emptySet(),
     val source: String = "user",
     val updatedAt: Long = 0L,
 )
+
+@Serializable
+internal data class LocalFolderDisplaySettings(
+    val displayName: String? = null,
+    val author: String? = null,
+    val description: String? = null,
+    val tags: List<String> = emptyList(),
+    val lockedFields: Set<String> = emptySet(),
+)
+
+internal fun LocalFolderDisplaySettings.effectiveLockedFields(): Set<String> = lockedFields + buildSet {
+    if (!displayName.isNullOrBlank()) add("title")
+    if (!author.isNullOrBlank()) add("author")
+    if (!description.isNullOrBlank()) add("description")
+    if (tags.isNotEmpty()) add("genres")
+}
 
 class LocalLibraryPreferences(
     private val sourceId: Long,
@@ -289,6 +400,15 @@ class LocalLibraryPreferences(
             ?: emptyMap()
     }
 
+    internal fun folderDisplaySettings(key: String): LocalFolderDisplaySettings =
+        preferences.getString("local_folder_display_$key", null)
+            ?.let { runCatching { json.decodeFromString<LocalFolderDisplaySettings>(it) }.getOrNull() }
+            ?: LocalFolderDisplaySettings()
+
+    internal fun setFolderDisplaySettings(key: String, value: LocalFolderDisplaySettings) {
+        preferences.edit().putString("local_folder_display_$key", json.encodeToString(value)).apply()
+    }
+
     @Synchronized
     internal fun removeDeletedItems(keys: Set<String>) {
         val index = getIndex()
@@ -307,10 +427,31 @@ class LocalLibraryPreferences(
             .apply()
     }
 
-    fun setMetadataOverride(itemKey: String, value: LocalMetadataOverride) {
+    fun setMetadataOverride(itemKey: String, value: LocalMetadataOverride) = synchronized(preferences) {
         val values = getMetadataOverrides().toMutableMap()
         values[itemKey] = value
         preferences.edit().putString(KEY_METADATA_OVERRIDES, json.encodeToString(values)).apply()
+    }
+
+    internal fun recordFolderOperation(value: String?) {
+        check(preferences.edit().putString("local_folder_operation", value).commit())
+    }
+
+    internal fun pendingFolderOperation(): String? = preferences.getString("local_folder_operation", null)
+
+    internal fun commitFolderOperation(index: LocalLibraryIndex, operation: String?) {
+        check(
+            preferences.edit()
+                .putString(KEY_INDEX, json.encodeToString(index))
+                .putString("local_folder_operation", operation)
+                .commit(),
+        )
+    }
+
+    internal fun metadataRevision(key: String): String? = preferences.getString("local_metadata_revision_$key", null)
+
+    internal fun setMetadataRevision(key: String, revision: String) {
+        preferences.edit().putString("local_metadata_revision_$key", revision).apply()
     }
 
     fun getBookshelfAssignments(): Map<String, String> {
@@ -337,7 +478,15 @@ class LocalLibraryPreferences(
         removedRoots.forEach { removeRoot(it.id) }
         if (reboundIds.isNotEmpty()) {
             val index = getIndex()
-            setIndex(index.copy(items = index.items.filterNot { it.rootId in reboundIds }))
+            setIndex(
+                index.rebindFolderLocations(reboundIds, markMissing = true).let { rebound ->
+                    rebound.copy(
+                        items = rebound.items.filterNot {
+                            it.rootId in reboundIds && !it.locatorPath.startsWith(".koharia/nodes/")
+                        },
+                    )
+                },
+            )
         }
         val detached = (getConfig().detachedRoots + config.detachedRoots)
             .distinctBy(LocalLibraryRootConfig::id)
@@ -565,6 +714,7 @@ internal fun recoverLocalLibraryItems(
         val kind = when (config.organizationMode(root)) {
             LocalLibraryOrganizationMode.SERIES -> LocalLibraryItem.Kind.SERIES
             LocalLibraryOrganizationMode.INDIVIDUAL_FILES -> LocalLibraryItem.Kind.FILE_ENTRY
+            LocalLibraryOrganizationMode.FOLDER -> return@mapNotNull null
         }
         LocalLibraryItem(
             itemKey = LocalLibraryLocator.itemKey(root.id, location.relativePath),

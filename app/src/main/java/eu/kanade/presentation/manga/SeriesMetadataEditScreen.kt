@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.manga.components.MetadataGenerationDialog
+import koharia.connection.LibraryMetadataField
 import koharia.connection.MetadataFilenameTemplate
 import koharia.connection.ui.SeriesMetadataEditScreenModel
 import tachiyomi.i18n.MR
@@ -43,6 +45,7 @@ fun SeriesMetadataEditScreen(
     onDescriptionChange: (String) -> Unit,
     onGenresChange: (String) -> Unit,
     onOpenMetadataGeneration: () -> Unit,
+    onImportLegacyMetadata: () -> Unit,
     onDismissMetadataGeneration: () -> Unit,
     onFilenameTemplateChange: (MetadataFilenameTemplate) -> Unit,
     onGenerateMetadataPreview: () -> Unit,
@@ -103,52 +106,79 @@ fun SeriesMetadataEditScreen(
                     },
                 )
             }
-            OutlinedTextField(
-                value = state.title,
-                onValueChange = onTitleChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(MR.strings.title)) },
-                supportingText = {
-                    if (state.title.isBlank()) {
-                        Text(stringResource(MR.strings.information_required_plain))
-                    }
-                },
-                enabled = !state.isSaving,
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = state.author,
-                onValueChange = onAuthorChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(MR.strings.author)) },
-                enabled = !state.isSaving,
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = state.artist,
-                onValueChange = onArtistChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(MR.strings.artist)) },
-                enabled = !state.isSaving,
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = state.genres,
-                onValueChange = onGenresChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(MR.strings.genres)) },
-                supportingText = { Text(stringResource(MR.strings.series_details_genres_hint)) },
-                enabled = !state.isSaving,
-                minLines = 2,
-            )
-            OutlinedTextField(
-                value = state.description,
-                onValueChange = onDescriptionChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(MR.strings.description)) },
-                enabled = !state.isSaving,
-                minLines = 5,
-            )
+            if (state.legacyMetadata != null) {
+                ListItem(
+                    modifier = Modifier.clickable(
+                        enabled = !state.isLoading && !state.isSaving,
+                        onClick = onImportLegacyMetadata,
+                    ),
+                    headlineContent = { Text(stringResource(MR.strings.local_library_import_legacy_metadata)) },
+                    supportingContent = {
+                        Text(stringResource(MR.strings.local_library_import_legacy_metadata_notice))
+                    },
+                    leadingContent = { Icon(Icons.Outlined.FileOpen, contentDescription = null) },
+                )
+            }
+            if (LibraryMetadataField.TITLE in state.editableFields) {
+                OutlinedTextField(
+                    value = state.title,
+                    onValueChange = onTitleChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(MR.strings.title)) },
+                    supportingText = {
+                        if (state.title.isBlank()) {
+                            Text(stringResource(MR.strings.information_required_plain))
+                        }
+                    },
+                    enabled = !state.isSaving,
+                    singleLine = true,
+                )
+            }
+            if (LibraryMetadataField.AUTHOR in state.editableFields) {
+                OutlinedTextField(
+                    value = state.author,
+                    onValueChange = onAuthorChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(MR.strings.author)) },
+                    enabled = !state.isSaving,
+                    singleLine = true,
+                )
+            }
+            if (LibraryMetadataField.ARTIST in state.editableFields) {
+                OutlinedTextField(
+                    value = state.artist,
+                    onValueChange = onArtistChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(MR.strings.artist)) },
+                    enabled = !state.isSaving,
+                    singleLine = true,
+                )
+            }
+            if (LibraryMetadataField.GENRES in state.editableFields) {
+                OutlinedTextField(
+                    value = state.genres,
+                    onValueChange = onGenresChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = {
+                        Text(stringResource(MR.strings.genres))
+                    },
+                    supportingText = {
+                        Text(stringResource(MR.strings.series_details_genres_hint))
+                    },
+                    enabled = !state.isSaving,
+                    minLines = 2,
+                )
+            }
+            if (LibraryMetadataField.DESCRIPTION in state.editableFields) {
+                OutlinedTextField(
+                    value = state.description,
+                    onValueChange = onDescriptionChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(MR.strings.description)) },
+                    enabled = !state.isSaving,
+                    minLines = 5,
+                )
+            }
         }
     }
 

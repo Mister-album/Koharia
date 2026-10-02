@@ -10,6 +10,8 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.decoder.Format
 import tachiyomi.decoder.ImageDecoder
+import java.io.File
+import java.io.InputStream
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
@@ -21,7 +23,7 @@ internal class MitchellRegionDecoder(
     private val displayProfile: ByteArray,
     private val thresholdPercent: Int = MoireReductionPolicy.DEFAULT_THRESHOLD,
 ) : FilteredRegionDecoder {
-    @Volatile private var encoded: ByteArray? = null
+    @Volatile private var encodedFile: File? = null
 
     @Volatile private var fallback: ImageDecoder? = null
     private var imageWidth = 0
@@ -29,30 +31,47 @@ internal class MitchellRegionDecoder(
     private var evenCrop = false
 
     override fun init(context: Context, provider: InputProvider): Point {
-        val bytes = checkNotNull(provider.openStream()).use { it.readBytes() }
-        val format = ImageDecoder.findType(bytes)?.format
-        val image = checkNotNull(ImageDecoder.newInstance(bytes.inputStream(), cropBorders, displayProfile))
-        imageWidth = image.width
-        imageHeight = image.height
-        evenCrop = format == Format.Webp
-        if (format in listOf(Format.Jpeg, Format.Png, Format.Webp)) {
-            encoded = bytes
-            image.recycle()
-        } else {
-            fallback = image
+        recycle()
+        val file = File.createTempFile("koharia-mitchell-", ".image", context.cacheDir)
+        try {
+            checkNotNull(provider.openStream()).use { input ->
+                file.outputStream().use { output -> input.copyTo(output) }
+            }
+            val format = ImageDecoder.findType(file.inputStream().use(::readHeader))?.format
+            val image = checkNotNull(
+                file.inputStream().use { input ->
+                    ImageDecoder.newInstance(input, cropBorders, displayProfile)
+                },
+            )
+            imageWidth = image.width
+            imageHeight = image.height
+            evenCrop = format == Format.Webp
+            if (format in listOf(Format.Jpeg, Format.Png, Format.Webp)) {
+                encodedFile = file
+                image.recycle()
+            } else {
+                fallback = image
+                file.delete()
+            }
+        } catch (error: Throwable) {
+            file.delete()
+            throw error
         }
         return Point(imageWidth, imageHeight)
     }
 
-    override fun isReady(): Boolean = encoded != null || fallback?.isRecycled == false
+    override fun isReady(): Boolean = encodedFile != null || fallback?.isRecycled == false
 
-    override fun isFilteringEnabled(): Boolean = encoded != null
+    override fun isFilteringEnabled(): Boolean = encodedFile != null
 
     override fun shouldFilter(displayScale: Float): Boolean =
         isFilteringEnabled() && MoireReductionPolicy.shouldFilter(displayScale, thresholdPercent)
 
     override fun recycle() {
-        encoded = null
+        encodedFile?.let { file ->
+            encodedFile = null
+            file.delete()
+        }
         val image = fallback
         fallback = null
         image?.recycle()
@@ -64,8 +83,12 @@ internal class MitchellRegionDecoder(
         require((region.width().toLong() / sample) * (region.height() / sample) <= 2L * 1024 * 1024) {
             "Oversized resampling input"
         }
-        val bytes = encoded ?: throw CancellationException()
-        val image = checkNotNull(ImageDecoder.newInstance(bytes.inputStream(), cropBorders, displayProfile))
+        val file = encodedFile ?: throw CancellationException()
+        val image = checkNotNull(
+            file.inputStream().use { input ->
+                ImageDecoder.newInstance(input, cropBorders, displayProfile)
+            },
+        )
         try {
             val bitmap = checkNotNull(image.decode(region, sample))
             if (!MitchellResampler.premultiply(bitmap)) {
@@ -188,6 +211,18 @@ internal class MitchellRegionDecoder(
 
     companion object {
         private const val BLOCK_SIZE = 256
+        private const val TYPE_HEADER_SIZE = 64 * 1024
         private val workers = Semaphore(2, true)
+
+        private fun readHeader(input: InputStream): ByteArray {
+            val header = ByteArray(TYPE_HEADER_SIZE)
+            var offset = 0
+            while (offset < header.size) {
+                val count = input.read(header, offset, header.size - offset)
+                if (count < 0) break
+                offset += count
+            }
+            return if (offset == header.size) header else header.copyOf(offset)
+        }
     }
 }

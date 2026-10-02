@@ -44,6 +44,7 @@ class ExternalMediaImportScreenModel(
     private val preferredShelfId: String? = null,
     initialStep: Step = Step.ACTIONS,
     private val generatedComicPath: String? = null,
+    private val targetFolderUrl: String? = null,
 ) : StateScreenModel<ExternalMediaImportScreenModel.State>(State(step = initialStep)) {
 
     private val eventChannel = Channel<Event>(capacity = Channel.BUFFERED)
@@ -83,15 +84,15 @@ class ExternalMediaImportScreenModel(
                         }
                     },
                     selectedConnectionId = selectedConnection?.id,
-                    selectedDestinationId = null,
-                    selectedShelfId = null,
+                    selectedDestinationId = initialTarget.destination?.id.takeIf { targetFolderUrl != null },
+                    selectedShelfId = initialTarget.shelfId.takeIf { targetFolderUrl != null },
                     openSourceId = openSourceId,
                     seriesName = it.seriesName.ifBlank { suggestedSeriesName(items) },
                     loadFailure = when {
                         it.step == Step.IMPORT_CONFIGURATION &&
                             items.any { item ->
                                 LocalMediaFormats.isImage(item.extension)
-                            } -> LoadFailure.SCATTERED_IMAGES
+                            } && connections.isEmpty() -> LoadFailure.SCATTERED_IMAGES
                         items.size != uriValues.distinct().size -> LoadFailure.NO_SUPPORTED_MEDIA
                         items.isEmpty() -> LoadFailure.NO_SUPPORTED_MEDIA
                         connections.isEmpty() && openSourceId == null -> LoadFailure.NO_DESTINATION
@@ -179,6 +180,7 @@ class ExternalMediaImportScreenModel(
     }
 
     fun selectConnection(connectionId: Long) {
+        if (targetFolderUrl != null) return
         if (state.value.isImporting) return
         if (state.value.connections.none { it.id == connectionId }) return
         mutableState.update {
@@ -187,11 +189,13 @@ class ExternalMediaImportScreenModel(
     }
 
     fun selectDestination(destinationId: String) {
+        if (targetFolderUrl != null) return
         if (state.value.isImporting) return
         mutableState.update { it.selectImportDirectory(destinationId) }
     }
 
     fun selectShelf(shelfId: String?) {
+        if (targetFolderUrl != null) return
         if (state.value.isImporting) return
         mutableState.update { it.selectImportShelf(shelfId) }
     }
@@ -216,6 +220,7 @@ class ExternalMediaImportScreenModel(
             val result = adapter.importMedia(
                 ConnectionMediaImportRequest(
                     destinationId = destination.id,
+                    targetFolderUrl = targetFolderUrl,
                     shelfId = snapshot.selectedShelfId,
                     seriesName = snapshot.effectiveSeriesName.takeUnless { snapshot.isIndividualDestination }
                         ?.trim()
@@ -279,16 +284,25 @@ class ExternalMediaImportScreenModel(
     }
 
     private suspend fun loadConnections(items: List<ConnectionMediaImportItem>): List<ImportConnection> {
-        if (items.isEmpty() || items.any { LocalMediaFormats.isImage(it.extension) }) return emptyList()
+        if (items.isEmpty()) return emptyList()
         val restrictConnection = restrictedConnectionId != null &&
-            !(allowCrossConnectionForEpub && items.all { it.extension.equals("epub", true) })
+            (
+                targetFolderUrl != null ||
+                    !(allowCrossConnectionForEpub && items.all { it.extension.equals("epub", true) })
+                )
         return connectionPreferences.getProfiles()
             .filter { !restrictConnection || it.id == restrictedConnectionId }
             .mapNotNull { profile ->
                 val source = sourceManager.get(profile.id) ?: return@mapNotNull null
                 val adapter = source as? ConnectionMediaImportAdapter ?: return@mapNotNull null
                 val destinations = try {
-                    adapter.mediaImportDestinations()
+                    (
+                        if (targetFolderUrl != null) {
+                            listOfNotNull((source as? LocalFolderSource)?.folderImportDestination(targetFolderUrl))
+                        } else {
+                            adapter.mediaImportDestinations()
+                        }
+                        )
                         .filter { destination ->
                             items.all { item -> item.extension in destination.supportedExtensions }
                         }
@@ -466,7 +480,9 @@ class ExternalMediaImportScreenModel(
         val canImport: Boolean
             get() = !isLoading && !isImporting && !isOpening &&
                 (seriesTargetMode == SeriesTargetMode.EXISTING || !isScanningMetadata) &&
-                items.isNotEmpty() && items.none { LocalMediaFormats.isImage(it.extension) } &&
+                items.isNotEmpty() && items.all {
+                    it.extension in selectedDestination?.supportedExtensions.orEmpty()
+                } &&
                 selectedConnection != null &&
                 selectedDestination != null &&
                 selectableDestinations.any { it.id == selectedDestinationId } &&
@@ -477,7 +493,7 @@ class ExternalMediaImportScreenModel(
 
         val canConfigureImport: Boolean
             get() = !isLoading && !isImporting && !isOpening && items.isNotEmpty() &&
-                items.none { LocalMediaFormats.isImage(it.extension) }
+                (items.none { LocalMediaFormats.isImage(it.extension) } || connections.isNotEmpty())
     }
 
     @Immutable

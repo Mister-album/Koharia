@@ -17,6 +17,7 @@ data class LocalLibraryFilters(
     val format: String = "",
     val sort: Int = 0,
     val descending: Boolean = false,
+    val foldersFirst: Boolean = false,
 ) {
     val isActive: Boolean
         get() = series.isNotBlank() ||

@@ -34,6 +34,9 @@ fun BrowseSourceComfortableGrid(
     showLibraryBadges: Boolean,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
     showPagingLoadingIndicator: Boolean = true,
+    entryLabel: ((Manga) -> String)? = null,
+    contentHeader: (@Composable () -> Unit)? = null,
+    entryBadge: (@Composable (Manga) -> Unit)? = null,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
 ) {
@@ -44,6 +47,7 @@ fun BrowseSourceComfortableGrid(
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
+        contentHeader?.let { header -> item(span = { GridItemSpan(maxLineSpan) }) { header() } }
         if (showPagingLoadingIndicator && mangaList.loadState.prepend is LoadState.Loading) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 BrowseSourceLoadingItem()
@@ -54,6 +58,8 @@ fun BrowseSourceComfortableGrid(
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceComfortableGridItem(
                 manga = manga,
+                label = entryLabel?.invoke(manga) ?: manga.title,
+                entryBadge = { entryBadge?.invoke(manga) },
                 isSelected = manga.id in selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress?.invoke(manga),
@@ -76,6 +82,8 @@ fun BrowseSourceComfortableGrid(
 @Composable
 private fun BrowseSourceComfortableGridItem(
     manga: Manga,
+    label: String,
+    entryBadge: @Composable () -> Unit,
     isSelected: Boolean,
     showLibraryBadges: Boolean,
     readProgress: MangaReadProgress?,
@@ -86,7 +94,7 @@ private fun BrowseSourceComfortableGridItem(
     val readProgressText = readProgress?.displayText()
     val hasReadProgress = readProgressText != null
     MangaComfortableGridItem(
-        title = manga.title,
+        title = label,
         coverData = MangaCover(
             mangaId = manga.id,
             sourceId = manga.source,
@@ -98,6 +106,7 @@ private fun BrowseSourceComfortableGridItem(
         coverAlpha = if (isLibraryManga) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         coverBadgeStart = {
             InLibraryBadge(enabled = isLibraryManga)
+            entryBadge()
         },
         coverBadgeEndModifier = if (hasReadProgress) Modifier.padding(top = 32.dp) else Modifier,
         coverOverlay = if (hasReadProgress) {

@@ -60,7 +60,12 @@ internal class LocalPageLoader(
             sizeBytes = file.length()
             stage = "enumerate"
             val pages = when {
-                file.isDirectory -> DirectoryPageLoader(file).getPages()
+                file.isDirectory -> DirectoryPageLoader(
+                    file,
+                    (source as? koharia.source.local.LocalFolderSource)?.indexedEntry(
+                        chapter.chapter.url,
+                    )?.let { it.imageComic || it.locatorPath.startsWith(".koharia/nodes/") } == true,
+                ).getPages()
                 file.extension.equals("epub", true) -> getPagesFromEpub(file)
                 file.extension.equals("pdf", true) -> getPagesFromPdf(file)
                 DocumentEngines.forExtension(file.extension) != null -> getPagesFromDocument(file)

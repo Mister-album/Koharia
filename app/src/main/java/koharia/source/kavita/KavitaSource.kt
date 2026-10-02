@@ -658,6 +658,8 @@ class KavitaSource(private val context: Context, override val connectionProfile:
         }
     }
     override fun isPdfChapter(chapterUrl: String) = session().identity.chapter(chapterUrl).format == 4
+    override fun isPdfChapter(chapter: SChapter) = isPdfChapter(chapter.url) &&
+        (chapter.memo["kavitaFileCount"]?.jsonPrimitive?.longOrNull ?: 1) <= 1
     private fun pdfKey(url: String) = session().identity.chapter(url).chapterId.toString()
     override fun findCompletePdfFile(chapterUrl: String) = session().let {
         it.identity.chapter(chapterUrl)

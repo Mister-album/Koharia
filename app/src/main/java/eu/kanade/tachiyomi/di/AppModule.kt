@@ -215,6 +215,7 @@ class AppModule(val app: Application) : InjektModule {
             )
         }
         addSingletonFactory { ConnectionProfileManager(get(), get(), get()) }
+        addSingletonFactory { koharia.source.local.LocalLibraryRefreshTasks() }
         addSingletonFactory { koharia.connection.ConnectionNetworkMonitor(app) }
         addSingletonFactory { koharia.lanraragi.LanraragiCatalogSyncCoordinator() }
         addSingletonFactory {

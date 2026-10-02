@@ -129,6 +129,8 @@ interface ConnectionLocalFileAdapter {
 interface ConnectionPdfFileAdapter {
     fun isPdfChapter(chapterUrl: String): Boolean
 
+    fun isPdfChapter(chapter: SChapter): Boolean = isPdfChapter(chapter.url)
+
     fun findCompletePdfFile(chapterUrl: String): UniFile?
 
     suspend fun preparePdfFile(chapterUrl: String): UniFile
@@ -191,6 +193,8 @@ data class ConnectionLibraryShelf(
 interface ConnectionLibraryShelfAdapter {
     val libraryShelves: Flow<List<ConnectionLibraryShelf>>
 
+    fun isLibraryShelfAssignable(mangaUrl: String): Boolean = true
+
     suspend fun currentLibraryShelfId(mangaUrl: String): String?
 
     suspend fun compatibleLibraryShelves(mangaUrl: String): List<ConnectionLibraryShelf> = libraryShelves.first()
@@ -233,6 +237,7 @@ data class ConnectionMediaImportRequest(
     val seriesName: String,
     val items: List<ConnectionMediaImportItem>,
     val existingSeriesId: String? = null,
+    val targetFolderUrl: String? = null,
 )
 
 data class ConnectionMediaImportSeries(
@@ -297,12 +302,24 @@ data class LibraryMetadata(
     val status: Int? = null,
     val lockedFields: Set<String> = emptySet(),
     val source: String = "unknown",
+    val editedFields: Set<LibraryMetadataField> = emptySet(),
 )
 
 interface ConnectionMetadataAdapter {
+    fun isMetadataEditable(resourceUrl: String): Boolean = true
+
+    fun editableMetadataFields(resourceUrl: String): Set<LibraryMetadataField> =
+        LibraryMetadataField.entries.toSet()
+
     suspend fun readMetadata(resourceUrl: String): LibraryMetadata?
 
     suspend fun updateMetadata(resourceUrl: String, metadata: LibraryMetadata): Result<Unit>
+}
+
+interface ConnectionMetadataConflictAdapter {
+    suspend fun overwriteMetadata(resourceUrl: String, metadata: LibraryMetadata): Result<Unit>
+
+    suspend fun useExternalMetadata(resourceUrl: String): Result<Unit>
 }
 
 enum class MetadataFilenameTemplate {
@@ -326,6 +343,12 @@ enum class MetadataSuggestionSource {
     FOLDER,
     EPUB_EMBEDDED,
     ITEM_FILENAME,
+    MOBI_EMBEDDED,
+    COMICINFO_EMBEDDED,
+    CHAPTER_EMBEDDED,
+    SIDECAR,
+    LOCAL_OVERRIDE,
+    LEGACY_SIDECAR,
 }
 
 data class LibraryMetadataSuggestion(
@@ -336,6 +359,8 @@ data class LibraryMetadataSuggestion(
 )
 
 interface ConnectionMetadataGenerationAdapter {
+    suspend fun legacyMetadataSuggestion(resourceUrl: String): LibraryMetadataSuggestion? = null
+
     suspend fun generateMetadataSuggestion(
         resourceUrl: String,
         filenameTemplate: MetadataFilenameTemplate,

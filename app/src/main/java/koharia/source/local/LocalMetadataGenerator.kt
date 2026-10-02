@@ -16,11 +16,62 @@ internal data class LocalEmbeddedMetadata(
     val contributors: List<String> = emptyList(),
     val description: String? = null,
     val subjects: List<String> = emptyList(),
+    val status: Int? = null,
+    val source: MetadataSuggestionSource = MetadataSuggestionSource.EPUB_EMBEDDED,
 )
 
 internal fun LocalEmbeddedMetadata.forSeriesDisplay(isDirectoryMetadata: Boolean): LocalEmbeddedMetadata {
-    return copy(title = series ?: title.takeIf { isDirectoryMetadata })
+    return if (isDirectoryMetadata) copy(title = series ?: title) else LocalEmbeddedMetadata()
 }
+
+internal fun LocalEmbeddedMetadata.toLibraryMetadata() = LibraryMetadata(
+    title = title,
+    author = authors.takeIf { it.isNotEmpty() }?.joinToString(", "),
+    artist = contributors.takeIf { it.isNotEmpty() }?.joinToString(", "),
+    description = description,
+    genres = subjects,
+    status = status,
+)
+
+internal data class LocalMetadataCandidate(val metadata: LibraryMetadata, val source: MetadataSuggestionSource)
+
+/** Candidates are ordered from lowest to highest priority, and belong to a single object. */
+internal fun LibraryMetadataSuggestion.withLocalMetadata(
+    candidates: List<LocalMetadataCandidate>,
+    protectedFields: Set<String> = emptySet(),
+): LibraryMetadataSuggestion {
+    var value = metadata
+    val sources = fieldSources.toMutableMap()
+    candidates.forEach { (candidate, source) ->
+        val editedFields = candidate.editedFields
+        fun edited(field: LibraryMetadataField): Boolean =
+            editedFields.isEmpty() || field in editedFields
+
+        fun present(field: LibraryMetadataField, exists: Boolean) {
+            if (exists && edited(field)) sources[field] = source
+        }
+        present(LibraryMetadataField.TITLE, candidate.title != null)
+        present(LibraryMetadataField.AUTHOR, candidate.author != null)
+        present(LibraryMetadataField.ARTIST, candidate.artist != null)
+        present(LibraryMetadataField.DESCRIPTION, candidate.description != null)
+        val hasGenres = candidate.genres.isNotEmpty() || "genres" in candidate.lockedFields
+        present(LibraryMetadataField.GENRES, hasGenres)
+        present(LibraryMetadataField.STATUS, candidate.status != null)
+        value = value.copy(
+            title = candidate.title.takeIf { it != null && edited(LibraryMetadataField.TITLE) } ?: value.title,
+            author = candidate.author.takeIf { it != null && edited(LibraryMetadataField.AUTHOR) } ?: value.author,
+            artist = candidate.artist.takeIf { it != null && edited(LibraryMetadataField.ARTIST) } ?: value.artist,
+            description = candidate.description.takeIf {
+                it != null && edited(LibraryMetadataField.DESCRIPTION)
+            } ?: value.description,
+            genres = if (hasGenres && edited(LibraryMetadataField.GENRES)) candidate.genres else value.genres,
+            status = candidate.status.takeIf { it != null && edited(LibraryMetadataField.STATUS) } ?: value.status,
+        )
+    }
+    return copy(metadata = value, fieldSources = sources.filterKeys { it.localFieldKey() !in protectedFields })
+}
+
+internal fun LibraryMetadataField.localFieldKey(): String = name.lowercase()
 
 private data class LocalFilenameMetadata(
     val titleCandidates: List<String>,
@@ -86,22 +137,23 @@ internal fun generateLocalMetadataSuggestion(
     val embeddedTitles = embeddedMetadata.mapNotNull(LocalEmbeddedMetadata::title).distinctNormalized()
     val embeddedTitle = embeddedTitles.singleOrNull()
     val embeddedSeriesOrTitle = embeddedSeries ?: embeddedTitle
+    val embeddedSource = embeddedMetadata.firstOrNull()?.source ?: MetadataSuggestionSource.EPUB_EMBEDDED
     val normalizedFolderName = folderMetadata?.titleCandidates?.firstOrNull()
         ?: folderName.trim().takeIf(String::isNotBlank)
 
     val titleWithSource = when (filenameTemplate) {
         MetadataFilenameTemplate.AUTO -> {
-            embeddedSeriesOrTitle?.let { it to MetadataSuggestionSource.EPUB_EMBEDDED }
+            embeddedSeriesOrTitle?.let { it to embeddedSource }
                 ?: filenameSeries?.let { it to MetadataSuggestionSource.ITEM_FILENAME }
                 ?: normalizedFolderName?.let { it to MetadataSuggestionSource.FOLDER }
         }
         MetadataFilenameTemplate.FOLDER_ITEM_TITLE -> {
             normalizedFolderName?.let { it to MetadataSuggestionSource.FOLDER }
-                ?: embeddedSeriesOrTitle?.let { it to MetadataSuggestionSource.EPUB_EMBEDDED }
+                ?: embeddedSeriesOrTitle?.let { it to embeddedSource }
         }
         else -> {
             filenameSeries?.let { it to MetadataSuggestionSource.ITEM_FILENAME }
-                ?: embeddedSeriesOrTitle?.let { it to MetadataSuggestionSource.EPUB_EMBEDDED }
+                ?: embeddedSeriesOrTitle?.let { it to embeddedSource }
                 ?: normalizedFolderName?.let { it to MetadataSuggestionSource.FOLDER }
         }
     }
@@ -110,7 +162,7 @@ internal fun generateLocalMetadataSuggestion(
     val filenameAuthors = itemMetadata.map(LocalFilenameMetadata::authors).mostCommonList()
     val authorWithSource = embeddedAuthors.takeIf(List<String>::isNotEmpty)
         ?.joinToString(", ")
-        ?.let { it to MetadataSuggestionSource.EPUB_EMBEDDED }
+        ?.let { it to embeddedSource }
         ?: filenameAuthors.takeIf(List<String>::isNotEmpty)
             ?.joinToString(", ")
             ?.let { it to MetadataSuggestionSource.ITEM_FILENAME }
@@ -118,9 +170,11 @@ internal fun generateLocalMetadataSuggestion(
             ?.takeIf(List<String>::isNotEmpty)
             ?.joinToString(", ")
             ?.let { it to MetadataSuggestionSource.FOLDER }
-    val statusWithSource = itemMetadata.mapNotNull(LocalFilenameMetadata::status)
-        .mostCommonInt()
-        ?.let { it to MetadataSuggestionSource.ITEM_FILENAME }
+    val statusWithSource = embeddedMetadata.mapNotNull(LocalEmbeddedMetadata::status).mostCommonInt()
+        ?.let { it to embeddedSource }
+        ?: itemMetadata.mapNotNull(LocalFilenameMetadata::status)
+            .mostCommonInt()
+            ?.let { it to MetadataSuggestionSource.ITEM_FILENAME }
         ?: folderMetadata?.status?.let { it to MetadataSuggestionSource.FOLDER }
     val contributors = embeddedMetadata.flatMap(LocalEmbeddedMetadata::contributors).distinctNormalized()
     val description = embeddedMetadata.mapNotNull(LocalEmbeddedMetadata::description)
@@ -130,9 +184,9 @@ internal fun generateLocalMetadataSuggestion(
     val fieldSources = buildMap {
         titleWithSource?.let { put(LibraryMetadataField.TITLE, it.second) }
         authorWithSource?.let { put(LibraryMetadataField.AUTHOR, it.second) }
-        if (contributors.isNotEmpty()) put(LibraryMetadataField.ARTIST, MetadataSuggestionSource.EPUB_EMBEDDED)
-        if (description != null) put(LibraryMetadataField.DESCRIPTION, MetadataSuggestionSource.EPUB_EMBEDDED)
-        if (subjects.isNotEmpty()) put(LibraryMetadataField.GENRES, MetadataSuggestionSource.EPUB_EMBEDDED)
+        if (contributors.isNotEmpty()) put(LibraryMetadataField.ARTIST, embeddedSource)
+        if (description != null) put(LibraryMetadataField.DESCRIPTION, embeddedSource)
+        if (subjects.isNotEmpty()) put(LibraryMetadataField.GENRES, embeddedSource)
         statusWithSource?.let { put(LibraryMetadataField.STATUS, it.second) }
     }
 

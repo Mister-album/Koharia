@@ -27,6 +27,9 @@ fun BrowseSourceList(
     showLibraryBadges: Boolean,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
     showPagingLoadingIndicator: Boolean = true,
+    entryLabel: ((Manga) -> String)? = null,
+    contentHeader: (@Composable () -> Unit)? = null,
+    entryBadge: (@Composable (Manga) -> Unit)? = null,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
 ) {
@@ -34,6 +37,7 @@ fun BrowseSourceList(
         modifier = modifier,
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
     ) {
+        contentHeader?.let { header -> item { header() } }
         item {
             if (showPagingLoadingIndicator && mangaList.loadState.prepend is LoadState.Loading) {
                 BrowseSourceLoadingItem()
@@ -44,6 +48,8 @@ fun BrowseSourceList(
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceListItem(
                 manga = manga,
+                label = entryLabel?.invoke(manga) ?: manga.title,
+                entryBadge = { entryBadge?.invoke(manga) },
                 isSelected = manga.id in selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress?.invoke(manga),
@@ -66,6 +72,8 @@ fun BrowseSourceList(
 @Composable
 private fun BrowseSourceListItem(
     manga: Manga,
+    label: String,
+    entryBadge: @Composable () -> Unit,
     isSelected: Boolean,
     showLibraryBadges: Boolean,
     readProgress: MangaReadProgress?,
@@ -75,7 +83,7 @@ private fun BrowseSourceListItem(
     val isLibraryManga = showLibraryBadges && manga.favorite
     val readProgressText = readProgress?.displayText()
     MangaListItem(
-        title = manga.title,
+        title = label,
         coverData = MangaCover(
             mangaId = manga.id,
             sourceId = manga.source,
@@ -87,6 +95,7 @@ private fun BrowseSourceListItem(
         coverAlpha = if (isLibraryManga) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         badge = {
             InLibraryBadge(enabled = isLibraryManga)
+            entryBadge()
         },
         readProgressText = readProgressText,
         onLongClick = onLongClick,

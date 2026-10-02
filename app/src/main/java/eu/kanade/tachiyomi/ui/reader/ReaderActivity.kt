@@ -26,16 +26,15 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -307,6 +306,8 @@ class ReaderActivity : BaseActivity() {
     var isScrollingThroughPages = false
         private set
 
+    private val sliderPageSeek by lazy { ReaderPageSeek(lifecycleScope) }
+
     /**
      * Called when the activity is created. Initializes the presenter and configuration.
      */
@@ -519,26 +520,6 @@ class ReaderActivity : BaseActivity() {
 
         Box(modifier = Modifier.fillMaxSize()) {
             ContentOverlay(state = state)
-
-            state.archiveLoadingStage?.let { stage ->
-                Surface(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp)) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            stringResource(
-                                if (stage == eu.kanade.tachiyomi.ui.reader.loader.ArchiveLoadingStage.PREPARING) {
-                                    MR.strings.archive_preparing
-                                } else {
-                                    MR.strings.archive_enumerating
-                                },
-                            ),
-                        )
-                        TextButton(onClick = { finish() }) { Text(stringResource(MR.strings.action_cancel)) }
-                    }
-                }
-            }
 
             if (!state.menuVisible && showPageNumber) {
                 ReaderStatusIndicator(
@@ -921,6 +902,14 @@ class ReaderActivity : BaseActivity() {
 
         val isHttpSource = viewModel.getSource() is HttpSource
 
+        DisposableEffect(state.currentChapter, state.viewer, state.menuVisible) {
+            val loader = state.currentChapter?.pageLoader
+            onDispose {
+                sliderPageSeek.cancel()
+                loader?.setNetworkRequestsDeferred(false)
+            }
+        }
+
         val cropBorderPaged by readerPreferences.cropBorders.collectAsState()
         val cropBorderWebtoon by readerPreferences.cropBordersWebtoon.collectAsState()
         val isPagerType = ReadingMode.isPagerType(effectiveReadingModePreference())
@@ -995,11 +984,8 @@ class ReaderActivity : BaseActivity() {
             visiblePageStart = state.visiblePageStart,
             visiblePageEnd = state.visiblePageEnd.takeIf { it > 0 } ?: state.currentPage,
             totalPages = state.totalPages,
-            onPageIndexChange = ::moveToPageIndex,
-            onPageIndexChangeFinished = {
-                isScrollingThroughPages = true
-                moveToPageIndex(it)
-            },
+            onPageIndexChange = { seekToPageIndex(it, finished = false) },
+            onPageIndexChangeFinished = { seekToPageIndex(it, finished = true) },
 
             readingMode = ReadingMode.fromPreference(
                 effectiveReadingModePreference(),
@@ -1427,6 +1413,26 @@ class ReaderActivity : BaseActivity() {
             viewModel.showLoadingDialog()
         } else {
             viewModel.closeDialog()
+        }
+    }
+
+    private fun seekToPageIndex(index: Int, finished: Boolean) {
+        val chapter = viewModel.state.value.currentChapter ?: return
+        val viewer = viewModel.state.value.viewer ?: return
+        val loader = chapter.pageLoader
+        val preview = {
+            val state = viewModel.state.value
+            if (state.currentChapter === chapter && state.viewer === viewer && state.menuVisible) {
+                loader?.setNetworkRequestsDeferred(true)
+                isScrollingThroughPages = true
+                moveToPageIndex(index)
+            }
+        }
+        val load = { loader?.setNetworkRequestsDeferred(false) ?: Unit }
+        if (finished) {
+            sliderPageSeek.finish(index, preview, load)
+        } else {
+            sliderPageSeek.update(index, preview, load)
         }
     }
 

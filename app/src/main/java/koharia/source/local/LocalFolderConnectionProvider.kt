@@ -51,6 +51,7 @@ class LocalFolderConnectionProvider(
     }
 
     override suspend fun removeConnection(profile: LibraryConnectionProfile): Result<Boolean> = runCatching {
+        Injekt.get<LocalLibraryRefreshTasks>().cancel(profile.id)
         val mangaRepository = Injekt.get<MangaRepository>()
         val coverCache = Injekt.get<CoverCache>()
         mangaRepository.getMangaBySourceId(profile.id).forEach { manga ->

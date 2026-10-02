@@ -215,4 +215,10 @@ private fun MetadataSuggestionSource.labelResource(): StringResource = when (thi
     MetadataSuggestionSource.FOLDER -> MR.strings.metadata_source_folder
     MetadataSuggestionSource.EPUB_EMBEDDED -> MR.strings.metadata_source_epub
     MetadataSuggestionSource.ITEM_FILENAME -> MR.strings.metadata_source_filename
+    MetadataSuggestionSource.MOBI_EMBEDDED -> MR.strings.metadata_source_mobi
+    MetadataSuggestionSource.COMICINFO_EMBEDDED -> MR.strings.metadata_source_comicinfo
+    MetadataSuggestionSource.CHAPTER_EMBEDDED -> MR.strings.metadata_source_chapter
+    MetadataSuggestionSource.SIDECAR -> MR.strings.metadata_source_sidecar
+    MetadataSuggestionSource.LOCAL_OVERRIDE -> MR.strings.metadata_source_override
+    MetadataSuggestionSource.LEGACY_SIDECAR -> MR.strings.metadata_source_legacy
 }

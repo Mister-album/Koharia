@@ -36,6 +36,7 @@ internal fun LocalLibraryOrganizationModePicker(
         Text(
             text = stringResource(
                 when (selectedMode) {
+                    LocalLibraryOrganizationMode.FOLDER -> MR.strings.local_library_mode_folder_summary
                     LocalLibraryOrganizationMode.SERIES -> MR.strings.local_library_mode_series_summary
                     LocalLibraryOrganizationMode.INDIVIDUAL_FILES -> MR.strings.local_library_mode_individual_summary
                     null -> MR.strings.local_library_mode_choice_hint

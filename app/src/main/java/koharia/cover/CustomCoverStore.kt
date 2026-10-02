@@ -95,6 +95,7 @@ class CustomCoverStore(
             runCatching { deleteLegacy(manga) }
                 .onFailure { logcat(LogPriority.WARN) { "Legacy custom cover cleanup deferred" } }
         }
+        (sourceManager.get(manga.source) as? LocalFolderSource)?.invalidateFolderAncestorCovers(manga.url)
     }
 
     suspend fun savedCovers(): List<Uri> = withContext(Dispatchers.IO) {
@@ -135,6 +136,7 @@ class CustomCoverStore(
             deleteLegacy(manga)
             files(directory).delete(key(manga))
         }
+        (sourceManager.get(manga.source) as? LocalFolderSource)?.invalidateFolderAncestorCovers(manga.url)
     }
 
     suspend fun migrate(mangas: List<Manga>) = withContext(Dispatchers.IO) {
