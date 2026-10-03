@@ -629,10 +629,7 @@ data class LocalLibraryScreen(
                                 selectedMangaIds = selectedIds,
                                 readProgress = if (showLibraryReadProgress) {
                                     { manga ->
-                                        readProgressByUrl[manga.url.trimEnd('/')].takeUnless {
-                                            localFolderSource?.indexedEntry(manga.url)?.kind ==
-                                                LocalLibraryItem.Kind.FOLDER
-                                        }
+                                        readProgressByUrl[manga.url.trimEnd('/')]
                                     }
                                 } else {
                                     null

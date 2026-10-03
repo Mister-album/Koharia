@@ -16,15 +16,23 @@ internal class LocalLibraryItemActions(
     private val epubProgressRepository: EpubProgressRepository,
 ) {
     suspend fun markRead(source: LocalFolderSource, manga: Manga, read: Boolean) {
-        val sourceChapters = source.getChapterList(manga.toSManga())
-        syncChaptersWithSource.await(sourceChapters, manga, source, manualFetch = false)
-        val chapters = chapterRepository.getChapterByMangaId(manga.id)
-        check(chapters.isNotEmpty()) { "No local chapters available" }
-        when (val result = setReadStatus.await(read, *chapters.toTypedArray())) {
-            is SetReadStatus.Result.InternalError -> throw result.error
-            else -> Unit
+        val targets = if (source.isFolderContainer(manga.url)) {
+            source.readableDescendantMangas(manga.url)
+        } else {
+            listOf(manga)
         }
-        if (!read) chapters.forEach { epubProgressRepository.deleteProgress(it.id) }
+        if (targets.isEmpty()) return
+        targets.distinctBy(Manga::id).forEach { target ->
+            val sourceChapters = source.getChapterList(target.toSManga())
+            syncChaptersWithSource.await(sourceChapters, target, source, manualFetch = false)
+            val chapters = chapterRepository.getChapterByMangaId(target.id)
+            if (chapters.isEmpty()) return@forEach
+            when (val result = setReadStatus.await(read, *chapters.toTypedArray())) {
+                is SetReadStatus.Result.InternalError -> throw result.error
+                else -> Unit
+            }
+            if (!read) chapters.forEach { epubProgressRepository.deleteProgress(it.id) }
+        }
     }
 }
 

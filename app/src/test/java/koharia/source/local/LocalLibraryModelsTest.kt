@@ -193,6 +193,33 @@ class LocalLibraryModelsTest {
     }
 
     @Test
+    fun `folder read progress aggregates completed descendant books`() {
+        assertEquals(
+            MangaReadProgress(readCount = 1L, totalChapterCount = 3L),
+            buildFolderReadProgress(
+                indexedBookCount = 3,
+                descendantItemKeys = setOf("book-1", "book-2", "book-3"),
+                progressByItemKey = mapOf(
+                    "book-1" to MangaReadProgress(readCount = 100L, totalChapterCount = 100L),
+                    "book-2" to MangaReadProgress(readCount = 40L, totalChapterCount = 100L),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `folder read progress keeps indexed count when child progress is unavailable`() {
+        assertEquals(
+            MangaReadProgress(readCount = 0L, totalChapterCount = 2L),
+            buildFolderReadProgress(
+                indexedBookCount = 2,
+                descendantItemKeys = setOf("book-1", "book-2"),
+                progressByItemKey = emptyMap(),
+            ),
+        )
+    }
+
+    @Test
     fun `locator round trips encoded relative paths`() {
         val relativePath = "Comics/Series Name/Volume 01.cbz"
         val rootId = "comic-root"

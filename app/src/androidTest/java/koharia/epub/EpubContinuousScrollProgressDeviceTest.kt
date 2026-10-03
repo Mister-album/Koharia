@@ -138,6 +138,15 @@ class EpubContinuousScrollProgressDeviceTest {
                         notified.getDouble("progression"),
                         0.001,
                     )
+
+                    val bottom = JSONObject(
+                        evaluate(
+                            "const end = document.getElementById('koharia-continuous-current-end');" +
+                                "window.scrollTo(0, end.getBoundingClientRect().top + window.scrollY - innerHeight);" +
+                                "window.__kohariaContinuousScroll.currentLocation()",
+                        ),
+                    )
+                    assertEquals("Bottom of a resource must be complete", 1.0, bottom.getDouble("progression"), 0.001)
                 }
             } finally {
                 scenario.onActivity { webView?.destroy() }

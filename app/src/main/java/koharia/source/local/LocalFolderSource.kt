@@ -110,6 +110,9 @@ import java.security.MessageDigest
 internal data class LocalReadProgressIndex(
     val indexedChapterCount: Int,
     val isIndividualFile: Boolean,
+    val itemKey: String = "",
+    val isFolderContainer: Boolean = false,
+    val descendantItemKeys: Set<String> = emptySet(),
 )
 
 internal class LocalLibraryPartialScanException(
@@ -1409,6 +1412,25 @@ class LocalFolderSource(
             (item.kind == LocalLibraryItem.Kind.FOLDER && item.imageComic)
     }
 
+    internal fun isFolderContainer(mangaUrl: String): Boolean {
+        return indexedEntry(mangaUrl)?.let { it.kind == LocalLibraryItem.Kind.FOLDER && !it.imageComic } == true
+    }
+
+    internal suspend fun readableDescendantMangas(mangaUrl: String): List<Manga> = withIOContext {
+        val folder = indexedEntry(mangaUrl)?.takeIf {
+            it.kind == LocalLibraryItem.Kind.FOLDER && !it.imageComic
+        } ?: return@withIOContext emptyList()
+        val descendantKeys = preferences.getIndex().folderReadProgressDescendants()[folder.itemKey].orEmpty()
+        if (descendantKeys.isEmpty()) return@withIOContext emptyList()
+        val mangas = mangaRepository.getMangaBySourceId(id)
+        val progressIndexes = readProgressIndexes(mangas.map(Manga::url))
+        mangas.filter { manga ->
+            progressIndexes[manga.url.trimEnd('/')]
+                ?.itemKey
+                ?.let(descendantKeys::contains) == true
+        }
+    }
+
     internal fun indexedEntry(url: String): LocalLibraryItem? {
         val location = LocalLibraryLocator.location(url, id) ?: return null
         return location.rootId?.let {
@@ -1867,6 +1889,7 @@ class LocalFolderSource(
         val rootsById = preferences.getConfig().roots.associateBy { it.id }
         val indexedItems = index.libraryItemsByKey
         val chapterCounts = index.chaptersBySeriesKey
+        val folderDescendants = index.folderReadProgressDescendants()
 
         return mangaUrls.mapNotNull { mangaUrl ->
             val location = LocalLibraryLocator.location(mangaUrl, id) ?: return@mapNotNull null
@@ -1881,15 +1904,55 @@ class LocalFolderSource(
             val progress = if (item.kind == LocalLibraryItem.Kind.FILE_ENTRY ||
                 (item.kind == LocalLibraryItem.Kind.FOLDER && item.imageComic)
             ) {
-                LocalReadProgressIndex(indexedChapterCount = 1, isIndividualFile = true)
+                LocalReadProgressIndex(
+                    indexedChapterCount = 1,
+                    isIndividualFile = true,
+                    itemKey = item.itemKey,
+                )
+            } else if (item.kind == LocalLibraryItem.Kind.FOLDER) {
+                val descendantItemKeys = folderDescendants[item.itemKey].orEmpty()
+                LocalReadProgressIndex(
+                    indexedChapterCount = descendantItemKeys.size,
+                    isIndividualFile = false,
+                    itemKey = item.itemKey,
+                    isFolderContainer = true,
+                    descendantItemKeys = descendantItemKeys,
+                )
             } else {
                 LocalReadProgressIndex(
                     indexedChapterCount = chapterCounts[itemKey]?.size ?: 0,
                     isIndividualFile = false,
+                    itemKey = item.itemKey,
                 )
             }
             mangaUrl.trimEnd('/') to progress
         }.toMap()
+    }
+
+    private fun LocalLibraryItem.isReadProgressLeaf(): Boolean {
+        return kind == LocalLibraryItem.Kind.FILE_ENTRY ||
+            (kind == LocalLibraryItem.Kind.FOLDER && imageComic)
+    }
+
+    private fun LocalLibraryIndex.folderReadProgressDescendants(): Map<String, Set<String>> {
+        val cache = mutableMapOf<String, Set<String>>()
+        fun descendants(folder: LocalLibraryItem): Set<String> {
+            return cache.getOrPut(folder.itemKey) {
+                childrenByLocation[folder.rootId to folder.relativePath]
+                    .orEmpty()
+                    .flatMapTo(mutableSetOf()) { child ->
+                        when {
+                            child.isReadProgressLeaf() -> setOf(child.itemKey)
+                            child.kind == LocalLibraryItem.Kind.FOLDER -> descendants(child)
+                            else -> emptySet()
+                        }
+                    }
+            }
+        }
+        return libraryItemsByKey.values
+            .asSequence()
+            .filter { it.kind == LocalLibraryItem.Kind.FOLDER && !it.imageComic }
+            .associate { it.itemKey to descendants(it) }
     }
 
     private fun indexedLibraryItem(resource: ResolvedLocalResource): LocalLibraryItem? {

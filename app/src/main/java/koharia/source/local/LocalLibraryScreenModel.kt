@@ -164,33 +164,49 @@ internal class LocalLibraryScreenModel(
             LocalReadProgressEntry(
                 manga = manga,
                 chapters = chapters,
-                indexedChapterCount = index?.indexedChapterCount ?: chapters.size,
-                isIndividualFile = index?.isIndividualFile == true,
+                index = index,
             )
         }
         val epubProgressByChapterId = getEpubProgress.await(
             entries.asSequence()
-                .filter { it.isIndividualFile }
+                .filter { it.index?.isIndividualFile == true }
                 .flatMap { it.chapters.asSequence() }
                 .mapTo(mutableSetOf(), Chapter::id),
         )
-        val progressByUrl = entries.mapNotNull { entry ->
+        val progressByUrl = mutableMapOf<String, MangaReadProgress>()
+        val progressByItemKey = mutableMapOf<String, MangaReadProgress>()
+        entries.forEach { entry ->
+            val index = entry.index
             val epubProgression = entry.chapters.firstOrNull()?.id?.let { chapterId ->
                 epubProgressByChapterId[chapterId]?.progression
             }
             val documentPageCount = entry.chapters.firstOrNull()?.memo?.let(ConnectionChapterMetadata::pagesCount)
             buildLocalReadProgress(
-                indexedChapterCount = entry.indexedChapterCount,
+                indexedChapterCount = index?.indexedChapterCount ?: entry.chapters.size,
                 chapters = entry.chapters,
-                isIndividualFile = entry.isIndividualFile,
+                isIndividualFile = index?.isIndividualFile == true,
                 epubProgression = epubProgression,
                 documentPageCount = documentPageCount,
             )?.let { progress ->
-                entry.manga.url.trimEnd('/') to progress
+                progressByUrl[entry.manga.url.trimEnd('/')] = progress
+                index?.itemKey?.takeIf(String::isNotEmpty)?.let { itemKey ->
+                    progressByItemKey[itemKey] = progress
+                }
             }
-        }.toMap()
+        }
+        entries.forEach { entry ->
+            val index = entry.index ?: return@forEach
+            if (!index.isFolderContainer) return@forEach
+            buildFolderReadProgress(
+                indexedBookCount = index.indexedChapterCount,
+                descendantItemKeys = index.descendantItemKeys,
+                progressByItemKey = progressByItemKey,
+            )?.let { progress ->
+                progressByUrl[entry.manga.url.trimEnd('/')] = progress
+            }
+        }
         if (parentUrl != null || showReadProgress.get()) {
-            localReadProgress.value = progressByUrl
+            localReadProgress.value = progressByUrl.toMap()
         }
     }
 
@@ -521,8 +537,7 @@ internal class LocalLibraryScreenModel(
     private data class LocalReadProgressEntry(
         val manga: Manga,
         val chapters: List<Chapter>,
-        val indexedChapterCount: Int,
-        val isIndividualFile: Boolean,
+        val index: LocalReadProgressIndex?,
     )
 }
 
@@ -583,4 +598,24 @@ internal fun buildLocalReadProgress(
         readCount = chapters.count { it.read }.coerceAtMost(totalChapterCount).toLong(),
         totalChapterCount = totalChapterCount.toLong(),
     )
+}
+
+internal fun buildFolderReadProgress(
+    indexedBookCount: Int,
+    descendantItemKeys: Set<String>,
+    progressByItemKey: Map<String, MangaReadProgress>,
+): MangaReadProgress? {
+    val totalBookCount = indexedBookCount.takeIf { it > 0 } ?: descendantItemKeys.size
+    if (totalBookCount <= 0) return null
+    val readBookCount = descendantItemKeys.count { itemKey ->
+        progressByItemKey[itemKey]?.isComplete() == true
+    }.coerceAtMost(totalBookCount)
+    return MangaReadProgress(
+        readCount = readBookCount.toLong(),
+        totalChapterCount = totalBookCount.toLong(),
+    )
+}
+
+private fun MangaReadProgress.isComplete(): Boolean {
+    return totalChapterCount > 0 && readCount >= totalChapterCount
 }

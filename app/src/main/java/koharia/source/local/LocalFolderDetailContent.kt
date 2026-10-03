@@ -90,11 +90,14 @@ internal fun LocalFolderDetailContent(
     val tablet = isTabletUi()
     val entries = mangaList.itemSnapshotList.items.map { it.value }
     val nextEntry = entries.firstOrNull {
-        source.indexedEntry(it.url)?.kind != LocalLibraryItem.Kind.FOLDER &&
-            readProgress[it.url]?.let { progress ->
+        source.indexedEntry(it.url)?.let { entry ->
+            entry.kind != LocalLibraryItem.Kind.FOLDER || entry.imageComic
+        } == true &&
+            readProgress[it.url.trimEnd('/')]?.let { progress ->
                 progress.totalChapterCount == 0L || progress.readCount < progress.totalChapterCount
             } != false
     }
+    val folderProgress = readProgress[folder.url.trimEnd('/')]
     val useGrid = displayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
     MangaDetailLayout(
         isTabletUi = tablet,
@@ -171,7 +174,10 @@ internal fun LocalFolderDetailContent(
                 chapterCount = null,
                 missingChapterCount = 0,
                 onClick = onFilter,
-                countLabel = stringResource(MR.strings.local_library_folder_item_count, mangaList.itemCount),
+                countLabel = stringResource(
+                    MR.strings.local_library_folder_item_count,
+                    folderProgress?.totalChapterCount?.toInt() ?: mangaList.itemCount,
+                ),
             )
         },
         listContent = {
@@ -182,16 +188,18 @@ internal fun LocalFolderDetailContent(
             ) { index ->
                 val manga by mangaList[index]?.collectAsState() ?: return@items
                 val entry = source.indexedEntry(manga.url)
-                val progress = readProgress[manga.url].takeIf {
-                    showReadProgress && entry?.kind != LocalLibraryItem.Kind.FOLDER
-                }
+                val progress = readProgress[manga.url.trimEnd('/')].takeIf { showReadProgress }
+                val progressText = progress?.takeIf {
+                    entry?.let { it.kind == LocalLibraryItem.Kind.FOLDER && !it.imageComic } == true ||
+                        it.readCount > 0
+                }?.displayText()
                 MangaChapterListItem(
                     title = folderEntryTitle(manga, entry, showFileSize),
                     date = entry?.modifiedAt?.let { relativeDateText(it) },
-                    readProgress = progress?.takeIf { it.readCount > 0 }?.displayText(),
+                    readProgress = progressText,
                     scanlator = null,
                     read = progress.isComplete(),
-                    showReadStatus = showReadProgress && entry?.kind != LocalLibraryItem.Kind.FOLDER,
+                    showReadStatus = showReadProgress && progress != null,
                     bookmark = false,
                     selected = manga.id in selectedIds,
                     downloadIndicatorEnabled = false,
@@ -219,10 +227,11 @@ internal fun LocalFolderDetailContent(
             ) { index ->
                 val manga by mangaList[index]?.collectAsState() ?: return@items
                 val entry = source.indexedEntry(manga.url)
-                val progress = readProgress[manga.url].takeIf {
-                    showReadProgress && entry?.kind != LocalLibraryItem.Kind.FOLDER
-                }
-                val progressText = progress?.takeIf { it.readCount > 0 }?.displayText()
+                val progress = readProgress[manga.url.trimEnd('/')].takeIf { showReadProgress }
+                val progressText = progress?.takeIf {
+                    entry?.let { it.kind == LocalLibraryItem.Kind.FOLDER && !it.imageComic } == true ||
+                        it.readCount > 0
+                }?.displayText()
                 val overlay: (@Composable BoxScope.() -> Unit)? = if (progress.isComplete() || progressText != null) {
                     {
                         if (progress.isComplete()) {

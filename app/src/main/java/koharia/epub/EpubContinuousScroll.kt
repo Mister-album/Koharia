@@ -407,10 +407,16 @@ internal fun buildEpubContinuousScrollInstallScript(
                 }
                 const bounds = sectionBounds(index);
                 if (!bounds) return null;
-                // Readium measures resource progression against its full height, including the viewport.
+                // Keep Readium's full-height progression for intermediate positions, but normalize
+                // the final scroll offset to 1 so completion and legacy progress remain stable.
+                const offset = Math.max(0, scrolling.scrollTop - bounds.top);
+                const maxOffset = Math.max(0, bounds.height - viewportHeight);
+                const atEnd = maxOffset === 0 || offset >= maxOffset - 1;
                 return {
                     resourceIndex: index,
-                    progression: Math.max(0, Math.min(1, (scrolling.scrollTop - bounds.top) / bounds.height)),
+                    progression: atEnd
+                        ? 1
+                        : Math.max(0, Math.min(1, offset / bounds.height)),
                 };
             }
 
