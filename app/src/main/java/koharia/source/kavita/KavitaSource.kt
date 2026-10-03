@@ -271,7 +271,13 @@ class KavitaSource(private val context: Context, override val connectionProfile:
                             val seriesId = event.body["seriesId"]?.jsonPrimitive?.longOrNull
                             when (event.name) {
                                 "UserProgressUpdate" -> {
-                                    session.catalog.invalidateGroups("resource/Stats/")
+                                    session.catalog.invalidateGroups("resource/Stats/", "shelf/")
+                                    if (seriesId != null) {
+                                        session.catalog.invalidateGroups("volumes/$seriesId")
+                                    } else {
+                                        session.catalog.invalidateGroups("volumes/")
+                                    }
+                                    shelfChanged = true
                                     val local = mangas.getMangaBySourceId(id).filter {
                                         it.url.startsWith(session.prefix) &&
                                             (seriesId == null || session.identity.seriesId(it.url) == seriesId)
@@ -471,7 +477,11 @@ class KavitaSource(private val context: Context, override val connectionProfile:
             entry.name
         },
         thumbnailUrl = session.api.cover(entry.id, entry.coverImage),
-        memo = buildJsonObject { put("kavitaLibraryId", entry.libraryId) },
+        memo = buildJsonObject {
+            put("kavitaLibraryId", entry.libraryId)
+            put("kavitaPages", entry.pages)
+            put("kavitaPagesRead", entry.pagesRead)
+        },
     )
     suspend fun materialize(manga: Manga): Manga = materializeMutex.withLock {
         val session = session()
@@ -554,6 +564,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
                     kavitaTimestamp(chapter.releaseDate).takeIf { it > 0 } ?: kavitaTimestamp(chapter.createdUtc)
                 memo = buildJsonObject {
                     put("pagesCount", chapter.pages)
+                    put("kavitaPagesRead", chapter.pagesRead)
                     put("kavitaFormat", format)
                     put("kavitaVolume", volume.name)
                     put("kavitaRange", chapter.range.ifBlank { chapter.number })
@@ -619,6 +630,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     }
     override fun preferRawDownload(chapter: Chapter) = chapter.url.endsWith(".epub") ||
         (chapter.url.endsWith(".pdf") && (chapter.memo["kavitaFileCount"]?.jsonPrimitive?.longOrNull ?: 1) <= 1)
+    override fun requiresRawDownload(chapter: Chapter) = session().identity.chapter(chapter.url).format == 3
     override fun rawFileRequest(resourceUrl: String, rangeStart: Long?): Request {
         if (!preferences.capabilities.downloads) throw KavitaException(KavitaException.Reason.PERMISSION)
         return session().let {

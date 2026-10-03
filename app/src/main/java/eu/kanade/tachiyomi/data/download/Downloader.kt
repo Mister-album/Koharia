@@ -448,6 +448,11 @@ class Downloader(
      */
     private suspend fun downloadChapter(download: Download) {
         try {
+            download.mode = resolveChapterDownloadMode(
+                download.source as? ConnectionRawDownloadAdapter,
+                download.chapter,
+                download.mode,
+            )
             (download.source as? koharia.connection.ConnectionDownloadAuthorizationAdapter)
                 ?.authorizeDownload(download.chapter.url)
         } catch (error: Exception) {
@@ -481,7 +486,15 @@ class Downloader(
         )
 
         if (download.mode == Download.Mode.RAW_FILE) {
-            val rawSuccess = tryDownloadRawFile(download, mangaDir, chapterDirname)
+            val rawSuccess = try {
+                tryDownloadRawFile(download, mangaDir, chapterDirname)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                logcat(LogPriority.ERROR, error)
+                download.status = Download.State.ERROR
+                notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
+                return
+            }
             if (rawSuccess) {
                 return
             } else {
@@ -557,10 +570,10 @@ class Downloader(
             )
 
             // Only rename the directory if it's downloaded
-            if (downloadPreferences.saveChaptersAsCBZ.get()) {
+            val finalizedChapter = if (downloadPreferences.saveChaptersAsCBZ.get()) {
                 archiveChapter(mangaDir, chapterDirname, tmpDir)
             } else {
-                tmpDir.renameTo(chapterDirname)
+                finalizeDownloadedDirectory(mangaDir, tmpDir, chapterDirname)
             }
             cache.addChapter(chapterDirname, mangaDir, download.manga)
 
@@ -574,7 +587,7 @@ class Downloader(
                 storageAdapter.indexDownloadedChapter(download.chapter, indexedFile)
             }
 
-            DiskUtil.createNoMediaFile(tmpDir, context)
+            DiskUtil.createNoMediaFile(finalizedChapter, context)
 
             download.status = Download.State.DOWNLOADED
         } catch (error: Throwable) {
@@ -656,6 +669,9 @@ class Downloader(
                         ?.takeIf { it.isNotBlank() }
                         ?: resolveRawFileExtension(response)
                     if (!DownloadProvider.isSupportedChapterFileExtension(extension)) {
+                        if (source.requiresRawDownload(download.chapter)) {
+                            throw IllegalStateException("Unsupported publication download format")
+                        }
                         logcat(LogPriority.INFO) {
                             "Downloader.tryDownloadRawFile(): unsupported raw file extension=$extension, falling back to page cache"
                         }
@@ -773,7 +789,7 @@ class Downloader(
         source.validateRawDownload(tmpFile)
         currentCoroutineContext().ensureActive()
         mangaDir.findFile(finalFileName)?.delete()
-        if (!tmpFile.renameTo(finalFileName)) throw IOException("Failed to finalize raw download file: $finalFileName")
+        finalizeDownloadedFile(mangaDir, tmpFile, finalFileName)
         cache.addChapter(finalFileName, mangaDir, download.manga)
         mangaDir.findFile(finalFileName)?.let { finalizedFile ->
             (download.source as? ConnectionDownloadStorageAdapter)?.indexDownloadedChapter(
@@ -800,15 +816,6 @@ class Downloader(
                     ?.takeIf { it != tmpFile.name }
                     ?.let { finalFileName -> finalFileName to tmpFile }
             }
-    }
-
-    private fun resolveRawFileExtension(response: Response): String? {
-        val header = response.header("Content-Disposition")
-        val filename = header?.let(::parseContentDispositionFilename)
-        return filename
-            ?.substringAfterLast('.', "")
-            ?.takeIf { it.isNotBlank() }
-            ?.lowercase(Locale.ROOT)
     }
 
     private fun resolveRawFileTotalBytes(response: Response, resumedBytes: Long): Long {
@@ -856,16 +863,6 @@ class Downloader(
             download.updateRawProgress(existingBytes, totalBytes)
             store.addAll(listOf(download))
         }
-    }
-
-    private fun parseContentDispositionFilename(header: String): String? {
-        val encodedMatch = Regex("""filename\*=UTF-8''([^;]+)""", RegexOption.IGNORE_CASE).find(header)
-        if (encodedMatch != null) {
-            return URLDecoder.decode(encodedMatch.groupValues[1].trim('"'), StandardCharsets.UTF_8.name())
-        }
-
-        val plainMatch = Regex("""filename="?([^";]+)"?""", RegexOption.IGNORE_CASE).find(header)
-        return plainMatch?.groupValues?.getOrNull(1)
     }
 
     /**
@@ -937,15 +934,16 @@ class Downloader(
             val response = source.getImage(page)
             val file = tmpDir.createFile("$filename.tmp")!!
             try {
-                response.body.source().saveTo(file.openOutputStream())
-                val extension = getImageExtension(response, file)
-                file.renameTo("$filename.$extension")
+                val finalFile = response.use {
+                    response.body.source().saveTo(file.openOutputStream())
+                    val extension = getImageExtension(response, file)
+                    finalizeDownloadedFile(tmpDir, file, "$filename.$extension")
+                }
+                emit(finalFile)
             } catch (e: Exception) {
-                response.close()
                 file.delete()
                 throw e
             }
-            emit(file)
         }
             // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
             .retryWhen { _, attempt ->
@@ -973,9 +971,32 @@ class Downloader(
                 input.copyTo(output)
             }
         }
-        val extension = ImageUtil.findImageType(cacheFile.inputStream()) ?: return tmpFile
-        tmpFile.renameTo("$filename.${extension.extension}")
-        return tmpFile
+        val extension = ImageUtil.findImageType { cacheFile.inputStream() } ?: return tmpFile
+        return finalizeDownloadedFile(tmpDir, tmpFile, "$filename.${extension.extension}")
+    }
+
+    /**
+     * Some Android document providers reject an in-tree rename even though reading and writing
+     * the same directory is allowed. Copying through the provider keeps downloads usable on
+     * those devices while retaining the fast atomic rename where it works.
+     */
+    private fun finalizeDownloadedFile(tmpDir: UniFile, file: UniFile, targetName: String): UniFile {
+        if (tryRenameDownloadedEntry(file, targetName)) {
+            return tmpDir.findFile(targetName) ?: file
+        }
+
+        val target = tmpDir.createFile(targetName)
+            ?: throw IOException("Failed to create downloaded file: $targetName")
+        try {
+            file.openInputStream().use { input ->
+                target.openOutputStream().use { output -> input.copyTo(output) }
+            }
+            if (!file.delete()) throw IOException("Failed to remove temporary download: ${file.name}")
+            return target
+        } catch (error: Throwable) {
+            target.delete()
+            throw error
+        }
     }
 
     /**
@@ -1046,15 +1067,57 @@ class Downloader(
         mangaDir: UniFile,
         dirname: String,
         tmpDir: UniFile,
-    ) {
+    ): UniFile {
         val zip = mangaDir.createFile("$dirname.cbz$TMP_DIR_SUFFIX")!!
         ZipWriter(context, zip).use { writer ->
             tmpDir.listFiles()?.forEach { file ->
                 writer.write(file)
             }
         }
-        zip.renameTo("$dirname.cbz")
-        tmpDir.delete()
+        val finalized = finalizeDownloadedFile(mangaDir, zip, "$dirname.cbz")
+        deleteDownloadedTree(tmpDir)
+        return finalized
+    }
+
+    private fun finalizeDownloadedDirectory(parent: UniFile, directory: UniFile, targetName: String): UniFile {
+        if (tryRenameDownloadedEntry(directory, targetName)) {
+            return parent.findFile(targetName) ?: directory
+        }
+
+        val target = parent.createDirectory(targetName)
+            ?: throw IOException("Failed to create downloaded directory: $targetName")
+        try {
+            directory.listFiles().orEmpty().forEach { child ->
+                val name = child.name ?: throw IOException("Downloaded file has no name")
+                if (child.isDirectory) {
+                    finalizeDownloadedDirectory(target, child, name)
+                } else {
+                    finalizeDownloadedFile(target, child, name)
+                }
+            }
+            if (!directory.delete()) throw IOException("Failed to remove temporary download: ${directory.name}")
+            return target
+        } catch (error: Throwable) {
+            deleteDownloadedTree(target)
+            throw error
+        }
+    }
+
+    private fun deleteDownloadedTree(file: UniFile): Boolean {
+        if (file.isDirectory) file.listFiles().orEmpty().forEach(::deleteDownloadedTree)
+        return file.delete()
+    }
+
+    private fun tryRenameDownloadedEntry(file: UniFile, targetName: String): Boolean {
+        return try {
+            file.renameTo(targetName)
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            logcat(LogPriority.WARN, error) {
+                "Downloader: SAF rename failed for ${file.name}, using copy fallback"
+            }
+            false
+        }
     }
 
     /**
@@ -1206,10 +1269,14 @@ internal fun resolveChapterDownloadMode(
     source: ConnectionRawDownloadAdapter?,
     chapter: Chapter,
     mode: Download.Mode?,
-): Download.Mode = mode ?: if (source?.preferRawDownload(chapter) == true) {
+): Download.Mode = if (source?.requiresRawDownload(chapter) == true) {
     Download.Mode.RAW_FILE
 } else {
-    Download.Mode.PAGE_CACHE
+    mode ?: if (source?.preferRawDownload(chapter) == true) {
+        Download.Mode.RAW_FILE
+    } else {
+        Download.Mode.PAGE_CACHE
+    }
 }
 
 internal suspend fun copyRawDownloadResponse(
@@ -1292,4 +1359,33 @@ internal fun hasExpectedRawRange(response: Response, existingBytes: Long): Boole
     val end = range.groupValues[2].toLongOrNull() ?: return false
     val total = range.groupValues[3].toLongOrNull()
     return start == existingBytes && end >= start && (total == null || end == total - 1)
+}
+
+internal fun resolveRawFileExtension(response: Response): String? {
+    val filename = response.header("Content-Disposition")?.let(::parseContentDispositionFilename)
+    val extension = filename?.substringAfterLast('.', "")?.lowercase(Locale.ROOT)
+    if (DownloadProvider.isSupportedChapterFileExtension(extension)) return extension
+    return when (response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)) {
+        "application/epub+zip" -> "epub"
+        "application/pdf" -> "pdf"
+        "application/zip", "application/x-zip-compressed" -> "zip"
+        "application/vnd.comicbook+zip" -> "cbz"
+        "application/rar", "application/vnd.rar", "application/x-rar-compressed" -> "rar"
+        "application/vnd.comicbook-rar" -> "cbr"
+        "application/x-7z-compressed" -> "7z"
+        "application/x-tar" -> "tar"
+        else -> null
+    }
+}
+
+private fun parseContentDispositionFilename(header: String): String? {
+    val encodedMatch = Regex("""filename\*=UTF-8''([^;]+)""", RegexOption.IGNORE_CASE).find(header)
+    if (encodedMatch != null) {
+        runCatching {
+            URLDecoder.decode(encodedMatch.groupValues[1].trim('"'), StandardCharsets.UTF_8.name())
+        }.getOrNull()?.let { return it }
+    }
+
+    val plainMatch = Regex("""filename="?([^";]+)"?""", RegexOption.IGNORE_CASE).find(header)
+    return plainMatch?.groupValues?.getOrNull(1)
 }

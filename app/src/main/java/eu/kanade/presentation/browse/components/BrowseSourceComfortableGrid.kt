@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
+import eu.kanade.presentation.library.components.DownloadedCorner
 import eu.kanade.presentation.library.components.LibraryReadProgressCorner
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaReadProgress
@@ -33,6 +34,7 @@ fun BrowseSourceComfortableGrid(
     selectedMangaIds: Set<Long> = emptySet(),
     showLibraryBadges: Boolean,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
+    downloaded: ((Manga) -> Boolean)? = null,
     showPagingLoadingIndicator: Boolean = true,
     entryLabel: ((Manga) -> String)? = null,
     contentHeader: (@Composable () -> Unit)? = null,
@@ -63,6 +65,7 @@ fun BrowseSourceComfortableGrid(
                 isSelected = manga.id in selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress?.invoke(manga),
+                downloaded = downloaded?.invoke(manga) == true,
                 onClick = { onMangaClick(manga) },
                 onLongClick = { onMangaLongClick(manga) },
             )
@@ -87,6 +90,7 @@ private fun BrowseSourceComfortableGridItem(
     isSelected: Boolean,
     showLibraryBadges: Boolean,
     readProgress: MangaReadProgress?,
+    downloaded: Boolean,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
@@ -109,14 +113,23 @@ private fun BrowseSourceComfortableGridItem(
             entryBadge()
         },
         coverBadgeEndModifier = if (hasReadProgress) Modifier.padding(top = 32.dp) else Modifier,
-        coverOverlay = if (hasReadProgress) {
+        coverOverlay = if (hasReadProgress || downloaded) {
             {
-                LibraryReadProgressCorner(
-                    readCount = readProgress.readCount,
-                    totalChapterCount = readProgress.totalChapterCount,
-                    text = readProgressText,
-                    modifier = Modifier.align(Alignment.TopEnd),
-                )
+                if (hasReadProgress) {
+                    LibraryReadProgressCorner(
+                        readCount = readProgress.readCount,
+                        totalChapterCount = readProgress.totalChapterCount,
+                        text = readProgressText,
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    )
+                }
+                if (downloaded) {
+                    DownloadedCorner(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp),
+                    )
+                }
             }
         } else {
             null

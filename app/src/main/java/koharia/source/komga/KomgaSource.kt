@@ -376,6 +376,9 @@ class KomgaSource(
             headersBuilder().add("Accept", "image/*,*/*;q=0.8").build(),
         )
 
+    override fun requiresRawDownload(chapter: tachiyomi.domain.chapter.model.Chapter) =
+        KomgaChapterMemo.isEpub(chapter.memo) == true && !KomgaChapterMemo.canOpenEpubAsPages(chapter.memo)
+
     override fun rawFileRequest(resourceUrl: String, rangeStart: Long?): Request = apiClient.bookFileRequest(
         resourceUrl,
         rangeStart,

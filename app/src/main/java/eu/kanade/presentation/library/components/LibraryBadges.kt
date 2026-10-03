@@ -1,13 +1,17 @@
 package eu.kanade.presentation.library.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -68,6 +72,36 @@ internal fun DownloadsBadge(count: Long) {
 internal fun UnreadBadge(count: Long) {
     if (count > 0) {
         Badge(text = "$count")
+    }
+}
+
+@Composable
+internal fun DownloadedCorner(
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(24.dp)
+            .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Check,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.size(14.dp),
+        )
+    }
+}
+
+@Composable
+internal fun DownloadedBadge(enabled: Boolean) {
+    if (enabled) {
+        Badge(
+            imageVector = Icons.Filled.Check,
+            color = MaterialTheme.colorScheme.primaryContainer,
+            iconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
     }
 }
 

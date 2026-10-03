@@ -19,6 +19,50 @@ import java.io.IOException
 
 class RawDownloadPolicyTest {
     @Test
+    fun `epub retry repairs a previously persisted page fallback`() {
+        val source = object : TestRawAdapter() {
+            override fun requiresRawDownload(chapter: Chapter) = chapter.url.endsWith(".epub")
+        }
+        val chapter = Chapter.create().copy(url = "chapter.epub")
+        assertEquals(Download.Mode.RAW_FILE, resolveChapterDownloadMode(source, chapter, Download.Mode.PAGE_CACHE))
+    }
+
+    @Test
+    fun `raw publications and archives accept mime without a filename`() {
+        for ((mime, expected) in listOf(
+            "application/epub+zip" to "epub",
+            "application/pdf; charset=binary" to "pdf",
+            "Application/PDF" to "pdf",
+            "application/zip" to "zip",
+            "application/vnd.comicbook+zip" to "cbz",
+            "application/x-rar-compressed" to "rar",
+            "application/x-7z-compressed" to "7z",
+            "application/octet-stream" to null,
+            "text/html" to null,
+            "application/json" to null,
+        )) {
+            response("payload").newBuilder().header("Content-Type", mime).build().use {
+                assertEquals(expected, resolveRawFileExtension(it))
+            }
+        }
+    }
+
+    @Test
+    fun `server filenames retain precedence and malformed encoding permits mime fallback`() {
+        for ((header, expected) in listOf(
+            "attachment; filename=\"book.EPUB\"" to "epub",
+            "attachment; filename*=UTF-8''book%20name.cbz" to "cbz",
+            "attachment; filename*=UTF-8''bad%ZZ" to "pdf",
+            "attachment; filename=download" to "pdf",
+        )) {
+            response("payload").newBuilder()
+                .header("Content-Disposition", header)
+                .header("Content-Type", "application/pdf")
+                .build().use { assertEquals(expected, resolveRawFileExtension(it)) }
+        }
+    }
+
+    @Test
     fun `mixed chapters select their own default and retain explicit modes`() {
         val source = object : TestRawAdapter() {
             override fun preferRawDownload(chapter: Chapter) = chapter.url.endsWith(".pdf")

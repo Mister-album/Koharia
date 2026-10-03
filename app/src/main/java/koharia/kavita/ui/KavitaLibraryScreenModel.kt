@@ -11,19 +11,25 @@ import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.presentation.library.components.MangaReadProgress
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import koharia.connection.ConnectionShelfUpdates
 import koharia.connection.LibraryContentScope
 import koharia.kavita.KavitaLibrary
+import koharia.kavita.KavitaSeries
 import koharia.source.kavita.KavitaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -32,14 +38,20 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import tachiyomi.domain.library.model.LibraryDisplayMode
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 internal fun mergeKavitaShelfManga(remote: Manga, local: Manga?): Manga {
     return local?.copy(
@@ -116,13 +128,55 @@ class KavitaLibraryScreenModel(
     private val repository: MangaRepository = Injekt.get()
     private val downloads: DownloadManager = Injekt.get()
     private val sourcePreferences: SourcePreferences = Injekt.get()
+    private val libraryPreferences: LibraryPreferences = Injekt.get()
     private var searchJob: Job? = null
     private var refreshJob: Job? = null
+    private val shelfReadProgress = MutableStateFlow<Map<String, MangaReadProgress>>(emptyMap())
+    private val progressLoading = ConcurrentHashMap<String, Long>()
+    private val visibleSeriesByUrl = ConcurrentHashMap<String, KavitaSeries>()
+    private val progressEpoch = AtomicLong(0)
+    val readProgressByUrl: StateFlow<Map<String, MangaReadProgress>> = shelfReadProgress
+    private val shelfDownloadCounts = MutableStateFlow<Map<String, Long>>(emptyMap())
+    private val shelfTotalBookCounts = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val downloadedSeriesByUrl: StateFlow<Map<String, Boolean>> = combine(
+        shelfDownloadCounts,
+        shelfTotalBookCounts,
+    ) { downloaded, totals ->
+        totals.mapValues { (url, total) -> total > 0L && (downloaded[url] ?: 0L) >= total }
+    }.stateIn(screenModelScope, SharingStarted.Eagerly, emptyMap())
 
     init {
+        screenModelScope.launch(Dispatchers.IO) {
+            combine(
+                repository.getMangaBySourceIdAsFlow(source.id),
+                downloads.cacheChanges.onStart { emit(Unit) },
+            ) { mangas, _ ->
+                mangas.associate { manga -> manga.url to downloads.getDownloadCount(manga).toLong() }
+            }.collect { counts ->
+                shelfDownloadCounts.value = counts
+                if (!libraryPreferences.showLibraryReadProgress.get()) {
+                    scheduleReadProgress(
+                        counts.mapNotNull { (url, count) ->
+                            visibleSeriesByUrl[url].takeIf { count > 0L }
+                        },
+                        session,
+                    )
+                }
+            }
+        }
         screenModelScope.launch {
             sourcePreferences.sourceDisplayMode.changes().collect { mode ->
                 mutableState.update { it.copy(displayMode = mode) }
+            }
+        }
+        screenModelScope.launch {
+            libraryPreferences.showLibraryReadProgress.changes().collect { enabled ->
+                if (enabled) {
+                    clearReadProgress()
+                    mutableState.update { it.copy(generation = it.generation + 1) }
+                } else {
+                    shelfReadProgress.value = emptyMap()
+                }
             }
         }
         loadMedia()
@@ -133,6 +187,7 @@ class KavitaLibraryScreenModel(
         }
         screenModelScope.launch {
             ConnectionShelfUpdates.changes.filter { it == source.id }.collect {
+                clearReadProgress()
                 loadMedia()
                 mutableState.update { it.copy(generation = it.generation + 1) }
             }
@@ -181,6 +236,7 @@ class KavitaLibraryScreenModel(
         )
     }.distinctUntilChanged()
     val pages: Flow<PagingData<StateFlow<Manga>>> = request.flatMapLatest { request ->
+        visibleSeriesByUrl.clear()
         if (request.media.isEmpty()) {
             flowOf(PagingData.empty())
         } else if (request.downloads) {
@@ -191,17 +247,19 @@ class KavitaLibraryScreenModel(
                 val cachedIds = request.advanced?.takeIf { it.statements.isNotEmpty() }?.let {
                     session.catalog.cachedSeriesIds(filter(request.media, "", request.order, request.advanced))
                 }
+                val shelf = local.filter {
+                    it.url.startsWith(session.prefix) &&
+                        it.memo["kavitaLibraryId"]?.toString()?.toLongOrNull() in request.media &&
+                        (cachedIds == null || session.identity.seriesId(it.url) in cachedIds) &&
+                        (
+                            it.title.contains(request.query, true) ||
+                                it.genre.orEmpty().any { tag -> tag.contains(request.query, true) }
+                            ) &&
+                        downloads.getDownloadCount(it) > 0
+                }
+                scheduleLocalReadProgress(shelf, session)
                 PagingData.from(
-                    local.filter {
-                        it.url.startsWith(session.prefix) &&
-                            it.memo["kavitaLibraryId"]?.toString()?.toLongOrNull() in request.media &&
-                            (cachedIds == null || session.identity.seriesId(it.url) in cachedIds) &&
-                            (
-                                it.title.contains(request.query, true) ||
-                                    it.genre.orEmpty().any { tag -> tag.contains(request.query, true) }
-                                ) &&
-                            downloads.getDownloadCount(it) > 0
-                    }.map { MutableStateFlow(it) as StateFlow<Manga> },
+                    shelf.map { MutableStateFlow(it) as StateFlow<Manga> },
                 )
             }
         } else if (request.media.isEmpty()) {
@@ -219,6 +277,7 @@ class KavitaLibraryScreenModel(
                                     filter(request.media, request.query, request.order, request.advanced),
                                 )
                                 session.checkActive()
+                                scheduleReadProgress(result.items, session)
                                 LoadResult.Page(
                                     data = result.items.map { source.toManga(it, session) },
                                     prevKey = (page - 1).takeIf { page > 1 },
@@ -321,6 +380,7 @@ class KavitaLibraryScreenModel(
         if (refreshJob?.isActive == true) return
         val request = state.value
         refreshJob = screenModelScope.launch(Dispatchers.IO) {
+            clearReadProgress()
             mutableState.update { it.copy(refreshing = true, error = null) }
             var refreshed = false
             try {
@@ -369,6 +429,67 @@ class KavitaLibraryScreenModel(
             }
         }
     }
+
+    private fun clearReadProgress() {
+        progressEpoch.incrementAndGet()
+        shelfReadProgress.value = emptyMap()
+        shelfTotalBookCounts.value = emptyMap()
+        progressLoading.clear()
+    }
+
+    private fun scheduleReadProgress(entries: List<KavitaSeries>, session: KavitaSource.Session) {
+        val epoch = progressEpoch.get()
+        val downloadCounts = shelfDownloadCounts.value
+        val showReadProgress = libraryPreferences.showLibraryReadProgress.get()
+        val pending = entries.filter { entry ->
+            val url = session.identity.series(entry.id)
+            visibleSeriesByUrl[url] = entry
+            val needsProgress = showReadProgress || (downloadCounts[url] ?: 0L) > 0L
+            needsProgress &&
+                !shelfTotalBookCounts.value.containsKey(url) &&
+                progressLoading.putIfAbsent(url, epoch) == null
+        }
+        if (pending.isEmpty()) return
+        screenModelScope.launch(Dispatchers.IO) {
+            val gate = Semaphore(permits = 6)
+            try {
+                coroutineScope {
+                    pending.map { entry ->
+                        async {
+                            runCatching {
+                                gate.withPermit { session.catalog.seriesBookProgress(entry.id) }
+                            }.onSuccess { progress ->
+                                if (epoch == progressEpoch.get()) {
+                                    val url = session.identity.series(entry.id)
+                                    shelfTotalBookCounts.update { it + (url to progress.totalCount) }
+                                    if (libraryPreferences.showLibraryReadProgress.get() && progress.totalCount > 0) {
+                                        shelfReadProgress.update {
+                                            it + (url to MangaReadProgress(progress.readCount, progress.totalCount))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }.forEach { it.await() }
+                }
+            } finally {
+                pending.forEach { progressLoading.remove(session.identity.series(it.id), epoch) }
+            }
+        }
+    }
+
+    private fun scheduleLocalReadProgress(mangas: List<Manga>, session: KavitaSource.Session) {
+        val entries = mangas.mapNotNull { manga ->
+            runCatching {
+                KavitaSeries(
+                    id = session.identity.seriesId(manga.url),
+                    libraryId = manga.memo["kavitaLibraryId"]?.toString()?.toLongOrNull() ?: 0L,
+                )
+            }.getOrNull()
+        }
+        scheduleReadProgress(entries, session)
+    }
+
     data class State(
         val appliedFilter: koharia.kavita.KavitaFilter? = null,
         val media: List<KavitaLibrary> = emptyList(),

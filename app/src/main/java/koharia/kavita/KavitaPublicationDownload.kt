@@ -53,6 +53,7 @@ internal class KavitaPublicationDownload(
                 override fun source(): BufferedSource = source
             }
             return Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .header("Content-Disposition", "attachment; filename=\"$chapterId.epub\"")
                 .header("Content-Type", "application/epub+zip").body(body).build()
         } catch (error: Exception) {
             file.delete()

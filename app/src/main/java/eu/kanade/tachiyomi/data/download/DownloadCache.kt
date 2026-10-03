@@ -45,7 +45,6 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.core.common.storage.extension
-import tachiyomi.core.common.storage.nameWithoutExtension
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.system.logcat
@@ -208,11 +207,20 @@ class DownloadCache(
         if (sourceDir != null) {
             val mangaDir = sourceDir.mangaDirs[provider.getMangaDirName(mangaTitle)]
             if (mangaDir != null) {
-                return provider.getValidChapterDirNames(
+                val validNames = provider.getValidChapterDirNames(
                     chapterName,
                     chapterScanlator,
                     chapterUrl,
-                ).any { it in mangaDir.chapterDirs }
+                )
+                if (validNames.any { it in mangaDir.chapterDirs }) return true
+
+                // Older cache snapshots stripped extensions from downloaded files. Check the
+                // actual provider entry while those snapshots are being replaced by a full scan.
+                return validNames.any { name ->
+                    name.substringAfterLast('.', missingDelimiterValue = "") in
+                        DownloadProvider.SUPPORTED_CHAPTER_FILE_EXTENSIONS &&
+                        mangaDir.dir?.findFile(name) != null
+                }
             }
         }
 
@@ -574,7 +582,7 @@ class DownloadCache(
                         it.isDirectory -> it.name
                         // Supported downloaded files
                         it.isFile && DownloadProvider.isSupportedChapterFileExtension(it.extension) ->
-                            it.nameWithoutExtension
+                            it.name
                         // Anything else is irrelevant
                         else -> null
                     }

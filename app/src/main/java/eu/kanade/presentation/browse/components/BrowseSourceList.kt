@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
+import eu.kanade.presentation.library.components.DownloadedBadge
 import eu.kanade.presentation.library.components.MangaListItem
 import eu.kanade.presentation.library.components.MangaReadProgress
 import eu.kanade.presentation.library.components.displayText
@@ -26,6 +27,7 @@ fun BrowseSourceList(
     selectedMangaIds: Set<Long> = emptySet(),
     showLibraryBadges: Boolean,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
+    downloaded: ((Manga) -> Boolean)? = null,
     showPagingLoadingIndicator: Boolean = true,
     entryLabel: ((Manga) -> String)? = null,
     contentHeader: (@Composable () -> Unit)? = null,
@@ -53,6 +55,7 @@ fun BrowseSourceList(
                 isSelected = manga.id in selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress?.invoke(manga),
+                downloaded = downloaded?.invoke(manga) == true,
                 onClick = { onMangaClick(manga) },
                 onLongClick = { onMangaLongClick(manga) },
             )
@@ -77,6 +80,7 @@ private fun BrowseSourceListItem(
     isSelected: Boolean,
     showLibraryBadges: Boolean,
     readProgress: MangaReadProgress?,
+    downloaded: Boolean,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
@@ -95,6 +99,7 @@ private fun BrowseSourceListItem(
         coverAlpha = if (isLibraryManga) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         badge = {
             InLibraryBadge(enabled = isLibraryManga)
+            DownloadedBadge(enabled = downloaded)
             entryBadge()
         },
         readProgressText = readProgressText,

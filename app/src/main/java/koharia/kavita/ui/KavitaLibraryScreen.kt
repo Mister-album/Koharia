@@ -103,12 +103,15 @@ class KavitaLibraryScreen(
         }
         runtimeModel = model
         val state by model.state.collectAsState()
+        val readProgressByUrl by model.readProgressByUrl.collectAsState()
+        val downloadedSeriesByUrl by model.downloadedSeriesByUrl.collectAsState()
         val pages = model.pages.collectAsLazyPagingItems()
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val snackbar = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
+        val showLibraryReadProgress by libraryPreferences.showLibraryReadProgress.collectAsState()
         val orientation = LocalConfiguration.current.orientation
         val columnPreference = if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
             libraryPreferences.landscapeColumns
@@ -278,6 +281,12 @@ class KavitaLibraryScreen(
                             snackbarHostState = snackbar,
                             contentPadding = PaddingValues(0.dp),
                             showLibraryBadges = false,
+                            readProgress = if (showLibraryReadProgress) {
+                                { manga -> readProgressByUrl[manga.url] }
+                            } else {
+                                null
+                            },
+                            downloaded = { manga -> downloadedSeriesByUrl[manga.url] == true },
                             onWebViewClick = { navigator.push(KavitaSettingsScreen(sourceId)) },
                             onHelpClick = { navigator.push(KavitaSettingsScreen(sourceId)) },
                             onMangaClick = ::open,

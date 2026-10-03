@@ -78,6 +78,10 @@ class KavitaCatalog(
     ): List<KavitaVolume> = cached("volumes/$id", refresh) {
         api.volumes(id).also { volumes -> volumes.flatMap { it.chapters }.forEach { observeContent(it) } }
     }
+
+    suspend fun seriesBookProgress(id: Long, refresh: Boolean = false): KavitaSeriesBookProgress =
+        volumes(id, refresh).bookProgress()
+
     suspend fun chapter(
         id: Long,
         refresh: Boolean = false,

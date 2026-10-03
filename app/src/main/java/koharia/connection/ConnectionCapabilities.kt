@@ -416,6 +416,9 @@ interface ConnectionRawDownloadAdapter {
 
     fun preferRawDownload(chapter: Chapter): Boolean = true
 
+    /** Publications without a page representation must never fall back to image downloads. */
+    fun requiresRawDownload(chapter: Chapter): Boolean = false
+
     fun rawFileRequest(resourceUrl: String, rangeStart: Long? = null): Request
 
     suspend fun validateRawDownload(file: UniFile) = Unit

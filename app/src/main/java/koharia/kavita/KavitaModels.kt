@@ -121,6 +121,19 @@ data class KavitaVolume(
     val chapters: List<KavitaChapter> = emptyList(),
 )
 
+data class KavitaSeriesBookProgress(
+    val readCount: Long,
+    val totalCount: Long,
+)
+
+fun List<KavitaVolume>.bookProgress(): KavitaSeriesBookProgress {
+    val books = flatMap { it.chapters }.distinctBy { it.id }
+    return KavitaSeriesBookProgress(
+        readCount = books.count { it.pages > 0 && it.pagesRead >= it.pages }.toLong(),
+        totalCount = books.size.toLong(),
+    )
+}
+
 @Serializable
 data class KavitaChapterRef(
     val libraryId: Long,

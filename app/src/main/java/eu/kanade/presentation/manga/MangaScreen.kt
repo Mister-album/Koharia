@@ -40,6 +40,7 @@ import androidx.compose.ui.util.fastAll
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastMap
 import eu.kanade.presentation.components.relativeDateText
+import eu.kanade.presentation.library.components.DownloadedCorner
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaCompactGridItem
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
@@ -553,7 +554,10 @@ private fun LazyGridScope.sharedChapterGridItems(
                 val readProgress = chapterGridProgress(item)
                     .takeIf { showChapterReadProgress }
                 val isRead = showChapterReadProgress && item.chapter.read
-                val coverOverlay: (@Composable BoxScope.() -> Unit)? = if (readProgress != null || isRead) {
+                val isDownloaded = item.downloadState == Download.State.DOWNLOADED
+                val coverOverlay: (@Composable BoxScope.() -> Unit)? = if (readProgress != null || isRead ||
+                    isDownloaded
+                ) {
                     {
                         when {
                             readProgress != null -> {
@@ -563,6 +567,13 @@ private fun LazyGridScope.sharedChapterGridItems(
                                 )
                             }
                             isRead -> ChapterReadCorner(modifier = Modifier.align(Alignment.TopEnd))
+                        }
+                        if (isDownloaded) {
+                            DownloadedCorner(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(4.dp),
+                            )
                         }
                     }
                 } else {
