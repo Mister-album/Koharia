@@ -5,8 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        请先搜索已有 Issue，并尽可能使用最新的 Koharia 构建版本。涉及 Komga 或服务器的问题，请在适用时提供服务器版本。
-        Please search existing issues first and use the latest available Koharia build when possible. For Komga or server-related problems, include the server version if relevant.
+        请先搜索已有 Issue，并尽可能使用最新的 Koharia 构建版本。请注明库类型；涉及服务器时提供其版本。无需为了反馈问题测试所有库，请勿提供凭据或私人服务器信息。
+        Please search existing issues first and use the latest available Koharia build when possible. Identify the provider and server version when relevant. You do not need to test every provider; do not include credentials or private server information.
 
   - type: textarea
     id: issue-description
@@ -48,11 +48,16 @@ body:
     id: environment
     attributes:
       label: 运行环境 / Environment
-      description: 请填写设备、Android 版本；如适用，也请填写 Komga 服务器版本。 / Include your device, Android version, and Komga server version when relevant.
+      description: 请填写设备、Android 版本、库类型，以及相关的服务器版本、内容格式和操作入口。权限只需描述相关能力，不要填写账号或凭据。 / Include your device, Android version, provider, and relevant server version, content format, and entry point. Describe relevant permissions without account details or credentials.
       placeholder: |
         设备 / Device:
         Android 版本 / Android:
-        Komga 服务器版本（如适用） / Komga server (if relevant):
+        库类型（服务器类型或本地目录） / Provider (server type or local folder):
+        服务器版本（如适用） / Server version (if relevant):
+        内容格式 / Content format:
+        操作入口（书架、搜索、详情、阅读器等） / Entry point (shelf, search, details, reader, etc.):
+        相关权限（如允许下载、只读） / Relevant permissions (e.g. download allowed, read-only):
+        其他库是否出现（可选，无需额外测试） / Other providers affected (optional, no extra testing required):
     validations:
       required: true
 

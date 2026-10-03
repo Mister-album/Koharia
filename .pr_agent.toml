@@ -7,16 +7,21 @@ restricted_mode = true
 enable_review_labels_effort = false
 enable_review_labels_security = false
 extra_instructions = """
-This repository is Koharia, an Android reader forked from Mihon and specialized for Komga.
+This repository is Koharia, an Android reader forked from Mihon for personal server and local media libraries.
+Use AGENTS.md as the authoritative development and cross-provider contract. Inspect current ConnectionRegistry registration and relevant implementations rather than assuming a fixed provider list; distinguish development from released support.
 Prioritize concrete behavioral regressions, edge cases, and missing validation over style-only feedback.
 Pay extra attention to:
 - Jetpack Compose state, side effects, navigation, and lifecycle handling.
 - SQLDelight schema/query changes, migrations, adapters, and mapper signature mismatches.
 - Reader loading/viewer logic, download queue/resume/delete behavior, cache invalidation, and file/storage changes.
-- Komga source behavior, progress sync, history sync, and Komga-specific library or browse flows.
+- Applicable providers' source behavior, progress/history sync, identity isolation, and library/browse flows.
+- Shared feature wiring across applicable providers and affected shelves, search, collections, history, details, and reader entry points. Check omitted nullable callbacks, default-false capabilities, no-op implementations, provider-type/ID branches, and copied state/UI logic when they cause a concrete gap.
+- Common download/read state semantics, standard MangaScreen details, shared preferences, and provider-labeled settings whose visibility follows the correct connection/content context. Cache availability and server downloads must not be treated as local manual downloads.
+- Regression tests for shared behavior AND provider integration. Existing compilation or component tests alone do not establish cross-provider parity; distinguish unsupported capabilities from applicable but unfinished implementations.
 - Backup/restore compatibility, numbered migration or proto changes, and build-variant-specific behavior.
 If the diff changes compile-sensitive code or persistence behavior, call out missing compile/test/migration verification when relevant.
-Avoid suggestions that would reintroduce Mihon extension-store or generic multi-source behavior unless the diff explicitly intends that.
+Require concrete code evidence for cross-provider findings; do not demand unrelated refactors or all live-server tests just because a provider file changed. Explain why a supposedly provider-specific fix affects shared behavior before requesting broader coverage. Report unfinished and unverified coverage honestly.
+Encourage shared components and capability adapters among supported or explicitly requested providers. Avoid suggestions that restore public content-source or Mihon extension-store ecosystems without explicit authorization.
 """
 
 [pr_code_suggestions]

@@ -29,7 +29,21 @@ Before you start, please note that the ability to use following technologies is 
 ## Getting help
 
 - Review the local [README](./README.md), existing issues, and recent changes before opening a new report.
-- When reporting a bug, include the Koharia version, Android version, device model, Komga server version if relevant, and clear reproduction steps.
+- When reporting a bug, include the Koharia version, Android version, device model, provider type and server version if relevant, content format, entry point, relevant account permissions, and clear reproduction steps. Comparing other libraries is helpful when available, but reporters do not need access to every provider.
+
+## Shared features and provider integration
+
+[AGENTS.md](./AGENTS.md) defines the development, product, and verification contracts for contributors and coding agents. Read its cross-provider, series, settings, shelf-entry, and cache contracts before changing those areas.
+
+1. Determine whether the request concerns shared behavior or a provider-specific protocol. Inspect the current `ConnectionRegistry` registration and relevant working-tree implementations; distinguish development from released support.
+2. For affected providers and routes, identify what is applicable and implemented, applicable but missing, or not applicable with a reason. A report mentioning one library does not limit a shared fix to that library.
+3. Implement generic presentation, state, and behavior through shared components and capability adapters. Integrate every applicable consumer within the requested scope; retain provider-specific protocols, identities, and permission rules. Protocol-only fixes need no unrelated refactor.
+4. Verify the changed shared behavior and its provider wiring with appropriate contract tests/fixtures and any necessary UI checks. A shared widget test or successful compilation alone cannot demonstrate that each provider uses it.
+5. Write the PR title and description in Chinese and English. Summarize applicability, shared implementation, checks actually run, and unfinished/unverified items using the PR template. Keep task-local matrices and evidence under `.test-artifacts/<task>/` or in the PR; do not commit per-run reports.
+
+New providers must satisfy the completion checklist in `AGENTS.md`; default-hidden settings, omitted card state, and no-op callbacks do not count as implemented features. Shared capability work is compatible with the personal-media-library direction and does not authorize restoring public content-source or extension-store ecosystems.
+
+Device validation must follow `AGENTS.md`: use an explicitly selected device and an isolated fixture package, retaining installed packages and existing app data. Documentation-only changes need the relevant whitespace, link, and configuration syntax checks, not an app build.
 
 # Translations
 

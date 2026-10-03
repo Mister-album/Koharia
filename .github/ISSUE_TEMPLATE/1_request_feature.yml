@@ -20,6 +20,16 @@ body:
       required: true
 
   - type: textarea
+    id: applicability
+    attributes:
+      label: 适用库与入口 / Providers and entry points
+      description: 可选：这是所有适用库的通用体验，还是某种服务器的专属能力？请注明相关内容格式及操作入口，无需测试其他服务器。 / Optional - is this shared behavior across applicable libraries or a server-specific capability? Include relevant content formats and entry points; no testing of other servers is required.
+      placeholder: |
+        库类型 / Providers:
+        内容格式与入口 / Content formats and entry points:
+        已知的服务器限制（如有） / Known server limitations (if any):
+
+  - type: textarea
     id: other-details
     attributes:
       label: 补充信息 / Additional context
