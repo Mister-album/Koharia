@@ -817,6 +817,10 @@ object SettingsReaderScreen : SearchableSettings {
                     enabled = imageScaleType == 1,
                 ),
                 Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.pagerDoubleTapZoomEnabled,
+                    title = stringResource(MR.strings.pref_double_tap_zoom),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
                     preference = readerPreferences.navigateToPan,
                     title = stringResource(MR.strings.pref_navigate_pan),
                     enabled = navMode != 5,

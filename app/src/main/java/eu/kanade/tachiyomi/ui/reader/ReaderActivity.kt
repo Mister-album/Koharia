@@ -542,7 +542,8 @@ class ReaderActivity : BaseActivity() {
                     position = readerStatusPosition,
                     contentColor = when (statusReaderTheme) {
                         0 -> androidx.compose.ui.graphics.Color.Black
-                        3 -> androidx.compose.material3.MaterialTheme.colorScheme.onBackground
+                        ReaderPreferences.AUTOMATIC_BACKGROUND_THEME ->
+                            androidx.compose.material3.MaterialTheme.colorScheme.onBackground
                         ReaderPreferences.CUSTOM_BACKGROUND_THEME ->
                             if (androidx.core.graphics.ColorUtils.calculateLuminance(statusCustomBackground) > 0.5) {
                                 androidx.compose.ui.graphics.Color.Black
@@ -1748,7 +1749,7 @@ class ReaderActivity : BaseActivity() {
                         when (theme) {
                             0 -> Color.WHITE
                             2 -> grayBackgroundColor
-                            3 -> automaticBackgroundColor()
+                            ReaderPreferences.AUTOMATIC_BACKGROUND_THEME -> automaticBackgroundColor()
                             ReaderPreferences.CUSTOM_BACKGROUND_THEME -> customColor
                             else -> Color.BLACK
                         },

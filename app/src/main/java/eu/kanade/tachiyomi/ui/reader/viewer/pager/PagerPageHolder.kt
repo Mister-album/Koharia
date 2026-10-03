@@ -438,6 +438,7 @@ class PagerPageHolder(
         cropBorders = viewer.config.imageCropBorders,
         zoomStartPosition = viewer.config.imageZoomType,
         landscapeZoom = landscapeZoom,
+        doubleTapZoomEnabled = viewer.config.doubleTapZoomEnabled,
     )
 
     private fun displayContent(

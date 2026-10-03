@@ -115,6 +115,11 @@ class ReaderPreferences(
         true,
     )
 
+    val pagerDoubleTapZoomEnabled: Preference<Boolean> = preferenceStore.getBoolean(
+        "pref_enable_double_tap_zoom_pager",
+        true,
+    )
+
     val imageScaleType: Preference<Int> = preferenceStore.getInt("pref_image_scale_type_key", 1)
 
     val zoomStart: Preference<Int> = preferenceStore.getInt("pref_zoom_start_key", 1)
@@ -275,6 +280,7 @@ class ReaderPreferences(
     }
 
     companion object {
+        const val AUTOMATIC_BACKGROUND_THEME = 3
         const val CUSTOM_BACKGROUND_THEME = 4
         val DEFAULT_READER_BACKGROUND_COLOR = 0xFF000000.toInt()
         val LEGACY_GRAY_BACKGROUND_COLOR = 0xFF202125.toInt()

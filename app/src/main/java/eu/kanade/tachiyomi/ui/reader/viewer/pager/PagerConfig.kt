@@ -71,6 +71,9 @@ class PagerConfig(
     var imageCropBorders = false
         private set
 
+    var doubleTapZoomEnabled = true
+        private set
+
     var navigateToPan = false
         private set
 
@@ -82,7 +85,7 @@ class PagerConfig(
             .register(
                 {
                     theme = it
-                    automaticBackground = it == 3
+                    automaticBackground = it == ReaderPreferences.AUTOMATIC_BACKGROUND_THEME
                 },
                 { imagePropertyChangedListener?.invoke() },
             )
@@ -104,6 +107,9 @@ class PagerConfig(
 
         readerPreferences.cropBorders
             .register({ imageCropBorders = it }, { imagePropertyChangedListener?.invoke() })
+
+        readerPreferences.pagerDoubleTapZoomEnabled
+            .register({ doubleTapZoomEnabled = it }, { imagePropertyChangedListener?.invoke() })
 
         readerPreferences.navigateToPan
             .register({ navigateToPan = it })

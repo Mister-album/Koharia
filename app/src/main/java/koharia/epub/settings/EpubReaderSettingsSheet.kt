@@ -74,6 +74,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -111,7 +112,6 @@ import android.graphics.Color as AndroidColor
 private enum class EpubSettingsDialog {
     READING_MODE,
     TYPOGRAPHY,
-    TTS,
     MORE,
 }
 
@@ -218,10 +218,6 @@ fun EpubReaderSettingsContent(
                 }
             }
         }
-        TextPreferenceWidget(
-            title = stringResource(MR.strings.tts_engine_settings_title),
-            onPreferenceClick = { activeDialog = EpubSettingsDialog.TTS },
-        )
     }
 
     when (activeDialog) {
@@ -234,9 +230,6 @@ fun EpubReaderSettingsContent(
             preferences = preferences,
             readerPreferences = readerPreferences,
             onOpenFontPicker = onOpenFontPicker,
-            onDismissRequest = { activeDialog = null },
-        )
-        EpubSettingsDialog.TTS -> TtsReaderSettingsSheet(
             onDismissRequest = { activeDialog = null },
         )
         EpubSettingsDialog.MORE -> MoreReadingSettingsSheet(
@@ -645,11 +638,15 @@ fun ComicThemePreference(readerPreferences: ReaderPreferences) {
         readerPreferences.readerTheme.set(ReaderPreferences.CUSTOM_BACKGROUND_THEME)
     }
 
+    fun selectAutomatic() {
+        readerPreferences.readerTheme.set(ReaderPreferences.AUTOMATIC_BACKGROUND_THEME)
+    }
+
     val selectedColor = when (currentTheme) {
         0 -> AndroidColor.WHITE
         1 -> AndroidColor.BLACK
         2 -> ReaderPreferences.LEGACY_GRAY_BACKGROUND_COLOR
-        3 -> automaticColor
+        ReaderPreferences.AUTOMATIC_BACKGROUND_THEME -> automaticColor
         else -> currentCustomColor
     }
 
@@ -657,7 +654,7 @@ fun ComicThemePreference(readerPreferences: ReaderPreferences) {
         val color = backgroundColors[index]
         val remainingColors = backgroundColors.toMutableList().apply { removeAt(index) }
         saveBackgroundColors(remainingColors)
-        if (selectedColor == color) {
+        if (currentTheme != ReaderPreferences.AUTOMATIC_BACKGROUND_THEME && selectedColor == color) {
             remainingColors.getOrNull(index.coerceAtMost(remainingColors.lastIndex))?.let(::selectColor)
                 ?: selectColor(AndroidColor.WHITE)
         }
@@ -682,12 +679,20 @@ fun ComicThemePreference(readerPreferences: ReaderPreferences) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            ThemeSwatch(
+                color = Color(automaticColor),
+                label = stringResource(MR.strings.automatic_background),
+                selected = currentTheme == ReaderPreferences.AUTOMATIC_BACKGROUND_THEME,
+                onClick = ::selectAutomatic,
+                content = { AutomaticBackgroundMark() },
+            )
             backgroundColors.forEachIndexed { index, color ->
                 key(color) {
                     ThemeSwatch(
                         color = Color(color),
                         label = "#%06X".format(color and 0xFFFFFF),
-                        selected = selectedColor == color,
+                        selected = currentTheme != ReaderPreferences.AUTOMATIC_BACKGROUND_THEME &&
+                            selectedColor == color,
                         onClick = { selectColor(color) },
                         onLongClickLabel = deleteColorLabel,
                         onLongClick = { deleteBackgroundColor(index) },
@@ -1030,11 +1035,15 @@ fun ComicBackgroundSettingsPreference(readerPreferences: ReaderPreferences) {
         readerPreferences.readerTheme.set(ReaderPreferences.CUSTOM_BACKGROUND_THEME)
     }
 
+    fun selectAutomatic() {
+        readerPreferences.readerTheme.set(ReaderPreferences.AUTOMATIC_BACKGROUND_THEME)
+    }
+
     val selectedColor = when (currentTheme) {
         0 -> AndroidColor.WHITE
         1 -> AndroidColor.BLACK
         2 -> ReaderPreferences.LEGACY_GRAY_BACKGROUND_COLOR
-        3 -> automaticColor
+        ReaderPreferences.AUTOMATIC_BACKGROUND_THEME -> automaticColor
         else -> currentCustomColor
     }
 
@@ -1042,7 +1051,7 @@ fun ComicBackgroundSettingsPreference(readerPreferences: ReaderPreferences) {
         val removedColor = backgroundColors[index]
         val remainingColors = backgroundColors.toMutableList().apply { removeAt(index) }
         saveBackgroundColors(remainingColors)
-        if (selectedColor == removedColor) {
+        if (currentTheme != ReaderPreferences.AUTOMATIC_BACKGROUND_THEME && selectedColor == removedColor) {
             remainingColors.getOrNull(index.coerceAtMost(remainingColors.lastIndex))?.let(::selectColor)
                 ?: selectColor(AndroidColor.WHITE)
         }
@@ -1086,8 +1095,52 @@ fun ComicBackgroundSettingsPreference(readerPreferences: ReaderPreferences) {
                             style = MaterialTheme.typography.headlineSmall,
                         )
                         Spacer(modifier = Modifier.height(12.dp))
+                        val automaticSelected = currentTheme == ReaderPreferences.AUTOMATIC_BACKGROUND_THEME
+                        Surface(
+                            onClick = ::selectAutomatic,
+                            color = if (automaticSelected) {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            } else {
+                                Color.Transparent
+                            },
+                            shape = MaterialTheme.shapes.large,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 56.dp)
+                                    .padding(horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .border(
+                                            width = if (automaticSelected) 2.dp else 1.dp,
+                                            color = if (automaticSelected) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.outlineVariant
+                                            },
+                                            shape = CircleShape,
+                                        )
+                                        .padding(4.dp)
+                                        .background(Color(automaticColor), CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    AutomaticBackgroundMark()
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = stringResource(MR.strings.automatic_background),
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
                         backgroundColors.forEachIndexed { index, color ->
-                            val selected = selectedColor == color
+                            val selected = currentTheme != ReaderPreferences.AUTOMATIC_BACKGROUND_THEME &&
+                                selectedColor == color
                             Surface(
                                 onClick = { selectColor(color) },
                                 color = if (selected) {
@@ -1226,6 +1279,16 @@ fun ComicBackgroundSettingsPreference(readerPreferences: ReaderPreferences) {
 }
 
 @Composable
+private fun AutomaticBackgroundMark() {
+    Text(
+        text = "A",
+        color = MaterialTheme.colorScheme.onBackground,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.Bold,
+    )
+}
+
+@Composable
 private fun ThemeSwatch(
     color: Color,
     label: String,
@@ -1233,6 +1296,7 @@ private fun ThemeSwatch(
     onClick: () -> Unit,
     onLongClickLabel: String? = null,
     onLongClick: (() -> Unit)? = null,
+    content: (@Composable () -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
@@ -1260,7 +1324,10 @@ private fun ThemeSwatch(
                 onLongClickLabel = onLongClickLabel,
                 onLongClick = onLongClick,
             ),
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        content?.invoke()
+    }
 }
 
 @Composable
@@ -1844,6 +1911,7 @@ private fun MoreReadingSettingsSheet(
     epubReaderPreferences: EpubReaderPreferences,
     onDismissRequest: () -> Unit,
 ) {
+    var showTtsSettings by rememberSaveable { mutableStateOf(false) }
     val tabTitles = persistentListOf(
         stringResource(MR.strings.pref_category_reading),
         stringResource(MR.strings.pref_category_general),
@@ -1871,11 +1939,25 @@ private fun MoreReadingSettingsSheet(
                 .verticalScroll(rememberScrollState()),
         ) {
             when (page) {
-                0 -> EpubReadingSettingsPage(preferences, readerPreferences)
+                0 -> {
+                    HeadingItem(stringResource(MR.strings.reader_read_aloud))
+                    TextPreferenceWidget(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        title = stringResource(MR.strings.tts_engine_settings_title),
+                        onPreferenceClick = { showTtsSettings = true },
+                    )
+                    EpubReadingSettingsPage(preferences, readerPreferences)
+                }
                 1 -> EpubGeneralSettingsPage(readerPreferences, epubReaderPreferences)
                 2 -> EpubFilterSettingsPage(preferences, readerPreferences)
             }
         }
+    }
+
+    if (showTtsSettings) {
+        TtsReaderSettingsSheet(
+            onDismissRequest = { showTtsSettings = false },
+        )
     }
 }
 

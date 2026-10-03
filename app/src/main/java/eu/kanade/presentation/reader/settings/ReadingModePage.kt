@@ -145,6 +145,11 @@ private fun ColumnScope.PagerViewerSettings(
         pref = screenModel.preferences.landscapeZoom,
     )
 
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_double_tap_zoom),
+        pref = screenModel.preferences.pagerDoubleTapZoomEnabled,
+    )
+
     ReaderSettingsGroupDivider()
 
     val pageLayoutValue by screenModel.preferences.pageLayout.collectAsState()

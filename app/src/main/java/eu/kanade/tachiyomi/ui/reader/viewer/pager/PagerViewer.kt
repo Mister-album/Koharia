@@ -43,7 +43,7 @@ import kotlin.math.min
 @Suppress("LeakingThis")
 abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
-    private data class PendingCoverTurn(
+    private data class PendingPageTurn(
         val target: Int,
         val slot: PagerSlot.Pages,
     )
@@ -135,11 +135,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private var pageTransitionTransformer: PagerPageTransformer? = null
 
-    private var pendingCoverTurn: PendingCoverTurn? = null
+    private var pendingPageTurn: PendingPageTurn? = null
 
-    private var pendingCoverTurnTimeout: Job? = null
+    private var pendingPageTurnTimeout: Job? = null
 
-    private val pendingCoverTurns = ArrayDeque<Int>(MAX_PENDING_COVER_TURNS)
+    /** Net page turns requested while the destination page is still being rendered. */
+    private var pendingPageTurnDelta = 0
 
     /**
      * Viewer chapters to set when the pager enters idle mode. Otherwise, if the view was settling
@@ -179,7 +180,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 val splits = pendingPageSplits.toMap()
                 pendingPageSplits.clear()
                 splits.forEach { (page, secondHalf) -> adapter.onPageSplit(page, secondHalf) }
-                drainPendingCoverTurn()
+                drainPendingPageTurn()
             }
         }
 
@@ -218,7 +219,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             if (state == ViewPager.SCROLL_STATE_DRAGGING) {
                 pendingPageMove = null
                 userDragSelectionPending = true
-                cancelPendingCoverTurn(reactivateCurrent = true)
+                cancelPendingPageTurn(reactivateCurrent = true)
             }
             isIdle = state == ViewPager.SCROLL_STATE_IDLE
             if (isIdle) userDragSelectionPending = false
@@ -339,7 +340,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     override fun destroy() {
         pendingPageSplits.clear()
-        cancelPendingCoverTurn(reactivateCurrent = false)
+        cancelPendingPageTurn(reactivateCurrent = false)
         pageFlipController.cancel()
         super.destroy()
         scope.cancel()
@@ -553,7 +554,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Sets the active [chapters] on this pager.
      */
     private fun setChaptersInternal(chapters: ViewerChapters) {
-        cancelPendingCoverTurn(reactivateCurrent = false)
+        cancelPendingPageTurn(reactivateCurrent = false)
         pageFlipController.cancel()
         // Remove listener so the change in item doesn't trigger it
         pager.removeOnPageChangeListener(pagerListener)
@@ -619,6 +620,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun moveToPage(page: ReaderPage, cause: PageChangeCause) {
         val position = adapter.positionOf(page)
         if (position != -1) {
+            cancelPendingPageTurn(reactivateCurrent = false)
             pageFlipController.cancel()
             val currentPosition = pager.currentItem
             stableSlotAnchor = page
@@ -697,7 +699,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * changed.
      */
     private fun refreshAdapter() {
-        cancelPendingCoverTurn(reactivateCurrent = false)
+        cancelPendingPageTurn(reactivateCurrent = false)
         pageFlipController.cancel()
         val currentItem = pager.currentItem
         adapter.refresh()
@@ -711,12 +713,6 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun setCurrentItemForPageTurn(target: Int) {
         // Mark app-driven page turns so they are distinguishable from viewport resize callbacks.
         markPendingUserNavigation(target)
-        if (config.pageTransitionEffect == PageTransitionEffect.COVER &&
-            ValueAnimator.areAnimatorsEnabled() &&
-            prepareCoverPageTurn(target)
-        ) {
-            return
-        }
         if (config.pageTransitionEffect == PageTransitionEffect.CURL && ValueAnimator.areAnimatorsEnabled()) {
             val origin = activePageTurnOrigin ?: PageTurnOrigin.center(PageTurnCause.KEY)
             val sourceIsPage = adapter.slots.getOrNull(pager.currentItem) is PagerSlot.Pages
@@ -725,8 +721,65 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 return
             }
         }
+        if (waitForPageTurnTarget(target)) return
         pager.setCurrentItem(target, shouldAnimatePageTurn())
     }
+
+    /**
+     * Keeps the current page on screen until the destination page has been rendered, banking the
+     * turn when it has to wait. Moving onto a page that is still loading would reveal its empty
+     * placeholder, which reads as a blank flash when the volume keys are pressed faster than pages
+     * are delivered.
+     *
+     * Returns false when the turn has to be applied right away.
+     */
+    private fun waitForPageTurnTarget(target: Int): Boolean {
+        val delta = target.compareTo(pager.currentItem)
+        if (delta == 0) return false
+
+        val targetSlot = adapter.slots.getOrNull(target) as? PagerSlot.Pages
+        val pending = pendingPageTurn
+        val shouldWait = PagerPageTurnPolicy.shouldWaitForTarget(
+            turnInFlight = pending != null,
+            pagerIdle = isIdle,
+            sourceIsPage = adapter.slots.getOrNull(pager.currentItem) is PagerSlot.Pages,
+            targetIsPage = targetSlot != null,
+            targetHolderAttached = targetSlot?.let { getPageHolder(it.progressPage) } != null,
+            targetRendered = targetSlot != null && isSlotRendered(targetSlot),
+        )
+        if (!shouldWait) return false
+
+        if (pending != null) {
+            pendingPageTurnDelta = PagerPageTurnPolicy.accumulate(pendingPageTurnDelta, delta)
+            // The page being waited for stays the loader's priority while more turns come in.
+            activateSlotForTransition(pending.slot)
+            return true
+        }
+        if (targetSlot == null || !isIdle) {
+            pendingPageTurnDelta = PagerPageTurnPolicy.accumulate(pendingPageTurnDelta, delta)
+            return true
+        }
+        // Only a slot whose loader can be pointed at the destination may be deferred.
+        if (!activateSlotForTransition(targetSlot)) return false
+        // The armed turn stands for this press, so it must not be banked as well.
+        pendingPageTurn = PendingPageTurn(target, targetSlot)
+        pendingPageTurnTimeout = scope.launch {
+            delay(PAGE_TURN_TARGET_TIMEOUT_MS)
+            val waiting = pendingPageTurn?.takeIf { it.target == target && it.slot == targetSlot } ?: return@launch
+            logcat {
+                "Page turn target not rendered after ${PAGE_TURN_TARGET_TIMEOUT_MS}ms; " +
+                    "revealing page ${waiting.slot.progressPage.number}"
+            }
+            pendingPageTurn = null
+            pendingPageTurnTimeout = null
+            pager.setCurrentItem(waiting.target, false)
+            pager.post(::drainPendingPageTurn)
+        }
+        return true
+    }
+
+    private fun isSlotRendered(slot: PagerSlot.Pages): Boolean =
+        getPageHolder(slot.progressPage)?.isTransitionTargetReady() == true
 
     private fun markPendingUserNavigation(target: Int) {
         if (target in adapter.slots.indices) {
@@ -758,71 +811,33 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         return !canPanTowardSwipe
     }
 
-    private fun prepareCoverPageTurn(target: Int): Boolean {
-        val delta = target.compareTo(pager.currentItem)
-        if (delta == 0) return false
-        if (pendingCoverTurn != null || !isIdle) {
-            enqueueCoverTurn(delta)
-            return true
-        }
-        val targetSlot = adapter.slots.getOrNull(target) as? PagerSlot.Pages ?: return false
-        if (adapter.slots.getOrNull(pager.currentItem) !is PagerSlot.Pages) return false
-        if (getPageHolder(targetSlot.progressPage)?.isTransitionTargetReady() == true) {
-            cancelPendingCoverTurn(reactivateCurrent = false, clearQueuedTurns = false)
-            pager.setCurrentItem(target, true)
-            return true
-        }
-
-        cancelPendingCoverTurn(reactivateCurrent = false, clearQueuedTurns = false)
-        if (!activateSlotForTransition(targetSlot)) {
-            pager.setCurrentItem(target, false)
-            pager.post(::drainPendingCoverTurn)
-            return true
-        }
-        pendingCoverTurn = PendingCoverTurn(target, targetSlot)
-        pendingCoverTurnTimeout = scope.launch {
-            delay(COVER_TARGET_READY_TIMEOUT_MS)
-            val pending = pendingCoverTurn?.takeIf { it.target == target && it.slot == targetSlot }
-                ?: return@launch
-            pendingCoverTurn = null
-            pendingCoverTurnTimeout = null
-            pager.setCurrentItem(pending.target, false)
-            pager.post(::drainPendingCoverTurn)
-        }
-        return true
-    }
-
     internal fun onTransitionTargetReady(slot: PagerSlot.Pages) {
-        val pending = pendingCoverTurn?.takeIf { it.slot == slot } ?: return
-        if (config.pageTransitionEffect != PageTransitionEffect.COVER ||
-            adapter.slots.getOrNull(pending.target) != slot
-        ) {
-            cancelPendingCoverTurn(reactivateCurrent = true)
+        val pending = pendingPageTurn?.takeIf { it.slot == slot } ?: return
+        if (adapter.slots.getOrNull(pending.target) != slot) {
+            cancelPendingPageTurn(reactivateCurrent = true)
             return
         }
-        pendingCoverTurnTimeout?.cancel()
-        pendingCoverTurnTimeout = null
+        pendingPageTurnTimeout?.cancel()
+        pendingPageTurnTimeout = null
         pager.post {
-            val committed = pendingCoverTurn?.takeIf { it == pending } ?: return@post
-            pendingCoverTurn = null
-            if (config.pageTransitionEffect == PageTransitionEffect.COVER &&
-                adapter.slots.getOrNull(pending.target) == slot &&
-                pager.currentItem != pending.target
-            ) {
-                pager.setCurrentItem(committed.target, true)
+            val committed = pendingPageTurn?.takeIf { it == pending } ?: return@post
+            pendingPageTurn = null
+            if (adapter.slots.getOrNull(committed.target) == slot && pager.currentItem != committed.target) {
+                pager.setCurrentItem(committed.target, shouldAnimatePageTurn())
             } else {
-                pendingCoverTurns.clear()
+                pendingPageTurnDelta = 0
             }
+            drainPendingPageTurn()
         }
     }
 
     internal fun onTransitionTargetFailed(slot: PagerSlot.Pages) {
-        val pending = pendingCoverTurn?.takeIf { it.slot == slot } ?: return
-        pendingCoverTurn = null
-        pendingCoverTurnTimeout?.cancel()
-        pendingCoverTurnTimeout = null
+        val pending = pendingPageTurn?.takeIf { it.slot == slot } ?: return
+        pendingPageTurn = null
+        pendingPageTurnTimeout?.cancel()
+        pendingPageTurnTimeout = null
         pager.setCurrentItem(pending.target, false)
-        pager.post(::drainPendingCoverTurn)
+        pager.post(::drainPendingPageTurn)
     }
 
     private fun activateSlotForTransition(slot: PagerSlot.Pages): Boolean {
@@ -834,36 +849,30 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         return true
     }
 
-    private fun enqueueCoverTurn(delta: Int) {
-        if (pendingCoverTurns.size >= MAX_PENDING_COVER_TURNS) return
-        pendingCoverTurns.addLast(delta)
-    }
-
-    private fun drainPendingCoverTurn() {
-        if (!isIdle || pendingCoverTurn != null) return
-        if (config.pageTransitionEffect != PageTransitionEffect.COVER || !ValueAnimator.areAnimatorsEnabled()) {
-            pendingCoverTurns.clear()
-            return
-        }
-        val delta = pendingCoverTurns.removeFirstOrNull() ?: return
-        val target = pager.currentItem + delta
+    /** Applies the banked turns one page at a time, waiting for each destination to render. */
+    private fun drainPendingPageTurn() {
+        if (!isIdle || pendingPageTurn != null) return
+        val step = PagerPageTurnPolicy.nextStep(pendingPageTurnDelta)
+        if (step == 0) return
+        val target = pager.currentItem + step
         if (target !in 0 until adapter.count) {
-            pendingCoverTurns.clear()
+            pendingPageTurnDelta = 0
             return
         }
+        pendingPageTurnDelta -= step
         setCurrentItemForPageTurn(target)
     }
 
-    private fun cancelPendingCoverTurn(
+    private fun cancelPendingPageTurn(
         reactivateCurrent: Boolean,
         clearQueuedTurns: Boolean = true,
     ) {
-        val hadPendingTarget = pendingCoverTurn != null || pendingCoverTurnTimeout != null
-        if (clearQueuedTurns) pendingCoverTurns.clear()
+        val hadPendingTarget = pendingPageTurn != null || pendingPageTurnTimeout != null
+        if (clearQueuedTurns) pendingPageTurnDelta = 0
         if (!hadPendingTarget) return
-        pendingCoverTurn = null
-        pendingCoverTurnTimeout?.cancel()
-        pendingCoverTurnTimeout = null
+        pendingPageTurn = null
+        pendingPageTurnTimeout?.cancel()
+        pendingPageTurnTimeout = null
         if (reactivateCurrent) {
             (adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages)
                 ?.let(::activateSlotForTransition)
@@ -881,7 +890,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun applyPageTransitionEffect() {
-        cancelPendingCoverTurn(reactivateCurrent = true)
+        cancelPendingPageTurn(reactivateCurrent = true)
         pageFlipController.cancel()
         pageTransitionTransformer?.clear(pager.children.asIterable())
         val effect = config.pageTransitionEffect.takeIf { ValueAnimator.areAnimatorsEnabled() }
@@ -927,8 +936,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private companion object {
-        const val COVER_TARGET_READY_TIMEOUT_MS = 1_200L
-        const val MAX_PENDING_COVER_TURNS = 3
+        /**
+         * Fallback for a destination page that never reports itself as rendered, so a page turn is
+         * never lost to a page that cannot finish loading.
+         */
+        const val PAGE_TURN_TARGET_TIMEOUT_MS = 2_000L
     }
 
     /**
@@ -1055,7 +1067,14 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun rebuildSlots(anchor: ReaderPage?) {
-        cancelPendingCoverTurn(reactivateCurrent = false)
+        // A rebuild keeps the pager on the same item, so a turn that is waiting for its destination
+        // is still wanted: bank it again and replay it against the rebuilt slots instead of
+        // dropping the key press.
+        val deferredTurn = pendingPageTurn?.target?.compareTo(pager.currentItem)
+        cancelPendingPageTurn(reactivateCurrent = false, clearQueuedTurns = false)
+        if (deferredTurn != null && deferredTurn != 0) {
+            pendingPageTurnDelta = PagerPageTurnPolicy.accumulate(pendingPageTurnDelta, deferredTurn)
+        }
         pageFlipController.cancel()
         val resolvedAnchor = anchor ?: stableSlotAnchor
         stableSlotAnchor = resolvedAnchor
@@ -1068,6 +1087,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             cause = PageChangeCause.LAYOUT_REBUILD,
             anchor = resolvedAnchor,
         )
+        drainPendingPageTurn()
     }
 
     private data class PendingPreparedSlot(

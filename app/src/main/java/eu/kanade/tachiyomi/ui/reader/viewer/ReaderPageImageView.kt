@@ -392,10 +392,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     }
                 },
             )
+            var suppressDoubleTap = false
             val tapDetector = GestureDetector(
                 context,
                 object : GestureDetector.SimpleOnGestureListener() {
                     override fun onDown(e: MotionEvent): Boolean = true
+
+                    override fun onDoubleTap(e: MotionEvent): Boolean {
+                        // Swallowing the second tap keeps pinch zoom working while the view never
+                        // zooms on a double tap.
+                        suppressDoubleTap = config?.doubleTapZoomEnabled == false
+                        return suppressDoubleTap
+                    }
 
                     override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                         val sourcePoint = viewToSourceCoord(e.x, e.y)
@@ -409,7 +417,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
             )
             setOnTouchListener { _, event ->
                 tapDetector.onTouchEvent(event)
-                false
+                if (event.actionMasked == MotionEvent.ACTION_UP ||
+                    event.actionMasked == MotionEvent.ACTION_CANCEL
+                ) {
+                    val consumeGesture = suppressDoubleTap
+                    suppressDoubleTap = false
+                    consumeGesture
+                } else {
+                    suppressDoubleTap
+                }
             }
         }
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
@@ -520,6 +536,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 setOnDoubleTapListener(
                     object : GestureDetector.SimpleOnGestureListener() {
                         override fun onDoubleTap(e: MotionEvent): Boolean {
+                            // Replacing the listener removes the view's own double tap zoom, so
+                            // reporting the gesture as unhandled leaves the scale untouched.
+                            if (config?.doubleTapZoomEnabled == false) return false
                             if (scale > 1F) {
                                 setScale(1F, e.x, e.y, true)
                             } else {
@@ -582,7 +601,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     /**
-     * All of the config except [zoomDuration] will only be used for non-animated image.
+     * All of the config except [zoomDuration] and [doubleTapZoomEnabled] will only be used for
+     * non-animated image.
      */
     data class Config(
         val zoomDuration: Int,
@@ -590,6 +610,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val cropBorders: Boolean = false,
         val zoomStartPosition: ZoomStartPosition = ZoomStartPosition.CENTER,
         val landscapeZoom: Boolean = false,
+        val doubleTapZoomEnabled: Boolean = true,
     )
 
     enum class ZoomStartPosition {
