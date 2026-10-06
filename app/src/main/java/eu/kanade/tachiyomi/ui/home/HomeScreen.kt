@@ -37,6 +37,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
+import eu.kanade.tachiyomi.ui.home.SuwayomiBrowseTab
 import eu.kanade.tachiyomi.ui.library.BooksTab
 import eu.kanade.tachiyomi.ui.library.ComicsTab
 import eu.kanade.tachiyomi.ui.library.ConnectionLibraryTab
@@ -44,13 +45,16 @@ import eu.kanade.tachiyomi.ui.library.LibraryTab
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.more.MoreTab
 import koharia.connection.ConnectionContentScopeController
+import koharia.connection.ConnectionPreferences
 import koharia.connection.LibraryContentScope
+import koharia.source.suwayomi.SuwayomiSource
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import soup.compose.material.motion.animation.materialFadeThroughIn
 import soup.compose.material.motion.animation.materialFadeThroughOut
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.presentation.core.components.material.NavigationBar
 import tachiyomi.presentation.core.components.material.NavigationRail
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -58,6 +62,7 @@ import tachiyomi.presentation.core.motion.EInkAnimatedContent
 import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import tachiyomi.presentation.core.util.collectAsState as collectPreferenceAsState
 
 object HomeScreen : Screen() {
 
@@ -81,11 +86,27 @@ object HomeScreen : Screen() {
         }.collectAsState(contentScopeController.activeScopes())
         val classificationEnabled = LibraryContentScope.COMIC in contentScopes &&
             LibraryContentScope.BOOK in contentScopes
+        val connectionPreferences = remember { Injekt.get<ConnectionPreferences>() }
+        val activeConnectionId by connectionPreferences.activeConnectionId.collectPreferenceAsState()
+        val suwayomiActive = remember(activeConnectionId) {
+            Injekt.get<SourceManager>().get(activeConnectionId) is SuwayomiSource
+        }
         val defaultLibraryTab: ConnectionLibraryTab = if (classificationEnabled) ComicsTab else LibraryTab
         val tabs = if (classificationEnabled) {
-            listOf(ComicsTab, BooksTab, HistoryTab, MoreTab)
+            buildList<eu.kanade.presentation.util.Tab> {
+                add(ComicsTab)
+                add(BooksTab)
+                if (suwayomiActive) add(SuwayomiBrowseTab)
+                add(HistoryTab)
+                add(MoreTab)
+            }
         } else {
-            listOf(LibraryTab, HistoryTab, MoreTab)
+            buildList<eu.kanade.presentation.util.Tab> {
+                add(LibraryTab)
+                if (suwayomiActive) add(SuwayomiBrowseTab)
+                add(HistoryTab)
+                add(MoreTab)
+            }
         }
         TabNavigator(
             tab = defaultLibraryTab,
@@ -164,8 +185,9 @@ object HomeScreen : Screen() {
                 activity?.finish()
             }
 
-            LaunchedEffect(classificationEnabled) {
+            LaunchedEffect(classificationEnabled, suwayomiActive) {
                 tabNavigator.current = when {
+                    !suwayomiActive && tabNavigator.current == SuwayomiBrowseTab -> defaultLibraryTab
                     classificationEnabled && tabNavigator.current == LibraryTab -> ComicsTab
                     !classificationEnabled &&
                         (tabNavigator.current == ComicsTab || tabNavigator.current == BooksTab) -> LibraryTab
@@ -173,7 +195,7 @@ object HomeScreen : Screen() {
                 }
             }
 
-            LaunchedEffect(classificationEnabled) {
+            LaunchedEffect(classificationEnabled, suwayomiActive) {
                 launch {
                     librarySearchEvent.receiveAsFlow().collectLatest {
                         goToLibraryTab()
@@ -193,6 +215,7 @@ object HomeScreen : Screen() {
                             Tab.Updates -> if (classificationEnabled) BooksTab else LibraryTab
                             Tab.History -> HistoryTab
                             is Tab.More -> MoreTab
+                            Tab.Browse -> if (suwayomiActive) SuwayomiBrowseTab else defaultLibraryTab
                         }
 
                         if (it is Tab.Library && it.mangaIdToOpen != null) {
@@ -303,6 +326,7 @@ object HomeScreen : Screen() {
         ) : Tab
         data object Updates : Tab
         data object History : Tab
+        data object Browse : Tab
         data class More(val toDownloads: Boolean) : Tab
     }
 }

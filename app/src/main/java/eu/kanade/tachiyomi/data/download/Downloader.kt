@@ -411,7 +411,11 @@ class Downloader(
     fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean, mode: Download.Mode?) {
         if (chapters.isEmpty()) return
 
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val source = sourceManager.get(manga.source) ?: return
+        val fileTransfer = (source as? koharia.connection.ConnectionFileTransferAdapter)?.takeIf {
+            it.supportsFileTransfers
+        }
+        if (source !is HttpSource && fileTransfer == null) return
         val wasEmpty = queueState.value.isEmpty()
         val chaptersToQueue = chapters.asSequence()
             // Filter out those already downloaded.
@@ -426,7 +430,13 @@ class Downloader(
                     source,
                     manga,
                     chapter,
-                    resolveChapterDownloadMode(source as? ConnectionRawDownloadAdapter, chapter, mode),
+                    if (fileTransfer !=
+                        null
+                    ) {
+                        Download.Mode.RAW_FILE
+                    } else {
+                        resolveChapterDownloadMode(source as? ConnectionRawDownloadAdapter, chapter, mode)
+                    },
                 )
             }
             .toList()
@@ -485,6 +495,135 @@ class Downloader(
             download.chapter.url,
         )
 
+        val fileTransfer = (download.source as? koharia.connection.ConnectionFileTransferAdapter)?.takeIf {
+            it.supportsFileTransfers
+        }
+        if (fileTransfer != null) {
+            var restarted = false
+            while (true) {
+                try {
+                    val description = fileTransfer.describeFileTransfer(download.chapter.url)
+                    require(description.extension.matches(Regex("[a-zA-Z0-9]{1,10}")))
+                    val name = "$chapterDirname.${description.extension}"
+                    val temporaryName = "$name$TMP_DIR_SUFFIX"
+                    var temporary = mangaDir.findFile(temporaryName)
+                    var bytes = 0L
+                    val checkpoint = fileTransfer.fileTransferCheckpoint(download.chapter.url)
+                    val digest = java.security.MessageDigest.getInstance("SHA-256")
+                    if (!restarted && temporary != null && checkpoint != null && description.size >= 0 &&
+                        checkpoint.version == description.version && checkpoint.bytes in 1..description.size &&
+                        temporary.length() >= checkpoint.bytes
+                    ) {
+                        temporary.openInputStream().use { input ->
+                            val buffer = ByteArray(256 * 1024)
+                            var remaining = checkpoint.bytes
+                            while (remaining > 0) {
+                                currentCoroutineContext().ensureActive()
+                                val count = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                                if (count <= 0) throw IOException("Incomplete checkpoint")
+                                digest.update(buffer, 0, count)
+                                remaining -= count
+                            }
+                        }
+                        val observed = (digest.clone() as java.security.MessageDigest).digest()
+                            .joinToString("") { "%02x".format(it) }
+                        if (observed == checkpoint.sha256) {
+                            val file = temporary
+                            val truncated = file.length() == checkpoint.bytes || runCatching {
+                                val random = file.createRandomAccessFile("rw")
+                                try {
+                                    random.setLength(checkpoint.bytes)
+                                } finally {
+                                    random.close()
+                                }
+                                file.length() == checkpoint.bytes
+                            }.getOrDefault(false)
+                            if (truncated) bytes = checkpoint.bytes
+                        }
+                    }
+                    if (bytes == 0L) {
+                        digest.reset()
+                        temporary?.delete()
+                        temporary = checkNotNull(mangaDir.createFile(temporaryName))
+                        fileTransfer.clearFileTransferCheckpoint(download.chapter.url)
+                    }
+                    val transferFile = checkNotNull(temporary)
+                    if (availSpace >= 0 && description.size >= 0 &&
+                        availSpace < description.size - bytes + MIN_DISK_SPACE
+                    ) {
+                        throw IOException(context.stringResource(MR.strings.download_insufficient_space))
+                    }
+                    val transferContext = currentCoroutineContext()
+                    var checkpointBytes = bytes
+                    download.mode = Download.Mode.RAW_FILE
+                    download.status = Download.State.DOWNLOADING
+                    transferFile.openOutputStream(bytes > 0).use { target ->
+                        fileTransfer.transferFile(
+                            download.chapter.url,
+                            description,
+                            object : java.io.FilterOutputStream(target) {
+                                override fun write(buffer: ByteArray, offset: Int, length: Int) {
+                                    transferContext.ensureActive()
+                                    if (description.size >= 0 && bytes + length > description.size) {
+                                        throw IOException("File transfer exceeded expected size")
+                                    }
+                                    out.write(buffer, offset, length)
+                                    digest.update(buffer, offset, length)
+                                    bytes += length
+                                    download.updateRawProgress(bytes, description.size.coerceAtLeast(0))
+                                    if (description.size >= 0 && bytes - checkpointBytes >= 1024 * 1024) {
+                                        out.flush()
+                                        val hash = (digest.clone() as java.security.MessageDigest).digest()
+                                            .joinToString("") { "%02x".format(it) }
+                                        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                                            fileTransfer.saveFileTransferCheckpoint(
+                                                download.chapter.url,
+                                                koharia.connection.ConnectionFileTransferCheckpoint(
+                                                    description.version,
+                                                    bytes,
+                                                    hash,
+                                                ),
+                                            )
+                                        }
+                                        checkpointBytes = bytes
+                                    }
+                                }
+                                override fun write(value: Int) {
+                                    write(byteArrayOf(value.toByte()), 0, 1)
+                                }
+                            },
+                            offset = bytes,
+                        )
+                    }
+                    currentCoroutineContext().ensureActive()
+                    if (description.size >= 0 && bytes != description.size) {
+                        throw IOException("Incomplete file transfer")
+                    }
+                    mangaDir.findFile(name)?.delete()
+                    finalizeDownloadedFile(mangaDir, transferFile, name)
+                    fileTransfer.clearFileTransferCheckpoint(download.chapter.url)
+                    cache.addChapter(name, mangaDir, download.manga)
+                    DiskUtil.createNoMediaFile(mangaDir, context)
+                    download.updateRawProgress(bytes, bytes)
+                    download.status = Download.State.DOWNLOADED
+                    return
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    if (error is koharia.connection.ConnectionFileTransferRestartRequired) {
+                        fileTransfer.clearFileTransferCheckpoint(download.chapter.url)
+                        if (!restarted) {
+                            // The backend cannot continue a partial file, so transfer it again from the start.
+                            restarted = true
+                            continue
+                        }
+                    }
+                    download.status = Download.State.ERROR
+                    notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
+                    return
+                }
+            }
+        }
+
         if (download.mode == Download.Mode.RAW_FILE) {
             val rawSuccess = try {
                 tryDownloadRawFile(download, mangaDir, chapterDirname)
@@ -539,7 +678,7 @@ class Downloader(
                     if (page.imageUrl.isNullOrEmpty()) {
                         page.status = Page.State.LoadPage
                         try {
-                            page.imageUrl = download.source.getImageUrl(page)
+                            page.imageUrl = (download.source as HttpSource).getImageUrl(page)
                         } catch (e: Throwable) {
                             page.status = Page.State.Error(e)
                         }
@@ -897,7 +1036,7 @@ class Downloader(
                 chapterCache.isImageInCache(
                     page.imageUrl!!,
                 ) -> copyImageFromCache(chapterCache.getImageFile(page.imageUrl!!), tmpDir, filename)
-                else -> downloadImage(page, download.source, tmpDir, filename)
+                else -> downloadImage(page, download.source as HttpSource, tmpDir, filename)
             }
 
             // When the page is ready, set page path, progress (just in case) and status
@@ -1127,14 +1266,14 @@ class Downloader(
         dir: UniFile,
         manga: Manga,
         chapter: Chapter,
-        source: HttpSource,
+        source: eu.kanade.tachiyomi.source.Source,
     ) {
         val categories = getCategories.await(manga.id).map { it.name.trim() }.takeUnless { it.isEmpty() }
         val urls = getTracks.await(manga.id)
             .mapNotNull { track ->
                 track.remoteUrl.takeUnless { url -> url.isBlank() }?.trim()
             }
-            .plus(source.getChapterUrl(chapter.toSChapter()).trim())
+            .plus((source as? HttpSource)?.getChapterUrl(chapter.toSChapter())?.trim().orEmpty())
             .distinct()
 
         val comicInfo = getComicInfo(

@@ -117,6 +117,7 @@ class LanraragiSource(
     ConnectionSource,
     ConnectionManagedLifecycle,
     ConnectionBrowseAdapter,
+    koharia.connection.ConnectionEntryOpeningAdapter,
     ConnectionPageAdapter,
     ConnectionHealthAdapter,
     ConnectionAccountAdapter,
@@ -234,6 +235,7 @@ class LanraragiSource(
     override val allowsUnvalidatedNetwork = true
     override val usesSharedDownloadStorage = false
     override val mangaBehavior = ConnectionMangaBehavior(
+        supportsChapterCoverGrid = true,
         providerManagedLibrary = true,
         allowsLocalLibraryManagement = false,
         allowsCategoryManagement = false,
@@ -272,6 +274,15 @@ class LanraragiSource(
     override suspend fun isConnectionReachable() = runCatching { api.serverInfo(true) }.isSuccess
     override suspend fun getAccount(): ConnectionAccount? = null
     override fun availableContentScopes() = setOf(LibraryContentScope.COMIC)
+    override fun seriesSettingsAvailable() = kotlinx.coroutines.flow.flowOf(true)
+
+    override fun entryOpeningSettings() = listOf(
+        koharia.connection.ConnectionEntryOpeningSetting(
+            tachiyomi.i18n.MR.strings.lanraragi_archive_open_mode,
+            preferences.archiveOpenModePreference(context),
+            koharia.connection.EntryOpenMode.entries,
+        ),
+    )
     override suspend fun readerContentScope(manga: Manga, chapter: Chapter) = LibraryContentScope.COMIC
     override fun createBrowseScreen(scope: LibraryContentScope, listingQuery: String?, showNavigationUp: Boolean) =
         LanraragiLibraryScreen(id, listingQuery, showNavigationUp)
@@ -766,6 +777,7 @@ class LanraragiSource(
             updatedChapterMemo = ConnectionChapterMetadata.withPagesCount(chapterMemo, state.totalPages),
             previousPublicationVersion = null, publicationVersion = null,
             requiresConfirmation = conflict,
+            blocksAutomaticSelection = conflict,
         )
     }
 

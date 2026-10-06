@@ -95,6 +95,7 @@ class KomgaSource(
     ConnectionSource,
     koharia.connection.ConnectionBackupRestoreAdapter,
     ConnectionBrowseAdapter,
+    koharia.connection.ConnectionEntryOpeningAdapter,
     ConnectionPageAdapter,
     ConnectionAccountAdapter,
     ConnectionMangaBehaviorAdapter,
@@ -141,6 +142,14 @@ class KomgaSource(
     }
 
     override fun seriesSettingsAvailable() = kotlinx.coroutines.flow.flowOf(true)
+
+    override fun entryOpeningSettings() = listOf(
+        koharia.connection.ConnectionEntryOpeningSetting(
+            tachiyomi.i18n.MR.strings.entry_open_komga_book,
+            Injekt.get<koharia.connection.EntryOpenPreferences>().komgaSingleBook,
+            koharia.connection.EntryOpenMode.entries,
+        ),
+    )
 
     override fun contentScopesChanges(): kotlinx.coroutines.flow.Flow<Set<LibraryContentScope>> {
         return Injekt.get<KomgaLibraryClassificationManager>().enabled.changes().map { enabled ->

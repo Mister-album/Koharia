@@ -116,6 +116,21 @@ Koharia focuses on reading from personal media libraries. It does not provide pu
 
 The DjVu decoder runs in the JavaScript / WebAssembly runtime provided by the system WebView. Chicory is not bundled or used by the current build. See [`app/src/main/assets/djvu/README.txt`](./app/src/main/assets/djvu/README.txt) for its source, license, and checksum.
 
+#### WebDAV / SMB (in development)
+
+Development builds offer Local directory, WebDAV, and SMB when adding a local library. Each connection has a fixed storage mode and can contain multiple shelf directories. Existing local connections retain their directory grants and reading records.
+
+Setup proceeds through name and storage type, remote authentication, the default library folder, then shelf definitions and metadata options. Local directories skip authentication. Authentication does not select directories. The default-folder page explains content folders, identity, metadata and sync data, separately from device caches. Local default folders belong to the connection and do not change global backup, download or cache locations. Editing connection details requires authentication and folder selection again. Existing connections retain their storage protocol.
+
+- WebDAV and SMB need only the server address and port on the authentication page (for example `https://example.com:5006` or `192.168.1.10:445`), where the credentials are verified. The library folder is chosen on the next page: WebDAV browses from the server root, accepts a typed path (such as `remote.php/dav/files/<user>`), or uses the root folder; SMB browses shares and subfolders. Neither requires typing a share or folder path, and “Choose library folder / Choose shared folder” in connection settings changes it later. Complete addresses (for example `https://example.com/dav/books/` or `smb://192.168.1.10/library`) remain compatible and prefill the browsing start. SMB2/SMB3 are supported.
+- A primary address and optional LAN address are supported. Automatic switching requires proof that both addresses access the same root. For LAN-only use, enter the LAN address as the primary address.
+- Initial scanning exposes entries progressively. Later visits use the saved index; refresh explicitly after external file changes. Reconnecting does not automatically rescan shelves.
+- Automatic content caching defaults to 512 MiB and is adjustable in shared settings. Manual downloads are managed separately. A cached catalogue does not mean the complete content is available offline.
+- Writable roots store library identity, move identity mappings, and progress records in `.koharia`. Progress uses event modification time, including backward movement and unread events; inaccurate device clocks affect conflict resolution. Roots without writable shared identity support one read-only address and local progress only.
+- Restored network connections require validation. Removing a connection cleans up its local state without deleting remote files.
+
+This feature is still undergoing development and acceptance testing, not released support. Large-file preparation UX, some ambiguous-write recovery cases, and the complete format/restore matrix remain unfinished. Matching content versions when accessing the same physical root through different protocols is not yet implemented.
+
 ### Unified comic and book management
 
 - Optionally split media libraries into Comics and Books, or keep everything in a combined library.

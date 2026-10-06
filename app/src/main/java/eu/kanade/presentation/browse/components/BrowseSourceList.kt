@@ -13,7 +13,10 @@ import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.DownloadedBadge
 import eu.kanade.presentation.library.components.MangaListItem
 import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.ManualDownloadIndicator
 import eu.kanade.presentation.library.components.displayText
+import koharia.connection.MangaDownloadState
+import koharia.connection.MangaDownloadStatus
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
@@ -27,7 +30,7 @@ fun BrowseSourceList(
     selectedMangaIds: Set<Long> = emptySet(),
     showLibraryBadges: Boolean,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
-    downloaded: ((Manga) -> Boolean)? = null,
+    downloadState: ((Manga) -> MangaDownloadState?)? = null,
     showPagingLoadingIndicator: Boolean = true,
     entryLabel: ((Manga) -> String)? = null,
     contentHeader: (@Composable () -> Unit)? = null,
@@ -55,7 +58,7 @@ fun BrowseSourceList(
                 isSelected = manga.id in selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
                 readProgress = readProgress?.invoke(manga),
-                downloaded = downloaded?.invoke(manga) == true,
+                downloadState = downloadState?.invoke(manga) ?: MangaDownloadState(0, null),
                 onClick = { onMangaClick(manga) },
                 onLongClick = { onMangaLongClick(manga) },
             )
@@ -80,11 +83,12 @@ private fun BrowseSourceListItem(
     isSelected: Boolean,
     showLibraryBadges: Boolean,
     readProgress: MangaReadProgress?,
-    downloaded: Boolean,
+    downloadState: MangaDownloadState,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
-    val isLibraryManga = showLibraryBadges && manga.favorite
+    val isLibraryManga = manga.favorite
+    val showLibraryBadge = showLibraryBadges && isLibraryManga
     val readProgressText = readProgress?.displayText()
     MangaListItem(
         title = label,
@@ -96,10 +100,10 @@ private fun BrowseSourceListItem(
             lastModified = manga.coverLastModified,
         ),
         isSelected = isSelected,
-        coverAlpha = if (isLibraryManga) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
+        coverAlpha = if (showLibraryBadge) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         badge = {
-            InLibraryBadge(enabled = isLibraryManga)
-            DownloadedBadge(enabled = downloaded)
+            InLibraryBadge(enabled = showLibraryBadge)
+            ManualDownloadIndicator(state = downloadState)
             entryBadge()
         },
         readProgressText = readProgressText,

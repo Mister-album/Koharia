@@ -11,6 +11,24 @@ import tachiyomi.domain.manga.model.Manga
 
 class SmangaShelfMangaTest {
     @Test
+    fun `refreshed shelf totals replace stale totals while preserving local metadata`() {
+        val local = Manga.create().copy(
+            memo = buildJsonObject {
+                put("booksCount", 2)
+                put("local", true)
+            },
+        )
+        val remote = Manga.create().copy(memo = buildJsonObject { put("booksCount", 3) })
+        assertEquals(
+            buildJsonObject {
+                put("booksCount", 3)
+                put("local", true)
+            },
+            mergeSmangaShelfManga(remote, local).memo,
+        )
+    }
+
+    @Test
     fun `remote shelf updates local display fields and keeps local state`() {
         val local = Manga.create().copy(
             id = 42,

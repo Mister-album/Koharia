@@ -1,5 +1,6 @@
 package koharia.epub.service
 
+import koharia.epub.injectEpubNotePrepaintStyle
 import logcat.LogPriority
 import org.readium.r2.shared.publication.Manifest
 import org.readium.r2.shared.publication.Publication
@@ -80,11 +81,12 @@ private fun Url.safeLogHref(): String =
 private fun ByteArray.normalizeEpubXhtmlForCompatibility(): EpubXhtmlByteCompatibilityResult {
     val decoded = decodeXhtml() ?: return EpubXhtmlByteCompatibilityResult(this, 0)
     val normalized = decoded.content.normalizeEpubXhtmlForCompatibility()
-    if (normalized.repairedAttributes == 0) {
+    val content = normalized.content.injectEpubNotePrepaintStyle()
+    if (normalized.repairedAttributes == 0 && content == decoded.content) {
         return EpubXhtmlByteCompatibilityResult(this, 0)
     }
     return EpubXhtmlByteCompatibilityResult(
-        bytes = decoded.byteOrderMark + normalized.content.toByteArray(decoded.charset),
+        bytes = decoded.byteOrderMark + content.toByteArray(decoded.charset),
         repairedAttributes = normalized.repairedAttributes,
     )
 }

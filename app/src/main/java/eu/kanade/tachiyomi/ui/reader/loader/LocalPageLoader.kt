@@ -54,7 +54,8 @@ internal class LocalPageLoader(
         var format: String? = null
         var sizeBytes: Long? = null
         try {
-            val file = fileAdapter.localChapterFile(chapter.chapter.url)
+            val file = (fileAdapter as? koharia.connection.ConnectionPreparedFileAdapter)
+                ?.prepareChapterFile(chapter.chapter.url) ?: fileAdapter.localChapterFile(chapter.chapter.url)
                 ?: error("Local chapter file is unavailable: ${chapter.chapter.url}")
             format = file.extension
             sizeBytes = file.length()

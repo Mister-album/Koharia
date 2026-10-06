@@ -872,6 +872,74 @@ class LegacyDatabaseSchemaBridge(
                     )
                 """.trimIndent(),
             ),
+            TableSpec(
+                name = "suwayomi_cache",
+                columns = listOf(
+                    ColumnSpec("connection_id"),
+                    ColumnSpec("account_key"),
+                    ColumnSpec("group_key"),
+                    ColumnSpec("cache_key"),
+                    ColumnSpec("payload"),
+                    ColumnSpec("generation"),
+                ),
+                createSql = """
+                    CREATE TABLE IF NOT EXISTS suwayomi_cache(
+                        connection_id INTEGER NOT NULL,
+                        account_key TEXT NOT NULL,
+                        group_key TEXT NOT NULL,
+                        cache_key TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        generation INTEGER NOT NULL,
+                        PRIMARY KEY (connection_id, account_key, group_key, cache_key)
+                    )
+                """.trimIndent(),
+            ),
+            TableSpec(
+                name = "suwayomi_operation",
+                columns = listOf(
+                    ColumnSpec("connection_id"),
+                    ColumnSpec("account_key"),
+                    ColumnSpec("operation_key"),
+                    ColumnSpec("payload"),
+                    ColumnSpec("revision"),
+                    ColumnSpec("pending"),
+                ),
+                createSql = """
+                    CREATE TABLE IF NOT EXISTS suwayomi_operation(
+                        connection_id INTEGER NOT NULL,
+                        account_key TEXT NOT NULL,
+                        operation_key TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        revision INTEGER NOT NULL,
+                        pending INTEGER NOT NULL,
+                        PRIMARY KEY (connection_id, account_key, operation_key)
+                    )
+                """.trimIndent(),
+            ),
+            TableSpec(
+                name = "library_storage_record",
+                columns = listOf(
+                    ColumnSpec("connection_id"),
+                    ColumnSpec("account_key"),
+                    ColumnSpec("root_id"),
+                    ColumnSpec("namespace"),
+                    ColumnSpec("record_key"),
+                    ColumnSpec("payload"),
+                    ColumnSpec("revision"),
+                ),
+                createSql = """
+                    CREATE TABLE IF NOT EXISTS library_storage_record(
+                        connection_id INTEGER NOT NULL,
+                        account_key TEXT NOT NULL,
+                        root_id TEXT NOT NULL,
+                        namespace TEXT NOT NULL,
+                        record_key TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        revision INTEGER NOT NULL,
+                        PRIMARY KEY (connection_id, account_key, root_id, namespace, record_key)
+                    )
+                """.trimIndent(),
+            ),
         )
 
         val ALL_TABLE_SPECS = CORE_TABLE_SPECS + AUXILIARY_TABLE_SPECS

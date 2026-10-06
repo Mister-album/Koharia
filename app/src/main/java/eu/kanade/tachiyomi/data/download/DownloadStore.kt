@@ -107,7 +107,12 @@ class DownloadStore(
                 val manga = cachedManga.getOrPut(mangaId) {
                     runBlocking { getManga.await(mangaId) }
                 } ?: continue
-                val source = sourceManager.get(manga.source) as? HttpSource ?: continue
+                val source = sourceManager.get(manga.source) ?: continue
+                if (source !is HttpSource &&
+                    (source as? koharia.connection.ConnectionFileTransferAdapter)?.supportsFileTransfers != true
+                ) {
+                    continue
+                }
                 val chapter = runBlocking { getChapter.await(chapterId) } ?: continue
                 downloads.add(
                     Download(source, manga, chapter, mode).apply {

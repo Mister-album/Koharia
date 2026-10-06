@@ -837,6 +837,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
             memo, previousVersion, version,
             requiresPageMappingConfirmation = (oldTotal != null && oldTotal != chapter.pages) ||
                 (previousVersion != null && previousVersion != version),
+            blocksAutomaticSelection = snapshot.conflict,
         )
     }
     override suspend fun acceptRemotePageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {

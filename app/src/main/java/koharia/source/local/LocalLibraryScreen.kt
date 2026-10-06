@@ -180,6 +180,9 @@ data class LocalLibraryScreen(
             )
         }
         val state by screenModel.state.collectAsState()
+        val refreshTasks = remember { Injekt.get<LocalLibraryRefreshTasks>() }
+        val backgroundRefreshes by refreshTasks.activeIds.collectAsState()
+        val backgroundRefreshErrors by refreshTasks.errors.collectAsState()
         val parentManga by screenModel.parentManga.collectAsState(initial = null)
         val seriesDisplayMode by libraryPreferences.chapterCoverDisplayMode.collectAsState()
         val displayMode = if (parentUrl == null) {
@@ -207,6 +210,7 @@ data class LocalLibraryScreen(
         }
         val showLibraryReadProgress by readProgressPreference.collectAsState()
         val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
+        val readingUnitCounts by screenModel.readingUnitCounts.collectAsState()
         val configuration = LocalConfiguration.current
         val columnsPreference = if (parentUrl != null) {
             if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -285,7 +289,7 @@ data class LocalLibraryScreen(
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
 
-        val isRefreshing = state.isRefreshing
+        val isRefreshing = state.isRefreshing || sourceId in backgroundRefreshes
         val pullRefreshState = rememberPullRefreshState(
             refreshing = isRefreshing,
             onRefresh = screenModel::refresh,
@@ -576,11 +580,11 @@ data class LocalLibraryScreen(
                         .fillMaxSize()
                         .pullRefresh(pullRefreshState),
                 ) {
-                    val refreshError = state.refreshError
+                    val refreshError = state.refreshError ?: backgroundRefreshErrors[sourceId]
                         ?: (mangaList.loadState.refresh as? LoadState.Error)?.error
                     when {
                         mangaList.itemCount == 0 &&
-                            (state.isRefreshing || mangaList.loadState.refresh is LoadState.Loading) -> {
+                            (isRefreshing || mangaList.loadState.refresh is LoadState.Loading) -> {
                             LoadingScreen(Modifier.padding(paddingValues))
                         }
                         mangaList.itemCount == 0 && state.submittedQuery.isBlank() && !state.filters.isActive &&
@@ -626,6 +630,7 @@ data class LocalLibraryScreen(
                                 snackbarHostState = snackbarHostState,
                                 contentPadding = paddingValues,
                                 showLibraryBadges = false,
+                                readingUnitCount = { manga -> readingUnitCounts[manga.url.trimEnd('/')] },
                                 selectedMangaIds = selectedIds,
                                 readProgress = if (showLibraryReadProgress) {
                                     { manga ->

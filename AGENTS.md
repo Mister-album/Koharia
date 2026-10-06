@@ -181,3 +181,10 @@ Use proportional compile/tests for:
 - Fetch shelf data only when the requested cache is missing, the user explicitly refreshes/changes server settings, or an actual server update event (such as SSE) invalidates it. Connectivity recovery alone does not invalidate cached data.
 - Keep valid empty caches distinct from missing caches. Retry initial failures without deleting prior successful data. Scope caches by connection/account and preserve read-progress synchronization as a separate pipeline.
 - Use `ConnectionShelfCachePolicy` and `ConnectionShelfUpdates`; test warm startup without server requests, cold-cache bootstrap, refresh failure retention, and account isolation for every new network provider.
+
+### Library Storage Modes
+
+- A provider may expose multiple storage modes. Include every applicable mode in its integration inventory; testing the local-folder provider with a native directory does not cover WebDAV or SMB. Network-backed local libraries must follow the remote shelf cache contract and shared download, details, and settings contracts.
+- Keep protocol operations behind `LibraryStorageBackend`; do not put network access in synchronous metadata getters. Resource and progress identity must not depend on the currently selected address. Verify both endpoints represent the same root before enabling failover, and never blindly retry mutations after an ambiguous response.
+- Keep persistent catalogue/cover state, evictable content caches, and manual downloads distinct. Exercise interrupted writes and conflicting external changes before claiming file-management support; compilation does not validate Android descriptors or SMB runtime compatibility.
+- Network roots are not SAF grants. Restore their configuration and pending progress separately from local directory permission rebinding, retain root/account isolation, and require connection validation after restore. Do not back up transient byte caches or reuse another installation's writer identity.

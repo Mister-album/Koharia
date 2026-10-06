@@ -67,6 +67,12 @@ internal object DirectoryRestorePlan {
                 source.sourceKey.startsWith("source_") &&
                     source.sourceKey.removePrefix("source_").toLongOrNull() != null
             }
+            .filterNot { source ->
+                source.prefs.firstOrNull { it.key == "network_storage_configuration" }
+                    ?.let { (it.value as? StringPreferenceValue)?.value }
+                    ?.let { json.decodeFromString<koharia.storage.NetworkStorageConfiguration>(it) }
+                    ?.mode?.let { it != koharia.storage.LibraryStorageMode.LOCAL } == true
+            }
             .flatMap { it.prefs.asSequence() }
             .filter { it.key == LOCAL_LIBRARY_CONFIG_KEY }
             .forEach { preference ->

@@ -144,6 +144,7 @@ class EpubReaderFragment : Fragment() {
     private var continuousScrollInstallJob: Job? = null
     private var continuousScrollInstallHref: String? = null
     private var imageInteractionInstallJob: Job? = null
+    private var pageLoadedPreparationJob: Job? = null
     private var fontSwitchJob: Job? = null
     private var fontRequirementCaptureJob: Job? = null
     private var paginationStartJob: Job? = null
@@ -227,6 +228,7 @@ class EpubReaderFragment : Fragment() {
         override fun onPageLoaded() {
             pageTransitionController?.onPageLoaded()
             scheduleContinuousScrollInstall(readyNavigatorFragment())
+            schedulePageLoadedPreparation()
         }
     }
 
@@ -408,6 +410,8 @@ class EpubReaderFragment : Fragment() {
         clearContinuousScrollState()
         imageInteractionInstallJob?.cancel()
         imageInteractionInstallJob = null
+        pageLoadedPreparationJob?.cancel()
+        pageLoadedPreparationJob = null
         fontSwitchJob?.cancel()
         fontSwitchJob = null
         fontRequirementCaptureJob?.cancel()
@@ -1028,6 +1032,36 @@ class EpubReaderFragment : Fragment() {
         }
     }
 
+    /**
+     * The document preparation runs in the draw pass, which happens while the resource is still
+     * loading. Its evaluation stores nothing then, so the visible resource is prepared again once
+     * the navigator reports the page as loaded.
+     */
+    private fun schedulePageLoadedPreparation() {
+        pageLoadedPreparationJob?.cancel()
+        if (!isAdded || view == null) return
+        pageLoadedPreparationJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(PAGE_LOADED_PREPARATION_DELAY_MS)
+            if (!isAdded || view == null) return@launch
+            val navigator = readyNavigatorFragment() ?: return@launch
+            var retried = false
+            navigator.publicationView.forEachWebView { webView ->
+                val url = webView.url?.substringBefore('#')?.takeIf { it.isNotBlank() } ?: return@forEachWebView
+                if (!webView.isVisiblyDrawn()) return@forEachWebView
+                retried = true
+                val policyKey = "$imageColorPolicyGeneration:$url"
+                if (installedImageColorPolicies[webView] == policyKey) {
+                    installedImageColorPolicies.remove(webView)
+                }
+                pendingImageColorPolicies.remove(webView)
+            }
+            if (retried) {
+                logcat(LogPriority.DEBUG) { "EPUB preparation retry after page load chapterId=$chapterId" }
+                imageColorPolicyRoot?.postInvalidateOnAnimation()
+            }
+        }
+    }
+
     private fun scheduleImageInteractionsInstall(
         navigator: EpubNavigatorFragment? = readyNavigatorFragment(),
     ) {
@@ -1127,7 +1161,10 @@ class EpubReaderFragment : Fragment() {
                         if (pendingImageColorPolicies[webView] == policyKey) {
                             pendingImageColorPolicies.remove(webView)
                         }
-                        val documentReady = result != "\"pending\""
+                        // A null result means the document was not ready to run the preparation, so
+                        // the next draw must retry instead of leaving the resource unprepared.
+                        val scriptRan = result != null && result != ""
+                        val documentReady = scriptRan && result != "\"pending\""
                         val fontReady = !expectedRequiresAsyncFontLoad ||
                             result == "\"ready\"" || result == "\"failed\""
                         if (result == "\"failed\"" && expectedRequiresAsyncFontLoad && wasVisible &&
@@ -1139,7 +1176,8 @@ class EpubReaderFragment : Fragment() {
                             } ?: EpubFontId.ORIGINAL.value
                             reportFontFailure(expectedFontKey, fallbackFontId)
                         }
-                        if (documentReady && fontReady && imageColorPolicyGeneration == generation &&
+                        if (scriptRan && documentReady && fontReady &&
+                            imageColorPolicyGeneration == generation &&
                             webView.url?.substringBefore('#') == url
                         ) {
                             installedImageColorPolicies[webView] = policyKey
@@ -1152,12 +1190,9 @@ class EpubReaderFragment : Fragment() {
                         {
                             if (pendingImageColorPolicies[webView] == policyKey) {
                                 pendingImageColorPolicies.remove(webView)
-                                if (imageColorPolicyGeneration == generation &&
-                                    webView.url?.substringBefore('#') == url
-                                ) {
-                                    installedImageColorPolicies[webView] = policyKey
-                                    imageColorPolicyDrawWaits.remove(webView)
-                                }
+                                // The callback never arrived, so the preparation is unverified: keep
+                                // the resource uninstalled and let a later draw retry it.
+                                imageColorPolicyDrawWaits.remove(webView)
                                 root.postInvalidateOnAnimation()
                             }
                         },
@@ -1841,6 +1876,7 @@ class EpubReaderFragment : Fragment() {
         private const val EPUB_FONT_BRIDGE_NAME = "KohariaEpubFont"
         private const val CONTINUOUS_SCROLL_INSTALL_DELAY_MS = 180L
         private const val IMAGE_INTERACTION_INSTALL_DELAY_MS = 80L
+        private const val PAGE_LOADED_PREPARATION_DELAY_MS = 120L
         private const val IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS = 250L
         private const val FONT_PREPARATION_DRAW_TIMEOUT_MS = 8_000L
         private const val FONT_PREPARATION_POLL_MS = 40L

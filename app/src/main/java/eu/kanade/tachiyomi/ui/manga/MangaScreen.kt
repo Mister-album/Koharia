@@ -171,6 +171,9 @@ class MangaScreen(
                     { navigator.push(SeriesMetadataEditScreen(successState.manga.id)) }
                 },
             onEditCategoryClicked = when {
+                successState.source is koharia.connection.ConnectionRemoteCategoriesAdapter -> {
+                    { navigator.push(successState.source.remoteCategoriesScreen(successState.manga.url)) }
+                }
                 successState.source is ConnectionLibraryShelfAdapter &&
                     successState.source.isLibraryShelfAssignable(successState.manga.url) -> {
                     screenModel::showChangeConnectionLibraryShelfDialog

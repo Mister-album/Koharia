@@ -104,7 +104,7 @@ class KavitaLibraryScreen(
         runtimeModel = model
         val state by model.state.collectAsState()
         val readProgressByUrl by model.readProgressByUrl.collectAsState()
-        val downloadedSeriesByUrl by model.downloadedSeriesByUrl.collectAsState()
+        val readingUnitCounts by model.readingUnitCounts.collectAsState()
         val pages = model.pages.collectAsLazyPagingItems()
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
@@ -286,7 +286,7 @@ class KavitaLibraryScreen(
                             } else {
                                 null
                             },
-                            downloaded = { manga -> downloadedSeriesByUrl[manga.url] == true },
+                            readingUnitCount = { manga -> readingUnitCounts[manga.url] },
                             onWebViewClick = { navigator.push(KavitaSettingsScreen(sourceId)) },
                             onHelpClick = { navigator.push(KavitaSettingsScreen(sourceId)) },
                             onMangaClick = ::open,
@@ -304,6 +304,8 @@ class KavitaLibraryScreen(
                 initial = model.editableFilter(),
                 libraries = state.media,
                 cachedOnly = state.downloadedOnly,
+                persistentFilters = state.persistentFilters,
+                onPersistentFiltersChange = model::setPersistentFilters,
                 onDismissRequest = { filters = false },
                 onApply = model::applyFilter,
             )

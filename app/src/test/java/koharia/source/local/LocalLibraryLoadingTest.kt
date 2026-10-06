@@ -179,6 +179,23 @@ class LocalLibraryLoadingTest {
         }
     }
 
+    @Test
+    fun `network downloads retain indexed totals when reading progress is hidden`() = runTest {
+        val dispatcher = UnconfinedTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        val manga = Manga.create().copy(id = 1, source = 42, url = "book")
+        val fixture = fixture(flowOf(listOf(manga)), networkStorage = true)
+        try {
+            val counts = fixture.model.readingUnitCounts.first { manga.url in it }
+            assertEquals(1L, counts.getValue(manga.url))
+            coVerify(exactly = 0) { fixture.source.documentPageCount(any()) }
+            coVerify(exactly = 0) { fixture.source.refreshLibrary() }
+        } finally {
+            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun presenter() = RecordingPresenter()
 
     private class RecordingPresenter : PagingDataPresenter<StateFlow<Manga>>(Dispatchers.Main) {
@@ -192,12 +209,14 @@ class LocalLibraryLoadingTest {
         mangas: Flow<List<Manga>>,
         needsScan: Boolean = false,
         showReadProgress: Boolean = false,
+        networkStorage: Boolean = false,
         progressChapters: Map<Long, List<Chapter>> = emptyMap(),
         refresh: suspend () -> Result<ConnectionLibraryRefreshResult> = {
             Result.success(ConnectionLibraryRefreshResult(0, 1))
         },
     ): Fixture {
         val source = mockk<LocalFolderSource>()
+        every { source.supportsFileTransfers } returns networkStorage
         val sourceManager = mockk<SourceManager>()
         val sourcePreferences = mockk<SourcePreferences>()
         val libraryPreferences = mockk<LibraryPreferences>()
@@ -218,6 +237,7 @@ class LocalLibraryLoadingTest {
         every { source.libraryRefreshes } returns MutableSharedFlow()
         every { source.libraryShelves } returns flowOf(emptyList())
         coEvery { source.needsInitialScan() } returns needsScan
+        coEvery { source.resumePendingNetworkScan() } returns Unit
         coEvery { source.refreshLibrary() } coAnswers { refresh() }
         coEvery { source.browseIndexedLibrary(any(), any(), any(), any(), any()) } coAnswers { firstArg() }
         every { mangaRepository.getMangaBySourceIdAsFlow(42) } returns mangas

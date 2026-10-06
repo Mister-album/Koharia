@@ -332,6 +332,11 @@
             android:foregroundServiceType="mediaPlayback" />
 
         <provider
+            android:name="koharia.storage.StorageDocumentsProvider"
+            android:authorities="${applicationId}.library-storage"
+            android:exported="false"
+            android:grantUriPermissions="false" />
+        <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"
             android:exported="false"

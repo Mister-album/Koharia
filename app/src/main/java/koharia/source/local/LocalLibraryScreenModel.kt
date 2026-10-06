@@ -81,6 +81,9 @@ internal class LocalLibraryScreenModel(
 
     val events = eventChannel.receiveAsFlow()
     val readProgressByUrl: StateFlow<Map<String, MangaReadProgress>> = localReadProgress.asStateFlow()
+    private val localReadingUnitCounts = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val readingUnitCounts = localReadingUnitCounts.asStateFlow()
+    private val needsDownloadCounts get() = (source as? LocalFolderSource)?.supportsFileTransfers == true
 
     private val showReadProgress = if (parentUrl == null) {
         libraryPreferences.showLibraryReadProgress
@@ -93,6 +96,14 @@ internal class LocalLibraryScreenModel(
     }
 
     init {
+        if (needsDownloadCounts) {
+            screenModelScope.launchIO { (source as? LocalFolderSource)?.resumePendingNetworkScan() }
+        }
+        // The toggle reflects the stored choice even before any filters were saved, so turning it
+        // off and returning does not show it enabled again.
+        filterPreferences?.enabled?.let { enabled ->
+            mutableState.update { it.copy(rememberFilters = enabled) }
+        }
         filterPreferences?.read().takeIf { filterPreferences?.enabled == true }?.let { saved ->
             appliedFilters.value = saved.filters
             selectedBookshelfId.value = saved.bookshelfId
@@ -100,7 +111,6 @@ internal class LocalLibraryScreenModel(
                 it.copy(
                     filters = saved.filters,
                     selectedBookshelfId = saved.bookshelfId,
-                    rememberFilters = true,
                 )
             }
         }
@@ -109,12 +119,12 @@ internal class LocalLibraryScreenModel(
                 refreshLocalReadProgress()
             }
         }
-        if (parentUrl != null || showReadProgress.get()) {
+        if (parentUrl != null || showReadProgress.get() || needsDownloadCounts) {
             refreshReadProgress()
         }
         screenModelScope.launchIO {
             showReadProgress.changes().collect { enabled ->
-                if (parentUrl != null || enabled) {
+                if (parentUrl != null || enabled || needsDownloadCounts) {
                     refreshReadProgress()
                 } else {
                     localReadProgress.value = emptyMap()
@@ -125,7 +135,7 @@ internal class LocalLibraryScreenModel(
             screenModelScope.launchIO {
                 refreshAdapter.libraryRefreshes.collect {
                     refreshSignal.value += 1
-                    if (parentUrl != null || showReadProgress.get()) {
+                    if (parentUrl != null || showReadProgress.get() || needsDownloadCounts) {
                         refreshReadProgress()
                     }
                 }
@@ -153,11 +163,12 @@ internal class LocalLibraryScreenModel(
 
     private suspend fun refreshLocalReadProgress() {
         val localSource = source as? LocalFolderSource ?: return
-        if (parentUrl == null && !showReadProgress.get()) return
+        if (parentUrl == null && !showReadProgress.get() && !needsDownloadCounts) return
 
         val mangas = mangaRepository.getMangaBySourceId(sourceId)
         val chaptersByMangaId = getChaptersByMangaId.await(mangas.map(Manga::id))
         val readProgressIndexes = localSource.readProgressIndexes(mangas.map(Manga::url))
+        localReadingUnitCounts.value = readProgressIndexes.mapValues { it.value.indexedChapterCount.toLong() }
         val entries = mangas.map { manga ->
             val chapters = chaptersByMangaId[manga.id].orEmpty()
             val index = readProgressIndexes[manga.url.trimEnd('/')]

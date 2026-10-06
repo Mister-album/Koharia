@@ -644,6 +644,7 @@ class SmangaReadingCoordinator(
             },
             previousPublicationVersion = version, publicationVersion = version, requiresConfirmation = confirmation,
             requiresPageMappingConfirmation = confirmation,
+            blocksAutomaticSelection = confirmation,
         )
     }
 

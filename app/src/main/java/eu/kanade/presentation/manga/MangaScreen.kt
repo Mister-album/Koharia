@@ -231,6 +231,11 @@ private fun MangaScreenImpl(
     onAllChapterSelected: (Boolean) -> Unit,
     onInvertSelection: () -> Unit,
 ) {
+    val serverDownloads = koharia.connection.ui.rememberConnectionServerDownloadActions(
+        state.source as? koharia.connection.ConnectionServerDownloadsAdapter,
+        state.manga.url,
+        snackbarHostState,
+    )
     val chapters = state.processedChapters
     val listItem = state.chapterListItems
     val isAnySelected = state.isAnySelected
@@ -323,6 +328,7 @@ private fun MangaScreenImpl(
         },
         listContent = {
             sharedChapterItems(
+                serverDownloads = serverDownloads,
                 manga = state.manga, chapters = listItem, showChapterReadProgress = showChapterReadProgress,
                 showChapterFileSize = showChapterFileSize, isConnectionCacheMode = isConnectionCacheMode,
                 isAnyChapterSelected = isAnySelected, chapterSwipeStartAction = chapterSwipeStartAction,
@@ -333,6 +339,7 @@ private fun MangaScreenImpl(
         },
         gridContent = {
             sharedChapterGridItems(
+                serverDownloads = serverDownloads,
                 manga = state.manga,
                 chapterThumbnailUrl = state.source::connectionChapterThumbnailUrl,
                 chapters = listItem,
@@ -345,6 +352,7 @@ private fun MangaScreenImpl(
         },
         bottomBar = {
             SharedMangaBottomActionMenu(
+                serverDownloads = serverDownloads,
                 selected = chapters.filter { it.selected },
                 isConnectionCacheMode = isConnectionCacheMode,
                 onMultiBookmarkClicked = onMultiBookmarkClicked,
@@ -382,6 +390,7 @@ private fun MangaScreenImpl(
 
 @Composable
 private fun SharedMangaBottomActionMenu(
+    serverDownloads: koharia.connection.ui.ConnectionServerDownloadActions?,
     selected: List<ChapterList.Item>,
     isConnectionCacheMode: Boolean,
     onMultiBookmarkClicked: (List<Chapter>, bookmarked: Boolean) -> Unit,
@@ -393,6 +402,9 @@ private fun SharedMangaBottomActionMenu(
     modifier: Modifier = Modifier,
 ) {
     MangaBottomActionMenu(
+        onServerDownloadClicked = serverDownloads?.takeUnless { it.busy }?.let { actions ->
+            { actions.enqueue(selected.map { it.chapter.url }) }
+        },
         visible = selected.isNotEmpty(),
         modifier = modifier.fillMaxWidth(fillFraction),
         onBookmarkClicked = {
@@ -425,6 +437,7 @@ private fun SharedMangaBottomActionMenu(
 }
 
 private fun LazyListScope.sharedChapterItems(
+    serverDownloads: koharia.connection.ui.ConnectionServerDownloadActions?,
     manga: Manga,
     chapters: List<ChapterList>,
     showChapterReadProgress: Boolean,
@@ -456,6 +469,9 @@ private fun LazyListScope.sharedChapterItems(
             }
             is ChapterList.Item -> {
                 MangaChapterListItem(
+                    serverDownloadAction = serverDownloads?.let { actions ->
+                        { actions.ChapterButton(item.chapter.url, !isAnyChapterSelected) }
+                    },
                     title = chapterTitleWithFileSize(manga, item, showChapterFileSize),
                     date = relativeDateText(item.chapter.dateUpload),
                     readProgress = chapterReadProgress(item).takeIf { showChapterReadProgress },
@@ -497,6 +513,7 @@ private fun LazyListScope.sharedChapterItems(
 }
 
 private fun LazyGridScope.sharedChapterGridItems(
+    serverDownloads: koharia.connection.ui.ConnectionServerDownloadActions?,
     manga: Manga,
     chapterThumbnailUrl: (String) -> String?,
     chapters: List<ChapterList>,
@@ -556,7 +573,7 @@ private fun LazyGridScope.sharedChapterGridItems(
                 val isRead = showChapterReadProgress && item.chapter.read
                 val isDownloaded = item.downloadState == Download.State.DOWNLOADED
                 val coverOverlay: (@Composable BoxScope.() -> Unit)? = if (readProgress != null || isRead ||
-                    isDownloaded
+                    isDownloaded || serverDownloads != null
                 ) {
                     {
                         when {
@@ -567,6 +584,11 @@ private fun LazyGridScope.sharedChapterGridItems(
                                 )
                             }
                             isRead -> ChapterReadCorner(modifier = Modifier.align(Alignment.TopEnd))
+                        }
+                        if (serverDownloads != null) {
+                            Box(Modifier.align(Alignment.BottomStart)) {
+                                serverDownloads.ChapterButton(item.chapter.url, !isAnyChapterSelected)
+                            }
                         }
                         if (isDownloaded) {
                             DownloadedCorner(

@@ -21,6 +21,20 @@ internal object BackupDirectoryRemapper {
         preferences: List<BackupSourcePreferences>,
         bindings: Map<String, String>,
     ): List<BackupSourcePreferences> = preferences.map { source ->
+        val remote = source.prefs.firstOrNull { it.key == "network_storage_configuration" }
+            ?.let { (it.value as? StringPreferenceValue)?.value }
+            ?.let { json.decodeFromString<koharia.storage.NetworkStorageConfiguration>(it) }
+            ?.mode?.let { it != koharia.storage.LibraryStorageMode.LOCAL } == true
+        fun bindRoot(uri: String, writable: Boolean): String {
+            if (!remote) return bind(context, uri, bindings, writable)
+            if (uri.isBlank()) return uri
+            val parsed = android.net.Uri.parse(uri)
+            require(parsed.scheme == "content" && parsed.authority?.endsWith(".library-storage") == true)
+            return android.provider.DocumentsContract.buildDocumentUri(
+                koharia.storage.NetworkStorageRuntime.authority(context),
+                android.provider.DocumentsContract.getDocumentId(parsed),
+            ).toString()
+        }
         source.copy(
             prefs = source.prefs.filterNot { it.key == "local_folder_operation" }.map { preference ->
                 if (preference.key == "local_library_index" && preference.value is StringPreferenceValue) {
@@ -48,15 +62,13 @@ internal object BackupDirectoryRemapper {
                             json.encodeToString(
                                 config.copy(
                                     roots = config.roots.map { root ->
-                                        root.copy(treeUri = bind(context, root.treeUri, bindings, root.managed))
+                                        root.copy(treeUri = bindRoot(root.treeUri, root.managed))
                                     },
-                                    treeUri = bind(
-                                        context,
+                                    treeUri = bindRoot(
                                         config.treeUri,
-                                        bindings,
                                         config.layout == LocalLibraryLayout.KOHARIA,
                                     ),
-                                    managedBaseTreeUri = bind(context, config.managedBaseTreeUri, bindings, true),
+                                    managedBaseTreeUri = bindRoot(config.managedBaseTreeUri, true),
                                 ),
                             ),
                         ),

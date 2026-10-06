@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,15 +34,16 @@ import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import koharia.connection.ConnectionBrowseAdapter
+import koharia.connection.ConnectionEntryOpeningAdapter
+import koharia.connection.ConnectionEntryOpeningSetting
 import koharia.connection.ConnectionLibrarySettingsAdapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionRegistry
 import koharia.connection.EntryOpenMode
-import koharia.connection.EntryOpenPreferences
-import koharia.source.komga.KomgaConnectionProvider
-import koharia.source.local.LocalFolderConnectionProvider
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.flow.flowOf
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -73,10 +75,15 @@ object SettingsLibraryScreen : SearchableSettings {
         val connectionRegistry = remember { Injekt.get<ConnectionRegistry>() }
         val sourceManager = remember { Injekt.get<SourceManager>() }
         val activeConnectionId by connectionPreferences.activeConnectionId.collectAsState()
-        val showSeriesSettings by remember(activeConnectionId) {
-            (sourceManager.get(activeConnectionId) as? ConnectionBrowseAdapter)
-                ?.seriesSettingsAvailable() ?: flowOf(false)
-        }.collectAsState(initial = false)
+        val sources by remember(sourceManager) { sourceManager.catalogueSources }
+            .collectAsState(initial = sourceManager.getCatalogueSources())
+        val activeSource = sources.firstOrNull { it.id == activeConnectionId }
+        val showSeriesSettings = key(activeSource) {
+            val available by remember(activeSource) {
+                (activeSource as? ConnectionBrowseAdapter)?.seriesSettingsAvailable() ?: flowOf(false)
+            }.collectAsState(initial = false)
+            available
+        }
         val profiles by remember(connectionPreferences) {
             connectionPreferences.profilesChanges()
         }.collectAsState(initial = connectionPreferences.getProfiles())
@@ -86,14 +93,30 @@ object SettingsLibraryScreen : SearchableSettings {
         val providerSettings = (activeProvider as? ConnectionLibrarySettingsAdapter)
             ?.connectionLibrarySettings()
             .orEmpty()
+            .map { group ->
+                group.copy(
+                    title = stringResource(
+                        MR.strings.connection_provider_settings_group,
+                        activeProvider?.displayName.orEmpty(),
+                        group.title,
+                    ),
+                )
+            }
+        val entrySettings = remember(activeSource) {
+            (activeSource as? ConnectionEntryOpeningAdapter)?.entryOpeningSettings().orEmpty()
+        }
 
+        val navigator = cafe.adriel.voyager.navigator.LocalNavigator.current
         return providerSettings + listOfNotNull(
+            (activeSource as? koharia.connection.ConnectionRemoteCategoriesAdapter)?.let { adapter ->
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.suwayomi_browse_categories),
+                    subtitle = activeProvider?.displayName,
+                    onClick = { navigator?.push(adapter.remoteCategoriesScreen()) },
+                )
+            },
             getDisplayGroup(libraryPreferences),
-            getEntryOpeningGroup(
-                isLocal = activeConnectionId == ConnectionPreferences.LOCAL_CONNECTION_ID ||
-                    activeProvider?.id == LocalFolderConnectionProvider.ID,
-                isKomga = activeProvider?.id == KomgaConnectionProvider.ID,
-            ),
+            getEntryOpeningGroup(entrySettings, activeProvider?.displayName.orEmpty()),
             if (showSeriesSettings) getChapterSettingsGroup(libraryPreferences) else null,
             getGlobalUpdateGroup(libraryPreferences),
             if (showSeriesSettings) getBehaviorGroup(libraryPreferences) else null,
@@ -101,40 +124,32 @@ object SettingsLibraryScreen : SearchableSettings {
     }
 
     @Composable
-    private fun getEntryOpeningGroup(isLocal: Boolean, isKomga: Boolean): Preference.PreferenceGroup? {
-        if (!isLocal && !isKomga) return null
-        val preferences = remember { Injekt.get<EntryOpenPreferences>() }
-        val entries = persistentMapOf(
-            EntryOpenMode.READER.name to stringResource(MR.strings.entry_open_reader),
-            EntryOpenMode.PAGE_PREVIEW.name to stringResource(MR.strings.entry_open_page_preview),
-            EntryOpenMode.DETAILS.name to stringResource(MR.strings.entry_open_details),
-        )
+    private fun getEntryOpeningGroup(
+        settings: List<ConnectionEntryOpeningSetting>,
+        providerName: String,
+    ): Preference.PreferenceGroup? {
+        if (settings.isEmpty()) return null
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.entry_open_group),
-            preferenceItems = persistentListOf(
+            title = stringResource(
+                MR.strings.connection_provider_settings_group,
+                providerName,
+                stringResource(MR.strings.entry_open_group),
+            ),
+            preferenceItems = settings.map { setting ->
                 Preference.PreferenceItem.ListPreference(
-                    preference = if (isLocal) preferences.localSingleComic else preferences.komgaSingleBook,
-                    entries = entries,
-                    title = stringResource(
-                        if (isLocal) MR.strings.entry_open_local_single else MR.strings.entry_open_komga_book,
-                    ),
-                ),
-            ).let { items ->
-                if (isLocal) {
-                    items.add(
-                        Preference.PreferenceItem.ListPreference(
-                            preference = preferences.localSingleBook,
-                            entries = persistentMapOf(
-                                EntryOpenMode.READER.name to stringResource(MR.strings.entry_open_reader),
-                                EntryOpenMode.DETAILS.name to stringResource(MR.strings.entry_open_details),
-                            ),
-                            title = stringResource(MR.strings.entry_open_local_single_book),
-                        ),
-                    )
-                } else {
-                    items
-                }
-            },
+                    preference = setting.preference,
+                    entries = setting.modes.associate { mode ->
+                        mode.name to stringResource(
+                            when (mode) {
+                                EntryOpenMode.READER -> MR.strings.entry_open_reader
+                                EntryOpenMode.PAGE_PREVIEW -> MR.strings.entry_open_page_preview
+                                EntryOpenMode.DETAILS -> MR.strings.entry_open_details
+                            },
+                        )
+                    }.toImmutableMap(),
+                    title = stringResource(setting.title),
+                )
+            }.toImmutableList(),
         )
     }
 
@@ -197,6 +212,23 @@ object SettingsLibraryScreen : SearchableSettings {
                     preference = libraryPreferences.showLibraryReadProgress,
                     title = stringResource(MR.strings.pref_show_library_read_progress),
                     subtitle = stringResource(MR.strings.pref_show_library_read_progress_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = libraryPreferences.showShelfDownloadCount,
+                    title = stringResource(MR.strings.pref_show_shelf_download_count),
+                    subtitle = stringResource(MR.strings.pref_show_shelf_download_count_summary),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = libraryPreferences.networkStorageCacheSizeMb,
+                    title = stringResource(MR.strings.storage_cache_size),
+                    entries = persistentMapOf(
+                        128 to "128 MiB",
+                        256 to "256 MiB",
+                        512 to "512 MiB",
+                        1024 to "1024 MiB",
+                        2048 to "2048 MiB",
+                        4096 to "4096 MiB",
+                    ),
                 ),
             ),
         )

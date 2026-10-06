@@ -125,6 +125,11 @@ interface ConnectionLocalFileAdapter {
     fun localChapterFile(chapterUrl: String): UniFile?
 }
 
+/** May load a missing remote directory snapshot; synchronous file lookup remains network-free. */
+interface ConnectionPreparedFileAdapter : ConnectionLocalFileAdapter {
+    suspend fun prepareChapterFile(chapterUrl: String): UniFile?
+}
+
 /** Supplies complete PDFs to the document reader without registering them as manual downloads. */
 interface ConnectionPdfFileAdapter {
     fun isPdfChapter(chapterUrl: String): Boolean
@@ -583,6 +588,8 @@ data class ConnectionPageProgressSnapshot(
     val publicationVersion: String?,
     val requiresConfirmation: Boolean = true,
     val requiresPageMappingConfirmation: Boolean = false,
+    /** Divergent pending state needs a decision even when the physical page indices are equal. */
+    val blocksAutomaticSelection: Boolean = false,
 )
 
 interface ConnectionEpubProgressAdapter {

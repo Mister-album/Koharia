@@ -28,7 +28,12 @@ class EpubDocumentPreparationTest {
         assertTrue(script.contains("break-before: column !important"))
         assertTrue(script.contains("'duokan-footnote'"))
         assertTrue(script.contains("setAttributeNS(epubNamespace, 'epub:type', updated)"))
+        // A Kotlin-escaped interpolation would reach the WebView as `${referenceSizeRem}` and abort
+        // the whole preparation, so the numeric value must be resolved before execution.
         assertTrue(script.contains("font-size: 1.125rem !important"))
+        assertFalse(script.contains("${'$'}{referenceSizeRem}"))
+        assertFalse(script.contains("${'$'}{referenceTouchExpansionRem}"))
+        assertFalse(script.contains("\${'$'}"))
         assertTrue(script.contains("filter: invert(100%) !important"))
         assertTrue(script.contains("function fitStandaloneImage(state)"))
         assertTrue(script.contains("standaloneImageLayout === 'pending' ? 'pending' : 'prepared'"))

@@ -27,6 +27,7 @@ internal fun resolveLocalChild(root: UniFile, path: String): UniFile {
 }
 
 internal fun canMoveLocalFile(context: Context, file: UniFile): Boolean {
+    if (file is com.hippo.unifile.RemoteStorageFile) return file.canWrite()
     if (file.uri.scheme == "file") return file.canWrite()
     val column = DocumentsContract.Document.COLUMN_FLAGS
     return context.contentResolver.query(file.uri, arrayOf(column), null, null, null)?.use {
@@ -36,6 +37,9 @@ internal fun canMoveLocalFile(context: Context, file: UniFile): Boolean {
 
 internal fun moveLocalFile(context: Context, file: UniFile, from: UniFile, to: UniFile): UniFile {
     check(to.findFile(checkNotNull(file.name)) == null) { "Destination already exists" }
+    if (file is com.hippo.unifile.RemoteStorageFile && to is com.hippo.unifile.RemoteStorageFile) {
+        return kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { file.moveTo(to) }
+    }
     if (file.uri.scheme == "file") {
         val target = File(checkNotNull(to.uri.path), checkNotNull(file.name))
         check(File(checkNotNull(file.uri.path)).renameTo(target)) { "Unable to move file" }

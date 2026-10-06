@@ -66,6 +66,7 @@ fun MangaChapterListItem(
     onDownloadClick: ((ChapterDownloadAction) -> Unit)?,
     onChapterSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
     modifier: Modifier = Modifier,
+    serverDownloadAction: (@Composable () -> Unit)? = null,
 ) {
     val startAction = chapterSwipeStartAction.takeUnless {
         it == LibraryPreferences.ChapterSwipeAction.Download && onDownloadClick == null
@@ -187,6 +188,7 @@ fun MangaChapterListItem(
                 }
             }
 
+            serverDownloadAction?.invoke()
             if (onDownloadClick != null) {
                 ChapterDownloadIndicator(
                     enabled = downloadIndicatorEnabled,

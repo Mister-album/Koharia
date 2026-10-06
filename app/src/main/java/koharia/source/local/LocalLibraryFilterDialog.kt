@@ -66,13 +66,6 @@ internal fun LocalLibraryFilterDialog(
             }
 
             item {
-                tachiyomi.presentation.core.components.CheckboxItem(
-                    label = stringResource(MR.strings.remember_filters),
-                    checked = rememberSelection,
-                    onClick = { rememberSelection = !rememberSelection },
-                )
-            }
-            item {
                 FilterTextField(
                     value = draft.series,
                     onValueChange = { draft = draft.copy(series = it) },
@@ -140,6 +133,15 @@ internal fun LocalLibraryFilterDialog(
                     value = draft.genre,
                     onValueChange = { draft = draft.copy(genre = it) },
                     label = stringResource(MR.strings.local_library_filter_genre),
+                )
+            }
+            // Last, and without an explanation: a stored preference rather than a filter.
+            item {
+                HorizontalDivider()
+                tachiyomi.presentation.core.components.CheckboxItem(
+                    label = stringResource(MR.strings.shelf_persistent_filters),
+                    checked = rememberSelection,
+                    onClick = { rememberSelection = !rememberSelection },
                 )
             }
         }

@@ -142,6 +142,20 @@ class LegacyDatabaseSchemaBridgeTest {
     }
 
     @Test
+    fun migratesPublishedSqlDelightVersionTwentyTwo() {
+        writableDatabase().use { database ->
+            listOf("suwayomi_cache", "suwayomi_operation", "library_storage_record").forEach { table ->
+                database.execSQL("DROP TABLE $table")
+            }
+            database.execSQL("PRAGMA user_version = 22")
+        }
+
+        migratePreparedDatabase()
+
+        readableDatabase().use { database -> assertCurrentSchema(database) }
+    }
+
+    @Test
     fun completesPartiallyAppliedNonIdempotentMigrations() {
         listOf(2, 4, 5, 11).forEach { migration ->
             writableDatabase().use { database ->
@@ -327,6 +341,9 @@ class LegacyDatabaseSchemaBridgeTest {
             "epub_bookmark",
             "epub_pagination_cache",
             "epub_remote_progress_cache",
+            "suwayomi_cache",
+            "suwayomi_operation",
+            "library_storage_record",
         )
 
         val komgaIndexes = listOf(

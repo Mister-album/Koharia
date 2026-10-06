@@ -75,6 +75,11 @@ class WebtoonPageHolder(
      * Page of a chapter.
      */
     private var page: ReaderPage? = null
+    private var imageDecoded = false
+
+    fun confirmDisplayedPage(selected: ReaderPage) {
+        if (page === selected && imageDecoded) viewer.activity.onPageDisplayed(selected)
+    }
 
     private val scope = MainScope()
 
@@ -96,6 +101,7 @@ class WebtoonPageHolder(
      */
     fun bind(page: ReaderPage) {
         this.page = page
+        imageDecoded = false
         loadJob?.cancel()
         loadJob = scope.launch { loadPageAndProcessStatus() }
         refreshLayoutParams()
@@ -117,6 +123,8 @@ class WebtoonPageHolder(
      * Called when the view is recycled and added to the view pool.
      */
     override fun recycle() {
+        imageDecoded = false
+        page = null
         loadJob?.cancel()
         loadJob = null
 
@@ -294,6 +302,7 @@ class WebtoonPageHolder(
      * Called when the page has an error.
      */
     private fun setError(error: Throwable?) {
+        imageDecoded = false
         progressContainer.isVisible = false
         initErrorLayout(error)
     }
@@ -302,6 +311,7 @@ class WebtoonPageHolder(
      * Called when the image is decoded and going to be displayed.
      */
     private fun onImageDecoded() {
+        imageDecoded = true
         progressContainer.isVisible = false
         removeErrorLayout()
         page?.let(viewer.activity::onPageDisplayed)

@@ -2,6 +2,7 @@ package koharia.epub.service
 
 import koharia.connection.SharedAppPreferences
 import koharia.epub.cache.EpubCacheManager
+import koharia.epub.injectEpubNotePrepaintStyle
 import koharia.epub.injectEpubParagraphIndentStyle
 import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
@@ -179,17 +180,29 @@ private class ParagraphIndentNormalizingHttpClient(
             val isHtml = htmlExtensions.any { path.endsWith(it, ignoreCase = true) }
             val isFullGet = request.method == HttpRequest.Method.GET &&
                 request.headers.keys.none { it.equals("Range", ignoreCase = true) }
-            if (!isHtml || !isFullGet || !shouldNormalize()) {
+            if (!isHtml || !isFullGet) {
                 return@map streamResponse
             }
 
+            // The note stylesheet hides publisher note bodies before the first paint, so it is
+            // injected whether or not the paragraph indent normalization applies.
             val source = streamResponse.body.use { it.readBytes() }.toString(Charsets.UTF_8)
+            val normalizeIndent = shouldNormalize()
             val matches = leadingParagraphIndent.findAll(source).count()
             val paragraphCount = paragraphTag.findAll(source).count()
             val declaredTextIndentCount = declaredTextIndent.findAll(source).count()
-            val normalized = leadingParagraphIndent
-                .replace(source) { match -> match.groupValues[1] }
+            val normalized = (
+                if (normalizeIndent) {
+                    leadingParagraphIndent.replace(source) { match -> match.groupValues[1] }
+                } else {
+                    source
+                }
+                )
                 .injectEpubParagraphIndentStyle()
+                .injectEpubNotePrepaintStyle()
+            if (normalized == source) {
+                return@map streamResponse
+            }
             val normalizedBytes = normalized.toByteArray(Charsets.UTF_8)
             val normalizedResponse = streamResponse.response.copy(
                 headers = streamResponse.response.headers
@@ -198,7 +211,8 @@ private class ParagraphIndentNormalizingHttpClient(
 
             logcat(LogPriority.DEBUG) {
                 "EPUB normalized paragraph indents url=${request.url} removedSpaces=$matches " +
-                    "paragraphs=$paragraphCount declaredTextIndents=$declaredTextIndentCount injectedIndentStyle=true"
+                    "paragraphs=$paragraphCount declaredTextIndents=$declaredTextIndentCount " +
+                    "injectedIndentStyle=$normalizeIndent"
             }
             HttpStreamResponse(
                 response = normalizedResponse,

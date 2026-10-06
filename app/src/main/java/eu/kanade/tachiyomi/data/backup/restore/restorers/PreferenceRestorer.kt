@@ -88,7 +88,32 @@ class PreferenceRestorer(
         preferences.forEach {
             if (!it.sourceKey.startsWith("source_")) return@forEach
             val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(it.sourceKey))
-            restorePreferences(it.prefs, sourcePrefs, strict = true)
+            restorePreferences(
+                it.prefs.filterNot { pref -> pref.key == koharia.storage.StorageBackup.KEY },
+                sourcePrefs,
+                strict = true,
+            )
+            val connectionId = it.sourceKey.removePrefix("source_").toLongOrNull()
+            if (connectionId != null) {
+                val network = koharia.storage.NetworkStoragePreferences(connectionId)
+                if (network.configuration.mode != koharia.storage.LibraryStorageMode.LOCAL) {
+                    koharia.storage.NetworkStorageRuntime.invalidate(connectionId)
+                    network.save(
+                        network.configuration.copy(verifiedInternal = false, needsValidation = true),
+                        network.username,
+                        network.password,
+                    )
+                    val state = it.prefs.firstOrNull { pref -> pref.key == koharia.storage.StorageBackup.KEY }
+                        ?.value as? StringPreferenceValue
+                    if (state != null) {
+                        koharia.storage.StorageBackup(Injekt.get(), Injekt.get()).restore(
+                            connectionId,
+                            network.configuration.rootIdentity,
+                            state.value,
+                        )
+                    }
+                }
+            }
         }
         if (connectionRestorePolicy.shouldForceLegacyInventoryAfterSourceRestore(
                 sourceKeys = preferences.map(BackupSourcePreferences::sourceKey),

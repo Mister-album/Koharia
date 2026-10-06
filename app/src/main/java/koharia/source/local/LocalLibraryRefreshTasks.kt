@@ -12,6 +12,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 /** Explicit scans belong to the application, not the screen waiting for their result. */
 class LocalLibraryRefreshTasks(
@@ -20,9 +21,16 @@ class LocalLibraryRefreshTasks(
     private val tasks = mutableMapOf<Long, Deferred<Result<ConnectionLibraryRefreshResult>>>()
     private val active = MutableStateFlow(emptySet<Long>())
     val activeIds = active.asStateFlow()
+    private val failures = MutableStateFlow<Map<Long, Throwable>>(emptyMap())
+    val errors = failures.asStateFlow()
+
+    fun start(id: Long, scan: suspend () -> ConnectionLibraryRefreshResult) {
+        scope.launch { refresh(id, scan) }
+    }
 
     suspend fun cancel(id: Long) {
         synchronized(tasks) { tasks[id] }?.cancelAndJoin()
+        failures.update { it - id }
     }
 
     suspend fun refresh(
@@ -36,10 +44,12 @@ class LocalLibraryRefreshTasks(
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
+                    failures.update { it + (id to error) }
                     Result.failure(error)
                 }
             }.also { task ->
                 tasks[id] = task
+                failures.update { it - id }
                 active.update { it + id }
                 task.invokeOnCompletion {
                     synchronized(tasks) {

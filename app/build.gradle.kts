@@ -251,6 +251,8 @@ kotlin {
 
 dependencies {
     implementation(libs.pdfium.core)
+    implementation(libs.smbj)
+    implementation(libs.smb.rpc)
     implementation(projects.i18n)
     implementation(projects.core.archive)
     implementation(projects.core.common)

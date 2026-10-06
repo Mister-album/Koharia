@@ -20,6 +20,11 @@ class ConnectionAddressRouter(
     private val clock: () -> Long = System::nanoTime,
     private val authenticateProbe: Boolean = true,
 ) : Interceptor {
+    /** Opt in only for replayable queries transported with POST, never for mutations. */
+    object ReadOnlyRequest
+
+    /** Authentication and request validation errors do not indicate an unavailable address. */
+    interface NonRoutingFailure
     private data class Route(val network: Any, val public: HttpUrl, val internal: HttpUrl)
     private var lastRoute: Route? = null
     private var internalAvailable = false
@@ -70,17 +75,20 @@ class ConnectionAddressRouter(
         val response = try {
             chain.withConnectTimeout(1500, TimeUnit.MILLISECONDS).proceed(routed)
         } catch (error: IOException) {
+            if (error.hasNonRoutingFailure()) throw error
             markUnavailable(route)
-            if (chain.call().isCanceled() || original.method !in READ_METHODS) throw error
+            if (chain.call().isCanceled() || !original.isReplayable()) throw error
             return chain.proceed(original)
         }
-        if (response.code in FALLBACK_CODES && original.method in READ_METHODS) {
+        if (response.code in FALLBACK_CODES && original.isReplayable()) {
             response.close()
             markUnavailable(route)
             return chain.proceed(original)
         }
         return response.newBuilder().request(original).build()
     }
+
+    private fun Request.isReplayable() = method in READ_METHODS || tag(ReadOnlyRequest::class.java) != null
 
     private fun probe(chain: Interceptor.Chain, original: Request, internal: HttpUrl): Boolean {
         val request = original.newBuilder()
@@ -106,9 +114,9 @@ class ConnectionAddressRouter(
         return try {
             chain.withConnectTimeout(1500, TimeUnit.MILLISECONDS)
                 .withReadTimeout(1500, TimeUnit.MILLISECONDS)
-                .proceed(request).use { it.isSuccessful }
+                .proceed(request).use { it.isSuccessful || it.code == 401 || it.code == 403 }
         } catch (error: IOException) {
-            if (chain.call().isCanceled()) throw error
+            if (chain.call().isCanceled() || error.hasNonRoutingFailure()) throw error
             false
         }
     }
@@ -119,6 +127,9 @@ class ConnectionAddressRouter(
             checkedAt = clock()
         }
     }
+
+    private fun Throwable.hasNonRoutingFailure(): Boolean =
+        generateSequence(this) { it.cause }.any { it is NonRoutingFailure }
 
     private data class InternalRoute(val base: HttpUrl)
 

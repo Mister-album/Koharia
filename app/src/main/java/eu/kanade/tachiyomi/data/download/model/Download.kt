@@ -20,7 +20,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 data class Download(
-    val source: HttpSource,
+    val source: eu.kanade.tachiyomi.source.Source,
     val manga: Manga,
     val chapter: Chapter,
     var mode: Mode = Mode.PAGE_CACHE,
@@ -126,7 +126,12 @@ data class Download(
         ): Download? {
             val chapter = getChapter.await(chapterId) ?: return null
             val manga = getManga.await(chapter.mangaId) ?: return null
-            val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+            val source = sourceManager.get(manga.source) ?: return null
+            if (source !is HttpSource &&
+                (source as? koharia.connection.ConnectionFileTransferAdapter)?.supportsFileTransfers != true
+            ) {
+                return null
+            }
 
             return Download(source, manga, chapter, mode)
         }

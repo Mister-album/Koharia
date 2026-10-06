@@ -24,6 +24,7 @@ import koharia.connection.ConnectionBrowseAdapter
 import koharia.connection.ConnectionBrowseScreen
 import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionChapterThumbnailAdapter
+import koharia.connection.ConnectionFileTransfer
 import koharia.connection.ConnectionLibraryMembershipAdapter
 import koharia.connection.ConnectionLibraryRefreshAdapter
 import koharia.connection.ConnectionLibraryRefreshResult
@@ -63,6 +64,7 @@ import koharia.media.LocalMediaFormats
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -71,6 +73,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
@@ -131,6 +134,7 @@ class LocalFolderSource(
     UnmeteredSource,
     ConnectionSource,
     ConnectionBrowseAdapter,
+    koharia.connection.ConnectionEntryOpeningAdapter,
     ConnectionLibraryRefreshAdapter,
     ConnectionLibraryMembershipAdapter,
     ConnectionLibraryShelfAdapter,
@@ -138,15 +142,96 @@ class LocalFolderSource(
     ConnectionMediaImportAdapter,
     ConnectionChapterThumbnailAdapter,
     ConnectionLocalFileAdapter,
+    koharia.connection.ConnectionPreparedFileAdapter,
     koharia.connection.ConnectionReaderRoutingAdapter,
     ConnectionSeriesCoverAdapter,
     ConnectionMetadataGenerationAdapter,
     ConnectionMetadataConflictAdapter,
-    ConnectionMetadataAdapter {
+    ConnectionMetadataAdapter,
+    koharia.connection.ConnectionFileTransferAdapter,
+    koharia.connection.ConnectionDownloadStorageAdapter,
+    koharia.connection.ConnectionPageProgressAdapter,
+    koharia.connection.ConnectionLocalPageProgressAdapter,
+    koharia.connection.ConnectionEpubProgressAdapter,
+    koharia.connection.ConnectionLocalEpubProgressAdapter,
+    koharia.connection.ConnectionReadStatusAdapter,
+    koharia.connection.ConnectionManagedLifecycle,
+    AutoCloseable {
 
     private val json = Injekt.get<kotlinx.serialization.json.Json>()
     private val xml: XML by injectLazy()
     private val preferences by lazy { LocalLibraryPreferences(id, json) }
+    private val storageProgress by lazy { koharia.storage.StorageReaderProgressAdapter(::prepareChapterFile) }
+    private val storageScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
+    private var storageObserver: kotlinx.coroutines.Job? = null
+    override fun onRegistered() {
+        if (storageObserver != null) return
+        storageObserver = storageScope.launch {
+            Injekt.get<koharia.connection.ConnectionNetworkMonitor>().available.collect { available ->
+                if (available && supportsFileTransfers) {
+                    runCatching { koharia.storage.NetworkStorageRuntime.get(context, id).progress.flush() }
+                        .onFailure { if (it is CancellationException) throw it }
+                }
+            }
+        }
+    }
+    override fun close() {
+        storageScope.cancel()
+    }
+    override suspend fun pullPageProgress(
+        chapterUrl: String,
+        chapterMemo: JsonObject,
+    ) = storageProgress.pullPageProgress(chapterUrl, chapterMemo)
+    override suspend fun pushPageProgress(
+        chapterUrl: String,
+        pageIndex: Int,
+        totalPages: Int,
+    ) = storageProgress.pushPageProgress(chapterUrl, pageIndex, totalPages)
+    override suspend fun recordLocalPageProgress(
+        chapterUrl: String,
+        pageIndex: Int,
+        totalPages: Int,
+        readAt: Long,
+        initialPage: Boolean,
+    ) =
+        storageProgress.recordLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt, initialPage)
+    override suspend fun setChapterReadStatus(
+        chapterUrl: String,
+        read: Boolean,
+    ) = storageProgress.setChapterReadStatus(chapterUrl, read)
+    override suspend fun getCachedEpubProgress(chapterId: Long) = storageProgress.getCachedEpubProgress(chapterId)
+    override suspend fun refreshEpubProgress(
+        mangaId: Long,
+        chapter: Chapter,
+    ) = storageProgress.refreshEpubProgress(mangaId, chapter)
+    override suspend fun pullEpubProgress(resourceId: String) = storageProgress.pullEpubProgress(resourceId)
+    override suspend fun pushEpubProgress(
+        resourceId: String,
+        locator: org.readium.r2.shared.publication.Locator,
+        positions: List<org.readium.r2.shared.publication.Locator>,
+        modifiedAt: java.util.Date,
+    ) =
+        storageProgress.pushEpubProgress(resourceId, locator, positions, modifiedAt)
+    override suspend fun recordLocalEpubProgress(
+        resourceId: String,
+        locator: org.readium.r2.shared.publication.Locator,
+        modifiedAt: java.util.Date,
+    ) =
+        storageProgress.recordLocalEpubProgress(resourceId, locator, modifiedAt)
+    override suspend fun acceptRemoteEpubProgress(
+        resourceId: String,
+        locator: org.readium.r2.shared.publication.Locator,
+        modifiedAt: java.util.Date,
+    ) =
+        storageProgress.acceptRemoteEpubProgress(resourceId, locator, modifiedAt)
+    override suspend fun confirmLocalEpubProgress(
+        resourceId: String,
+        locator: org.readium.r2.shared.publication.Locator,
+        modifiedAt: java.util.Date,
+    ) =
+        storageProgress.confirmLocalEpubProgress(resourceId, locator, modifiedAt)
 
     internal fun rememberCustomCover(url: String) = preferences.rememberCustomCover(url)
 
@@ -168,6 +253,22 @@ class LocalFolderSource(
     override fun seriesSettingsAvailable() = preferences.configChanges().map { config ->
         config.roots.any { config.organizationMode(it) == LocalLibraryOrganizationMode.SERIES }
     }
+
+    override fun entryOpeningSettings(): List<koharia.connection.ConnectionEntryOpeningSetting> {
+        val opening = Injekt.get<koharia.connection.EntryOpenPreferences>()
+        return listOf(
+            koharia.connection.ConnectionEntryOpeningSetting(
+                tachiyomi.i18n.MR.strings.entry_open_local_single,
+                opening.localSingleComic,
+                koharia.connection.EntryOpenMode.entries,
+            ),
+            koharia.connection.ConnectionEntryOpeningSetting(
+                tachiyomi.i18n.MR.strings.entry_open_local_single_book,
+                opening.localSingleBook,
+                listOf(koharia.connection.EntryOpenMode.READER, koharia.connection.EntryOpenMode.DETAILS),
+            ),
+        )
+    }
     private val metadataStore by lazy { LocalMetadataStore(context, id, json, xml) }
     private val mangaRepository: MangaRepository by injectLazy()
     private val getChaptersByMangaId: GetChaptersByMangaId by injectLazy()
@@ -188,17 +289,115 @@ class LocalFolderSource(
     override val name: String = customName
     override val lang: String = "other"
     override val supportsLatest: Boolean = true
-    override val mangaBehavior: ConnectionMangaBehavior = MANGA_BEHAVIOR
+    override val mangaBehavior: ConnectionMangaBehavior get() = MANGA_BEHAVIOR.copy(
+        allowsChapterDownloads = supportsFileTransfers,
+    )
+    override val supportsFileTransfers: Boolean get() =
+        koharia.storage.NetworkStoragePreferences(id).configuration.mode != koharia.storage.LibraryStorageMode.LOCAL
+    override val usesSharedDownloadStorage = false
+    override fun downloadDirectoryName() = "Storage_${id}_${koharia.storage.NetworkStoragePreferences(id).account}"
+    override fun downloadDirectoryNames() = listOf(downloadDirectoryName())
+    override fun ownedDownloadDirectoryNames() = setOf(downloadDirectoryName())
+    override fun legacyDownloadDirectoryNames() = emptyList<String>()
+
+    override suspend fun describeFileTransfer(chapterUrl: String): ConnectionFileTransfer = withIOContext {
+        val file = prepareChapterFile(chapterUrl) as? com.hippo.unifile.RemoteStorageFile ?: error("Not a network file")
+        val entry = file.runtime.backend.stat(file.storagePath)
+        if (entry.directory) {
+            val images = file.runtime.backend.list(file.storagePath).filter {
+                !it.directory &&
+                    LocalMediaFormats.isImage(it.name.substringAfterLast('.'))
+            }
+                .sortedBy { it.path }
+            require(images.isNotEmpty())
+            koharia.connection.ConnectionFileTransfer(
+                "cbz",
+                -1,
+                koharia.storage.storageDigest(
+                    images.joinToString {
+                        it.path +
+                            it.version
+                    },
+                ),
+            )
+        } else {
+            koharia.connection.ConnectionFileTransfer(checkNotNull(file.extension), entry.size, entry.version)
+        }
+    }
+    override suspend fun transferFile(
+        chapterUrl: String,
+        expected: koharia.connection.ConnectionFileTransfer,
+        output: java.io.OutputStream,
+        offset: Long,
+    ) = withIOContext {
+        val file = prepareChapterFile(chapterUrl) as? com.hippo.unifile.RemoteStorageFile ?: error("Not a network file")
+        check(describeFileTransfer(chapterUrl) == expected) { "File changed before download" }
+        val entry = file.runtime.backend.stat(file.storagePath)
+        if (entry.directory) {
+            require(offset == 0L)
+            val images = file.runtime.backend.list(file.storagePath).filter {
+                !it.directory &&
+                    LocalMediaFormats.isImage(it.name.substringAfterLast('.'))
+            }
+                .sortedBy { it.path }
+            val zip = java.util.zip.ZipOutputStream(output)
+            for (image in images) {
+                currentCoroutineContext().ensureActive()
+                zip.putNextEntry(java.util.zip.ZipEntry(image.name))
+                file.runtime.backend.copyTo(image, zip)
+                zip.closeEntry()
+            }
+            zip.finish()
+            zip.flush()
+        } else {
+            require(offset in 0..entry.size)
+            var position = offset
+            while (position < entry.size) {
+                currentCoroutineContext().ensureActive()
+                val bytes = try {
+                    file.runtime.backend.read(entry, position, minOf(256 * 1024L, entry.size - position).toInt())
+                } catch (failure: koharia.storage.StorageFailure) {
+                    if (failure.reason == koharia.storage.StorageFailure.Reason.UNSUPPORTED && offset > 0) {
+                        throw koharia.connection.ConnectionFileTransferRestartRequired()
+                    }
+                    if (failure.reason != koharia.storage.StorageFailure.Reason.UNSUPPORTED ||
+                        position != 0L
+                    ) {
+                        throw failure
+                    }
+                    file.runtime.backend.copyTo(entry, output)
+                    break
+                }
+                output.write(bytes)
+                position += bytes.size
+            }
+        }
+        check(describeFileTransfer(chapterUrl) == expected) { "File changed during download" }
+    }
+
+    override suspend fun fileTransferCheckpoint(chapterUrl: String) =
+        koharia.storage.NetworkStorageRuntime.get(context, id).records
+            .get<koharia.connection.ConnectionFileTransferCheckpoint>("transfers", chapterUrl)
+    override suspend fun saveFileTransferCheckpoint(
+        chapterUrl: String,
+        checkpoint: koharia.connection.ConnectionFileTransferCheckpoint,
+    ) = koharia.storage.NetworkStorageRuntime.get(context, id).records.put("transfers", chapterUrl, checkpoint)
+    override suspend fun clearFileTransferCheckpoint(chapterUrl: String) {
+        val records = koharia.storage.NetworkStorageRuntime.get(context, id).records
+        records.list("transfers").firstOrNull { it.key == chapterUrl }?.let {
+            records.remove("transfers", chapterUrl, it.revision)
+        }
+    }
 
     override fun toString(): String = name
 
     override fun chapterThumbnailUrl(chapterUrl: String): String = chapterUrl
 
     override suspend fun loadChapterThumbnail(chapterUrl: String): ByteArray? = withIOContext {
+        val file = prepareChapterFile(chapterUrl) ?: return@withIOContext null
         indexedEntry(chapterUrl)?.takeIf { it.kind == LocalLibraryItem.Kind.FOLDER }?.let {
             return@withIOContext folderCover(it, mutableSetOf())
         }
-        val file = localChapterFile(chapterUrl) ?: return@withIOContext null
         runCatching { firstImageBytes(file) }
             .onFailure { error ->
                 if (error is CancellationException) throw error
@@ -234,7 +433,21 @@ class LocalFolderSource(
         }
     }
 
+    internal fun startLibraryRefresh() {
+        Injekt.get<LocalLibraryRefreshTasks>().start(id) {
+            refreshMutex.withLock { scanLibrary().also { mutableLibraryRefreshes.emit(it) } }
+        }
+    }
+
+    internal suspend fun resumePendingNetworkScan() {
+        if (supportsFileTransfers && needsInitialScan()) startLibraryRefresh()
+    }
+
     suspend fun needsInitialScan(): Boolean = withIOContext {
+        for (root in preferences.getConfig().roots) {
+            val remote = koharia.storage.NetworkStorageRuntime.fromUri(context, Uri.parse(root.treeUri))
+            if (remote?.runtime?.snapshot?.hasPendingScan() == true) return@withIOContext true
+        }
         val index = preferences.getIndex()
         if (index.scannedAt <= 0L || index.schemaVersion < 5) return@withIOContext true
         val indexedUrls = index.items.asSequence()
@@ -905,10 +1118,13 @@ class LocalFolderSource(
     }
 
     override suspend fun getMangaDetails(manga: SManga): SManga = withIOContext {
+        hydrateNetworkDirectory(manga.url)
         val indexedItem = indexedEntry(manga.url)
         indexedEntry(manga.url)?.takeIf { it.kind == LocalLibraryItem.Kind.FOLDER }?.let {
             applyFolderDisplay(manga, it)
-            manga.thumbnail_url = manga.url
+            // Keep a cover discovered during indexing. Replacing it with the folder URL here
+            // invalidates the shared cover cache whenever the details screen is opened.
+            if (manga.thumbnail_url.isNullOrBlank()) manga.thumbnail_url = manga.url
             manga.initialized = true
             return@withIOContext manga
         }
@@ -954,6 +1170,7 @@ class LocalFolderSource(
     }
 
     override suspend fun getChapterList(manga: SManga): List<SChapter> = withIOContext {
+        hydrateNetworkDirectory(manga.url)
         IncomingMediaSessionLocator.location(manga.url, id)
             ?.takeIf { it.fileName == null }
             ?.let { location ->
@@ -1371,7 +1588,49 @@ class LocalFolderSource(
         return incoming ?: resolveResource(chapterUrl)?.file
     }
 
+    override suspend fun prepareChapterFile(chapterUrl: String): UniFile? = withIOContext {
+        if (!supportsFileTransfers) return@withIOContext localChapterFile(chapterUrl)
+        val location = LocalLibraryLocator.location(chapterUrl, id) ?: return@withIOContext null
+        val root = preferences.getConfig().roots.firstOrNull { it.id == location.rootId } ?: return@withIOContext null
+        val remote =
+            koharia.storage.NetworkStorageRuntime.fromUri(context, Uri.parse(root.treeUri)) ?: return@withIOContext null
+        val index = preferences.getIndex()
+        val indexed = index.itemsByLocator[root.id to location.relativePath]
+            ?: index.itemsByKey[LocalLibraryLocator.itemKey(root.id, location.relativePath)]
+        if (indexed?.missing == true ||
+            (location.relativePath.startsWith(".koharia/nodes/") && indexed == null)
+        ) {
+            return@withIOContext null
+        }
+        val relative = (indexed?.physicalPath() ?: location.relativePath)
+            .takeUnless { it == LocalLibraryLocator.ROOT_DIRECTORY_ENTRY }.orEmpty()
+        val path = koharia.storage.StoragePath.normalize(
+            listOf(remote.storagePath, root.relativePath, relative)
+                .filter(String::isNotEmpty).joinToString("/"),
+        )
+        remote.runtime.snapshot.directory("")
+        var parent = ""
+        for (segment in koharia.storage.StoragePath.parent(path).split('/').filter(String::isNotEmpty)) {
+            parent = koharia.storage.StoragePath.child(parent, segment)
+            remote.runtime.snapshot.directory(parent)
+        }
+        val file = localChapterFile(chapterUrl)
+        if (file is com.hippo.unifile.RemoteStorageFile &&
+            file.isDirectory
+        ) {
+            file.runtime.snapshot.directory(file.storagePath)
+        }
+        file
+    }
+
+    private suspend fun hydrateNetworkDirectory(url: String) {
+        if (!supportsFileTransfers) return
+        val file = prepareChapterFile(url) as? com.hippo.unifile.RemoteStorageFile ?: return
+        if (file.isDirectory) file.runtime.snapshot.scan(file.storagePath)
+    }
+
     override suspend fun loadSuggestedSeriesCover(mangaUrl: String): ByteArray? = withIOContext {
+        prepareChapterFile(mangaUrl)
         indexedEntry(mangaUrl)?.takeIf { it.kind == LocalLibraryItem.Kind.FOLDER }?.let {
             return@withIOContext folderCover(it, mutableSetOf())
         }
@@ -1391,12 +1650,8 @@ class LocalFolderSource(
         }
         val directory = incomingDirectory ?: resolveResource(mangaUrl)?.file?.takeIf(UniFile::isDirectory)
             ?: return@withIOContext null
-        val firstChapter = findFirstChapter(
-            directory.listFiles().orEmpty().filterNot { it.name.orEmpty().startsWith('.') },
-        ) ?: return@withIOContext null
-
         try {
-            firstImageBytes(firstChapter)
+            firstImageBytes(directory)
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             logcat(LogPriority.WARN, error) { "Unable to read suggested local series cover" }
@@ -1433,13 +1688,10 @@ class LocalFolderSource(
 
     internal fun indexedEntry(url: String): LocalLibraryItem? {
         val location = LocalLibraryLocator.location(url, id) ?: return null
-        return location.rootId?.let {
-            preferences.getIndex().libraryItemsByKey[
-                LocalLibraryLocator.itemKey(
-                    it,
-                    location.relativePath,
-                ),
-            ]
+        return location.rootId?.let { rootId ->
+            val index = preferences.getIndex()
+            index.itemsByLocator[rootId to location.relativePath]
+                ?: index.libraryItemsByKey[LocalLibraryLocator.itemKey(rootId, location.relativePath)]
         }
     }
 
@@ -1758,6 +2010,7 @@ class LocalFolderSource(
         mangaRepository.getMangaByUrlAndSourceId(entryUrl(item), id)?.let { manga ->
             customCovers.open(manga)?.use { return it.readBytes() }
         }
+        prepareChapterFile(entryUrl(item))
         val resource = resolveResource(entryUrl(item)) ?: return null
         val custom = resource.file.listFiles().orEmpty().firstOrNull {
             !it.isDirectory &&
@@ -1791,7 +2044,7 @@ class LocalFolderSource(
                         visited,
                     )
                 } else {
-                    resolveResource(entryUrl(child))?.file?.let {
+                    prepareChapterFile(entryUrl(child))?.let {
                         firstImageBytes(it)
                     }
                 }
@@ -2251,13 +2504,21 @@ class LocalFolderSource(
     private suspend fun firstImageBytes(file: UniFile): ByteArray? {
         val coroutineContext = currentCoroutineContext()
         if (file.isDirectory) {
-            return file.listFiles().orEmpty()
-                .filter { !it.isDirectory && ImageUtil.isImage(it.name) { it.openInputStream() } }
-                .minWithOrNull { first, second ->
-                    first.name.orEmpty().compareToCaseInsensitiveNaturalOrder(second.name.orEmpty())
+            if (file is com.hippo.unifile.RemoteStorageFile) {
+                file.runtime.snapshot.directory(file.storagePath)
+            }
+            val files = file.listFiles().orEmpty().filterNot { it.name.orEmpty().startsWith('.') }
+            findCover(files)?.let { return it.openInputStream().use { input -> input.readBytes() } }
+            for (chapter in files.sortedWith { first, second ->
+                first.name.orEmpty().compareToCaseInsensitiveNaturalOrder(second.name.orEmpty())
+            }) {
+                coroutineContext.ensureActive()
+                if (chapter is com.hippo.unifile.RemoteStorageFile && chapter.isDirectory) {
+                    chapter.runtime.snapshot.directory(chapter.storagePath)
                 }
-                ?.openInputStream()
-                ?.use { it.readBytes() }
+                if (isSupportedChapter(chapter)) return firstImageBytes(chapter)
+            }
+            return null
         }
 
         val extension = file.extension.orEmpty().lowercase()
@@ -2322,8 +2583,8 @@ class LocalFolderSource(
         }
     }
 
-    private fun candidateResources(root: ResolvedLocalLibraryRoot): List<ScanCandidate> {
-        val reader = LocalScanDirectoryReader(context)
+    private fun candidateResources(root: ResolvedLocalLibraryRoot, partial: Boolean = false): List<ScanCandidate> {
+        val reader = LocalScanDirectoryReader(context, allowPendingRemote = partial)
         return when (preferences.getConfig().organizationMode(root.config)) {
             LocalLibraryOrganizationMode.FOLDER -> candidateFolderEntries(root, reader)
             LocalLibraryOrganizationMode.SERIES -> candidateSeriesDirectories(root, reader)
@@ -2336,6 +2597,7 @@ class LocalFolderSource(
             LocalMediaFormats.isImage(entry.extension) ||
                 (
                     entry.extension !in SUPPORTED_FILE_EXTENSIONS &&
+                        entry.file !is com.hippo.unifile.RemoteStorageFile &&
                         try {
                             ImageUtil.isImage(entry.name) { entry.file.openInputStream() }
                         } catch (error: CancellationException) {
@@ -2605,7 +2867,9 @@ class LocalFolderSource(
             } else {
                 location.relativePath
             }
-            val indexed = preferences.getIndex().itemsByKey[LocalLibraryLocator.itemKey(root.id, relative)]
+            val index = preferences.getIndex()
+            val indexed = index.itemsByLocator[root.id to relative]
+                ?: index.itemsByKey[LocalLibraryLocator.itemKey(root.id, relative)]
             if (indexed?.missing == true) return@forEach
             val resolvedPath = indexed?.physicalPath() ?: relative
             if (relative.startsWith(".koharia/nodes/") && indexed == null) return@forEach
@@ -2667,9 +2931,68 @@ class LocalFolderSource(
         val configuredRootIds = config.roots.mapTo(mutableSetOf(), LocalLibraryRootConfig::id)
         val successfulRootIds = mutableSetOf<String>()
         val failedRoots = mutableListOf<LocalLibraryRootConfig>()
+        val previewUrls = existingByUrl.keys.toMutableSet()
+        var lastPreview = 0L
         val candidates = buildList {
             config.roots.forEach { root ->
                 try {
+                    koharia.storage.NetworkStorageRuntime.fromUri(context, Uri.parse(root.treeUri))?.let { remote ->
+                        if (remote.runtime.config.persistentIdentity) remote.runtime.identities.refresh()
+                        remote.runtime.snapshot.scan(
+                            koharia.storage.StoragePath.normalize(
+                                listOf(
+                                    remote.storagePath,
+                                    root.relativePath,
+                                ).filter(String::isNotEmpty).joinToString("/"),
+                            ),
+                            refresh = true,
+                            onDirectory = {
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                if (now - lastPreview >= 500) {
+                                    val directory = preferences.resolveRoot(context, root)
+                                    if (directory != null) {
+                                        val preview =
+                                            candidateResources(
+                                                ResolvedLocalLibraryRoot(root, directory),
+                                                partial = true,
+                                            )
+                                        val staged =
+                                            buildIndex(
+                                                preview,
+                                                preferences.getIndex(),
+                                                previousIndex.scannedAt,
+                                                configuredRootIds,
+                                                emptySet(),
+                                            )
+                                        preferences.setIndex(staged)
+                                        val additions = preview.mapNotNull { candidate ->
+                                            val item =
+                                                staged.itemsByLocation[candidate.root.id to candidate.relativePath]
+                                                    ?: return@mapNotNull null
+                                            val url = LocalLibraryLocator.entryUrl(id, item.rootId, item.locatorPath)
+                                            if (!previewUrls.add(url)) return@mapNotNull null
+                                            SManga.create().apply {
+                                                this.url = url
+                                                title = candidate.resource.nameWithoutExtension.orEmpty()
+                                                thumbnail_url = url
+                                                initialized = false
+                                            }.toDomainManga(id).copy(chapterFlags = defaultChapterFlags)
+                                        }
+                                        if (additions.isNotEmpty()) {
+                                            mangaRepository.insertNetworkManga(additions)
+                                            mutableLibraryRefreshes.emit(
+                                                ConnectionLibraryRefreshResult(
+                                                    staged.items.size,
+                                                    System.currentTimeMillis(),
+                                                ),
+                                            )
+                                        }
+                                    }
+                                    lastPreview = now
+                                }
+                            },
+                        )
+                    }
                     val directory = preferences.resolveRoot(context, root)
                         ?: throw IOException("Unable to resolve local library directory: ${root.displayPath}")
                     addAll(candidateResources(ResolvedLocalLibraryRoot(root, directory)))
@@ -2684,14 +3007,15 @@ class LocalFolderSource(
                 }
             }
         }
-        val previousItems = previousIndex.items.ifEmpty {
+        val stagedIndex = preferences.getIndex()
+        val previousItems = stagedIndex.items.ifEmpty {
             recoverLocalLibraryItems(
                 sourceId = id,
                 config = config,
                 mangaUrls = existingByUrl.keys,
             )
         }
-        val effectivePreviousIndex = previousIndex.copy(items = previousItems)
+        val effectivePreviousIndex = stagedIndex.copy(items = previousItems)
         val refreshedAt = System.currentTimeMillis()
         val refreshedIndex = buildIndex(
             candidates = candidates,
@@ -2700,7 +3024,7 @@ class LocalFolderSource(
             configuredRootIds = configuredRootIds,
             successfulRootIds = successfulRootIds,
         )
-        val previousEntriesByKey = effectivePreviousIndex.items
+        val previousEntriesByKey = previousIndex.items
             .filter {
                 it.kind in setOf(
                     LocalLibraryItem.Kind.SERIES,
@@ -2739,8 +3063,9 @@ class LocalFolderSource(
                                 }
                                 this.url = url
                                 val metadataRole = scannedItem.metadataRole(config.organizationMode(candidate.root))
+                                val deferEmbeddedMetadata = candidate.resource is com.hippo.unifile.RemoteStorageFile
                                 if (scannedItem.kind == LocalLibraryItem.Kind.FILE_ENTRY &&
-                                    (!unchanged || scannedItem.isVirtualImageSeries())
+                                    (!unchanged || scannedItem.isVirtualImageSeries()) && !deferEmbeddedMetadata
                                 ) {
                                     applyIndividualMetadata(
                                         manga = this,
@@ -2756,7 +3081,9 @@ class LocalFolderSource(
                                 } else if (scannedItem.kind == LocalLibraryItem.Kind.FOLDER) {
                                     applyFolderDisplay(this, scannedItem)
                                     thumbnail_url = url
-                                } else if (!unchanged && scannedItem.kind == LocalLibraryItem.Kind.SERIES) {
+                                } else if (!unchanged && scannedItem.kind == LocalLibraryItem.Kind.SERIES &&
+                                    !deferEmbeddedMetadata
+                                ) {
                                     applySeriesMetadata(
                                         manga = this,
                                         root = candidate.root,
@@ -2797,7 +3124,8 @@ class LocalFolderSource(
                                 if (metadataRole.isMetadataReadable()) {
                                     metadataOverrides[scannedItem.itemKey]?.applyTo(this)
                                 }
-                                initialized = true
+                                if (deferEmbeddedMetadata) thumbnail_url = url
+                                initialized = !deferEmbeddedMetadata || existing?.initialized == true
                             }.toDomainManga(id).let { manga ->
                                 if (unchanged &&
                                     existing.title == manga.title && existing.author == manga.author &&
@@ -3004,6 +3332,11 @@ class LocalFolderSource(
     }
 
     private fun localDocumentIdentity(file: UniFile): String? = runCatching {
+        if (file is com.hippo.unifile.RemoteStorageFile) {
+            return@runCatching kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                file.runtime.cached(file.storagePath)?.let { file.runtime.identities.identity(it) }
+            }
+        }
         when (file.uri.scheme) {
             "content" -> "${file.uri.authority}:${DocumentsContract.getDocumentId(file.uri)}"
             "file" -> Os.stat(checkNotNull(file.uri.path)).let { "file:${it.st_dev}:${it.st_ino}" }

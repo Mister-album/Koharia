@@ -35,6 +35,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -53,7 +55,6 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.components.AppBar
-import eu.kanade.presentation.more.settings.screen.SettingsDataScreen
 import eu.kanade.presentation.more.settings.widget.PreferenceGroupHeader
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.util.Screen
@@ -95,12 +96,27 @@ class LocalFolderSettingsScreen(
         val comicsName = stringResource(MR.strings.local_library_default_comics_bookshelf)
         val booksName = stringResource(MR.strings.local_library_default_books_bookshelf)
         val initial = remember(sourceId) { preferences.getConfig() }
+        val networkPreferences = remember(sourceId) { koharia.storage.NetworkStoragePreferences(sourceId) }
+        val initialNetwork = remember(sourceId) { networkPreferences.configuration }
+        var network by rememberSaveable(
+            sourceId,
+            stateSaver = Saver<NetworkStorageDraft, String>(
+                save = { json.encodeToString(it) },
+                restore = { json.decodeFromString(it) },
+            ),
+        ) {
+            mutableStateOf(
+                NetworkStorageDraft(initialNetwork, networkPreferences.username, networkPreferences.password),
+            )
+        }
+        val remoteMode = network.configuration.mode != koharia.storage.LibraryStorageMode.LOCAL
+        var remoteDirectoryDialog by remember { mutableStateOf(false) }
+        var networkError by remember { mutableStateOf(false) }
         val storagePreferences = remember { Injekt.get<StoragePreferences>() }
         val storageDirectory by storagePreferences.baseStorageDirectory.changes()
             .collectAsState(initial = storagePreferences.baseStorageDirectory.get())
-        val pickStorageDirectory = SettingsDataScreen.storageLocationPicker(storagePreferences.baseStorageDirectory)
-        val createInitialDirectories = remember(sourceId) {
-            shouldCreateInitialLocalDirectories(sourceId, initial, profileManager.profiles())
+        val createInitialDirectories = remember(sourceId, remoteMode) {
+            !initial.setupCompleted
         }
         var config by rememberSaveable(
             sourceId,
@@ -116,13 +132,58 @@ class LocalFolderSettingsScreen(
                 restore = { json.decodeFromString(it) },
             ),
         ) { mutableStateOf(preferences.getBookshelfAssignments()) }
-        var initialDirectoriesCreated by rememberSaveable(sourceId) { mutableStateOf(!createInitialDirectories) }
-        var initialDirectoryError by remember { mutableStateOf(false) }
+        var initialDirectoriesCreated by rememberSaveable(sourceId, remoteMode) {
+            mutableStateOf(!createInitialDirectories)
+        }
         var isPreparingDirectories by remember { mutableStateOf(false) }
         var selectedDefaultShelfIds by rememberSaveable(sourceId) { mutableStateOf(emptyList<String>()) }
         val defaultModesChosen = config.hasSelectedDefaultModes(selectedDefaultShelfIds)
         var connectionName by rememberSaveable(sourceId) { mutableStateOf(profileName) }
         var setupStep by rememberSaveable(sourceId) { mutableStateOf(LocalLibrarySetupStep.NAME) }
+        var authenticated by remember(network) { mutableStateOf(false) }
+        var selectedRemoteRoot by rememberSaveable(sourceId) {
+            mutableStateOf<String?>(
+                if (initial.roots.isNotEmpty() && remoteMode) {
+                    runCatching {
+                        if (initialNetwork.mode == koharia.storage.LibraryStorageMode.SMB) {
+                            koharia.storage.SmbAddress.parse(initialNetwork.address).root
+                        } else {
+                            koharia.storage.WebDavAddress.parse(initialNetwork.address).root
+                        }
+                    }.getOrNull()
+                } else {
+                    null
+                },
+            )
+        }
+        var choosingDefaultRoot by remember { mutableStateOf(false) }
+        val effectiveNetwork = if (!config.setupCompleted &&
+            selectedRemoteRoot != null
+        ) {
+            network.withRoot(selectedRemoteRoot!!)
+        } else {
+            network
+        }
+        val defaultLocalDirectory = config.managedBaseTreeUri.ifBlank { storageDirectory }
+        val pickStorageDirectory =
+            rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+                if (uri != null && persistDirectoryPermission(context, uri, requireWrite = true)) {
+                    config =
+                        config.copy(
+                            managedBaseTreeUri = uri.toString(),
+                            managedBaseDisplayPath = directoryDisplayPath(context, uri),
+                        )
+                }
+            }
+        LaunchedEffect(network, setupStep) {
+            if (!config.setupCompleted && remoteMode && !authenticated &&
+                setupStep in
+                listOf(LocalLibrarySetupStep.ROOT, LocalLibrarySetupStep.LIBRARIES, LocalLibrarySetupStep.METADATA)
+            ) {
+                setupStep = LocalLibrarySetupStep.AUTH
+            }
+        }
+
         var editingShelfId by rememberSaveable(sourceId) { mutableStateOf<String?>(null) }
         var pickerShelfId by rememberSaveable(sourceId) { mutableStateOf<String?>(null) }
         var replacingRootId by rememberSaveable(sourceId) { mutableStateOf<String?>(null) }
@@ -144,37 +205,6 @@ class LocalFolderSettingsScreen(
         fun updateShelf(shelf: LocalBookshelf) {
             config = config.copy(bookshelves = config.bookshelves.map { if (it.id == shelf.id) shelf else it })
         }
-        fun completeLibrariesStep() {
-            if (isPreparingDirectories || isSaving || !validShelves || !defaultModesChosen) return
-            if (!createInitialDirectories) {
-                setupStep = LocalLibrarySetupStep.METADATA
-                return
-            }
-            isPreparingDirectories = true
-            initialDirectoryError = false
-            scope.launch {
-                try {
-                    config = tachiyomi.core.common.util.lang.withIOContext {
-                        require(storagePreferences.baseStorageDirectory.isSet())
-                        prepareInitialLocalDirectories(
-                            context,
-                            config,
-                            storageDirectory,
-                            directoryDisplayPath(context, Uri.parse(storageDirectory)),
-                            json,
-                        )
-                    }
-                    initialDirectoriesCreated = true
-                    setupStep = LocalLibrarySetupStep.METADATA
-                } catch (error: kotlinx.coroutines.CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    initialDirectoryError = true
-                } finally {
-                    isPreparingDirectories = false
-                }
-            }
-        }
         fun discard() {
             scope.launch {
                 if (isNew) profileManager.remove(sourceId)
@@ -185,15 +215,28 @@ class LocalFolderSettingsScreen(
             if (isSaving || isPreparingDirectories) return
             if (editingShelfId != null) {
                 editingShelfId = null
-            } else if (config != initial || connectionName.trim() != profileName) {
+            } else if (!config.setupCompleted && setupStep != LocalLibrarySetupStep.NAME) {
+                setupStep = when (setupStep) {
+                    LocalLibrarySetupStep.METADATA -> LocalLibrarySetupStep.LIBRARIES
+                    LocalLibrarySetupStep.LIBRARIES -> LocalLibrarySetupStep.ROOT
+                    LocalLibrarySetupStep.ROOT -> if (remoteMode) {
+                        LocalLibrarySetupStep.AUTH
+                    } else {
+                        LocalLibrarySetupStep.NAME
+                    }
+                    else -> LocalLibrarySetupStep.NAME
+                }
+            } else if (config != initial || connectionName.trim() != profileName ||
+                network != NetworkStorageDraft(initialNetwork, networkPreferences.username, networkPreferences.password)
+            ) {
                 showUnsavedDialog = true
             } else {
                 discard()
             }
         }
         fun save() {
-            if (isSaving || !initialDirectoriesCreated || !defaultModesChosen || connectionName.isBlank() ||
-                !validShelves
+            if (isSaving || !defaultModesChosen || connectionName.isBlank() ||
+                !validShelves || (remoteMode && !effectiveNetwork.valid)
             ) {
                 return
             }
@@ -203,6 +246,41 @@ class LocalFolderSettingsScreen(
                     val profile = requireNotNull(profileManager.profiles().firstOrNull { it.id == sourceId })
                     val scanAdapter = Injekt.get<SourceManager>().get(sourceId) as? ConnectionLibraryRefreshAdapter
                         ?: LocalFolderSource(context, sourceId, connectionName.trim(), profile)
+                    if (remoteMode) {
+                        val saved = tachiyomi.core.common.util.lang.withIOContext {
+                            saveNetworkLibraryDraft(
+                                context,
+                                sourceId,
+                                effectiveNetwork,
+                                initialNetwork,
+                                config,
+                                assignments,
+                                isNew,
+                            )
+                        }
+                        config = saved
+                        profileManager.update(profile.copy(name = connectionName.trim()))
+                        (scanAdapter as? LocalFolderSource)?.startLibraryRefresh()
+                        if (completeOnboardingOnSave) {
+                            basePreferences.shownOnboardingFlow.set(true)
+                            navigator.popUntilRoot()
+                        } else {
+                            navigator.pop()
+                        }
+                        return@launch
+                    }
+                    if (createInitialDirectories) {
+                        config = tachiyomi.core.common.util.lang.withIOContext {
+                            prepareInitialLocalDirectories(
+                                context,
+                                config,
+                                defaultLocalDirectory,
+                                directoryDisplayPath(context, Uri.parse(defaultLocalDirectory)),
+                                json,
+                            )
+                        }
+                        initialDirectoriesCreated = true
+                    }
                     profileManager.update(profile.copy(name = connectionName.trim()))
                     val enabledConfig = if (config.setupCompleted) config else config.enabledLibraryConfiguration()
                     isInitialScanning = !preferences.getConfig().setupCompleted
@@ -224,7 +302,9 @@ class LocalFolderSettingsScreen(
                 } catch (error: kotlinx.coroutines.CancellationException) {
                     throw error
                 } catch (error: Exception) {
-                    context.toast(MR.strings.local_library_save_failed)
+                    context.toast(
+                        if (remoteMode) MR.strings.storage_operation_failed else MR.strings.local_library_save_failed,
+                    )
                 } finally {
                     isInitialScanning = false
                     isSaving = false
@@ -319,7 +399,11 @@ class LocalFolderSettingsScreen(
                 }
             },
         ) { padding ->
-            ScrollbarLazyColumn(contentPadding = padding) {
+            ScrollbarLazyColumn(
+                modifier = Modifier.testTag("local-settings-list"),
+                contentPadding = padding,
+                state = remember(setupStep) { androidx.compose.foundation.lazy.LazyListState() },
+            ) {
                 if (isSaving ||
                     isPreparingDirectories
                 ) {
@@ -328,23 +412,6 @@ class LocalFolderSettingsScreen(
                 if (isInitialScanning) {
                     item {
                         SetupNotice(stringResource(MR.strings.local_library_initial_scanning))
-                    }
-                }
-                if (initialDirectoryError) {
-                    item {
-                        SetupNotice(stringResource(MR.strings.local_library_auto_directories_failed), warning = true)
-                    }
-                    item {
-                        TextPreferenceWidget(
-                            title = stringResource(MR.strings.action_retry),
-                            onPreferenceClick = ::completeLibrariesStep,
-                        )
-                    }
-                    item {
-                        TextPreferenceWidget(
-                            title = stringResource(MR.strings.onboarding_storage_action_select),
-                            onPreferenceClick = { pickStorageDirectory.launch(null) },
-                        )
                     }
                 }
                 if (editingShelf != null) {
@@ -377,7 +444,11 @@ class LocalFolderSettingsScreen(
                             onPreferenceClick = {
                                 pickerShelfId = editingShelf.id
                                 replacingRootId = root.id
-                                chooseDirectory.launch(Uri.parse(root.treeUri))
+                                if (remoteMode) {
+                                    remoteDirectoryDialog = true
+                                } else {
+                                    chooseDirectory.launch(Uri.parse(root.treeUri))
+                                }
                             },
                             widget = {
                                 IconButton(onClick = { rootToRemove = root }) {
@@ -391,11 +462,11 @@ class LocalFolderSettingsScreen(
                     }
                     item {
                         DirectorySetupActions(
-                            showCreateManaged = true,
+                            showCreateManaged = !remoteMode,
                             onAddExisting = {
                                 pickerShelfId = editingShelf.id
                                 replacingRootId = null
-                                chooseDirectory.launch(null)
+                                if (remoteMode) remoteDirectoryDialog = true else chooseDirectory.launch(null)
                             },
                             onCreateManaged = {
                                 pickerShelfId = editingShelf.id
@@ -415,7 +486,11 @@ class LocalFolderSettingsScreen(
                                 onPreferenceClick = {
                                     pickerShelfId = editingShelf.id
                                     replacingRootId = root.id
-                                    chooseDirectory.launch(Uri.parse(root.treeUri))
+                                    if (remoteMode) {
+                                        remoteDirectoryDialog = true
+                                    } else {
+                                        chooseDirectory.launch(Uri.parse(root.treeUri))
+                                    }
                                 },
                             )
                         }
@@ -469,8 +544,18 @@ class LocalFolderSettingsScreen(
                         }
                     }
                 } else {
-                    if (!config.setupCompleted) item { SetupProgress(setupStep) }
+                    if (!config.setupCompleted) item { SetupProgress(setupStep, remoteMode) }
                     if (config.setupCompleted || setupStep == LocalLibrarySetupStep.NAME) {
+                        item {
+                            LocalStorageModeOptions(
+                                selected = network.configuration.mode,
+                                enabled = isNew && !isSaving && !isPreparingDirectories && config.roots.isEmpty(),
+                                onSelect = {
+                                    selectedRemoteRoot = null
+                                    network = network.copy(configuration = network.configuration.copy(mode = it))
+                                },
+                            )
+                        }
                         item {
                             OutlinedTextField(
                                 value = connectionName,
@@ -488,13 +573,126 @@ class LocalFolderSettingsScreen(
                             )
                         }
                     }
+                    if (remoteMode && (config.setupCompleted || setupStep == LocalLibrarySetupStep.AUTH)) {
+                        item {
+                            NetworkStorageConnectionFields(
+                                network,
+                                !isSaving && !isPreparingDirectories,
+                                showRootPicker = config.setupCompleted,
+                            ) {
+                                if (!config.setupCompleted && network != it) {
+                                    selectedRemoteRoot = null
+                                    config = config.copy(roots = emptyList(), detachedRoots = emptyList())
+                                }
+                                network = it
+                            }
+                        }
+                        if (config.setupCompleted) item { SetupNotice(stringResource(MR.strings.storage_sync_help)) }
+                        if (config.setupCompleted && !network.configuration.persistentIdentity) {
+                            item { SetupNotice(stringResource(MR.strings.storage_read_only_root), warning = true) }
+                        }
+                        if (networkError) {
+                            item {
+                                SetupNotice(stringResource(MR.strings.storage_operation_failed), warning = true)
+                            }
+                        }
+                        if (config.setupCompleted) item { NetworkStoragePendingSettings(sourceId) }
+                    }
                     if (!config.setupCompleted && setupStep == LocalLibrarySetupStep.NAME) {
                         item {
                             SetupNavigation(
-                                enabled = !isSaving && !isPreparingDirectories,
-                                onNext = { setupStep = LocalLibrarySetupStep.LIBRARIES },
-                                nextEnabled =
-                                connectionName.isNotBlank() && !isPreparingDirectories,
+                                onNext = {
+                                    setupStep =
+                                        if (remoteMode) LocalLibrarySetupStep.AUTH else LocalLibrarySetupStep.ROOT
+                                },
+                                nextEnabled = connectionName.isNotBlank(),
+                            )
+                        }
+                    }
+                    if (!config.setupCompleted && setupStep == LocalLibrarySetupStep.AUTH) {
+                        item { SetupNotice(stringResource(MR.strings.storage_setup_auth_summary)) }
+                        item {
+                            SetupNavigation(
+                                enabled = !isPreparingDirectories,
+                                onPrevious = { setupStep = LocalLibrarySetupStep.NAME },
+                                onNext = {
+                                    isPreparingDirectories = true
+                                    networkError = false
+                                    scope.launch {
+                                        try {
+                                            tachiyomi.core.common.util.lang.withIOContext { network.authenticate() }
+                                            authenticated = true
+                                            setupStep = LocalLibrarySetupStep.ROOT
+                                        } catch (error: kotlinx.coroutines.CancellationException) {
+                                            throw error
+                                        } catch (_: Exception) {
+                                            networkError = true
+                                        } finally {
+                                            isPreparingDirectories = false
+                                        }
+                                    }
+                                },
+                                nextEnabled = network.endpointValid,
+                            )
+                        }
+                    }
+                    if (!config.setupCompleted && setupStep == LocalLibrarySetupStep.ROOT) {
+                        item {
+                            SetupNotice(
+                                stringResource(
+                                    if (remoteMode) {
+                                        MR.strings.storage_setup_remote_root_summary
+                                    } else {
+                                        MR.strings.storage_setup_local_root_summary
+                                    },
+                                ),
+                            )
+                        }
+                        item {
+                            TextPreferenceWidget(
+                                title = stringResource(MR.strings.storage_setup_default_folder),
+                                subtitle = if (remoteMode) {
+                                    selectedRemoteRoot?.ifEmpty { "/" }
+                                        ?: stringResource(MR.strings.storage_browse_folders)
+                                } else {
+                                    defaultLocalDirectory.takeIf { it.isNotBlank() }?.let {
+                                        directoryDisplayPath(context, Uri.parse(it))
+                                    }
+                                },
+                                enabled = config.roots.isEmpty(),
+                                onPreferenceClick = {
+                                    if (remoteMode) choosingDefaultRoot = true else pickStorageDirectory.launch(null)
+                                },
+                            )
+                        }
+                        if (config.roots.isNotEmpty()) {
+                            item {
+                                SetupNotice(stringResource(MR.strings.storage_setup_root_locked))
+                            }
+                        }
+                        item {
+                            SetupNavigation(
+                                onPrevious = {
+                                    setupStep =
+                                        if (remoteMode) LocalLibrarySetupStep.AUTH else LocalLibrarySetupStep.NAME
+                                },
+                                onNext = {
+                                    if (!remoteMode) {
+                                        config = config.copy(
+                                            managedBaseTreeUri = defaultLocalDirectory,
+                                            managedBaseDisplayPath = directoryDisplayPath(
+                                                context,
+                                                Uri.parse(defaultLocalDirectory),
+                                            ),
+                                        )
+                                    }
+                                    setupStep = LocalLibrarySetupStep.LIBRARIES
+                                },
+                                nextEnabled = if (remoteMode) {
+                                    authenticated && selectedRemoteRoot != null
+                                } else {
+                                    defaultLocalDirectory.isNotBlank()
+                                },
                             )
                         }
                     }
@@ -530,7 +728,6 @@ class LocalFolderSettingsScreen(
                                                     },
                                                 )
                                                 if (createInitialDirectories) initialDirectoriesCreated = false
-                                                initialDirectoryError = false
                                             },
                                         ),
                                         headlineContent = { Text(bookshelfTypeTitle(type)) },
@@ -631,14 +828,6 @@ class LocalFolderSettingsScreen(
                                     SetupNotice(stringResource(MR.strings.local_library_enable_one), warning = true)
                                 }
                             }
-                            item {
-                                SetupNavigation(
-                                    enabled = !isSaving && !isPreparingDirectories,
-                                    onPrevious = { setupStep = LocalLibrarySetupStep.NAME },
-                                    onNext = ::completeLibrariesStep,
-                                    nextEnabled = validShelves && defaultModesChosen && !isPreparingDirectories,
-                                )
-                            }
                         }
                     }
                     if (config.setupCompleted) {
@@ -647,6 +836,15 @@ class LocalFolderSettingsScreen(
                                 title = stringResource(MR.strings.local_library_metadata_storage),
                                 subtitle = metadataLabel(context, config.metadataStorage),
                                 enabled = false,
+                            )
+                        }
+                    } else if (setupStep == LocalLibrarySetupStep.LIBRARIES) {
+                        item {
+                            SetupNavigation(
+                                enabled = !isSaving && !isPreparingDirectories,
+                                onPrevious = { setupStep = LocalLibrarySetupStep.ROOT },
+                                onNext = { setupStep = LocalLibrarySetupStep.METADATA },
+                                nextEnabled = validShelves && defaultModesChosen,
                             )
                         }
                     } else if (setupStep == LocalLibrarySetupStep.METADATA) {
@@ -664,7 +862,14 @@ class LocalFolderSettingsScreen(
                                 onPrevious = { setupStep = LocalLibrarySetupStep.LIBRARIES },
                                 onNext = ::save,
                                 nextEnabled =
-                                !isSaving && validShelves && defaultModesChosen && initialDirectoriesCreated,
+                                !isSaving && validShelves && defaultModesChosen &&
+                                    (
+                                        if (remoteMode) {
+                                            selectedRemoteRoot != null
+                                        } else {
+                                            defaultLocalDirectory.isNotBlank()
+                                        }
+                                        ),
                                 nextLabel = stringResource(MR.strings.local_library_setup_finish),
                             )
                         }
@@ -695,6 +900,67 @@ class LocalFolderSettingsScreen(
                         editingShelfId = null
                     }
                     shelfToRemove = null
+                },
+            )
+        }
+        if (choosingDefaultRoot) {
+            val smb = network.configuration.mode == koharia.storage.LibraryStorageMode.SMB
+            NetworkStorageDirectoryDialog(
+                // A pasted address may already carry a folder; use it as the browsing start so the
+                // folder is still explicitly confirmed here instead of being typed in step two.
+                initialPath = selectedRemoteRoot ?: runCatching {
+                    if (smb) {
+                        koharia.storage.SmbAddress.parse(network.configuration.address).root
+                    } else {
+                        koharia.storage.WebDavAddress.parse(network.configuration.address).root
+                    }
+                }.getOrDefault(""),
+                draft = network,
+                onDismiss = { choosingDefaultRoot = false },
+                onConfirm = {
+                    selectedRemoteRoot = it
+                    choosingDefaultRoot = false
+                },
+                loadDirectories = { path ->
+                    if (smb) {
+                        koharia.storage.browseSmbServer(
+                            network.configuration.address,
+                            network.username,
+                            network.password,
+                            network.configuration.domain,
+                            path,
+                        )
+                    } else {
+                        koharia.storage.browseWebDavServer(
+                            network.configuration.address,
+                            network.username,
+                            network.password,
+                            path,
+                        )
+                    }
+                },
+                allowRootSelection = !smb,
+                createDirectory = { parent, name -> network.createDirectory(parent, name, serverLevel = true) },
+                creationAllowed = { path -> network.canCreateDirectory(path, serverLevel = true) },
+            )
+        }
+        if (remoteDirectoryDialog) {
+            NetworkStorageDirectoryDialog(
+                initialPath = replacingRootId?.let { id ->
+                    (config.roots + config.detachedRoots).firstOrNull { it.id == id }?.relativePath
+                }.orEmpty(),
+                draft = effectiveNetwork,
+                onDismiss = { remoteDirectoryDialog = false },
+                onConfirm = { path ->
+                    attachDirectory(
+                        LocalLibraryRootConfig(
+                            id = UUID.randomUUID().toString(),
+                            treeUri = initial.roots.firstOrNull()?.treeUri ?: "koharia-draft://$sourceId/root",
+                            displayPath = path.ifEmpty { "/" },
+                            relativePath = path,
+                        ),
+                    )
+                    remoteDirectoryDialog = false
                 },
             )
         }
@@ -729,23 +995,27 @@ private fun LocalConfigurationRemovalDialog(
 }
 
 @Composable
-private fun SetupProgress(step: LocalLibrarySetupStep) {
-    val stepNumber = when (step) {
-        LocalLibrarySetupStep.NAME -> 1
-        LocalLibrarySetupStep.LIBRARIES -> 2
-        LocalLibrarySetupStep.METADATA -> 3
+private fun SetupProgress(step: LocalLibrarySetupStep, remote: Boolean) {
+    val steps = if (remote) {
+        LocalLibrarySetupStep.entries
+    } else {
+        LocalLibrarySetupStep.entries.filter {
+            it !=
+                LocalLibrarySetupStep.AUTH
+        }
     }
+    val stepNumber = steps.indexOf(step) + 1
     Column(
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = stringResource(MR.strings.local_library_setup_progress, stepNumber, 3),
+            text = stringResource(MR.strings.local_library_setup_progress, stepNumber, steps.size),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
         )
         EInkLinearProgressIndicator(
-            progress = { stepNumber / 3f },
+            progress = { stepNumber.toFloat() / steps.size },
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -767,7 +1037,7 @@ private fun SetupNavigation(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onPrevious != null) {
-            TextButton(onClick = onPrevious, enabled = enabled) {
+            TextButton(onClick = onPrevious, enabled = enabled, modifier = Modifier.testTag("local-setup-previous")) {
                 Text(text = stringResource(MR.strings.local_library_setup_previous))
             }
         } else {
@@ -776,6 +1046,7 @@ private fun SetupNavigation(
         TextButton(
             enabled = enabled && nextEnabled,
             onClick = onNext,
+            modifier = Modifier.testTag("local-setup-next"),
         ) {
             Text(text = nextLabel)
         }
@@ -807,7 +1078,7 @@ private fun DirectorySetupActions(
 }
 
 @Composable
-private fun SetupNotice(
+internal fun SetupNotice(
     text: String,
     warning: Boolean = false,
 ) {
@@ -858,7 +1129,7 @@ private fun metadataSummary(storage: LocalMetadataStorage): String {
     )
 }
 
-private fun metadataLabel(context: Context, storage: LocalMetadataStorage): String {
+internal fun metadataLabel(context: Context, storage: LocalMetadataStorage): String {
     return when (storage) {
         LocalMetadataStorage.FOLDER_DIRECTORY -> context.contextStringResource(MR.strings.local_library_metadata_folder)
         LocalMetadataStorage.DATABASE -> context.contextStringResource(MR.strings.local_library_metadata_database)
@@ -915,6 +1186,8 @@ private fun directoryDisplayPath(context: Context, uri: Uri): String {
 
 private enum class LocalLibrarySetupStep {
     NAME,
+    AUTH,
+    ROOT,
     LIBRARIES,
     METADATA,
 }

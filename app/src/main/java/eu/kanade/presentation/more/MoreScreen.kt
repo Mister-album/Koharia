@@ -36,6 +36,7 @@ fun MoreScreen(
     scopedSettingsBlockedReason: String?,
     onDownloadedOnlyChange: (Boolean) -> Unit,
     onClickDownloadQueue: () -> Unit,
+    onClickServerDownloads: (() -> Unit)? = null,
     onClickStats: () -> Unit,
     onClickDataAndStorage: () -> Unit,
     onClickSettings: () -> Unit,
@@ -94,6 +95,15 @@ fun MoreScreen(
                         },
                         icon = Icons.Outlined.GetApp,
                         onPreferenceClick = onClickDownloadQueue,
+                    )
+                }
+            }
+            if (onClickServerDownloads != null) {
+                item {
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.server_download_queue),
+                        icon = Icons.Outlined.Storage,
+                        onPreferenceClick = onClickServerDownloads,
                     )
                 }
             }

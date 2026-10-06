@@ -79,10 +79,13 @@ internal fun KavitaFilterDialog(
     initial: KavitaFilter,
     libraries: List<KavitaLibrary>,
     cachedOnly: Boolean,
+    persistentFilters: Boolean,
+    onPersistentFiltersChange: (Boolean) -> Unit,
     onDismissRequest: () -> Unit,
     onApply: (KavitaFilter) -> Unit,
 ) {
     var draft by remember { mutableStateOf(initial) }
+    var persistentFilters by remember(persistentFilters) { mutableStateOf(persistentFilters) }
     val commonFields = listOf(19, 21, 2, 18, 6, 7, 3, 4, 26)
     val fields = if (cachedOnly) {
         emptyList()
@@ -160,6 +163,14 @@ internal fun KavitaFilterDialog(
                     CollapsibleBox(stringResource(field.label)) {
                         KavitaFilterGroup(source, field, libraries, draft) { draft = it }
                     }
+                }
+            }
+            // Last, and without an explanation: a stored preference rather than a filter.
+            item {
+                HorizontalDivider()
+                CheckboxItem(stringResource(MR.strings.shelf_persistent_filters), persistentFilters) {
+                    persistentFilters = !persistentFilters
+                    onPersistentFiltersChange(!persistentFilters)
                 }
             }
         }

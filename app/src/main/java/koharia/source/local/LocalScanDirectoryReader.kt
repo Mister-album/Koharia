@@ -18,7 +18,7 @@ internal data class LocalScanFile(
 }
 
 /** A scan-scoped snapshot; never reused after refresh or used for file mutations. */
-internal class LocalScanDirectoryReader(private val context: Context) {
+internal class LocalScanDirectoryReader(private val context: Context, private val allowPendingRemote: Boolean = false) {
     val attributes = mutableMapOf<Uri, LocalScanFile>()
     private val directories = mutableMapOf<Uri, List<LocalScanFile>>()
 
@@ -28,6 +28,11 @@ internal class LocalScanDirectoryReader(private val context: Context) {
 
     fun list(directory: UniFile): List<LocalScanFile> = directories.getOrPut(directory.uri) {
         if (!metadata(directory).directory) throw IOException("Local scan target is not a directory")
+        if (allowPendingRemote && directory is com.hippo.unifile.RemoteStorageFile &&
+            directory.runtime.cachedChildren(directory.storagePath) == null
+        ) {
+            return@getOrPut emptyList()
+        }
         val uri = directory.uri
         val files = if (uri.scheme == ContentResolver.SCHEME_CONTENT && DocumentsContract.isTreeUri(uri)) {
             listDocuments(uri)

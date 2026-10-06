@@ -90,10 +90,8 @@ import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.system.copyToClipboard
+import koharia.connection.ConnectionSeriesMetadata
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.findChildOfType
@@ -586,13 +584,8 @@ private fun ColumnScope.ConnectionMetadataRow(
     memo: JsonObject,
     textAlign: TextAlign?,
 ) {
-    if (memo.isEmpty()) return
-
-    val publisher = memo["publisher"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-    val language = memo["language"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-    val ageRating = memo["ageRating"]?.jsonPrimitive?.intOrNull
-    val booksCount = memo["booksCount"]?.jsonPrimitive?.intOrNull
-    val totalBookCount = memo["totalBookCount"]?.jsonPrimitive?.intOrNull
+    val metadata = remember(memo) { ConnectionSeriesMetadata.fromMemo(memo) }
+    val (publisher, language, ageRating, booksCount, totalBookCount) = metadata
 
     val infoParts = buildList {
         if (publisher != null) add(publisher)

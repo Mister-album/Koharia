@@ -11,6 +11,18 @@ import org.junit.jupiter.api.Test
 
 class LocalFolderIndexTest {
     @Test
+    fun `stable node locator resolves its physical path for remote files`() {
+        val item = item("Series/001.cbz").copy(
+            kind = LocalLibraryItem.Kind.CHAPTER,
+            locatorPath = ".koharia/nodes/chapter-id",
+            itemKey = LocalLibraryLocator.itemKey("root", "Series/001.cbz"),
+        )
+        val index = LocalLibraryIndex(items = listOf(item))
+        assertEquals(item, index.itemsByLocator["root" to ".koharia/nodes/chapter-id"])
+        assertEquals("Series/001.cbz", index.itemsByLocator["root" to ".koharia/nodes/chapter-id"]?.physicalPath())
+    }
+
+    @Test
     fun `upgrading a legacy virtual provider identity keeps its locator and override key`() {
         val old = item("Images/.koharia-image-series").copy(
             format = "directory",

@@ -157,6 +157,8 @@ class PagerPageHolder(
         } else {
             pairContainer?.updateViewport()
         }
+        // A prefetched image was decoded before selection; confirm it again once it becomes active.
+        if (spreadDisplayed) viewer.activity.onPagesDisplayed(slot.pages)
     }
 
     private fun initProgressIndicator() {

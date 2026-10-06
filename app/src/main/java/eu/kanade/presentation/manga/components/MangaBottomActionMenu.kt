@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
@@ -79,6 +80,7 @@ fun MangaBottomActionMenu(
     onMarkPreviousAsReadClicked: (() -> Unit)? = null,
     onDownloadClicked: (() -> Unit)? = null,
     onDeleteClicked: (() -> Unit)? = null,
+    onServerDownloadClicked: (() -> Unit)? = null,
     isConnectionCacheMode: Boolean = false,
 ) {
     EInkAnimatedVisibility(
@@ -167,6 +169,15 @@ fun MangaBottomActionMenu(
                         toConfirm = confirm[5],
                         onLongClick = { onLongClickItem(5) },
                         onClick = onDownloadClicked,
+                    )
+                }
+                if (onServerDownloadClicked != null) {
+                    Button(
+                        title = stringResource(MR.strings.server_download_action),
+                        icon = Icons.Outlined.CloudDownload,
+                        toConfirm = false,
+                        onLongClick = {},
+                        onClick = onServerDownloadClicked,
                     )
                 }
                 if (onDeleteClicked != null) {

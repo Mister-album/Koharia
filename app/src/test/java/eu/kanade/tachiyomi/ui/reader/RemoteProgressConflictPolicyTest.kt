@@ -6,6 +6,20 @@ import org.junit.jupiter.api.Test
 class RemoteProgressConflictPolicyTest {
 
     @Test
+    fun `provider conflict cannot be approved by navigation during refresh`() {
+        assertEquals(
+            RemoteProgressDecision.KEEP_REMOTE,
+            RemoteProgressConflictPolicy.decide(
+                localUpdatedAtMillis = 2_000L,
+                remoteUpdatedAtMillis = 1_000L,
+                sameLocation = false,
+                localChangedDuringCheck = true,
+                requiresConfirmation = true,
+            ),
+        )
+    }
+
+    @Test
     fun `newer local progress may be written when positions differ`() {
         assertEquals(
             RemoteProgressDecision.KEEP_LOCAL,

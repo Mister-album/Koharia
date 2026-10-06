@@ -12,6 +12,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.paging.LoadState
@@ -21,12 +22,18 @@ import eu.kanade.presentation.browse.components.BrowseSourceCompactGrid
 import eu.kanade.presentation.browse.components.BrowseSourceList
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.MangaReadProgressDisplay
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.source.Source
+import koharia.connection.ConnectionSeriesMetadata
+import koharia.connection.MangaDownloadState
+import koharia.connection.rememberConnectionShelfEntries
+import koharia.connection.resolveShelfReadProgress
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.library.model.LibraryDisplayMode
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
@@ -35,6 +42,9 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 @Composable
 fun BrowseSourceContent(
@@ -48,7 +58,7 @@ fun BrowseSourceContent(
     selectedMangaIds: Set<Long> = emptySet(),
     showLibraryBadges: Boolean = true,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
-    downloaded: ((Manga) -> Boolean)? = null,
+    readingUnitCount: ((Manga) -> Long?)? = null,
     showPagingLoadingIndicator: Boolean = true,
     onWebViewClick: () -> Unit,
     onHelpClick: () -> Unit,
@@ -60,6 +70,25 @@ fun BrowseSourceContent(
     entryBadge: (@Composable (Manga) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val localEntries = rememberConnectionShelfEntries(source, mangaList)
+    val showReadProgress by Injekt.get<LibraryPreferences>().showLibraryReadProgress.collectAsState()
+    val expectedTotal: (Manga) -> Long? = { manga ->
+        readingUnitCount?.invoke(manga)
+            ?: ConnectionSeriesMetadata.fromMemo(manga.memo).booksCount?.toLong()
+            ?: readProgress?.invoke(manga)
+                ?.takeIf { it.display == MangaReadProgressDisplay.CHAPTERS }?.totalChapterCount
+    }
+    val progress: ((Manga) -> MangaReadProgress?)? = if (showReadProgress) {
+        { manga ->
+            resolveShelfReadProgress(localEntries[manga.url], readProgress?.invoke(manga), expectedTotal(manga))
+        }
+    } else {
+        null
+    }
+    val downloadState: (Manga) -> MangaDownloadState? = { manga ->
+        val local = localEntries[manga.url]
+        local?.downloads(expectedTotal(manga) ?: local.total)
+    }
 
     val errorState = mangaList.loadState.refresh.takeIf { it is LoadState.Error }
         ?: mangaList.loadState.append.takeIf { it is LoadState.Error }
@@ -129,8 +158,8 @@ fun BrowseSourceContent(
                 contentPadding = contentPadding,
                 selectedMangaIds = selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
-                readProgress = readProgress,
-                downloaded = downloaded,
+                readProgress = progress,
+                downloadState = downloadState,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
                 entryLabel = entryLabel,
                 contentHeader = contentHeader,
@@ -146,8 +175,8 @@ fun BrowseSourceContent(
                 contentPadding = contentPadding,
                 selectedMangaIds = selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
-                readProgress = readProgress,
-                downloaded = downloaded,
+                readProgress = progress,
+                downloadState = downloadState,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
                 entryLabel = entryLabel,
                 contentHeader = contentHeader,
@@ -165,8 +194,8 @@ fun BrowseSourceContent(
                 showTitle = displayMode is LibraryDisplayMode.CompactGrid,
                 selectedMangaIds = selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
-                readProgress = readProgress,
-                downloaded = downloaded,
+                readProgress = progress,
+                downloadState = downloadState,
                 showPagingLoadingIndicator = showPagingLoadingIndicator,
                 entryLabel = entryLabel,
                 contentHeader = contentHeader,

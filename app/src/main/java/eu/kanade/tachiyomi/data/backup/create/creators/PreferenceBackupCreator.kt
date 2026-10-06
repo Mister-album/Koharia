@@ -32,7 +32,7 @@ class PreferenceBackupCreator(
             .withPrivatePreferences(includePrivatePreferences)
     }
 
-    fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
+    suspend fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
         val sourceKeys = sourceManager.getCatalogueSources()
             .filterIsInstance<ConfigurableSource>()
             .map { it.preferenceKey() }
@@ -40,10 +40,22 @@ class PreferenceBackupCreator(
             .distinct()
             .sorted()
         return sourceKeys.map { key ->
+            val connectionId = key.removePrefix("source_").toLongOrNull()
+            val network = connectionId?.let { koharia.storage.NetworkStoragePreferences(it) }
+            val state = if (network != null && network.configuration.mode != koharia.storage.LibraryStorageMode.LOCAL) {
+                val payload = koharia.storage.StorageBackup(Injekt.get(), Injekt.get()).create(
+                    network.connectionId,
+                    network.account,
+                    network.configuration.rootIdentity,
+                )
+                listOf(BackupPreference(koharia.storage.StorageBackup.KEY, StringPreferenceValue(payload)))
+            } else {
+                emptyList()
+            }
             BackupSourcePreferences(
                 key,
                 sourcePreferences(key).all.toBackupPreferences()
-                    .withPrivatePreferences(includePrivatePreferences),
+                    .withPrivatePreferences(includePrivatePreferences) + state,
             )
         }
             .filter { it.prefs.isNotEmpty() }

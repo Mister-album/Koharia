@@ -107,8 +107,10 @@ class KavitaReadingCoordinator(
             val operation = operation(ref.chapterId)
             val old = operation?.let { json.decodeFromString<KavitaReadingState>(it.payload) }
             val snapshot = KavitaReadingState(ref, remote, total)
+            var conflict = old?.conflict == true
             if (operation?.pending == true) {
                 if (old != null && kavitaProgressConflict(old, remote)) {
+                    conflict = true
                     repository.putOperation(
                         connectionId,
                         account,
@@ -127,7 +129,7 @@ class KavitaReadingCoordinator(
                     ),
                 )
             }
-            snapshot
+            snapshot.copy(conflict = conflict)
         }
     }
 

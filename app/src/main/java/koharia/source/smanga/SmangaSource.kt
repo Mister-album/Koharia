@@ -273,6 +273,9 @@ class SmangaSource(private val context: Context, override val connectionProfile:
         genre = entry.tags.joinToString()
         status = SManga.UNKNOWN
         thumbnail_url = session.api.coverUrl(entry.id)
+        memo = buildJsonObject {
+            if (entry.chapterCount > 0) put("booksCount", entry.chapterCount)
+        }
         initialized = true
     }
     fun toManga(entry: SmangaManga, session: Session = session()): Manga {
@@ -280,7 +283,7 @@ class SmangaSource(private val context: Context, override val connectionProfile:
         return Manga.create().copy(
             id = -entry.id, source = id, url = remote.url, title = remote.title,
             author = remote.author, description = remote.description, genre = entry.tags,
-            thumbnailUrl = remote.thumbnail_url, initialized = false,
+            thumbnailUrl = remote.thumbnail_url, initialized = false, memo = remote.memo,
         )
     }
     suspend fun materialize(manga: Manga): Manga = materializeMutex.withLock {

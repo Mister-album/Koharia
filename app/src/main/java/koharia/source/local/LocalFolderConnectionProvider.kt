@@ -4,6 +4,7 @@ import android.content.Context
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.download.DownloadManager
 import koharia.connection.ConnectionProvider
 import koharia.connection.ConnectionSource
 import koharia.connection.LibraryConnectionProfile
@@ -52,12 +53,16 @@ class LocalFolderConnectionProvider(
 
     override suspend fun removeConnection(profile: LibraryConnectionProfile): Result<Boolean> = runCatching {
         Injekt.get<LocalLibraryRefreshTasks>().cancel(profile.id)
+        val downloads = Injekt.get<DownloadManager>()
+        downloads.cancelQueuedDownloads(downloads.queueState.value.filter { it.source.id == profile.id })
         val mangaRepository = Injekt.get<MangaRepository>()
         val coverCache = Injekt.get<CoverCache>()
         mangaRepository.getMangaBySourceId(profile.id).forEach { manga ->
             coverCache.deleteFromCache(manga)
         }
         mangaRepository.deleteMangaBySourceId(profile.id)
+        koharia.storage.NetworkStorageRuntime.removeCachedContent(context, profile.id)
+        Injekt.get<koharia.domain.storage.LibraryStorageRepository>().removeConnection(profile.id)
 
         // Let the generic connection cleanup remove the profile and its source-scoped index/configuration.
         false

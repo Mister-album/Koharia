@@ -6,29 +6,80 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
+import koharia.connection.MangaDownloadState
+import koharia.connection.MangaDownloadStatus
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.Badge
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 private val LibraryReadProgressCornerSize = 32.dp
+
+@Composable
+internal fun ManualDownloadIndicator(state: MangaDownloadState, modifier: Modifier = Modifier) {
+    if (state.status == MangaDownloadStatus.NONE) return
+    val showCount by Injekt.get<LibraryPreferences>().showShelfDownloadCount.collectAsState()
+    val description = when (state.status) {
+        MangaDownloadStatus.COMPLETE -> stringResource(MR.strings.shelf_download_complete, state.count)
+        MangaDownloadStatus.PARTIAL -> stringResource(MR.strings.shelf_download_partial, state.count, state.total ?: 0)
+        else -> stringResource(MR.strings.shelf_download_unknown, state.count)
+    }
+    val accessible = modifier.semantics { contentDescription = description }
+    if (state.status == MangaDownloadStatus.COMPLETE) {
+        DownloadedCorner(accessible)
+    } else {
+        androidx.compose.foundation.layout.Row(
+            modifier = accessible.background(MaterialTheme.colorScheme.primaryContainer, CircleShape).padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Outlined.Download,
+                null,
+                Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            if (showCount) {
+                Text(
+                    if (state.status ==
+                        MangaDownloadStatus.PARTIAL
+                    ) {
+                        "${state.count}/${state.total}"
+                    } else {
+                        "${state.count}/?"
+                    },
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontSize = 10.sp,
+                )
+            }
+        }
+    }
+}
 
 enum class MangaReadProgressDisplay {
     CHAPTERS,

@@ -13,8 +13,10 @@ internal object RemoteProgressConflictPolicy {
         remoteUpdatedAtMillis: Long?,
         sameLocation: Boolean,
         localChangedDuringCheck: Boolean,
+        requiresConfirmation: Boolean = false,
     ): RemoteProgressDecision = when {
         sameLocation -> RemoteProgressDecision.SAME_LOCATION
+        requiresConfirmation -> RemoteProgressDecision.KEEP_REMOTE
         localChangedDuringCheck -> RemoteProgressDecision.KEEP_LOCAL
         localUpdatedAtMillis != null &&
             remoteUpdatedAtMillis != null &&

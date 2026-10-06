@@ -115,6 +115,18 @@ class ConnectionAddressRouterTest {
     }
 
     @Test
+    fun `authentication failure during initial probe still uses internal address`() {
+        for (status in listOf(401, 403)) {
+            probeStatus = status
+            internalStatus = status
+            wifi = status
+            get()
+        }
+        assertTrue(publicRequests.isEmpty())
+        assertEquals(4, internalRequests.size)
+    }
+
+    @Test
     fun `overlapping base paths use the more specific prefix`() {
         val nestedInternal = ConnectionAddressRouter(
             { "https://public.test/lrr/" },

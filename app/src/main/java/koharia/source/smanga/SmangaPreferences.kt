@@ -2,6 +2,7 @@ package koharia.source.smanga
 
 import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.connection.ConnectionAddressRouter
+import koharia.connection.ConnectionShelfFilterPersistence
 import koharia.smanga.SmangaApi
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -30,10 +31,33 @@ class SmangaPreferences(connectionId: Long) {
         }
 
     var order: String
-        get() = preferences.getString(scoped("order"), "mangaName asc").orEmpty()
+        get() = preferences.getString(scoped("order"), DEFAULT_ORDER).orEmpty()
         set(value) {
             preferences.edit().putString(scoped("order"), value).apply()
         }
+
+    /**
+     * Whether the shelf sort survives leaving the shelf. Off by default, matching the library's own
+     * persistent-filtering option: an opt-in store, not an always-on one.
+     */
+    var persistentFilters: Boolean
+        get() = preferences.getBoolean(scoped("persistent_filters"), false)
+        set(value) {
+            preferences.edit().putBoolean(scoped("persistent_filters"), value).apply()
+        }
+
+    /** The sort to open the shelf with; the stored value only counts while persistence is on. */
+    fun initialOrder(): String =
+        ConnectionShelfFilterPersistence.initialOrder(persistentFilters, order, DEFAULT_ORDER)
+
+    /** Writes the confirmed sort, or drops the stored one when persistence is off. */
+    fun commitOrder(order: String, persistent: Boolean) {
+        if (ConnectionShelfFilterPersistence.shouldStore(persistent)) {
+            this.order = order
+        } else if (ConnectionShelfFilterPersistence.shouldClear(persistent)) {
+            preferences.edit().remove(scoped("order")).apply()
+        }
+    }
 
     var displayMode: Int
         get() = preferences.getInt(scoped("display_mode"), 0)
@@ -67,4 +91,8 @@ class SmangaPreferences(connectionId: Long) {
     }
 
     private fun scoped(key: String) = "account_${accountKey}_$key"
+
+    companion object {
+        const val DEFAULT_ORDER = "mangaName asc"
+    }
 }

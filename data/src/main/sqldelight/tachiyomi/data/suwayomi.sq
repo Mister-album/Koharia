@@ -1,0 +1,45 @@
+import kotlin.Boolean;
+
+CREATE TABLE suwayomi_cache (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    group_key TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    PRIMARY KEY (connection_id, account_key, group_key, cache_key)
+);
+
+CREATE TABLE suwayomi_operation (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    operation_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    pending INTEGER AS Boolean NOT NULL,
+    PRIMARY KEY (connection_id, account_key, operation_key)
+);
+
+getCache:
+SELECT cache_key, payload, generation FROM suwayomi_cache
+WHERE connection_id = :connectionId AND account_key = :account AND group_key = :groupKey AND cache_key = :key;
+
+putCache:
+INSERT OR REPLACE INTO suwayomi_cache VALUES (:connectionId, :account, :groupKey, :key, :payload, :generation);
+
+getOperations:
+SELECT operation_key, payload, revision, pending FROM suwayomi_operation
+WHERE connection_id = :connectionId AND account_key = :account;
+
+putOperation:
+INSERT OR REPLACE INTO suwayomi_operation VALUES (:connectionId, :account, :key, :payload, :revision, :pending);
+
+acknowledge:
+UPDATE suwayomi_operation SET pending = 0, payload = :payload
+WHERE connection_id = :connectionId AND account_key = :account AND operation_key = :key AND revision = :revision;
+
+removeConnectionCache:
+DELETE FROM suwayomi_cache WHERE connection_id = :connectionId;
+
+removeConnectionOperations:
+DELETE FROM suwayomi_operation WHERE connection_id = :connectionId;

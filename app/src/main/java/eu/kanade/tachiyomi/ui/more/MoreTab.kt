@@ -82,6 +82,12 @@ data object MoreTab : Tab {
             scopedSettingsBlockedReason = null,
             onDownloadedOnlyChange = { screenModel.downloadedOnly = it },
             onClickDownloadQueue = { navigator.push(DownloadQueueScreen) },
+            onClickServerDownloads = (
+                Injekt.get<tachiyomi.domain.source.service.SourceManager>()
+                    .get(activeConnectionId) as? koharia.connection.ConnectionServerDownloadsAdapter
+                )?.let { adapter ->
+                { navigator.push(adapter.serverDownloadsScreen()) }
+            },
             onClickStats = { navigator.push(StatsScreen()) },
             onClickDataAndStorage = { navigator.push(SettingsScreen(SettingsScreen.Destination.DataAndStorage)) },
             onClickSettings = { navigator.push(SettingsScreen()) },

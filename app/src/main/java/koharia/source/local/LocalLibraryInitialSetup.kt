@@ -40,9 +40,7 @@ internal fun prepareInitialLocalDirectories(
     json: Json,
 ): LocalLibraryConfig {
     if (config.setupCompleted) return config
-    val missingTypes = config.enabledContentTypes.filterTo(linkedSetOf()) { type ->
-        type != LocalLibraryContentType.MIXED && config.roots.none { it.contentType == type }
-    }
+    val missingTypes = config.missingInitialDirectoryTypes()
     if (missingTypes.isEmpty()) return config
     require(dataDirectory.isNotBlank()) { "App data directory is not configured" }
     val layout = checkNotNull(
@@ -63,4 +61,46 @@ internal fun prepareInitialLocalDirectories(
         managedBaseDisplayPath = displayPath,
         libraryId = layout.libraryId,
     )
+}
+
+internal fun LocalLibraryConfig.missingInitialDirectoryTypes(): Set<LocalLibraryContentType> =
+    if (setupCompleted) {
+        emptySet()
+    } else {
+        enabledContentTypes.filterTo(linkedSetOf()) { type ->
+            type != LocalLibraryContentType.MIXED && roots.none { it.contentType == type }
+        }
+    }
+
+internal suspend fun prepareInitialNetworkDirectories(
+    backend: koharia.storage.LibraryStorageBackend,
+    config: LocalLibraryConfig,
+): LocalLibraryConfig {
+    val roots = config.missingInitialDirectoryTypes().map { type ->
+        val name = if (type == LocalLibraryContentType.COMICS) "Comics" else "Books"
+        val existing = try {
+            backend.stat(name)
+        } catch (error: koharia.storage.StorageFailure) {
+            if (error.reason != koharia.storage.StorageFailure.Reason.NOT_FOUND) throw error
+            null
+        }
+        if (existing != null) {
+            if (!existing.directory) {
+                throw koharia.storage.StorageFailure(
+                    koharia.storage.StorageFailure.Reason.CONFLICT,
+                )
+            }
+        } else {
+            createStorageDirectory(backend, "", name)
+        }
+        LocalLibraryRootConfig(
+            id = UUID.randomUUID().toString(),
+            displayPath = name,
+            contentType = type,
+            bookshelfId = config.defaultBookshelfId(type).also { require(it.isNotBlank()) },
+            relativePath = name,
+            managed = true,
+        )
+    }
+    return config.copy(roots = config.roots + roots)
 }

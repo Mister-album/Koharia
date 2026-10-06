@@ -212,6 +212,10 @@ data class LocalLibraryIndex(
         items.filterNot { it.missing }.associateBy { it.rootId to it.relativePath }
     }
 
+    val itemsByLocator: Map<Pair<String, String>, LocalLibraryItem> by lazy {
+        items.filterNot { it.missing }.associateBy { it.rootId to it.locatorPath }
+    }
+
     val childrenByLocation: Map<Pair<String, String>, List<LocalLibraryItem>> by lazy {
         libraryItemsByKey.values.groupBy { it.rootId to it.relativePath.substringBeforeLast('/', "") }
     }
@@ -520,6 +524,15 @@ class LocalLibraryPreferences(
     }
 
     fun resolveRoot(context: android.content.Context, root: LocalLibraryRootConfig): UniFile? {
+        // A stale or reconfigured network document id must fall back to the SAF branch, not throw.
+        runCatching { koharia.storage.NetworkStorageRuntime.fromUri(context, Uri.parse(root.treeUri)) }
+            .getOrNull()
+            ?.let { remote ->
+                val path = koharia.storage.StoragePath.normalize(
+                    listOf(remote.storagePath, root.relativePath).filter(String::isNotBlank).joinToString("/"),
+                )
+                return remote.runtime.file(path).takeIf { it.isDirectory }
+            }
         val tree = selectedTreeDirectory(context, root.treeUri) ?: return null
         return LocalLibraryLocator.normalize(root.relativePath)
             .split('/')
@@ -566,7 +579,8 @@ class LocalLibraryPreferences(
 
     private fun selectedTreeDirectory(context: android.content.Context, value: String): UniFile? {
         val uri = value.takeIf(String::isNotBlank)?.let(Uri::parse) ?: return null
-        return UniFile.fromUri(context, uri)?.takeIf { it.isDirectory }
+        return (koharia.storage.NetworkStorageRuntime.fromUri(context, uri) ?: UniFile.fromUri(context, uri))
+            ?.takeIf { it.isDirectory }
     }
 
     companion object {

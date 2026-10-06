@@ -1,5 +1,8 @@
 package koharia.connection
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 class ConnectionProfileManager(
     private val preferences: ConnectionPreferences,
     private val registry: ConnectionRegistry,
@@ -25,10 +28,10 @@ class ConnectionProfileManager(
         preferences.setProfiles(profiles.map { if (it.id == profile.id) profile else it })
     }
 
-    suspend fun remove(connectionId: Long): Result<Unit> {
+    suspend fun remove(connectionId: Long): Result<Unit> = withContext(Dispatchers.IO) {
         val profile = preferences.getProfiles().firstOrNull { it.id == connectionId }
-            ?: return Result.success(Unit)
-        return registry.provider(profile.providerId)
+            ?: return@withContext Result.success(Unit)
+        registry.provider(profile.providerId)
             ?.removeConnection(profile)
             ?.mapCatching { handled ->
                 if (!handled) removeGenericProfile(profile)

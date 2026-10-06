@@ -27,7 +27,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
@@ -38,12 +37,13 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
@@ -60,6 +60,7 @@ internal fun mergeKavitaShelfManga(remote: Manga, local: Manga?): Manga {
         description = remote.description,
         genre = remote.genre,
         thumbnailUrl = remote.thumbnailUrl,
+        memo = kotlinx.serialization.json.JsonObject(local.memo + remote.memo),
     ) ?: remote
 }
 
@@ -71,14 +72,14 @@ class KavitaLibraryScreenModel(
 ) :
     StateScreenModel<KavitaLibraryScreenModel.State>(
         State(
-            appliedFilter = filterJson?.let { source.session().api.decode<koharia.kavita.KavitaFilter>(it) },
+            // A filter carried by the route wins; otherwise the opt-in store supplies one.
+            appliedFilter = source.preferences.initialFilter(filterJson),
             query = initialQuery.orEmpty(),
             toolbarQuery = initialQuery,
-            order = filterJson?.let {
-                source.session().api.json.decodeFromString<koharia.kavita.KavitaFilter>(it).sortOptions.let { sort ->
-                    "${sort.sortField} ${if (sort.isAscending) "asc" else "desc"}"
-                }
-            } ?: source.preferences.order,
+            order = source.preferences.initialFilter(filterJson)?.sortOptions?.let { sort ->
+                "${sort.sortField} ${if (sort.isAscending) "asc" else "desc"}"
+            } ?: source.preferences.initialOrder(),
+            persistentFilters = source.preferences.persistentFilters,
             displayMode = Injekt.get<SourcePreferences>().sourceDisplayMode.get(),
         ),
     ) {
@@ -95,8 +96,26 @@ class KavitaLibraryScreenModel(
         refreshJob?.cancel()
         genreFilter = null
         val order = "${value.sortOptions.sortField} ${if (value.sortOptions.isAscending) "asc" else "desc"}"
-        source.preferences.order = order
+        val json = runCatching { source.session().api.json.encodeToString(value) }.getOrNull()
+        // A confirmed submission is what the persistence choice applies to.
+        source.preferences.commitFilter(json, order, state.value.persistentFilters)
+        logcat(LogPriority.INFO) {
+            "Kavita shelf filters persisted=${state.value.persistentFilters} order='$order' " +
+                "statements=${value.statements.size} stored=${source.preferences.savedFilter != null}"
+        }
         mutableState.update { it.copy(appliedFilter = value, order = order, error = null) }
+    }
+
+    /** Sets the persistence choice and stores or clears the current filters and sort accordingly. */
+    fun setPersistentFilters(enabled: Boolean) {
+        source.preferences.persistentFilters = enabled
+        val current = state.value.appliedFilter
+        val json = current?.let { runCatching { source.session().api.json.encodeToString(it) }.getOrNull() }
+        source.preferences.commitFilter(json, state.value.order, enabled)
+        logcat(LogPriority.INFO) {
+            "Kavita persistence toggle enabled=$enabled stored=${source.preferences.savedFilter != null}"
+        }
+        mutableState.update { it.copy(persistentFilters = enabled) }
     }
     private var genreFilter: koharia.kavita.KavitaFilterStatement? = null
     fun currentFilter(): koharia.kavita.KavitaFilter = state.value.let {
@@ -138,12 +157,7 @@ class KavitaLibraryScreenModel(
     val readProgressByUrl: StateFlow<Map<String, MangaReadProgress>> = shelfReadProgress
     private val shelfDownloadCounts = MutableStateFlow<Map<String, Long>>(emptyMap())
     private val shelfTotalBookCounts = MutableStateFlow<Map<String, Long>>(emptyMap())
-    val downloadedSeriesByUrl: StateFlow<Map<String, Boolean>> = combine(
-        shelfDownloadCounts,
-        shelfTotalBookCounts,
-    ) { downloaded, totals ->
-        totals.mapValues { (url, total) -> total > 0L && (downloaded[url] ?: 0L) >= total }
-    }.stateIn(screenModelScope, SharingStarted.Eagerly, emptyMap())
+    val readingUnitCounts: StateFlow<Map<String, Long>> = shelfTotalBookCounts
 
     init {
         screenModelScope.launch(Dispatchers.IO) {
@@ -444,6 +458,17 @@ class KavitaLibraryScreenModel(
         val pending = entries.filter { entry ->
             val url = session.identity.series(entry.id)
             visibleSeriesByUrl[url] = entry
+            if (showReadProgress && entry.pages > 0 && !shelfReadProgress.value.containsKey(url)) {
+                shelfReadProgress.update {
+                    it + (
+                        url to MangaReadProgress(
+                            (entry.pagesRead.toLong() * 100 / entry.pages).coerceIn(0, 100),
+                            100,
+                            eu.kanade.presentation.library.components.MangaReadProgressDisplay.PERCENTAGE,
+                        )
+                        )
+                }
+            }
             val needsProgress = showReadProgress || (downloadCounts[url] ?: 0L) > 0L
             needsProgress &&
                 !shelfTotalBookCounts.value.containsKey(url) &&
@@ -457,9 +482,9 @@ class KavitaLibraryScreenModel(
                     pending.map { entry ->
                         async {
                             runCatching {
-                                gate.withPermit { session.catalog.seriesBookProgress(entry.id) }
+                                gate.withPermit { session.catalog.cachedSeriesBookProgress(entry.id) }
                             }.onSuccess { progress ->
-                                if (epoch == progressEpoch.get()) {
+                                if (progress != null && epoch == progressEpoch.get()) {
                                     val url = session.identity.series(entry.id)
                                     shelfTotalBookCounts.update { it + (url to progress.totalCount) }
                                     if (libraryPreferences.showLibraryReadProgress.get() && progress.totalCount > 0) {
@@ -498,6 +523,7 @@ class KavitaLibraryScreenModel(
         val query: String = "",
         val toolbarQuery: String? = null,
         val order: String = "1 asc",
+        val persistentFilters: Boolean = false,
         val displayMode: LibraryDisplayMode = LibraryDisplayMode.ComfortableGrid,
         val downloadedOnly: Boolean = false,
         val generation: Long = 0,

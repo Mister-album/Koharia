@@ -64,9 +64,6 @@ internal fun LanraragiFilterSheet(
                     draft = draft.copy(grouped = !draft.grouped)
                 }
                 CheckboxItem(stringResource(MR.strings.lanraragi_downloaded), downloads) { downloads = !downloads }
-                CheckboxItem(stringResource(MR.strings.remember_filters), rememberSelection) {
-                    rememberSelection = !rememberSelection
-                }
                 HorizontalDivider()
                 SelectItem(
                     label = stringResource(MR.strings.lanraragi_read_status),
@@ -107,6 +104,11 @@ internal fun LanraragiFilterSheet(
                             }
                         }
                     }
+                }
+                // Last, and without an explanation: a stored preference rather than a filter.
+                HorizontalDivider()
+                CheckboxItem(stringResource(MR.strings.shelf_persistent_filters), rememberSelection) {
+                    rememberSelection = !rememberSelection
                 }
             }
         }

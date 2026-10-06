@@ -1,0 +1,19 @@
+CREATE TABLE suwayomi_cache (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    group_key TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    PRIMARY KEY (connection_id, account_key, group_key, cache_key)
+);
+
+CREATE TABLE suwayomi_operation (
+    connection_id INTEGER NOT NULL,
+    account_key TEXT NOT NULL,
+    operation_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    pending INTEGER NOT NULL,
+    PRIMARY KEY (connection_id, account_key, operation_key)
+);

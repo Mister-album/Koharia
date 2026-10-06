@@ -100,7 +100,7 @@ fun KomgaFilterDialog(
             item {
                 HorizontalDivider()
                 CheckboxItem(
-                    label = stringResource(MR.strings.komga_filter_persist),
+                    label = stringResource(MR.strings.shelf_persistent_filters),
                     checked = persistentFilteringEnabled,
                 ) {
                     onPersistentFilteringChange(!persistentFilteringEnabled)

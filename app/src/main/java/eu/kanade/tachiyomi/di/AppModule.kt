@@ -226,6 +226,7 @@ class AppModule(val app: Application) : InjektModule {
                     koharia.source.lanraragi.LanraragiConnectionProvider(app),
                     koharia.source.smanga.SmangaConnectionProvider(app),
                     koharia.source.kavita.KavitaConnectionProvider(app),
+                    koharia.source.suwayomi.SuwayomiConnectionProvider(app),
                 ),
             )
         }

@@ -79,6 +79,8 @@ voyager = "1.1.0-beta03"
 xmlutil = "0.91.3"
 
 [libraries]
+smbj = { module = "com.hierynomus:smbj", version = "0.13.0" }
+smb-rpc = { module = "com.rapid7.client:dcerpc", version = "0.12.13" }
 pdfium-core = { module = "io.legere:pdfiumandroid-core", version = "2.0.3" }
 aboutLibraries-compose = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutLibraries" }
 android-desugar = { module = "com.android.tools:desugar_jdk_libs", version.ref = "android-desugar" }

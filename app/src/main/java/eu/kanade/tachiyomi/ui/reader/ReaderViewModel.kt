@@ -998,10 +998,12 @@ class ReaderViewModel @JvmOverloads constructor(
                 // safely prove that a different local page is newer than Komga's position.
                 localUpdatedAtMillis = null,
                 remoteUpdatedAtMillis = remoteUpdatedAtMillis,
-                sameLocation = remotePageIndex == localPageIndex && !remote.requiresPageMappingConfirmation,
+                sameLocation = remotePageIndex == localPageIndex && !remote.requiresPageMappingConfirmation &&
+                    !remote.blocksAutomaticSelection,
                 localChangedDuringCheck =
                 !remote.requiresPageMappingConfirmation &&
                     (localPageIndex != openingLocalPageIndex || chapterId == explicitOpeningChapterId),
+                requiresConfirmation = remote.blocksAutomaticSelection,
             )
         ) {
             RemoteProgressDecision.SAME_LOCATION -> {

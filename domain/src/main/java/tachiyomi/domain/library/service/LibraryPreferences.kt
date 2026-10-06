@@ -114,6 +114,9 @@ class LibraryPreferences(
 
     val downloadBadge: Preference<Boolean> = preferenceStore.getBoolean("display_download_badge", false)
 
+    val showShelfDownloadCount: Preference<Boolean> = preferenceStore.getBoolean("show_shelf_download_count", true)
+    val networkStorageCacheSizeMb: Preference<Int> = preferenceStore.getInt("network_storage_cache_mb", 512)
+
     val unreadBadge: Preference<Boolean> = preferenceStore.getBoolean("display_unread_badge", true)
 
     val showLibraryReadProgress: Preference<Boolean> = preferenceStore.getBoolean(

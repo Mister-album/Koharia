@@ -20,6 +20,11 @@ class LanraragiPreferences(connectionId: Long) {
         .firstOrNull { it.name == preferences.getString("archive_open_mode", "") }
         ?: LanraragiArchiveOpenMode.READER
     val rememberFilters: Boolean get() = preferences.getBoolean("remember_filters", false)
+
+    fun archiveOpenModePreference(context: android.content.Context): Preference<String> =
+        tachiyomi.core.common.preference.AndroidPreferenceStore(context, preferences)
+            .getString("archive_open_mode", LanraragiArchiveOpenMode.READER.name)
+
     fun savedFilter(): LanraragiFilter? = preferences.getString("saved_filter", null)
         ?.let { value ->
             runCatching { Json.decodeFromString<LanraragiFilterSnapshot>(value) }

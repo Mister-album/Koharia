@@ -58,7 +58,19 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             )
         }
 
-        val localFile = (source as? ConnectionLocalFileAdapter)?.localChapterFile(chapter.url)
+        val downloadedFile = downloadProvider.findChapterDir(
+            chapterName = chapter.name,
+            chapterScanlator = chapter.scanlator,
+            chapterUrl = chapter.url,
+            mangaTitle = manga.title,
+            source = source,
+        )?.takeIf { it.extension.equals("epub", ignoreCase = true) }
+        val localFile = if (downloadedFile != null && source is ConnectionLocalFileAdapter) {
+            source.localChapterFile(chapter.url) ?: downloadedFile
+        } else {
+            (source as? koharia.connection.ConnectionPreparedFileAdapter)?.prepareChapterFile(chapter.url)
+                ?: (source as? ConnectionLocalFileAdapter)?.localChapterFile(chapter.url)
+        }
         val localPublicationFile = localFile
             ?.takeIf { file -> !file.isDirectory && file.extension.equals("epub", ignoreCase = true) }
         val publicationAdapter = source as? ConnectionPublicationAdapter
@@ -76,24 +88,12 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             )
         }
 
-        val downloadedFile = if (localPublicationFile == null) {
-            downloadProvider.findChapterDir(
-                chapterName = chapter.name,
-                chapterScanlator = chapter.scanlator,
-                chapterUrl = chapter.url,
-                mangaTitle = manga.title,
-                source = source,
-            )
-                ?.takeIf { it.extension.equals("epub", ignoreCase = true) }
-        } else {
-            null
-        }
         val localPublicationUri = localPublicationFile?.uri?.toString()
         val downloadedUri = downloadedFile?.uri?.toString()
 
         val metadata = if (localPublicationFile != null) {
             ConnectionPublicationMetadata(
-                remoteResourceId = null,
+                remoteResourceId = chapter.url.takeIf { localFile is com.hippo.unifile.RemoteStorageFile },
                 publicationKey = localPublicationKey(
                     uri = checkNotNull(localPublicationUri),
                     modifiedAt = localPublicationFile.lastModified(),
@@ -116,10 +116,10 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             cachedBookUri,
             metadata.remoteResourceId,
         )
-        val localUri = localPublicationUri ?: when (selectedSource) {
+        val localUri = when (selectedSource) {
             EpubCachePolicy.OpenSource.MANUAL_DOWNLOAD -> downloadedUri
             EpubCachePolicy.OpenSource.COMPLETE_CACHE -> cachedBookUri
-            else -> null
+            else -> localPublicationUri
         }
 
         val remoteBookUrl = metadata.remoteResourceId
@@ -151,9 +151,9 @@ class EpubReaderSupportResolver @JvmOverloads constructor(
             unsupportedReason = unsupportedReason,
             metadataError = metadata.metadataError,
             publicationKey = when {
-                localPublicationFile != null -> metadata.publicationKey
                 downloadedFile != null ->
                     "local:$downloadedUri:${downloadedFile.lastModified()}:${downloadedFile.length()}"
+                localPublicationFile != null -> metadata.publicationKey
                 else -> metadata.publicationKey
             },
             bookFileName = localPublicationFile?.name

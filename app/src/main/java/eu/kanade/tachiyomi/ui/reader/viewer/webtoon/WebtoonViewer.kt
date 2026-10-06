@@ -201,6 +201,8 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         val pages = page.chapter.pages ?: return
         logcat { "onPageSelected: ${page.number}/${pages.size}" }
         activity.onPageSelected(page)
+        val position = adapter.items.indexOf(page)
+        (recycler.findViewHolderForAdapterPosition(position) as? WebtoonPageHolder)?.confirmDisplayedPage(page)
 
         // Preload next chapter once we're within the last 5 pages of the current chapter
         val inPreloadRange = pages.size - page.number < 5

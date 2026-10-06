@@ -13,6 +13,7 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import koharia.connection.ConnectionShelfUpdates
+import koharia.connection.ui.CONNECTION_SHELF_STATIC_LOAD_STATES
 import koharia.smanga.SmangaMedia
 import koharia.source.smanga.SmangaSource
 import kotlinx.coroutines.CancellationException
@@ -47,6 +48,7 @@ internal fun mergeSmangaShelfManga(remote: Manga, local: Manga?): Manga {
         description = remote.description,
         genre = remote.genre,
         thumbnailUrl = remote.thumbnailUrl,
+        memo = kotlinx.serialization.json.JsonObject(local.memo + remote.memo),
     ) ?: remote
 }
 
@@ -55,7 +57,9 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
         State(
             query = initialQuery.orEmpty(),
             toolbarQuery = initialQuery,
-            order = source.preferences.order,
+            // A stored sort only applies while the reader opted into remembering it.
+            order = source.preferences.initialOrder(),
+            persistentFilters = source.preferences.persistentFilters,
             displayMode = Injekt.get<SourcePreferences>().sourceDisplayMode.get(),
         ),
     ) {
@@ -121,7 +125,7 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
                 downloads.cacheChanges.onStart { emit(Unit) },
             ) { local, _ ->
                 PagingData.from(
-                    local.filter {
+                    data = local.filter {
                         it.url.startsWith(session.prefix) &&
                             (
                                 it.title.contains(request.query, true) ||
@@ -129,6 +133,7 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
                                 ) &&
                             downloads.getDownloadCount(it) > 0
                     }.map { MutableStateFlow(it) as StateFlow<Manga> },
+                    sourceLoadStates = CONNECTION_SHELF_STATIC_LOAD_STATES,
                 )
             }
         } else if (request.media.isEmpty()) {
@@ -197,8 +202,11 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
         mutableState.update { it.copy(displayMode = mode) }
     }
     fun filter(order: String, downloadedOnly: Boolean) {
+        applyOrder(order, downloadedOnly)
+    }
+
+    private fun applyOrder(order: String, downloadedOnly: Boolean) {
         refreshJob?.cancel()
-        source.preferences.order = order
         mutableState.update {
             it.copy(
                 order = order,
@@ -207,9 +215,21 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
             )
         }
     }
+
+    /**
+     * Applies one filter sheet submission. This provider has no conditions yet, so only the sort,
+     * downloaded-only and the persistence choice can change.
+     */
+    fun applyLibraryFilters(order: String, downloadedOnly: Boolean, persistentFilters: Boolean) {
+        source.preferences.persistentFilters = persistentFilters
+        source.preferences.commitOrder(order, persistentFilters)
+        applyOrder(order, downloadedOnly)
+        mutableState.update { it.copy(persistentFilters = persistentFilters) }
+    }
     fun selectSearchSort(field: String, ascending: Boolean) {
         if (field !in listOf("mangaName", "updateTime", "createTime") || state.value.downloadedOnly) return
-        filter("$field ${if (ascending) "asc" else "desc"}", state.value.downloadedOnly)
+        // A direct sort change applies for this visit only; the sheet is what stores it.
+        applyOrder("$field ${if (ascending) "asc" else "desc"}", state.value.downloadedOnly)
     }
     fun refresh() {
         if (refreshJob?.isActive == true) return
@@ -260,6 +280,7 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
         val query: String = "",
         val toolbarQuery: String? = null,
         val order: String = "mangaName asc",
+        val persistentFilters: Boolean = false,
         val displayMode: LibraryDisplayMode = LibraryDisplayMode.ComfortableGrid,
         val downloadedOnly: Boolean = false,
         val generation: Long = 0,

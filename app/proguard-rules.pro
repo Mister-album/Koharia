@@ -98,3 +98,15 @@
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
+
+##---------------Begin: network storage (WebDAV / SMB)  ----------
+# smbj publishes events through mbassador, which dispatches to @Handler methods reflectively, so
+# those classes and their annotations must survive shrinking.
+-keep class com.hierynomus.** { *; }
+-keep class net.engio.mbassy.** { *; }
+# dcerpc maps failures through JDK-only types and smbj's SPNEGO path references Kerberos classes;
+# neither exists on Android, and only the affected error paths would reach them.
+-dontwarn java.rmi.**
+-dontwarn javax.el.**
+-dontwarn org.ietf.jgss.**
+##---------------End: network storage (WebDAV / SMB)  ----------

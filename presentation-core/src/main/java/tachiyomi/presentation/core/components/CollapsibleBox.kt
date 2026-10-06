@@ -29,9 +29,10 @@ import tachiyomi.presentation.core.theme.header
 @Composable
 fun CollapsibleBox(
     heading: String,
+    initiallyExpanded: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(initiallyExpanded) }
 
     Column {
         Row(

@@ -56,6 +56,8 @@ class BackupManga(
     @ProtoNumber(118) var kavitaState: List<eu.kanade.tachiyomi.data.backup.providers.BackupKavitaState> = emptyList(),
     @ProtoNumber(119) var kavitaAnnotations:
     List<eu.kanade.tachiyomi.data.backup.providers.BackupKavitaAnnotation> = emptyList(),
+    @ProtoNumber(120) var suwayomiState: List<eu.kanade.tachiyomi.data.backup.providers.BackupSuwayomiState> =
+        emptyList(),
 ) {
     fun getMangaImpl(): Manga {
         return Manga.create().copy(

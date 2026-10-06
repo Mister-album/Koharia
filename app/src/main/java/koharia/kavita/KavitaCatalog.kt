@@ -82,6 +82,15 @@ class KavitaCatalog(
     suspend fun seriesBookProgress(id: Long, refresh: Boolean = false): KavitaSeriesBookProgress =
         volumes(id, refresh).bookProgress()
 
+    suspend fun cachedSeriesBookProgress(id: Long): KavitaSeriesBookProgress? {
+        checkSession()
+        val cached = repository.cache(connectionId, account, "volumes/$id", "data")
+        checkSession()
+        return cached?.takeUnless { it.stale }?.let {
+            runCatching { json.decodeFromString<List<KavitaVolume>>(it.payload).bookProgress() }.getOrNull()
+        }
+    }
+
     suspend fun chapter(
         id: Long,
         refresh: Boolean = false,
