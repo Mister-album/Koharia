@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import koharia.suwayomi.SuwayomiApi
 import okhttp3.OkHttpClient
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 
 /** One server image reference, so rows and the preview share the same authenticated request. */
 internal data class SuwayomiImageRef(
@@ -156,7 +156,7 @@ internal fun SuwayomiImagePreviewDialog(
                 contentAlignment = Alignment.Center,
             ) {
                 when {
-                    loading -> CircularProgressIndicator()
+                    loading -> EInkCircularProgressIndicator()
                     image == null -> Text(
                         text = title,
                         style = MaterialTheme.typography.bodyMedium,

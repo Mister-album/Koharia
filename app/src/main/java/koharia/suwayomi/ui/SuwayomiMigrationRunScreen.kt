@@ -25,7 +25,6 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -33,7 +32,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
@@ -71,6 +69,8 @@ import koharia.suwayomi.SuwayomiMigrationRunFilters
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
+import tachiyomi.presentation.core.components.EInkLinearProgressIndicator
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -173,7 +173,7 @@ class SuwayomiMigrationRunScreen(
         ) { padding ->
             Column(Modifier.fillMaxSize().padding(padding)) {
                 if (state.committing) {
-                    LinearProgressIndicator(
+                    EInkLinearProgressIndicator(
                         progress = {
                             if (state.commitTotal == 0) 0f else state.committed.toFloat() / state.commitTotal
                         },
@@ -311,7 +311,7 @@ private fun MigrationRow(
         Column(Modifier.weight(5f)) {
             when (phase) {
                 SuwayomiMigrationPhase.QUEUED, SuwayomiMigrationPhase.SEARCHING ->
-                    CircularProgressIndicator(Modifier.size(24.dp))
+                    EInkCircularProgressIndicator(Modifier.size(24.dp))
                 SuwayomiMigrationPhase.NO_MATCH -> Text(
                     text = stringResource(MR.strings.suwayomi_migration_no_match),
                     style = MaterialTheme.typography.bodyMedium,

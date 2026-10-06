@@ -192,7 +192,7 @@ class SuwayomiBrowseScreen(private val sourceId: Long) : Screen() {
                 if (refreshing ||
                     state.actionLoading
                 ) {
-                    androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                    tachiyomi.presentation.core.components.EInkLinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             }
         }

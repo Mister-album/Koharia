@@ -6,7 +6,7 @@
 
 # Koharia
 
-An Android comic and book reader for Komga, Kavita, LANraragi, smanga, and local media libraries
+An Android comic and book reader for Komga, Kavita, LANraragi, smanga, Suwayomi, and local media libraries
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0877d2?labelColor=27303D)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Mister-album/Koharia?label=release)](https://github.com/Mister-album/Koharia/releases/latest)
@@ -15,7 +15,7 @@ An Android comic and book reader for Komga, Kavita, LANraragi, smanga, and local
 
 ## Overview
 
-Koharia is a third-party Android client and reader for [Komga](https://komga.org/), [Kavita](https://www.kavitareader.com/), [LANraragi](https://github.com/Difegue/LANraragi), and [smanga](https://github.com/lkw199711/smanga) servers, as well as local media libraries. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, MOBI, and Markdown. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app. Supported formats and synchronization features vary by source, as described below.
+Koharia is a third-party Android client and reader for [Komga](https://komga.org/), [Kavita](https://www.kavitareader.com/), [LANraragi](https://github.com/Difegue/LANraragi), [smanga](https://github.com/lkw199711/smanga), and [Suwayomi](https://github.com/Suwayomi/Suwayomi-Server) servers, as well as local media libraries. Local libraries can use device folders or network folders over WebDAV and SMB. It provides dedicated reading experiences for comics, scanned image content, PDFs, and reflowable books such as EPUB, TXT, MOBI, and Markdown. Browsing, series details, reading progress, offline access, and reader customization are brought together in one app. Supported formats and synchronization features vary by source, as described below.
 
 The project is built on the mature Android reading foundation of [Mihon](https://github.com/mihonapp/mihon). Koharia does not provide or host any content. What you can browse depends on the servers you connect to, your account permissions, and the local directories you explicitly grant the app access to.
 
@@ -48,7 +48,7 @@ The project is built on the mature Android reading foundation of [Mihon](https:/
 - Readers who value control over reading direction, typography, background colors, page turning, and offline access.
 - Users who want manual downloads, book caching, and comic page caching to be managed separately.
 
-Koharia focuses on reading from personal media libraries. It does not provide public online content sources and is not intended to restore the traditional extension ecosystem.
+Koharia focuses on reading from personal media libraries and does not bundle public online content sources. Sources and extensions in a Suwayomi connection are provided and run by your own server; Mihon extensions are not installed on the Android device.
 
 ## Key features
 
@@ -90,10 +90,24 @@ Koharia focuses on reading from personal media libraries. It does not provide pu
 - Shelf and details data are cached persistently and shown first on startup. Previously cached content remains browsable offline; uncached queries still require a connection. Catalogue caching and content downloads are managed separately.
 - Synchronize chapter progress, read status, and reading history, with pending updates stored locally for retry. Progress conflicts or changes to page mapping can prompt a choice between local and server progress. Caches and reading records are isolated by connection and account.
 
+### Suwayomi libraries
+
+- Built-in [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server) integration targeting **2.4.2366 and later**. Saving a connection validates the version, authentication, and required API capabilities.
+- Add multiple connections with a server URL and matching authentication mode: None, Basic, Simple Login, or UI Login / JWT. Include any reverse-proxy subpath in the URL; an optional LAN address must be verified as belonging to the same server.
+- Browse the server library by category, with covers, series details, chapters, search, filters, and sorting. Choose visible categories in connection settings and manage server categories and manga assignments in the app.
+- Browse, search, filter, and pin server sources, change source preferences, and install, update, or uninstall server extensions. Available sources, extensions, and actions depend on the server configuration.
+- Read comics with the shared paged, scrolling, or dual-page reader and download chapters to the device for offline reading. Server download queue management is separate: downloading to the server does not save content to your phone.
+- Shelf and details screens show cached data first, fetch missing data as needed, and support manual refresh. Refreshing the shelf reads existing server data separately from explicitly fetching source details and chapters.
+- Reading progress, read status, and history are isolated by connection and account, with offline updates saved locally for synchronization. Progress conflicts or page mapping changes allow a choice between local and server progress.
+- A source migration flow within the same server finds target manga and transfers selected information such as categories and reading state. Local download files are not directly converted into downloads for the target source.
+
+Suwayomi integration provides comic reading without an EPUB reader entry point.
+
 ### Local media libraries
 
 - Read local comic archives, image folders, PDFs, EPUB, TXT, MOBI, and **Markdown documents**. Markdown supports paginated book-style reading with headings, lists, blockquotes, and code blocks, plus adjustable fonts and typography.
 - Link existing folders through Android's system directory picker without moving or deleting their files, or let Koharia create a managed `Comics`, `Books`, and `.koharia` directory structure.
+- Connect to folders on a NAS or home server over WebDAV or SMB, using the local library's shelf organization and reader entry points. Setup and limitations are described below.
 - Mark local directories as comics, books, or mixed content and assign them to custom bookshelves.
 - Choose between a series-based library, where each top-level folder is treated as a series, and an individual-file library, which recursively lists files and image folders that can be opened directly.
 - Local indexing, pull-to-refresh, cover extraction, format filters, entry metadata editing, and first-page cover generation.
@@ -116,20 +130,20 @@ Koharia focuses on reading from personal media libraries. It does not provide pu
 
 The DjVu decoder runs in the JavaScript / WebAssembly runtime provided by the system WebView. Chicory is not bundled or used by the current build. See [`app/src/main/assets/djvu/README.txt`](./app/src/main/assets/djvu/README.txt) for its source, license, and checksum.
 
-#### WebDAV / SMB (in development)
+#### WebDAV / SMB network folders
 
-Development builds offer Local directory, WebDAV, and SMB when adding a local library. Each connection has a fixed storage mode and can contain multiple shelf directories. Existing local connections retain their directory grants and reading records.
+Choose WebDAV or SMB when adding a local library, then name the connection, authenticate, select the library folder, and configure shelves. Each connection has a fixed storage mode and can contain multiple shelf directories. Existing local connections retain their directory grants and reading records.
 
-Setup proceeds through name and storage type, remote authentication, the default library folder, then shelf definitions and metadata options. Local directories skip authentication. Authentication does not select directories. The default-folder page explains content folders, identity, metadata and sync data, separately from device caches. Local default folders belong to the connection and do not change global backup, download or cache locations. Editing connection details requires authentication and folder selection again. Existing connections retain their storage protocol.
+- **WebDAV**: enter the server address, port, and required credentials, for example `https://example.com:5006`. After authentication, browse or enter a library path, or use the server root. Complete URLs such as `https://example.com/dav/books/` are also accepted; services such as Nextcloud can use a directory path like `remote.php/dav/files/<user>`.
+- **SMB**: SMB2/SMB3 are supported. Enter the server address and port, for example `192.168.1.10:445`, along with credentials and a domain if required, then browse shares and subfolders. Complete addresses such as `smb://192.168.1.10/library` are also accepted.
+- Select a different library folder in connection settings and validate again after changing connection details. The default library folder belongs to that connection and does not change global backup, download, or cache locations.
+- A primary address and optional LAN address are supported. Automatic switching requires verification that both access the same root. For LAN-only use, enter the LAN address as the primary address.
+- Use the local library's series-based or individual-file organization, cover browsing, details, and readers selected by format. Initial scanning exposes entries progressively; later visits show the saved index first. Refresh after external file changes; reconnecting does not automatically rescan shelves.
+- Content is read on demand, with an automatic cache of **512 MiB** by default, adjustable in shared settings. Files without range-read support require complete caching first. Manual downloads are managed separately; a saved index or partial cache does not mean complete offline availability.
+- Writable roots store library identity, file identity mappings, and progress records in `.koharia`. The same account can synchronize across devices, while different accounts keep separate progress. Events merge by modification time, including backward movement and unread events, so device clocks affect the result. Without writable shared identity, only one read-only address and local progress are supported.
+- Restored network connections require validation. Removing a connection cleans up its local state without deleting remote files. Legacy remote progress files without account scope are retained but no longer imported automatically.
 
-- WebDAV and SMB need only the server address and port on the authentication page (for example `https://example.com:5006` or `192.168.1.10:445`), where the credentials are verified. The library folder is chosen on the next page: WebDAV browses from the server root, accepts a typed path (such as `remote.php/dav/files/<user>`), or uses the root folder; SMB browses shares and subfolders. Neither requires typing a share or folder path, and “Choose library folder / Choose shared folder” in connection settings changes it later. Complete addresses (for example `https://example.com/dav/books/` or `smb://192.168.1.10/library`) remain compatible and prefill the browsing start. SMB2/SMB3 are supported.
-- A primary address and optional LAN address are supported. Automatic switching requires proof that both addresses access the same root. For LAN-only use, enter the LAN address as the primary address.
-- Initial scanning exposes entries progressively. Later visits use the saved index; refresh explicitly after external file changes. Reconnecting does not automatically rescan shelves.
-- Automatic content caching defaults to 512 MiB and is adjustable in shared settings. Manual downloads are managed separately. A cached catalogue does not mean the complete content is available offline.
-- Writable roots store library identity, move identity mappings, and progress records in `.koharia`. Progress uses event modification time, including backward movement and unread events; inaccurate device clocks affect conflict resolution. Roots without writable shared identity support one read-only address and local progress only.
-- Restored network connections require validation. Removing a connection cleans up its local state without deleting remote files.
-
-This feature is still undergoing development and acceptance testing, not released support. Large-file preparation UX, some ambiguous-write recovery cases, and the complete format/restore matrix remain unfinished. Matching content versions when accessing the same physical root through different protocols is not yet implemented.
+Accessing the same physical folder over WebDAV and SMB creates separate connections. Cross-protocol content version matching and progress merging are not supported.
 
 ### Unified comic and book management
 
@@ -168,7 +182,7 @@ Xiaomi MiMo TTS is **currently available for a free, limited-time trial**. You c
 
 ### Progress, offline access, and data management
 
-- Komga, Kavita, LANraragi, and smanga shelves show existing local cache first. Missing data is fetched on demand, with manual refresh available afterward; Komga and Kavita also respond to server update events.
+- Komga, Kavita, LANraragi, smanga, and Suwayomi shelves show existing local cache first. Missing data is fetched on demand, with manual refresh available afterward; Komga and Kavita also respond to server update events. WebDAV / SMB folders also retain a local index that can be refreshed after external file changes.
 - Saves local reading positions, history, and bookmarks, and synchronizes supported reading progress with the server.
 - Manual downloads, book cache, and comic page cache use separate policies; cached content is never incorrectly marked as downloaded.
 - Cache size limits, on-demand resource loading, offline access, and server-specific download directories.
@@ -215,7 +229,7 @@ Release signing reads the local `keystore.properties` file. You normally do not 
 
 Koharia is based on [Mihon](https://github.com/mihonapp/mihon) and is distributed under the Apache License 2.0. License and attribution details are available in [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for contribution guidelines. If you redistribute Koharia or create a derivative project, retain the required attribution and do not describe it as an official Mihon, Komga, Kavita, LANraragi, or smanga release.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for contribution guidelines. If you redistribute Koharia or create a derivative project, retain the required attribution and do not describe it as an official Mihon, Komga, Kavita, LANraragi, smanga, or Suwayomi release.
 
 ## Acknowledgements
 
