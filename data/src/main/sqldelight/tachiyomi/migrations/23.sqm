@@ -1,4 +1,4 @@
-CREATE TABLE suwayomi_cache (
+CREATE TABLE IF NOT EXISTS suwayomi_cache (
     connection_id INTEGER NOT NULL,
     account_key TEXT NOT NULL,
     group_key TEXT NOT NULL,
@@ -8,7 +8,7 @@ CREATE TABLE suwayomi_cache (
     PRIMARY KEY (connection_id, account_key, group_key, cache_key)
 );
 
-CREATE TABLE suwayomi_operation (
+CREATE TABLE IF NOT EXISTS suwayomi_operation (
     connection_id INTEGER NOT NULL,
     account_key TEXT NOT NULL,
     operation_key TEXT NOT NULL,

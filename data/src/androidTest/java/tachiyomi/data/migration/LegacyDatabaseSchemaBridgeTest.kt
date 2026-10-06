@@ -119,6 +119,7 @@ class LegacyDatabaseSchemaBridgeTest {
     fun migratesPublishedSqlDelightVersionTwelve() {
         writableDatabase().use { database ->
             (auxiliaryTables - "extension_repos").forEach { table -> database.execSQL("DROP TABLE $table") }
+            database.dropKavitaTables()
             database.execSQL("PRAGMA user_version = 12")
         }
 
@@ -133,6 +134,7 @@ class LegacyDatabaseSchemaBridgeTest {
             auxiliaryTables.filter { it.startsWith("epub_") }.forEach { table ->
                 database.execSQL("DROP TABLE $table")
             }
+            database.dropKavitaTables()
             database.execSQL("PRAGMA user_version = 13")
         }
 
@@ -144,7 +146,12 @@ class LegacyDatabaseSchemaBridgeTest {
     @Test
     fun migratesPublishedSqlDelightVersionTwentyTwo() {
         writableDatabase().use { database ->
-            listOf("suwayomi_cache", "suwayomi_operation", "library_storage_record").forEach { table ->
+            listOf(
+                "kavita_annotation",
+                "suwayomi_cache",
+                "suwayomi_operation",
+                "library_storage_record",
+            ).forEach { table ->
                 database.execSQL("DROP TABLE $table")
             }
             database.execSQL("PRAGMA user_version = 22")
@@ -156,12 +163,63 @@ class LegacyDatabaseSchemaBridgeTest {
     }
 
     @Test
+    fun migratesVersionTwentyOneFromRelease060() {
+        writableDatabase().use { database ->
+            listOf(
+                "kavita_cache",
+                "kavita_operation",
+                "kavita_annotation",
+                "suwayomi_cache",
+                "suwayomi_operation",
+                "library_storage_record",
+            ).forEach { database.execSQL("DROP TABLE $it") }
+            database.execSQL("PRAGMA user_version = 21")
+        }
+
+        migratePreparedDatabase()
+
+        readableDatabase().use { database ->
+            assertCurrentSchema(database)
+            assertTrue(database.hasObject("table", "kavita_cache"))
+            assertTrue(database.hasObject("table", "kavita_annotation"))
+        }
+        openAndInitializeDriver().close()
+    }
+
+    @Test
+    fun retriesPreparedMigrationWithoutLosingProviderRecords() {
+        writableDatabase().use { database ->
+            database.dropKavitaTables()
+            database.execSQL("PRAGMA user_version = 21")
+            database.execSQL("INSERT INTO suwayomi_cache VALUES (1, 'account', 'shelf', 'key', 'cached', 1)")
+            database.execSQL("INSERT INTO suwayomi_operation VALUES (1, 'account', 'progress', 'pending', 1, 1)")
+            database.execSQL(
+                "INSERT INTO library_storage_record VALUES (1, 'account', 'root', 'progress', 'book', 'saved', 1)",
+            )
+        }
+        // A failed 0.7.0 launch commits the guard's tables but leaves user_version unchanged.
+        assertNotNull(schemaBridge().prepare())
+        readableDatabase().use { assertEquals(21, it.userVersion()) }
+
+        migratePreparedDatabase()
+
+        readableDatabase().use { database ->
+            assertCurrentSchema(database)
+            assertEquals("cached", database.singleString("SELECT payload FROM suwayomi_cache"))
+            assertEquals("pending", database.singleString("SELECT payload FROM suwayomi_operation"))
+            assertEquals("saved", database.singleString("SELECT payload FROM library_storage_record"))
+        }
+        openAndInitializeDriver().close()
+    }
+
+    @Test
     fun completesPartiallyAppliedNonIdempotentMigrations() {
         listOf(2, 4, 5, 11).forEach { migration ->
             writableDatabase().use { database ->
                 database.execSQL("DROP VIEW IF EXISTS historyView")
                 database.execSQL("DROP VIEW IF EXISTS libraryView")
                 database.execSQL("DROP VIEW IF EXISTS updatesView")
+                database.dropKavitaTables()
                 when (migration) {
                     2 -> {
                         database.execSQL("ALTER TABLE manga_sync DROP COLUMN private")
@@ -202,6 +260,13 @@ class LegacyDatabaseSchemaBridgeTest {
         assertTrue("Expected a retained migration backup", backups.isNotEmpty())
     }
 
+    // Downgraded fixtures must omit tables introduced after the version being simulated.
+    private fun SQLiteDatabase.dropKavitaTables() {
+        listOf("kavita_cache", "kavita_operation", "kavita_annotation").forEach {
+            execSQL("DROP TABLE $it")
+        }
+    }
+
     private fun runSchemaGuard() {
         val bridge = schemaBridge()
         val backup = bridge.prepare()
@@ -213,12 +278,8 @@ class LegacyDatabaseSchemaBridgeTest {
         val bridge = schemaBridge()
         val backup = bridge.prepare()
         assertNotNull("Expected the migration to create a backup", backup)
-        val driver = openAndInitializeDriver()
-        try {
-            bridge.complete(backup)
-        } finally {
-            driver.close()
-        }
+        openAndInitializeDriver().close()
+        bridge.complete(backup)
     }
 
     private fun schemaBridge(): LegacyDatabaseSchemaBridge {

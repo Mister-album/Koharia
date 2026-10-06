@@ -1,4 +1,4 @@
-CREATE TABLE library_storage_record (
+CREATE TABLE IF NOT EXISTS library_storage_record (
     connection_id INTEGER NOT NULL,
     account_key TEXT NOT NULL,
     root_id TEXT NOT NULL,
