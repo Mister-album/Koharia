@@ -222,11 +222,11 @@ class AppModule(val app: Application) : InjektModule {
             ConnectionRegistry(
                 listOf(
                     KomgaConnectionProvider(),
-                    LocalFolderConnectionProvider(app),
                     koharia.source.lanraragi.LanraragiConnectionProvider(app),
-                    koharia.source.smanga.SmangaConnectionProvider(app),
-                    koharia.source.kavita.KavitaConnectionProvider(app),
                     koharia.source.suwayomi.SuwayomiConnectionProvider(app),
+                    koharia.source.kavita.KavitaConnectionProvider(app),
+                    koharia.source.smanga.SmangaConnectionProvider(app),
+                    LocalFolderConnectionProvider(app),
                 ),
             )
         }

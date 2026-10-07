@@ -47,7 +47,12 @@ private fun webDavBackend(address: String, username: String, password: String) =
 internal suspend fun authenticateWebDavServer(address: String, username: String, password: String) =
     withContext(Dispatchers.IO) {
         val endpoint = WebDavAddress.parse(address).endpoint
-        webDavBackend(endpoint, username, password).use { it.checkEndpointReachable() }
+        WebDavStorageBackend(
+            koharia.connection.ConnectionValidation.client(Injekt.get<NetworkHelper>().nonCloudflareClient),
+            endpoint,
+            username,
+            password,
+        ).use { it.checkEndpointReachable() }
     }
 
 /** Lists folders below the server endpoint, so the DAV root is reachable without typing its path first. */

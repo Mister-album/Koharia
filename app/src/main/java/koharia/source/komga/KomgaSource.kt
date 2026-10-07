@@ -240,9 +240,17 @@ class KomgaSource(
 
     fun currentHeaders(): Headers = headersBuilder().build()
 
+    fun connectionSettingsChanged(store: androidx.preference.PreferenceDataStore): Boolean {
+        fun changed(key: String) = store.getString(key, "").orEmpty() != preferences.getString(key, "").orEmpty()
+        val draftMode = store.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
+        val draftKey = store.getString(PREF_API_KEY, null)
+            ?: store.getString(PREF_API_KEY_WRONG_CASE, "").orEmpty()
+        return changed(PREF_ADDRESS) || changed(ConnectionAddressRouter.INTERNAL_ADDRESS_KEY) ||
+            changed(PREF_USERNAME) || changed(PREF_PASSWORD) || draftMode != authMode || draftKey != apiKey
+    }
+
     suspend fun verifyServerAddresses(store: androidx.preference.PreferenceDataStore) {
         val internalAddress = store.getString(ConnectionAddressRouter.INTERNAL_ADDRESS_KEY, "").orEmpty()
-        if (internalAddress.isBlank()) return
         val publicAddress = store.getString(PREF_ADDRESS, "").orEmpty()
         val mode = store.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
         val validationHeaders = Headers.Builder().apply {
@@ -1175,8 +1183,9 @@ class KomgaSource(
         val usernamePref = screen.addEditTextPreference(
             title = screen.context.stringResource(MR.strings.komga_pref_username_title),
             default = "",
-            summary = username.ifBlank { screen.context.stringResource(MR.strings.komga_pref_username_summary) },
+            summary = screen.context.stringResource(MR.strings.komga_pref_username_summary),
             key = PREF_USERNAME,
+            showValueAsSummary = true,
         )
         val passwordPref = screen.addEditTextPreference(
             title = screen.context.stringResource(MR.strings.komga_pref_password_title),
@@ -1184,18 +1193,18 @@ class KomgaSource(
             summary = if (password.isBlank()) {
                 screen.context.stringResource(MR.strings.komga_pref_password_summary)
             } else {
-                "*".repeat(password.length)
+                screen.context.stringResource(MR.strings.connection_credential_configured)
             },
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
             key = PREF_PASSWORD,
         )
         val apiKeyPref = screen.addEditTextPreference(
             title = screen.context.stringResource(MR.strings.komga_pref_api_key_title),
-            default = "",
+            default = apiKey,
             summary = if (apiKey.isBlank()) {
                 screen.context.stringResource(MR.strings.komga_pref_api_key_summary)
             } else {
-                "*".repeat(apiKey.length)
+                screen.context.stringResource(MR.strings.connection_credential_configured)
             },
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
             key = PREF_API_KEY,
@@ -1795,8 +1804,17 @@ private fun PreferenceScreen.addEditTextPreference(
         this.key = key
         this.title = title
         this.summary = summary
-        if (showValueAsSummary) {
-            summaryProvider = EditTextPreference.SimpleSummaryProvider.getInstance()
+        val secret = inputType?.let { it and InputType.TYPE_TEXT_VARIATION_PASSWORD != 0 } == true
+        if (showValueAsSummary || secret) {
+            summaryProvider = androidx.preference.Preference.SummaryProvider<EditTextPreference> { pref ->
+                val value = pref.preferenceManager.preferenceDataStore?.getString(key, "") ?: pref.text.orEmpty()
+                when {
+                    secret && value.isEmpty() -> context.stringResource(MR.strings.connection_credential_not_configured)
+                    value.isBlank() -> summary
+                    secret -> context.stringResource(MR.strings.connection_credential_configured)
+                    else -> value
+                }
+            }
         }
         setDefaultValue(default)
         dialogTitle = title

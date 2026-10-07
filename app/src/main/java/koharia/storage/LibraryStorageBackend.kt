@@ -28,7 +28,16 @@ data class StorageCapabilities(
     val atomicMove: Boolean,
 )
 
-class StorageFailure(val reason: Reason, cause: Throwable? = null) : IOException("Storage: ${reason.name}", cause) {
+class StorageFailure(val reason: Reason, cause: Throwable? = null) :
+    IOException("Storage: ${reason.name}", cause), koharia.connection.ConnectionValidationError {
+    override val validationReason get() = when (reason) {
+        Reason.AUTH -> koharia.connection.ConnectionAddressVerification.Reason.AUTHENTICATION
+        Reason.PERMISSION -> koharia.connection.ConnectionAddressVerification.Reason.PERMISSION
+        Reason.NETWORK -> koharia.connection.ConnectionAddressVerification.Reason.UNAVAILABLE
+        Reason.PROTOCOL -> koharia.connection.ConnectionAddressVerification.Reason.RESPONSE
+        Reason.UNVERIFIED -> koharia.connection.ConnectionAddressVerification.Reason.MISMATCH
+        else -> null
+    }
     enum class Reason { AUTH, PERMISSION, NOT_FOUND, CONFLICT, UNSUPPORTED, PROTOCOL, NETWORK, SPACE, UNVERIFIED }
 }
 

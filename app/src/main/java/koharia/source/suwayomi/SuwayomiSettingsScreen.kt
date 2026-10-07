@@ -36,6 +36,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.network.NetworkHelper
 import koharia.connection.ConnectionAddressVerification
 import koharia.connection.ConnectionProfileManager
+import koharia.connection.ConnectionValidation
 import koharia.connection.ui.ConnectionAddressSetting
 import koharia.suwayomi.SuwayomiApi
 import koharia.suwayomi.SuwayomiAuthMode
@@ -97,6 +98,8 @@ class SuwayomiSettingsScreen(
         var message by remember { mutableStateOf<String?>(null) }
         var showUnsaved by rememberSaveable { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
+        val connectionChanged = address != initialAddress || internalAddress != initialInternalAddress ||
+            mode != initialMode || username != initialUsername || password != initialPassword
         val dirty =
             name != initialName || address != initialAddress || internalAddress != initialInternalAddress ||
                 username != initialUsername ||
@@ -129,44 +132,53 @@ class SuwayomiSettingsScreen(
             scope.launch {
                 try {
                     val normalized = SuwayomiApi.normalizeBase(address).toString()
-                    withContext(Dispatchers.IO) {
-                        val api = SuwayomiApi(
-                            networkClient = Injekt.get<NetworkHelper>().nonCloudflareClient.newBuilder()
-                                .callTimeout(10, TimeUnit.SECONDS).build(),
-                            json = Injekt.get<Json>(),
-                            address = normalized,
-                            mode = mode,
-                            username = username.trim(),
-                            password = password,
-                            internalAddress = internalAddress,
+                    if (ConnectionValidation.required(
+                            isNew,
+                            connectionChanged,
                         )
-                        try {
-                            withTimeoutOrNull(60_000) {
-                                api.validate()
-                                api.verifyInternal()
-                                if (
-                                    address != initialAddress || internalAddress != initialInternalAddress ||
-                                    mode != initialMode || username != initialUsername || password != initialPassword
-                                ) {
-                                    val catalog = koharia.suwayomi.SuwayomiCatalog(
-                                        SuwayomiIdentity(
-                                            sourceId,
-                                            SuwayomiIdentity.account(normalized, mode, username),
-                                        ),
-                                        Injekt.get(),
-                                        api,
-                                        Injekt.get<Json>(),
-                                        {},
-                                    )
-                                    catalog.invalidateSourceConfiguration()
-                                    catalog.categoryInventory.invalidate()
-                                    catalog.invalidateShelf()
+                    ) {
+                        ConnectionValidation.at(ConnectionValidation.Endpoint.PUBLIC) {
+                            withContext(Dispatchers.IO) {
+                                val api = SuwayomiApi(
+                                    networkClient = ConnectionValidation.client(
+                                        Injekt.get<NetworkHelper>().nonCloudflareClient,
+                                        internalAddress,
+                                    ),
+                                    json = Injekt.get<Json>(),
+                                    address = normalized,
+                                    mode = mode,
+                                    username = username.trim(),
+                                    password = password,
+                                    internalAddress = internalAddress,
+                                )
+                                try {
+                                    withTimeoutOrNull(60_000) {
+                                        api.validate()
+                                        api.verifyInternal()
+                                        if (connectionChanged) {
+                                            val catalog = koharia.suwayomi.SuwayomiCatalog(
+                                                SuwayomiIdentity(
+                                                    sourceId,
+                                                    SuwayomiIdentity.account(normalized, mode, username),
+                                                ),
+                                                Injekt.get(),
+                                                api,
+                                                Injekt.get<Json>(),
+                                                {},
+                                            )
+                                            catalog.invalidateSourceConfiguration()
+                                            catalog.categoryInventory.invalidate()
+                                            catalog.invalidateShelf()
+                                        }
+                                        true
+                                    }
+                                        ?: throw ConnectionAddressVerification.Failure(
+                                            ConnectionAddressVerification.Reason.TIMEOUT,
+                                        )
+                                } finally {
+                                    api.close()
                                 }
-                                true
                             }
-                                ?: throw SuwayomiException(SuwayomiException.Reason.SERVER)
-                        } finally {
-                            api.close()
                         }
                     }
                     val profile = manager.profiles().first { it.id == sourceId }

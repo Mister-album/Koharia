@@ -34,6 +34,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import koharia.connection.ConnectionProfileManager
+import koharia.connection.ConnectionValidation
 import koharia.connection.ui.ConnectionAddressSetting
 import koharia.kavita.KavitaApiClient
 import koharia.kavita.KavitaEndpoint
@@ -160,37 +161,55 @@ class KavitaSettingsScreen(
                             try {
                                 val parsed = requireNotNull(endpoint)
                                 val credential = parsed.importedKey ?: key.trim()
-                                val account = withContext(Dispatchers.IO) {
-                                    KavitaApiClient(
-                                        Injekt.get<NetworkHelper>().client,
-                                        parsed.base.toString(),
-                                        credential,
-                                        "validate-$sourceId",
-                                    ).use {
-                                        it.getAccount()
-                                    }
-                                }
                                 val normalizedInternal = internalAddress.takeIf { it.isNotBlank() }?.let {
                                     requireNotNull(koharia.connection.ConnectionAddressRouter.normalize(it)).toString()
                                 }.orEmpty()
-                                if (normalizedInternal.isNotEmpty()) {
-                                    val internalAccount = withContext(Dispatchers.IO) {
-                                        KavitaApiClient(
-                                            Injekt.get<NetworkHelper>().client,
-                                            normalizedInternal,
-                                            credential,
-                                            "validate-internal-$sourceId",
-                                        ).use { it.getAccount() }
+                                if (ConnectionValidation.required(
+                                        isNew,
+                                        parsed.base.toString() != preferences.address ||
+                                            credential != preferences.key ||
+                                            normalizedInternal != preferences.internalAddress,
+                                        preferences.identity == null,
+                                    )
+                                ) {
+                                    val account = ConnectionValidation.at(ConnectionValidation.Endpoint.PUBLIC) {
+                                        withContext(Dispatchers.IO) {
+                                            KavitaApiClient(
+                                                ConnectionValidation.client(Injekt.get<NetworkHelper>().client),
+                                                parsed.base.toString(),
+                                                credential,
+                                                "validate-$sourceId",
+                                            ).use {
+                                                it.getAccount()
+                                            }
+                                        }
                                     }
-                                    if (!account.identity.sameServerVerified(internalAccount.identity)) {
-                                        throw koharia.connection.ConnectionAddressVerification.Failure(
-                                            koharia.connection.ConnectionAddressVerification.Reason.MISMATCH,
-                                        )
+                                    if (normalizedInternal.isNotEmpty()) {
+                                        val internalAccount = ConnectionValidation.at(
+                                            ConnectionValidation.Endpoint.INTERNAL,
+                                        ) {
+                                            withContext(Dispatchers.IO) {
+                                                KavitaApiClient(
+                                                    ConnectionValidation.client(
+                                                        Injekt.get<NetworkHelper>().client,
+                                                        normalizedInternal,
+                                                    ),
+                                                    normalizedInternal,
+                                                    credential,
+                                                    "validate-internal-$sourceId",
+                                                ).use { it.getAccount() }
+                                            }
+                                        }
+                                        if (!account.identity.sameServerVerified(internalAccount.identity)) {
+                                            throw koharia.connection.ConnectionAddressVerification.Failure(
+                                                koharia.connection.ConnectionAddressVerification.Reason.MISMATCH,
+                                            )
+                                        }
                                     }
+                                    preferences.save(parsed.base.toString(), credential, account, sameServer)
+                                    preferences.internalAddress = normalizedInternal
                                 }
                                 val profile = manager.profiles().first { it.id == sourceId }
-                                preferences.save(parsed.base.toString(), credential, account, sameServer)
-                                preferences.internalAddress = normalizedInternal
                                 preferences.chapterTitleTemplate = chapterTemplate
                                 (Injekt.get<SourceManager>().get(sourceId) as? KavitaSource)?.reload()
                                 manager.update(profile.copy(name = name.trim()))

@@ -95,9 +95,9 @@ fun InfoScreen(
 
         Column(
             modifier = Modifier
+                .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
                 .fillMaxWidth()
-                .padding(paddingValues)
                 .padding(top = 48.dp)
                 .padding(horizontal = MaterialTheme.padding.medium),
         ) {

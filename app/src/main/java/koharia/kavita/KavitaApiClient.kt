@@ -41,7 +41,10 @@ class KavitaApiClient(
         networkInterceptors().removeAll { it is okhttp3.logging.HttpLoggingInterceptor }
         interceptors().removeAll { it is okhttp3.logging.HttpLoggingInterceptor }
     }.cache(null).followRedirects(false).followSslRedirects(false)
-        .callTimeout(45, TimeUnit.SECONDS).build()
+        .callTimeout(
+            if (networkClient.interceptors.any { it is koharia.connection.ConnectionValidation.ReadRetry }) 8 else 45,
+            TimeUnit.SECONDS,
+        ).build()
 
     private val routedRaw = raw.newBuilder().apply { if (router != null) addInterceptor(router) }.build()
 

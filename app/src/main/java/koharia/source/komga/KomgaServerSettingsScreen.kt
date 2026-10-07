@@ -104,13 +104,25 @@ class KomgaServerSettingsScreen(
             isSaving = true
             scope.launch {
                 try {
-                    deferredDataStore?.let { komgaSource?.verifyServerAddresses(it) }
+                    val source = komgaSource ?: throw koharia.connection.ConnectionAddressVerification.Failure(
+                        koharia.connection.ConnectionAddressVerification.Reason.UNAVAILABLE,
+                    )
+                    val store = deferredDataStore ?: throw koharia.connection.ConnectionAddressVerification.Failure(
+                        koharia.connection.ConnectionAddressVerification.Reason.UNAVAILABLE,
+                    )
+                    if (koharia.connection.ConnectionValidation.required(
+                            isNew,
+                            source.connectionSettingsChanged(store),
+                        )
+                    ) {
+                        source.verifyServerAddresses(store)
+                    }
                     val currentName = serverPreferences.getProfiles()
                         .find { it.id == sourceId }
                         ?.name
                         .orEmpty()
-                    val requestedName = deferredDataStore
-                        ?.getString(KomgaSource.PREF_SERVER_PROFILE_NAME, currentName)
+                    val requestedName = store
+                        .getString(KomgaSource.PREF_SERVER_PROFILE_NAME, currentName)
                         ?.trim()
                         ?: currentName
                     val result = serverProfileManager.renameServer(sourceId, requestedName)
@@ -119,11 +131,11 @@ class KomgaServerSettingsScreen(
                         return@launch
                     }
 
-                    deferredDataStore?.putString(
+                    store.putString(
                         KomgaSource.PREF_SERVER_PROFILE_NAME,
                         requestedName,
                     )
-                    deferredDataStore?.applyChanges()
+                    store.applyChanges()
                     if (completeOnboardingOnSave) {
                         basePreferences.shownOnboardingFlow.set(true)
                         navigator.popUntilRoot()

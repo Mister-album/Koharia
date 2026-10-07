@@ -36,6 +36,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.network.NetworkHelper
 import koharia.connection.ConnectionAddressVerification
 import koharia.connection.ConnectionProfileManager
+import koharia.connection.ConnectionValidation
 import koharia.connection.ui.ConnectionAddressSetting
 import koharia.smanga.SmangaApi
 import koharia.smanga.SmangaException
@@ -115,26 +116,42 @@ class SmangaSettingsScreen(
             scope.launch {
                 try {
                     val normalized = SmangaApi.normalizeBase(address).toString()
-                    val account = withContext(Dispatchers.IO) {
-                        val api = SmangaApi(
-                            networkClient = Injekt.get<NetworkHelper>().client.newBuilder()
-                                .callTimeout(10, TimeUnit.SECONDS).build(),
-                            json = Injekt.get<Json>(),
-                            address = normalized,
-                            username = username.trim(),
-                            password = password,
-                            namespace = "validate-$sourceId",
-                        )
-                        try {
-                            withTimeoutOrNull(30_000) { api.validate(internalAddress) }
-                                ?: throw SmangaException(SmangaException.Reason.SERVER)
-                        } finally {
-                            api.close()
+                    val validate = ConnectionValidation.required(
+                        isNew,
+                        address != initialAddress || internalAddress != initialInternalAddress ||
+                            username != initialUsername || password != initialPassword,
+                        preferences.accountId <= 0,
+                    )
+                    val accountId = if (validate) {
+                        ConnectionValidation.at(ConnectionValidation.Endpoint.PUBLIC) {
+                            withContext(Dispatchers.IO) {
+                                val api = SmangaApi(
+                                    networkClient = ConnectionValidation.client(
+                                        Injekt.get<NetworkHelper>().client,
+                                        internalAddress,
+                                    ),
+                                    json = Injekt.get<Json>(),
+                                    address = normalized,
+                                    username = username.trim(),
+                                    password = password,
+                                    namespace = "validate-$sourceId",
+                                )
+                                try {
+                                    withTimeoutOrNull(30_000) { api.validate(internalAddress).id }
+                                        ?: throw ConnectionAddressVerification.Failure(
+                                            ConnectionAddressVerification.Reason.TIMEOUT,
+                                        )
+                                } finally {
+                                    api.close()
+                                }
+                            }
                         }
+                    } else {
+                        preferences.accountId
                     }
                     val profile = manager.profiles().first { it.id == sourceId }
                     withContext(Dispatchers.IO) {
-                        preferences.save(normalized, username, password, account.id, internalAddress)
+                        preferences.save(normalized, username, password, accountId, internalAddress)
                     }
                     manager.update(profile.copy(name = name.trim()))
                     (Injekt.get<SourceManager>().get(sourceId) as? SmangaSource)?.reload()

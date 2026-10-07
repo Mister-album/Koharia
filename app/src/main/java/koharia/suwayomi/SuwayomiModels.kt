@@ -17,8 +17,23 @@ import java.io.IOException
 
 enum class SuwayomiAuthMode { NONE, BASIC_AUTH, SIMPLE_LOGIN, UI_LOGIN }
 
-class SuwayomiException(val reason: Reason) :
-    IOException("Suwayomi: ${reason.name}"), koharia.connection.ConnectionAddressRouter.NonRoutingFailure {
+class SuwayomiException(val reason: Reason, val status: Int? = null) :
+    IOException("Suwayomi: ${reason.name}"),
+    koharia.connection.ConnectionAddressRouter.NonRoutingFailure,
+    koharia.connection.ConnectionValidationError {
+    override val validationStatus get() = status
+    override val validationReason get() = when (reason) {
+        Reason.AUTH -> if (status == 403) {
+            koharia.connection.ConnectionAddressVerification.Reason.PERMISSION
+        } else if (status == null || status == 401) {
+            koharia.connection.ConnectionAddressVerification.Reason.AUTHENTICATION
+        } else {
+            koharia.connection.ConnectionAddressVerification.Reason.UNAVAILABLE
+        }
+        Reason.SERVER -> koharia.connection.ConnectionAddressVerification.Reason.UNAVAILABLE
+        Reason.PROTOCOL -> koharia.connection.ConnectionAddressVerification.Reason.RESPONSE
+        else -> null
+    }
     enum class Reason { ADDRESS, AUTH, VERSION, PROTOCOL, NOT_FOUND, SOURCE, PAGES, SERVER, IMAGE }
 }
 

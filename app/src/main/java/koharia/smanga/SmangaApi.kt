@@ -72,8 +72,10 @@ class SmangaApi(
 
     // Inherited interceptors/event listeners may record request bodies or authentication headers.
     private val isolatedClient = networkClient.newBuilder().apply {
+        val validation = interceptors().filterIsInstance<koharia.connection.ConnectionValidation.ReadRetry>()
         interceptors().clear()
         networkInterceptors().clear()
+        validation.forEach(::addInterceptor)
     }
         .cache(null)
         .dns(Dns.SYSTEM)
@@ -97,7 +99,10 @@ class SmangaApi(
     private val historyClient = client.newBuilder().retryOnConnectionFailure(false).build()
 
     val opdsClient: OkHttpClient = isolatedClient.newBuilder()
-        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .callTimeout(
+            if (isolatedClient.interceptors.any { it is koharia.connection.ConnectionValidation.ReadRetry }) 8 else 0,
+            TimeUnit.SECONDS,
+        )
         .addInterceptor { chain ->
             checkOpen()
             val request = chain.request()
@@ -127,25 +132,34 @@ class SmangaApi(
     suspend fun validate(internalAddress: String = ""): SmangaAccount = withContext(Dispatchers.IO) {
         // Address verification must contact both endpoints directly, without a routing fallback.
         check(internalAddress.isBlank() || addressRouter == null)
-        val account = account()
-        validateOpds()
+        val account = koharia.connection.ConnectionValidation.at(
+            koharia.connection.ConnectionValidation.Endpoint.PUBLIC,
+        ) {
+            account().also { validateOpds() }
+        }
         if (internalAddress.isNotBlank() && normalizeBase(internalAddress) != base) {
             val alternate = SmangaApi(isolatedClient, json, internalAddress, username, password, namespace)
             try {
                 // A new login token is a shared-database proof; never log in again at the alternate endpoint.
                 alternate.session = ensureSession()
-                val other = try {
-                    parseAccount(alternate.read("user/me", retryAuthentication = false).data())
-                } catch (error: SmangaException) {
-                    if (error.reason == SmangaException.Reason.AUTH) {
-                        throw ConnectionAddressVerification.Failure(ConnectionAddressVerification.Reason.MISMATCH)
+                val other = koharia.connection.ConnectionValidation.at(
+                    koharia.connection.ConnectionValidation.Endpoint.INTERNAL,
+                ) {
+                    try {
+                        parseAccount(alternate.read("user/me", retryAuthentication = false).data())
+                    } catch (error: SmangaException) {
+                        if (error.reason == SmangaException.Reason.AUTH) {
+                            throw ConnectionAddressVerification.Failure(ConnectionAddressVerification.Reason.MISMATCH)
+                        }
+                        throw error
                     }
-                    throw error
                 }
                 if (other.id != account.id || other.userName != account.userName) {
                     throw ConnectionAddressVerification.Failure(ConnectionAddressVerification.Reason.MISMATCH)
                 }
-                alternate.validateOpds()
+                koharia.connection.ConnectionValidation.at(koharia.connection.ConnectionValidation.Endpoint.INTERNAL) {
+                    alternate.validateOpds()
+                }
             } finally {
                 alternate.close()
             }

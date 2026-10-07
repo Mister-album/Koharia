@@ -16,6 +16,7 @@ import uy.kohesive.injekt.api.get
 class SuwayomiConnectionProvider(private val context: Context) : ConnectionProvider {
     override val id = ID
     override val displayName = "Suwayomi"
+    override val onboardingDescription = tachiyomi.i18n.MR.strings.suwayomi_setup_help
     override val iconRes = eu.kanade.tachiyomi.R.drawable.brand_suwayomi
     override val configuresConnectionNameInSettings = true
     override fun createSource(profile: LibraryConnectionProfile): SuwayomiSource {

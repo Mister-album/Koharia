@@ -12,9 +12,8 @@ import eu.kanade.presentation.more.settings.screen.SearchableSettings
 import eu.kanade.presentation.more.settings.screen.SettingsDataScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
+import koharia.connection.ConnectionRegistry
 import koharia.connection.ui.LibraryConnectionProfilesScreen
-import koharia.source.lanraragi.LanraragiConnectionProvider
-import koharia.source.local.LocalFolderConnectionProvider
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
@@ -27,6 +26,7 @@ class OnboardingScreen : Screen() {
         val navigator = LocalNavigator.currentOrThrow
 
         val basePreferences = remember { Injekt.get<BasePreferences>() }
+        val providers = remember { Injekt.get<ConnectionRegistry>().availableProviders() }
         val shownOnboardingFlow by basePreferences.shownOnboardingFlow.collectAsState()
 
         val finishOnboarding: () -> Unit = {
@@ -42,28 +42,12 @@ class OnboardingScreen : Screen() {
 
         OnboardingScreen(
             onComplete = finishOnboarding,
-            onAddServer = {
+            providers = providers,
+            onAddConnection = { providerId ->
                 navigator.push(
                     LibraryConnectionProfilesScreen(
                         openAddDialog = true,
-                        completeOnboardingAfterAdd = true,
-                    ),
-                )
-            },
-            onAddLanraragi = {
-                navigator.push(
-                    LibraryConnectionProfilesScreen(
-                        openAddDialog = true,
-                        initialProviderId = LanraragiConnectionProvider.ID,
-                        completeOnboardingAfterAdd = true,
-                    ),
-                )
-            },
-            onAddLocalFolder = {
-                navigator.push(
-                    LibraryConnectionProfilesScreen(
-                        openAddDialog = true,
-                        initialProviderId = LocalFolderConnectionProvider.ID,
+                        initialProviderId = providerId,
                         completeOnboardingAfterAdd = true,
                     ),
                 )

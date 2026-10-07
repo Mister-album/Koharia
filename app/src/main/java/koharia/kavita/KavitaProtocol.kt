@@ -5,7 +5,16 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.IOException
 
 class KavitaException(val reason: Reason, val status: Int? = null) :
-    IOException("Kavita ${reason.name}${status?.let { " ($it)" }.orEmpty()}") {
+    IOException("Kavita ${reason.name}${status?.let { " ($it)" }.orEmpty()}"),
+    koharia.connection.ConnectionValidationError {
+    override val validationStatus get() = status
+    override val validationReason get() = when (reason) {
+        Reason.AUTHENTICATION -> koharia.connection.ConnectionAddressVerification.Reason.AUTHENTICATION
+        Reason.PERMISSION -> koharia.connection.ConnectionAddressVerification.Reason.PERMISSION
+        Reason.NETWORK -> koharia.connection.ConnectionAddressVerification.Reason.UNAVAILABLE
+        Reason.PROTOCOL -> koharia.connection.ConnectionAddressVerification.Reason.RESPONSE
+        else -> null
+    }
     enum class Reason {
         ADDRESS,
         AUTHENTICATION,

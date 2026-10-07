@@ -18,6 +18,7 @@ class KomgaConnectionProvider :
     ConnectionLibrarySettingsAdapter {
     override val id: String = ID
     override val displayName: String = KomgaSource.SOURCE_NAME
+    override val onboardingDescription = tachiyomi.i18n.MR.strings.onboarding_komga_description
     override val iconRes: Int = R.drawable.brand_komga
     override val configuresConnectionNameInSettings: Boolean = true
 

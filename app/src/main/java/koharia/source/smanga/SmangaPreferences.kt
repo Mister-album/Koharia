@@ -66,6 +66,8 @@ class SmangaPreferences(connectionId: Long) {
             preferences.edit().putInt(scoped("display_mode"), value).apply()
         }
 
+    val accountId: Long get() = preferences.getLong("account_id", 0)
+
     fun save(
         address: String,
         username: String,

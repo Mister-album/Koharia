@@ -18,6 +18,7 @@ import java.io.File
 class KavitaConnectionProvider(private val context: Context) : ConnectionProvider {
     override val id = ID
     override val displayName = "Kavita"
+    override val onboardingDescription = tachiyomi.i18n.MR.strings.kavita_setup_help
     override val iconRes = R.drawable.ic_kavita
     override val configuresConnectionNameInSettings = true
     override fun createSource(profile: LibraryConnectionProfile) = KavitaSource(context, profile)

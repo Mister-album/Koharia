@@ -9,6 +9,35 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class StorageProgressTest {
+    @Test fun `path reuse cannot overwrite pending progress of a moved file`() = runBlocking {
+        val backend = MemoryStorageBackend().apply { seed("first.cbz", "original") }
+        val store = StorageRecordStore(StorageSession(1, "account", "root") { true }, MemoryStorageRepository(), Json)
+        val identities = StorageResourceIdentities(backend, store)
+        val progress = StorageProgress(backend, store, "device")
+        val original = backend.stat("first.cbz")
+        val originalKey = identities.identity(original)
+        progress.record(originalKey, "v1", 100, 8, 10, locator = "original locator")
+        StorageMutations(backend, store, identities).move(original, "second.cbz")
+        backend.seed("first.cbz", "replacement")
+        val replacementKey = identities.identity(backend.stat("first.cbz"))
+        progress.record(replacementKey, "v1", 200, 1, 10, locator = "replacement locator")
+        assertEquals(8, progress.cached(originalKey)?.page)
+        assertEquals("original locator", progress.cached(originalKey)?.locator)
+        assertEquals(1, progress.cached(replacementKey)?.page)
+        assertEquals("replacement locator", progress.cached(replacementKey)?.locator)
+        assertEquals(2, store.list("progress").size)
+        assertTrue(store.list("progress").all { Json.decodeFromString<StoragePendingProgress>(it.payload).pending })
+
+        progress.flush()
+        val otherStore =
+            StorageRecordStore(StorageSession(2, "account", "root") { true }, MemoryStorageRepository(), Json)
+        val otherIdentities = StorageResourceIdentities(backend, otherStore)
+        otherIdentities.refresh()
+        val otherProgress = StorageProgress(backend, otherStore, "other-device")
+        assertEquals(8, otherProgress.pull(otherIdentities.identity(backend.stat("second.cbz")), "v1")?.page)
+        assertEquals(1, otherProgress.pull(otherIdentities.identity(backend.stat("first.cbz")), "v1")?.page)
+    }
+
     @Test fun `compaction preserves other devices versions and newer timestamps`() = runBlocking {
         val backend = MemoryStorageBackend()
         fun progress(device: String) = StorageProgress(

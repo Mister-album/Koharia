@@ -13,7 +13,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.kanade.presentation.theme.TachiyomiTheme
@@ -22,6 +21,7 @@ import koharia.connection.ui.ConnectionAddressSetting
 import koharia.connection.ui.ConnectionProviderIcon
 import koharia.source.smanga.SmangaConnectionProvider
 import koharia.source.smanga.SmangaPreferences
+import koharia.testing.FixtureActivityLauncher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -52,7 +52,7 @@ class SmangaConnectionSettingsTest {
             preferences.order = "updateTime desc"
             val accountKey = preferences.accountKey
             val confirmations = AtomicInteger()
-            ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            FixtureActivityLauncher.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
                     activity.setContent {
                         TachiyomiTheme {

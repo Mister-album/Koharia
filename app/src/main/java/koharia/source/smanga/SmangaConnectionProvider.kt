@@ -18,6 +18,7 @@ import java.io.File
 class SmangaConnectionProvider(private val context: Context) : ConnectionProvider {
     override val id = ID
     override val displayName = "smanga"
+    override val onboardingDescription = tachiyomi.i18n.MR.strings.smanga_setup_help
     override val iconRes = R.drawable.brand_smanga
     override val configuresConnectionNameInSettings = true
     override fun createSource(profile: LibraryConnectionProfile) = SmangaSource(context, profile)

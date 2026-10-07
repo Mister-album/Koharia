@@ -16,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import koharia.connection.ConnectionProvider
 import soup.compose.material.motion.animation.materialSharedAxisX
 import soup.compose.material.motion.animation.rememberSlideDistance
 import tachiyomi.i18n.MR
@@ -27,23 +28,21 @@ import tachiyomi.presentation.core.screens.InfoScreen
 @Composable
 fun OnboardingScreen(
     onComplete: () -> Unit,
-    onAddServer: () -> Unit,
-    onAddLanraragi: () -> Unit,
-    onAddLocalFolder: () -> Unit,
+    providers: List<ConnectionProvider>,
+    onAddConnection: (String) -> Unit,
     onRestoreBackup: () -> Unit,
 ) {
     val slideDistance = rememberSlideDistance()
 
     var currentStep by rememberSaveable { mutableIntStateOf(0) }
-    val steps = remember(onAddServer, onAddLocalFolder, onRestoreBackup) {
+    val steps = remember(providers, onAddConnection, onRestoreBackup) {
         listOf(
             ThemeStep(),
             StorageStep(),
             PermissionStep(),
             GuidesStep(
-                onAddServer = onAddServer,
-                onAddLanraragi = onAddLanraragi,
-                onAddLocalFolder = onAddLocalFolder,
+                providers = providers,
+                onAddConnection = onAddConnection,
                 onRestoreBackup = onRestoreBackup,
             ),
         )

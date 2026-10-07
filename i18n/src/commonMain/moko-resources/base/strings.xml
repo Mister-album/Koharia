@@ -265,6 +265,9 @@
     <string name="onboarding_permission_analytics_description">Send anonymized usage data to improve app features.</string>
     <string name="onboarding_permission_action_grant">Grant</string>
     <string name="onboarding_guides_new_user">New to %s? We recommend checking out the getting started guide.</string>
+    <string name="onboarding_add_library">Add %1$s library</string>
+    <string name="onboarding_komga_description">Connect to your Komga comics and books server. Enter the server address, including any reverse-proxy subpath, and use an API Key or your username and password. An optional LAN address must reach the same service and account. Save to browse your server libraries.</string>
+    <string name="onboarding_local_library_description">Read comics and books from a local directory, WebDAV, or SMB. Choose the storage mode; network libraries also need a server address and any required credentials. Follow the setup steps to select a library folder, choose series or individual-file organization, and configure metadata. Scan the folder to start reading.</string>
     <string name="onboarding_guides_returning_user">Reinstalling %s?</string>
 
     <!-- Preferences -->
@@ -284,6 +287,7 @@
     <string name="pref_connection_management">Library connections</string>
     <string name="connection_unavailable">Unavailable</string>
     <string name="connection_provider">Connection type</string>
+    <string name="connection_provider_local">Local / SMB / WebDAV</string>
     <string name="action_add_connection">Add connection</string>
     <string name="delete_connection">Delete connection</string>
     <string name="delete_connection_confirmation">Do you wish to delete the connection "%s"?</string>
@@ -1990,10 +1994,18 @@
     <string name="connection_internal_address">Local network address</string>
     <string name="connection_internal_address_summary">Optional. On Wi-Fi, try the local address first and fall back to the server address if unavailable. Leave empty to disable. Both addresses must point to the same service.</string>
     <string name="connection_address_advanced">Advanced settings</string>
-    <string name="connection_verify_auth_failed">Could not authenticate both addresses. Check that both are reachable and accept the supplied API key. Nothing was saved.</string>
-    <string name="connection_verify_unavailable">Could not verify both addresses. Make sure both are reachable and the credentials allow creating and deleting a temporary verification marker. Nothing was saved.</string>
+    <string name="connection_verify_target">Connection</string>
+    <string name="connection_verify_auth_failed">%1$s authentication failed. Check the username, password or API key. Nothing was saved.</string>
+    <string name="connection_verify_unavailable">Could not connect to %1$s, or the connection was interrupted. Please try again. Nothing was saved.</string>
+    <string name="connection_verify_permission">The account does not have permission to verify %1$s. Nothing was saved.</string>
+    <string name="connection_verify_timeout">%1$s verification timed out. Please try again. Nothing was saved.</string>
+    <string name="connection_verify_certificate">The HTTPS certificate for %1$s could not be verified. Check the server certificate. Nothing was saved.</string>
+    <string name="connection_verify_response">%1$s returned an unexpected response. Check the address and server compatibility. Nothing was saved.</string>
+    <string name="connection_verify_redirect">%1$s redirected the verification request. Enter the service address directly. Nothing was saved.</string>
+    <string name="connection_credential_configured">Filled in. Tap to change.</string>
+    <string name="connection_credential_not_configured">Not filled in.</string>
     <string name="connection_verify_mismatch">The addresses do not share the same verification marker. Check that they point to the same server and account. Nothing was saved.</string>
-    <string name="connection_verify_cleanup">Could not confirm removal of temporary marker %1$s. Nothing was saved. Check and remove this marker in the Komga server client settings.</string>
+    <string name="connection_verify_cleanup">Could not confirm removal of temporary marker %1$s. Nothing was saved. Check and remove this marker in the server client settings.</string>
     <string name="connection_refresh">Refresh library</string>
     <string name="smanga_setup_help">Connect to smanga 4.3 with your username and password. OPDS must be enabled. Enter the server URL, including any reverse-proxy path; an /api suffix is also accepted.</string>
     <string name="smanga_error_connection">Could not connect to smanga. Check the server address and try again.</string>

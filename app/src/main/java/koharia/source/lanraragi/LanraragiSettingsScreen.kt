@@ -45,6 +45,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.network.NetworkHelper
 import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionProfileManager
+import koharia.connection.ConnectionValidation
 import koharia.connection.ui.ConnectionAddressSetting
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.domain.lanraragi.LanraragiRepository
@@ -95,7 +96,6 @@ class LanraragiSettingsScreen(
         // Credentials stay in memory and never enter saved screen state.
         var apiKey by remember(sourceId) { mutableStateOf(initialKey) }
         var saving by remember { mutableStateOf(false) }
-        var showConnectionFailure by remember { mutableStateOf(false) }
         var message by remember { mutableStateOf<String?>(null) }
         var showHelp by rememberSaveable { mutableStateOf(false) }
         var showUnsaved by rememberSaveable { mutableStateOf(false) }
@@ -135,13 +135,18 @@ class LanraragiSettingsScreen(
             if (saving) return
             if (dirty) showUnsaved = true else discard()
         }
-        fun save(checkConnection: Boolean = true) {
+        fun save() {
             if (saving) return
             saving = true
             scope.launch {
                 try {
                     val normalized = LanraragiApi.normalizeBase(address).toString()
-                    if (internalAddress.isNotBlank()) {
+                    if (ConnectionValidation.required(
+                            isNew,
+                            address != initialAddress || internalAddress != initialInternalAddress ||
+                                apiKey != initialKey,
+                        )
+                    ) {
                         val headers = okhttp3.Headers.Builder().apply {
                             if (apiKey.isNotBlank()) {
                                 set("Authorization", "Bearer ${apiKey.trim().encodeUtf8().base64()}")
@@ -153,37 +158,6 @@ class LanraragiSettingsScreen(
                             internalAddress,
                             headers,
                         )
-                    }
-                    if (checkConnection) {
-                        val connected = try {
-                            withContext(Dispatchers.IO) {
-                                val api = LanraragiApi(
-                                    normalized,
-                                    apiKey.trim(),
-                                    Injekt.get<NetworkHelper>().client.newBuilder()
-                                        .callTimeout(10, TimeUnit.SECONDS).build(),
-                                    Injekt.get<Json>(),
-                                    addressRouter = ConnectionAddressRouter.forAndroid(
-                                        context,
-                                        { normalized },
-                                        { internalAddress },
-                                        "api/info",
-                                    ),
-                                )
-                                try {
-                                    withTimeoutOrNull(10_000) { api.serverInfo(true) } != null
-                                } finally {
-                                    api.close()
-                                }
-                            }
-                        } catch (error: Exception) {
-                            if (error is CancellationException) throw error
-                            false
-                        }
-                        if (!connected) {
-                            showConnectionFailure = true
-                            return@launch
-                        }
                     }
                     val profile = manager.profiles().first { it.id == sourceId }
                     withContext(Dispatchers.IO) {
@@ -311,26 +285,6 @@ class LanraragiSettingsScreen(
                     )
                 }
             }
-        }
-        if (showConnectionFailure) {
-            AlertDialog(
-                onDismissRequest = { showConnectionFailure = false },
-                title = { Text(stringResource(MR.strings.lanraragi_connection_failed_title)) },
-                text = { Text(stringResource(MR.strings.lanraragi_save_connection_failed)) },
-                confirmButton = {
-                    TextButton(onClick = {
-                        showConnectionFailure = false
-                        save(checkConnection = false)
-                    }) {
-                        Text(stringResource(MR.strings.lanraragi_save_anyway))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showConnectionFailure = false }) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-            )
         }
         message?.let { error ->
             AlertDialog(

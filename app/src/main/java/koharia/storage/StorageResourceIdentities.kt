@@ -67,7 +67,7 @@ class StorageResourceIdentities(private val backend: LibraryStorageBackend, priv
                 throw error
             }
         }
-        bindings.forEach { store.put("identities", it.path, it.identity) }
+        manifest.bindings.forEach { applyBinding(manifest.id, it) }
     }
 
     suspend fun refresh() {
@@ -89,12 +89,19 @@ class StorageResourceIdentities(private val backend: LibraryStorageBackend, priv
         for (manifest in manifests.sortedWith(compareBy<StorageIdentityManifest> { it.order }.thenBy { it.id })) {
             manifest.bindings.forEach {
                 require(StoragePath.normalize(it.path) == it.path && it.identity?.isBlank() != true)
-                store.put("identities", it.path, it.identity)
+                applyBinding(manifest.id, it)
             }
         }
         manifests.maxOfOrNull { it.order }?.let {
             store.put("identity-clock", "revision", maxOf(it, store.get<Long>("identity-clock", "revision") ?: 0))
         }
+    }
+
+    private suspend fun applyBinding(manifestId: String, binding: StorageIdentityBinding) {
+        // Retired paths reserve a new generation, shared by every client replaying this move.
+        val identity = binding.identity
+            ?: "path:${storageDigest(store.session.rootIdentity + "\n" + binding.path + "\n" + manifestId)}"
+        store.put("identities", binding.path, identity)
     }
 
     private suspend fun ensureDirectory() {

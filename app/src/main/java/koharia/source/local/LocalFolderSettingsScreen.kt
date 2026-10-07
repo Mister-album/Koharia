@@ -111,7 +111,7 @@ class LocalFolderSettingsScreen(
         }
         val remoteMode = network.configuration.mode != koharia.storage.LibraryStorageMode.LOCAL
         var remoteDirectoryDialog by remember { mutableStateOf(false) }
-        var networkError by remember { mutableStateOf(false) }
+        var networkError by remember { mutableStateOf<String?>(null) }
         val storagePreferences = remember { Injekt.get<StoragePreferences>() }
         val storageDirectory by storagePreferences.baseStorageDirectory.changes()
             .collectAsState(initial = storagePreferences.baseStorageDirectory.get())
@@ -247,20 +247,31 @@ class LocalFolderSettingsScreen(
                     val scanAdapter = Injekt.get<SourceManager>().get(sourceId) as? ConnectionLibraryRefreshAdapter
                         ?: LocalFolderSource(context, sourceId, connectionName.trim(), profile)
                     if (remoteMode) {
-                        val saved = tachiyomi.core.common.util.lang.withIOContext {
-                            saveNetworkLibraryDraft(
-                                context,
-                                sourceId,
-                                effectiveNetwork,
+                        val validate = koharia.connection.ConnectionValidation.required(
+                            isNew,
+                            effectiveNetwork != NetworkStorageDraft(
                                 initialNetwork,
-                                config,
-                                assignments,
-                                isNew,
-                            )
+                                networkPreferences.username,
+                                networkPreferences.password,
+                            ) || config != initial || assignments != preferences.getBookshelfAssignments(),
+                            initialNetwork.needsValidation,
+                        )
+                        if (validate) {
+                            val saved = tachiyomi.core.common.util.lang.withIOContext {
+                                saveNetworkLibraryDraft(
+                                    context,
+                                    sourceId,
+                                    effectiveNetwork,
+                                    initialNetwork,
+                                    config,
+                                    assignments,
+                                    isNew,
+                                )
+                            }
+                            config = saved
                         }
-                        config = saved
                         profileManager.update(profile.copy(name = connectionName.trim()))
-                        (scanAdapter as? LocalFolderSource)?.startLibraryRefresh()
+                        if (validate) (scanAdapter as? LocalFolderSource)?.startLibraryRefresh()
                         if (completeOnboardingOnSave) {
                             basePreferences.shownOnboardingFlow.set(true)
                             navigator.popUntilRoot()
@@ -302,9 +313,18 @@ class LocalFolderSettingsScreen(
                 } catch (error: kotlinx.coroutines.CancellationException) {
                     throw error
                 } catch (error: Exception) {
-                    context.toast(
-                        if (remoteMode) MR.strings.storage_operation_failed else MR.strings.local_library_save_failed,
-                    )
+                    val failure = if (remoteMode) koharia.connection.ConnectionValidation.classify(error) else null
+                    if (failure != null) {
+                        context.toast(failure.userMessage(context))
+                    } else {
+                        context.toast(
+                            if (remoteMode) {
+                                MR.strings.storage_operation_failed
+                            } else {
+                                MR.strings.local_library_save_failed
+                            },
+                        )
+                    }
                 } finally {
                     isInitialScanning = false
                     isSaving = false
@@ -591,9 +611,9 @@ class LocalFolderSettingsScreen(
                         if (config.setupCompleted && !network.configuration.persistentIdentity) {
                             item { SetupNotice(stringResource(MR.strings.storage_read_only_root), warning = true) }
                         }
-                        if (networkError) {
+                        networkError?.let { message ->
                             item {
-                                SetupNotice(stringResource(MR.strings.storage_operation_failed), warning = true)
+                                SetupNotice(message, warning = true)
                             }
                         }
                         if (config.setupCompleted) item { NetworkStoragePendingSettings(sourceId) }
@@ -617,7 +637,7 @@ class LocalFolderSettingsScreen(
                                 onPrevious = { setupStep = LocalLibrarySetupStep.NAME },
                                 onNext = {
                                     isPreparingDirectories = true
-                                    networkError = false
+                                    networkError = null
                                     scope.launch {
                                         try {
                                             tachiyomi.core.common.util.lang.withIOContext { network.authenticate() }
@@ -625,8 +645,10 @@ class LocalFolderSettingsScreen(
                                             setupStep = LocalLibrarySetupStep.ROOT
                                         } catch (error: kotlinx.coroutines.CancellationException) {
                                             throw error
-                                        } catch (_: Exception) {
-                                            networkError = true
+                                        } catch (error: Exception) {
+                                            networkError = koharia.connection.ConnectionValidation.classify(error)
+                                                ?.userMessage(context)
+                                                ?: context.contextStringResource(MR.strings.storage_operation_failed)
                                         } finally {
                                             isPreparingDirectories = false
                                         }

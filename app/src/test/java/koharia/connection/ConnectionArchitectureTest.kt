@@ -144,6 +144,7 @@ class ConnectionArchitectureTest {
         val provider = object : ConnectionProvider {
             override val id = profile.providerId
             override val displayName = "Test"
+            override val onboardingDescription = tachiyomi.i18n.MR.strings.onboarding_komga_description
             override fun createSource(profile: LibraryConnectionProfile) = source
         }
 
@@ -235,6 +236,7 @@ class ConnectionArchitectureTest {
         val provider = object : ConnectionProvider {
             override val id = profile.providerId
             override val displayName = "Capability provider"
+            override val onboardingDescription = tachiyomi.i18n.MR.strings.onboarding_komga_description
             override fun createSource(profile: LibraryConnectionProfile) = source
         }
 
@@ -274,6 +276,7 @@ class ConnectionArchitectureTest {
         val provider = object : ConnectionProvider, ConnectionManagementAdapter {
             override val id = "managed-provider"
             override val displayName = "Managed"
+            override val onboardingDescription = tachiyomi.i18n.MR.strings.onboarding_komga_description
 
             override fun createSource(profile: LibraryConnectionProfile) = TestConnectionSource(profile)
 

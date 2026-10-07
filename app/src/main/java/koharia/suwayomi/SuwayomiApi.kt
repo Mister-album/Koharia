@@ -196,7 +196,7 @@ class SuwayomiApi(
 
     private fun loginOperation(base: HttpUrl, query: String, variables: JsonObject, field: String): JsonObject =
         rawClient.newCall(graphqlRequest(base, query, variables)).execute().use { response ->
-            if (!response.isSuccessful) throw SuwayomiException(SuwayomiException.Reason.AUTH)
+            if (!response.isSuccessful) throw SuwayomiException(SuwayomiException.Reason.AUTH, response.code)
             val root = runCatching { json.parseToJsonElement(response.body.string()).jsonObject }.getOrNull()
                 ?: throw SuwayomiException(SuwayomiException.Reason.AUTH)
             if (root["errors"]?.jsonArray?.isNotEmpty() == true) {
@@ -236,7 +236,8 @@ class SuwayomiApi(
     private suspend fun operation(query: String, variables: JsonObject = JsonObject(emptyMap())): JsonObject =
         client.newCall(graphqlRequest(base, query, variables)).await().use { response ->
             when {
-                response.code == 401 || response.code == 403 -> throw SuwayomiException(SuwayomiException.Reason.AUTH)
+                response.code == 401 || response.code == 403 ->
+                    throw SuwayomiException(SuwayomiException.Reason.AUTH, response.code)
                 response.code == 404 -> throw SuwayomiException(SuwayomiException.Reason.NOT_FOUND)
                 !response.isSuccessful -> throw SuwayomiException(SuwayomiException.Reason.SERVER)
             }
@@ -877,7 +878,9 @@ class SuwayomiApi(
         val nonce = UUID.randomUUID().toString()
         var attempted = false
         try {
-            direct.validate()
+            koharia.connection.ConnectionValidation.at(koharia.connection.ConnectionValidation.Endpoint.INTERNAL) {
+                direct.validate()
+            }
             withContext(NonCancellable) {
                 attempted = true
                 operation(

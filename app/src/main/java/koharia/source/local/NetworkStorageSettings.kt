@@ -60,10 +60,18 @@ internal data class NetworkStorageDraft(
 ) {
     suspend fun authenticate() {
         for (address in listOf(configuration.address, configuration.internalAddress).filter { it.isNotBlank() }) {
-            if (configuration.mode == LibraryStorageMode.SMB) {
-                authenticateSmbServer(address, username, password, configuration.domain.trim())
-            } else {
-                authenticateWebDavServer(address, username, password)
+            koharia.connection.ConnectionValidation.at(
+                if (address == configuration.address) {
+                    koharia.connection.ConnectionValidation.Endpoint.PUBLIC
+                } else {
+                    koharia.connection.ConnectionValidation.Endpoint.INTERNAL
+                },
+            ) {
+                if (configuration.mode == LibraryStorageMode.SMB) {
+                    authenticateSmbServer(address, username, password, configuration.domain.trim())
+                } else {
+                    authenticateWebDavServer(address, username, password)
+                }
             }
         }
         require(configuration.address.isNotBlank())
@@ -344,44 +352,58 @@ internal suspend fun saveNetworkLibraryDraft(
         throw StorageFailure(StorageFailure.Reason.UNVERIFIED)
     }
     var enabled = if (library.setupCompleted) library else library.enabledLibraryConfiguration()
+    draft.authenticate()
     val verified = NetworkStorageRuntime.backend(
         config,
         config.address,
         draft.username,
         draft.password,
+        validation = true,
     ).use { primary ->
-        var persistent = true
-        val identity = try {
-            StorageIdentity.ensure(primary)
-        } catch (failure: StorageFailure) {
-            if (failure.reason !in
-                setOf(StorageFailure.Reason.PERMISSION, StorageFailure.Reason.UNSUPPORTED)
+        koharia.connection.ConnectionValidation.at(koharia.connection.ConnectionValidation.Endpoint.PUBLIC) {
+            var persistent = true
+            val identity = try {
+                StorageIdentity.ensure(primary)
+            } catch (failure: StorageFailure) {
+                if (failure.reason !in
+                    setOf(StorageFailure.Reason.PERMISSION, StorageFailure.Reason.UNSUPPORTED)
+                ) {
+                    throw failure
+                }
+                check(primary.stat("").directory)
+                persistent = false
+                initial.rootIdentity.takeIf { !initial.persistentIdentity && it.isNotBlank() }
+                    ?: UUID.randomUUID().toString()
+            }
+            enabled = prepareInitialNetworkDirectories(primary, enabled)
+            require(enabled.roots.isNotEmpty())
+            enabled.roots.forEach { check(primary.stat(it.relativePath).directory) }
+            if (persistent &&
+                config.internalAddress.isNotBlank()
             ) {
-                throw failure
+                NetworkStorageRuntime.backend(
+                    config,
+                    config.internalAddress,
+                    draft.username,
+                    draft.password,
+                    validation = true,
+                ).use {
+                    koharia.connection.ConnectionValidation.at(
+                        koharia.connection.ConnectionValidation.Endpoint.INTERNAL,
+                    ) {
+                        StorageIdentity.verify(primary, it, identity)
+                    }
+                }
             }
-            check(primary.stat("").directory)
-            persistent = false
-            initial.rootIdentity.takeIf { !initial.persistentIdentity && it.isNotBlank() }
-                ?: UUID.randomUUID().toString()
+            config.copy(
+                rootIdentity = identity,
+                persistentIdentity = persistent,
+                verifiedInternal =
+                persistent && config.internalAddress.isNotBlank(),
+                needsValidation = false,
+                accountIdentity = "",
+            )
         }
-        enabled = prepareInitialNetworkDirectories(primary, enabled)
-        require(enabled.roots.isNotEmpty())
-        enabled.roots.forEach { check(primary.stat(it.relativePath).directory) }
-        if (persistent &&
-            config.internalAddress.isNotBlank()
-        ) {
-            NetworkStorageRuntime.backend(config, config.internalAddress, draft.username, draft.password).use {
-                StorageIdentity.verify(primary, it, identity)
-            }
-        }
-        config.copy(
-            rootIdentity = identity,
-            persistentIdentity = persistent,
-            verifiedInternal =
-            persistent && config.internalAddress.isNotBlank(),
-            needsValidation = false,
-            accountIdentity = "",
-        )
     }
     if (!isNew &&
         (

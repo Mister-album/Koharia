@@ -35,6 +35,11 @@ class ConnectionAddressVerificationTest {
     private var malformedAuthResponse = false
     private var redirectInternal = false
     private var blockInternal = false
+    private var disconnectInternalReads = 0
+    private var truncateInternalBody = false
+    private var disconnectWriteResponse = false
+    private var denyWrite = false
+    private var permissionDenied = false
     private val internalRead = CompletableDeferred<Unit>()
     private val publicServer = server(false)
     private val internalServer = server(true)
@@ -97,13 +102,19 @@ class ConnectionAddressVerificationTest {
     @Test
     fun `lanraragi rejects redirected authentication`() = runBlocking {
         redirectInternal = true
-        assertAuthFailure()
+        assertEquals(
+            ConnectionAddressVerification.Reason.REDIRECT,
+            failure(ConnectionAddressVerification.Provider.LANRARAGI),
+        )
     }
 
     @Test
     fun `lanraragi rejects unexpected successful response`() = runBlocking {
         malformedAuthResponse = true
-        assertAuthFailure()
+        assertEquals(
+            ConnectionAddressVerification.Reason.RESPONSE,
+            failure(ConnectionAddressVerification.Provider.LANRARAGI),
+        )
     }
 
     private suspend fun assertAuthFailure() {
@@ -129,7 +140,7 @@ class ConnectionAddressVerificationTest {
     fun `redirect cannot silently verify the public address again`() = runBlocking {
         redirectInternal = true
         assertEquals(
-            ConnectionAddressVerification.Reason.UNAVAILABLE,
+            ConnectionAddressVerification.Reason.REDIRECT,
             failure(ConnectionAddressVerification.Provider.KOMGA),
         )
         assertTrue(publicStore.isEmpty())
@@ -152,6 +163,95 @@ class ConnectionAddressVerificationTest {
         job.cancelAndJoin()
         assertTrue(publicStore.isEmpty())
         assertTrue(requests.any { it.startsWith("public DELETE") })
+    }
+
+    @Test
+    fun `single address still checks authentication without writing`() = runBlocking {
+        rejectPublicAuth = true
+        val error = org.junit.jupiter.api.assertThrows<ConnectionAddressVerification.Failure> {
+            verification.verify(ConnectionAddressVerification.Provider.KOMGA, public, "", Headers.headersOf())
+        }
+        assertEquals(ConnectionAddressVerification.Reason.AUTHENTICATION, error.reason)
+        assertEquals(ConnectionValidation.Endpoint.PUBLIC, error.endpoint)
+        assertEquals(401, error.status)
+        assertEquals(ConnectionAddressVerification.Stage.AUTHENTICATION, error.stage)
+        assertEquals(listOf("public GET /api/v1/client-settings/user/list"), requests.toList())
+    }
+
+    @Test
+    fun `internal authentication is checked before writing a marker`() = runBlocking {
+        rejectInternalAuth = true
+        val error = org.junit.jupiter.api.assertThrows<ConnectionAddressVerification.Failure> {
+            verify(ConnectionAddressVerification.Provider.KOMGA)
+        }
+        assertEquals(ConnectionAddressVerification.Reason.AUTHENTICATION, error.reason)
+        assertEquals(ConnectionValidation.Endpoint.INTERNAL, error.endpoint)
+        assertEquals(2, requests.size)
+        assertTrue(publicStore.isEmpty())
+    }
+
+    @Test
+    fun `permission denial is distinct from authentication failure`() = runBlocking {
+        permissionDenied = true
+        assertEquals(
+            ConnectionAddressVerification.Reason.PERMISSION,
+            failure(ConnectionAddressVerification.Provider.KOMGA),
+        )
+        assertEquals(1, requests.size)
+    }
+
+    @Test
+    fun `denied marker write retains the permission error and does not attempt cleanup`() = runBlocking {
+        denyWrite = true
+        val error = org.junit.jupiter.api.assertThrows<ConnectionAddressVerification.Failure> {
+            verify(ConnectionAddressVerification.Provider.KOMGA)
+        }
+        assertEquals(ConnectionAddressVerification.Reason.PERMISSION, error.reason)
+        assertEquals(ConnectionAddressVerification.Stage.WRITE, error.stage)
+        assertEquals(1, requests.count { " PATCH " in it })
+        assertTrue(requests.none { " DELETE " in it })
+        assertTrue(publicStore.isEmpty())
+    }
+
+    @Test
+    fun `one interrupted internal read is retried directly and verification succeeds`() = runBlocking {
+        disconnectInternalReads = 1
+        verify(ConnectionAddressVerification.Provider.KOMGA)
+        assertEquals(3, requests.count { it.startsWith("internal GET") })
+        assertEquals(1, requests.count { " PATCH " in it })
+        assertTrue(publicStore.isEmpty())
+    }
+
+    @Test
+    fun `persistently interrupted read stops after one retry without writing`() = runBlocking {
+        disconnectInternalReads = 3
+        assertEquals(
+            ConnectionAddressVerification.Reason.UNAVAILABLE,
+            failure(ConnectionAddressVerification.Provider.KOMGA),
+        )
+        assertEquals(2, requests.count { it.startsWith("internal GET") })
+        assertTrue(requests.none { " PATCH " in it })
+    }
+
+    @Test
+    fun `interrupted response body is also retried without recreating a marker`() = runBlocking {
+        truncateInternalBody = true
+        verify(ConnectionAddressVerification.Provider.KOMGA)
+        assertEquals(3, requests.count { it.startsWith("internal GET") })
+        assertEquals(1, requests.count { " PATCH " in it })
+        assertTrue(publicStore.isEmpty())
+    }
+
+    @Test
+    fun `lost write response is not replayed and its committed marker is removed`() = runBlocking {
+        disconnectWriteResponse = true
+        assertEquals(
+            ConnectionAddressVerification.Reason.UNAVAILABLE,
+            failure(ConnectionAddressVerification.Provider.KOMGA),
+        )
+        assertEquals(1, requests.count { " PATCH " in it })
+        assertEquals(1, requests.count { " DELETE " in it })
+        assertTrue(publicStore.isEmpty())
     }
 
     private suspend fun verify(provider: ConnectionAddressVerification.Provider) =
@@ -178,15 +278,25 @@ class ConnectionAddressVerificationTest {
                 val body = exchange.requestBody.bufferedReader().use { it.readText() }
                 var code = 200
                 var response: kotlinx.serialization.json.JsonElement = JsonObject(emptyMap())
-                if (internal && blockInternal) {
+                if (internal && blockInternal && publicStore.isNotEmpty()) {
                     internalRead.complete(Unit)
                     // The exchange remains open until the client cancels; the public server can clean up independently.
                     return@createContext
+                } else if (internal && disconnectInternalReads > 0) {
+                    disconnectInternalReads--
+                    exchange.close()
+                    return@createContext
+                } else if (permissionDenied) {
+                    code = 403
+                } else if ((internal && rejectInternalAuth) || (!internal && rejectPublicAuth)) {
+                    code = 401
                 } else if (internal && redirectInternal) {
                     exchange.responseHeaders.add("Location", public + path.removePrefix("/"))
                     code = 302
                 } else if (method == "DELETE" && rejectDelete) {
                     code = 423
+                } else if (method == "PATCH" && denyWrite) {
+                    code = 403
                 } else if (path.startsWith("/api/v1/client-settings")) {
                     when (method) {
                         "PATCH" -> {
@@ -198,6 +308,10 @@ class ConnectionAddressVerificationTest {
                                     value.jsonObject
                             }
                             code = 204
+                            if (disconnectWriteResponse) {
+                                exchange.close()
+                                return@createContext
+                            }
                         }
                         "GET" -> response = JsonObject(store.toMap())
                         "DELETE" -> {
@@ -222,6 +336,13 @@ class ConnectionAddressVerificationTest {
                     exchange.sendResponseHeaders(code, -1)
                 } else {
                     val bytes = response.toString().toByteArray()
+                    if (internal && truncateInternalBody) {
+                        truncateInternalBody = false
+                        exchange.sendResponseHeaders(code, bytes.size + 20L)
+                        exchange.responseBody.write(bytes)
+                        exchange.close()
+                        return@createContext
+                    }
                     exchange.sendResponseHeaders(code, bytes.size.toLong())
                     exchange.responseBody.write(bytes)
                 }

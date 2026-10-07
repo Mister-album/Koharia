@@ -145,10 +145,20 @@ class NetworkStorageRuntime private constructor(val context: Context, val connec
             address: String,
             username: String,
             password: String,
+            validation: Boolean = false,
         ): LibraryStorageBackend =
             when (config.mode) {
                 LibraryStorageMode.WEBDAV -> WebDavStorageBackend(
-                    Injekt.get<NetworkHelper>().nonCloudflareClient,
+                    Injekt.get<NetworkHelper>().nonCloudflareClient.let { client ->
+                        if (validation) {
+                            koharia.connection.ConnectionValidation.client(
+                                client,
+                                config.internalAddress,
+                            )
+                        } else {
+                            client
+                        }
+                    },
                     address,
                     username,
                     password,

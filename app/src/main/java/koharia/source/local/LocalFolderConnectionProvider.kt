@@ -18,7 +18,8 @@ class LocalFolderConnectionProvider(
     private val context: Context,
 ) : ConnectionProvider {
     override val id: String = ID
-    override val displayName: String = context.stringResource(MR.strings.label_local)
+    override val displayName: String = context.stringResource(MR.strings.connection_provider_local)
+    override val onboardingDescription = MR.strings.onboarding_local_library_description
     override val iconRes: Int = R.mipmap.ic_local_source
     override val configuresConnectionNameInSettings: Boolean = true
 

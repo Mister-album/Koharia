@@ -5,6 +5,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -126,5 +127,38 @@ class StorageCacheTest {
         backend.failReads = true
         assertArrayEquals("cached".encodeToByteArray(), cache.read(moved, 0, 6))
         assertEquals(1, temporary.toFile().walkTopDown().count { it.extension == "block" })
+    }
+
+    @Test fun `reused paths with matching versions cannot serve a moved files cached bytes`() = runBlocking {
+        val memory = MemoryStorageBackend().apply { seed("first.cbz", "oldone") }
+        val backend = object : LibraryStorageBackend by memory {
+            override suspend fun stat(path: String) = memory.stat(path).copy(version = "same-version")
+            override suspend fun list(path: String) = memory.list(path).map { it.copy(version = "same-version") }
+            override suspend fun read(entry: StorageEntry, offset: Long, length: Int) =
+                memory.read(memory.stat(entry.path), offset, length)
+            override suspend fun copyTo(entry: StorageEntry, output: OutputStream) =
+                memory.copyTo(memory.stat(entry.path), output)
+            override suspend fun move(entry: StorageEntry, destination: String) =
+                memory.move(memory.stat(entry.path), destination)
+        }
+        val session = StorageSession(1, "account", "root") { true }
+        val records = StorageRecordStore(session, MemoryStorageRepository(), Json)
+        val identities = StorageResourceIdentities(backend, records)
+        val cache = StorageBlockCache(
+            temporary.toFile(),
+            session,
+            backend,
+            resourceIdentity = { runBlocking { identities.identity(it) } },
+        ) { 1024 }
+        val original = backend.stat("first.cbz")
+        assertArrayEquals("oldone".encodeToByteArray(), cache.read(original, 0, 6))
+        StorageMutations(backend, records, identities).move(original, "second.cbz")
+        memory.seed("first.cbz", "newone")
+        val replacement = backend.stat("first.cbz")
+        val moved = backend.stat("second.cbz")
+        assertArrayEquals("newone".encodeToByteArray(), cache.read(replacement, 0, 6))
+        memory.failReads = true
+        assertArrayEquals("oldone".encodeToByteArray(), cache.read(moved, 0, 6))
+        assertArrayEquals("newone".encodeToByteArray(), cache.read(replacement, 0, 6))
     }
 }

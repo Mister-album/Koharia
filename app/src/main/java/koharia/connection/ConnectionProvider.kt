@@ -26,6 +26,8 @@ interface ConnectionProvider {
     val id: String
     val displayName: String
 
+    val onboardingDescription: StringResource
+
     @get:DrawableRes
     val iconRes: Int
         get() = 0

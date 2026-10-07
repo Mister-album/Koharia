@@ -2,32 +2,40 @@ package eu.kanade.presentation.more.onboarding
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
+import koharia.connection.ConnectionProvider
+import koharia.connection.ui.ConnectionProviderIcon
+import koharia.source.kavita.KavitaConnectionProvider
+import koharia.source.komga.KomgaConnectionProvider
+import koharia.source.lanraragi.LanraragiConnectionProvider
+import koharia.source.local.LocalFolderConnectionProvider
+import koharia.source.smanga.SmangaConnectionProvider
+import koharia.source.suwayomi.SuwayomiConnectionProvider
 import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
 internal class GuidesStep(
-    private val onAddServer: () -> Unit,
-    private val onAddLanraragi: () -> Unit,
-    private val onAddLocalFolder: () -> Unit,
+    private val providers: List<ConnectionProvider>,
+    private val onAddConnection: (String) -> Unit,
     private val onRestoreBackup: () -> Unit,
 ) : OnboardingStep {
 
@@ -43,45 +51,27 @@ internal class GuidesStep(
             verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
         ) {
             Text(stringResource(MR.strings.onboarding_guides_new_user, stringResource(MR.strings.app_name)))
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onAddServer,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Add,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-                Text(stringResource(MR.strings.action_add_komga_server))
-            }
-
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onAddLanraragi,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Add,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-                Text(stringResource(MR.strings.action_add_lanraragi))
-            }
-
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 8.dp),
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onAddLocalFolder,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.FolderOpen,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-                Text(stringResource(MR.strings.action_use_local_folder))
+            providers.forEach { provider ->
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        ConnectionProviderIcon(provider.iconRes, Modifier.size(28.dp))
+                        Text(
+                            text = provider.displayName,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Button(
+                            modifier = Modifier.testTag("onboarding-provider-${provider.id}"),
+                            onClick = { onAddConnection(provider.id) },
+                        ) {
+                            Text(stringResource(MR.strings.action_add))
+                        }
+                    }
+                }
             }
             Button(
                 modifier = Modifier.fillMaxWidth(),
@@ -109,11 +99,18 @@ internal class GuidesStep(
 @PreviewLightDark
 @Composable
 private fun GuidesStepPreview() {
+    val context = LocalContext.current
     TachiyomiPreviewTheme {
         GuidesStep(
-            onAddServer = {},
-            onAddLanraragi = {},
-            onAddLocalFolder = {},
+            providers = listOf(
+                KomgaConnectionProvider(),
+                LanraragiConnectionProvider(context),
+                SuwayomiConnectionProvider(context),
+                KavitaConnectionProvider(context),
+                SmangaConnectionProvider(context),
+                LocalFolderConnectionProvider(context),
+            ),
+            onAddConnection = {},
             onRestoreBackup = {},
         ).Content()
     }

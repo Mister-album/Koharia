@@ -185,6 +185,20 @@ class SmangaApiTest {
 
     @Test
     fun `OPDS basic auth stays within exact server base and never follows redirects`() {
+        assertEquals(0, api.opdsClient.callTimeoutMillis)
+        val validation = SmangaApi(
+            koharia.connection.ConnectionValidation.client(network),
+            Json,
+            root,
+            "reader",
+            "fixture-password",
+            "validation",
+        )
+        try {
+            assertEquals(8_000, validation.opdsClient.callTimeoutMillis)
+        } finally {
+            validation.close()
+        }
         handler = { 200 to "image" }
         api.opdsClient.newCall(Request.Builder().url(api.coverUrl(4)).header("token", "wrong").build()).execute().use {
             assertTrue(it.isSuccessful)
