@@ -106,6 +106,7 @@ class WebtoonAdapter(val viewer: WebtoonViewer) : RecyclerView.Adapter<RecyclerV
                     context = readerThemedContext,
                     isWebtoon = true,
                     basePreferences = viewer.activity.basePreferences,
+                    readerPreferences = viewer.activity.readerPreferences,
                 )
                 WebtoonPageHolder(view, viewer)
             }

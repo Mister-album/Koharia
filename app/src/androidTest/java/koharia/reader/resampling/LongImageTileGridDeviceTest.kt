@@ -7,12 +7,11 @@ import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.SystemClock
-import android.widget.FrameLayout
-import androidx.test.core.app.ActivityScenario
+import android.view.View
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
-import eu.kanade.tachiyomi.ui.eink.EInkMotionFixtureActivity
+import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import okio.buffer
@@ -21,28 +20,29 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class LongImageTileGridDeviceTest {
     @Test
-    fun longWebtoonLoadsAndReachesLastPixelsBothBelowAndAboveThreshold() = verify(257, 20001)
+    fun longWebtoonLoadsAndReachesLastPixelsWithAndWithoutInterpolation() = verify(257, 20001)
 
     @Test
     fun wideImageLoadsAndReachesLastPixelsWithoutOversizedOrMissingTiles() = verify(20001, 257)
 
     private fun verify(width: Int, height: Int) {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
         check(context.packageName == "app.koharia.dev.devicefixture")
         val preferences = Injekt.get<ReaderPreferences>()
         val enabled = preferences.moireReduction.get()
         val enabledWasSet = preferences.moireReduction.isSet()
-        val threshold = preferences.moireReductionThreshold.get()
-        val thresholdWasSet = preferences.moireReductionThreshold.isSet()
+        val oldKernel = preferences.resamplingKernel.get()
+        val kernelWasSet = preferences.resamplingKernel.isSet()
         val file = File.createTempFile("long-tile-grid-", ".png", context.cacheDir)
         try {
             val source = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -56,18 +56,21 @@ class LongImageTileGridDeviceTest {
             } finally {
                 source.recycle()
             }
-            preferences.moireReduction.set(true)
-            for (percent in listOf(50, 25)) {
-                preferences.moireReductionThreshold.set(percent)
+            preferences.resamplingKernel.set(ResamplingKernel.MITCHELL)
+            for (filtering in listOf(false, true)) {
+                preferences.moireReduction.set(filtering)
                 val loaded = CountDownLatch(1)
                 var image: ReaderPageImageView? = null
-                ActivityScenario.launch(EInkMotionFixtureActivity::class.java).use { scenario ->
+                run {
                     try {
-                        scenario.onActivity { host ->
-                            val reader = ReaderPageImageView(host, isWebtoon = height > width).also { image = it }
-                            host.setContentView(
-                                FrameLayout(host).apply { addView(reader, FrameLayout.LayoutParams(128, 256)) },
-                            )
+                        instrumentation.runOnMainSync {
+                            val reader = ReaderPageImageView(
+                                context,
+                                isWebtoon = height > width,
+                                basePreferences = BasePreferences(context, InMemoryPreferenceStore()).apply {
+                                    alwaysDecodeLongStripWithSSIV.set(true)
+                                },
+                            ).also { image = it }
                             reader.onImageLoaded = { loaded.countDown() }
                             reader.setImage(
                                 file.source().buffer(),
@@ -78,11 +81,31 @@ class LongImageTileGridDeviceTest {
                                 ),
                             )
                         }
-                        assertTrue(
-                            "Long image load timed out: $width x $height, threshold=$percent",
-                            loaded.await(30, TimeUnit.SECONDS),
+                        val loadDeadline = SystemClock.uptimeMillis() + 30_000
+                        val capture = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+                        try {
+                            while (loaded.count > 0 && SystemClock.uptimeMillis() < loadDeadline) {
+                                instrumentation.runOnMainSync {
+                                    checkNotNull(image).apply {
+                                        measure(
+                                            View.MeasureSpec.makeMeasureSpec(128, View.MeasureSpec.EXACTLY),
+                                            View.MeasureSpec.makeMeasureSpec(256, View.MeasureSpec.EXACTLY),
+                                        )
+                                        layout(0, 0, 128, 256)
+                                        draw(Canvas(capture))
+                                    }
+                                }
+                                SystemClock.sleep(25)
+                            }
+                        } finally {
+                            capture.recycle()
+                        }
+                        assertEquals(
+                            "Long image load timed out: $width x $height, interpolation=$filtering",
+                            0L,
+                            loaded.count,
                         )
-                        scenario.onActivity {
+                        instrumentation.runOnMainSync {
                             val view = checkNotNull(image).getChildAt(0) as SubsamplingScaleImageView
                             assertGrid(view, width, height)
                             view.setScaleAndCenter(
@@ -99,7 +122,7 @@ class LongImageTileGridDeviceTest {
                         val deadline = SystemClock.uptimeMillis() + 10_000
                         var blue = false
                         while (!blue && SystemClock.uptimeMillis() < deadline) {
-                            scenario.onActivity {
+                            instrumentation.runOnMainSync {
                                 val bitmap = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
                                 try {
                                     checkNotNull(image).draw(Canvas(bitmap))
@@ -111,23 +134,17 @@ class LongImageTileGridDeviceTest {
                             if (!blue) SystemClock.sleep(25)
                         }
                         assertTrue("Last region was not displayed", blue)
-                        scenario.onActivity {
+                        instrumentation.runOnMainSync {
                             assertGrid(checkNotNull(image).getChildAt(0) as SubsamplingScaleImageView, width, height)
                         }
                     } finally {
-                        scenario.onActivity { image?.recycle() }
+                        instrumentation.runOnMainSync { image?.recycle() }
                     }
                 }
             }
         } finally {
             if (enabledWasSet) preferences.moireReduction.set(enabled) else preferences.moireReduction.delete()
-            if (thresholdWasSet) {
-                preferences.moireReductionThreshold.set(
-                    threshold,
-                )
-            } else {
-                preferences.moireReductionThreshold.delete()
-            }
+            if (kernelWasSet) preferences.resamplingKernel.set(oldKernel) else preferences.resamplingKernel.delete()
             file.delete()
         }
     }
@@ -143,7 +160,14 @@ class LongImageTileGridDeviceTest {
                 assertTrue(rect.width() > 0 && rect.height() > 0)
                 area += rect.width().toLong() * rect.height()
                 val bitmap = type.getDeclaredField("bitmap").apply { isAccessible = true }.get(tile) as Bitmap?
-                if (bitmap != null) assertTrue(bitmap.width <= 256 && bitmap.height <= 256)
+                if (bitmap !=
+                    null
+                ) {
+                    assertTrue(
+                        bitmap.width <= ResamplingRegionDecoder.MAX_TILE_SIZE &&
+                            bitmap.height <= ResamplingRegionDecoder.MAX_TILE_SIZE,
+                    )
+                }
             }
             assertEquals("Every level must cover the entire source", width.toLong() * height, area)
         }

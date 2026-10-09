@@ -4,10 +4,14 @@ import android.os.Build
 import androidx.compose.ui.graphics.BlendMode
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+import koharia.reader.resampling.ReaderResamplingSettings
+import koharia.reader.resampling.ResamplingKernel
+import koharia.reader.resampling.ResamplingQuality
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -26,7 +30,29 @@ class ReaderPreferences(
 
     val moireReduction = preferenceStore.getBoolean("reader_moire_reduction", false)
 
-    val moireReductionThreshold = preferenceStore.getInt("reader_moire_reduction_threshold", 50)
+    val resamplingKernel = preferenceStore.getObjectFromString(
+        "reader_resampling_kernel",
+        ResamplingKernel.CATMULL_ROM,
+        serializer = { it.name },
+        deserializer = { value ->
+            ResamplingKernel.entries.firstOrNull { it.name == value } ?: ResamplingKernel.MITCHELL
+        },
+    )
+    val resamplingQuality = preferenceStore.getEnum("reader_resampling_quality", ResamplingQuality.BALANCED)
+
+    internal fun resamplingSettings() = ReaderResamplingSettings.resolve(
+        moireReduction.get(),
+        resamplingKernel.get(),
+        resamplingQuality.get(),
+    )
+
+    internal fun resamplingChanges() = combine(
+        moireReduction.changes(),
+        resamplingKernel.changes(),
+        resamplingQuality.changes(),
+    ) { enabled, kernel, quality ->
+        ReaderResamplingSettings.resolve(enabled, kernel, quality)
+    }.distinctUntilChanged()
 
     val persistReaderSettingsChanges: Preference<Boolean> =
         preferenceStore.getBoolean("reader_persist_settings_changes", true)

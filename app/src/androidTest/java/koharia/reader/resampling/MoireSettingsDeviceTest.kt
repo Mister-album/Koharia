@@ -1,5 +1,6 @@
 package koharia.reader.resampling
 
+import android.content.Context
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
@@ -16,6 +17,8 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
+import eu.kanade.presentation.more.settings.PreferenceScreen
+import eu.kanade.presentation.more.settings.screen.SettingsReaderScreen
 import eu.kanade.presentation.reader.settings.MoireReductionSettings
 import eu.kanade.tachiyomi.ui.eink.EInkMotionFixtureActivity
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
@@ -28,64 +31,85 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.i18n.MR
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = 29)
 class MoireSettingsDeviceTest {
     @Test
-    fun readerSettingsPersistSharedThresholdAndNotifyActiveViewer() {
+    fun readerAndMoreSettingsShareAlgorithmsWithoutThresholdControls() {
         assertFixture()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val preferences = Injekt.get<ReaderPreferences>()
-        val oldEnabled = preferences.moireReduction.get()
-        val enabledWasSet = preferences.moireReduction.isSet()
-        val oldThreshold = preferences.moireReductionThreshold.get()
-        val thresholdWasSet = preferences.moireReductionThreshold.isSet()
+        val preferenceName = "resampling-settings-ui-${System.nanoTime()}"
+        val preferences = ReaderPreferences(
+            AndroidPreferenceStore(context, context.getSharedPreferences(preferenceName, Context.MODE_PRIVATE)),
+        )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val updates = AtomicInteger()
         try {
             preferences.moireReduction.set(false)
-            preferences.moireReductionThreshold.delete()
-            assertEquals(50, preferences.moireReductionThreshold.get())
+            preferences.resamplingKernel.set(ResamplingKernel.MITCHELL)
             ActivityScenario.launch(EInkMotionFixtureActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
-                    WebtoonConfig(scope, preferences).imagePropertyChangedListener = { updates.incrementAndGet() }
+                    WebtoonConfig(scope, preferences).resamplingChangedListener = { updates.incrementAndGet() }
                     activity.setContent { MaterialTheme { Column { MoireReductionSettings(preferences) } } }
                 }
-                val label = context.getString(MR.strings.reader_moire_reduction.resourceId)
-                awaitText(label)
-                SystemClock.sleep(200)
-                updates.set(0)
+                val label = context.getString(MR.strings.reader_resampling_enabled.resourceId)
                 click(label)
-                awaitText(context.getString(MR.strings.reader_moire_threshold_percent.resourceId, 50))
+                awaitText(context.getString(ResamplingKernel.MITCHELL.stringRes.resourceId))
                 assertTrue(preferences.moireReduction.get())
-                awaitUpdates(updates)
-                updates.set(0)
-                click(context.getString(MR.strings.reader_moire_threshold_percent.resourceId, 75))
-                awaitText(context.getString(MR.strings.reader_moire_threshold_summary.resourceId, 75))
-                assertEquals(75, preferences.moireReductionThreshold.get())
+                assertNoReaderDescriptionsOrThresholds()
+                click(context.getString(ResamplingKernel.LANCZOS3.stringRes.resourceId))
+                click(context.getString(ResamplingQuality.SPEED.stringRes.resourceId))
+                assertEquals(ResamplingKernel.LANCZOS3, preferences.resamplingKernel.get())
+                assertEquals(ResamplingQuality.SPEED, preferences.resamplingQuality.get())
+                scenario.onActivity { activity ->
+                    activity.setContent {
+                        MaterialTheme { PreferenceScreen(SettingsReaderScreen.comicPreferences(preferences).take(4)) }
+                    }
+                }
+                awaitText(context.getString(MR.strings.reader_resampling_summary.resourceId))
+                awaitText(context.getString(MR.strings.reader_resampling_quality_summary.resourceId))
+                awaitText(context.getString(MR.strings.reader_resampling_scale_summary.resourceId))
+                awaitText(context.getString(ResamplingKernel.LANCZOS3.stringRes.resourceId))
+                click(context.getString(MR.strings.reader_resampling_algorithm.resourceId))
+                click(context.getString(ResamplingKernel.MITCHELL.stringRes.resourceId))
+                awaitText(context.getString(ResamplingKernel.MITCHELL.stringRes.resourceId))
+                awaitText(context.getString(MR.strings.reader_resampling_scale_summary.resourceId))
+                assertEquals(ResamplingKernel.MITCHELL, preferences.resamplingKernel.get())
+                scenario.onActivity { activity ->
+                    activity.setContent { MaterialTheme { Column { MoireReductionSettings(preferences) } } }
+                }
+                awaitText(context.getString(ResamplingQuality.SPEED.stringRes.resourceId))
+                awaitText(context.getString(ResamplingKernel.MITCHELL.stringRes.resourceId))
+                assertNoReaderDescriptionsOrThresholds()
                 awaitUpdates(updates)
                 click(label)
                 assertTrue(!preferences.moireReduction.get())
                 click(label)
-                awaitText(context.getString(MR.strings.reader_moire_threshold_summary.resourceId, 75))
-                assertEquals(75, preferences.moireReductionThreshold.get())
+                awaitText(context.getString(ResamplingKernel.MITCHELL.stringRes.resourceId))
+                assertEquals(ResamplingKernel.MITCHELL, preferences.resamplingKernel.get())
+                assertEquals(ResamplingQuality.SPEED, preferences.resamplingQuality.get())
+                assertNoReaderDescriptionsOrThresholds()
             }
         } finally {
             scope.cancel()
-            if (enabledWasSet) preferences.moireReduction.set(oldEnabled) else preferences.moireReduction.delete()
-            if (thresholdWasSet) {
-                preferences.moireReductionThreshold.set(
-                    oldThreshold,
-                )
-            } else {
-                preferences.moireReductionThreshold.delete()
-            }
+            context.deleteSharedPreferences(preferenceName)
         }
+    }
+
+    private fun assertNoReaderDescriptionsOrThresholds() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        for (resource in listOf(
+            MR.strings.reader_resampling_summary,
+            MR.strings.reader_resampling_quality_summary,
+            MR.strings.reader_resampling_scale_summary,
+        )) {
+            assertTrue(findText(context.getString(resource.resourceId)) == null)
+        }
+        for (percent in listOf(25, 33, 50, 75, 100)) assertTrue(findText("$percent%") == null)
     }
 
     private fun awaitUpdates(updates: AtomicInteger) {

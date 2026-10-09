@@ -20,9 +20,6 @@
     <string name="suwayomi_libraries_selected">%1$d libraries selected · Suwayomi</string>
     <string name="reader_moire_reduction">Reduce moiré</string>
     <string name="reader_moire_reduction_summary">Reduce screen-tone interference below the selected display scale. Uses more processing and may soften fine details.</string>
-    <string name="reader_moire_threshold">Moiré reduction threshold</string>
-    <string name="reader_moire_threshold_percent">%1$d%%</string>
-    <string name="reader_moire_threshold_summary">Apply when the display scale is at most %1$d%% of the original. 100%% covers all downscaling.</string>
     <string name="app_name" translatable="false">Koharia</string>
 
     <!-- Generic strings -->
@@ -2330,4 +2327,18 @@
     <string name="suwayomi_clear_queue_confirm">Cancel all queued server downloads? Completed files will be kept.</string>
     <string name="suwayomi_add_library">Add to server library</string>
     <string name="suwayomi_remove_library">Remove from server library</string>
+
+    <string name="reader_resampling_enabled">Custom image interpolation</string>
+    <string name="reader_resampling_summary">Choose how static comic images are resized. Processing may delay display.</string>
+    <string name="reader_resampling_algorithm">Interpolation algorithm</string>
+    <string name="reader_resampling_mitchell">Mitchell (compatibility mode)</string>
+    <string name="reader_resampling_bilinear">Bilinear</string>
+    <string name="reader_resampling_bicubic">Bicubic (Catmull–Rom)</string>
+    <string name="reader_resampling_lanczos">Lanczos3</string>
+    <string name="reader_resampling_quality">Processing quality</string>
+    <string name="reader_resampling_speed">Prefer speed</string>
+    <string name="reader_resampling_balanced">Balanced</string>
+    <string name="reader_resampling_detail">Prefer detail</string>
+    <string name="reader_resampling_quality_summary">Changes input sampling when reducing images, without changing the algorithm. Speed may lose fine detail; detail may increase moiré and processing time. All presets use full input when enlarging.</string>
+    <string name="reader_resampling_scale_summary">Applies when reducing or enlarging images. Original size is displayed without resampling.</string>
 </resources>

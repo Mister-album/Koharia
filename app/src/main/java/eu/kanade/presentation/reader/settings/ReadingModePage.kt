@@ -19,7 +19,9 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.VerticalPagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
-import koharia.reader.resampling.MoireReductionPolicy
+import koharia.reader.resampling.ResamplingKernel
+import koharia.reader.resampling.ResamplingQuality
+import koharia.reader.resampling.stringRes
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.SettingsChipRow
@@ -63,27 +65,31 @@ internal fun ColumnScope.ViewerSettingsPage(screenModel: ReaderSettingsScreenMod
 @Composable
 internal fun ColumnScope.MoireReductionSettings(preferences: ReaderPreferences) {
     CheckboxItem(
-        label = stringResource(MR.strings.reader_moire_reduction),
+        label = stringResource(MR.strings.reader_resampling_enabled),
         pref = preferences.moireReduction,
     )
     val enabled by preferences.moireReduction.collectAsState()
-    val threshold by preferences.moireReductionThreshold.collectAsState()
+    val kernel by preferences.resamplingKernel.collectAsState()
+    val quality by preferences.resamplingQuality.collectAsState()
     if (enabled) {
-        SettingsChipRow(MR.strings.reader_moire_threshold) {
-            MoireReductionPolicy.thresholds.forEach { percent ->
+        SettingsChipRow(MR.strings.reader_resampling_algorithm) {
+            ResamplingKernel.entries.forEach { item ->
                 FilterChip(
-                    selected = MoireReductionPolicy.normalize(threshold) == percent,
-                    onClick = { preferences.moireReductionThreshold.set(percent) },
-                    label = { Text(stringResource(MR.strings.reader_moire_threshold_percent, percent)) },
+                    selected = kernel == item,
+                    onClick = { preferences.resamplingKernel.set(item) },
+                    label = { Text(stringResource(item.stringRes)) },
                 )
             }
         }
-        Text(
-            text = stringResource(MR.strings.reader_moire_threshold_summary, MoireReductionPolicy.normalize(threshold)),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-        )
+        SettingsChipRow(MR.strings.reader_resampling_quality) {
+            ResamplingQuality.entries.forEach { item ->
+                FilterChip(
+                    selected = quality == item,
+                    onClick = { preferences.resamplingQuality.set(item) },
+                    label = { Text(stringResource(item.stringRes)) },
+                )
+            }
+        }
     }
 }
 

@@ -20,9 +20,6 @@
     <string name="suwayomi_libraries_selected">已选择 %1$d 个书库 · Suwayomi</string>
     <string name="reader_moire_reduction">抗摩尔纹</string>
     <string name="reader_moire_reduction_summary">在选定的显示比例下减少漫画网点干扰。会增加处理开销，细节可能略微柔和。</string>
-    <string name="reader_moire_threshold">抗摩尔纹启用阈值</string>
-    <string name="reader_moire_threshold_percent">%1$d%%</string>
-    <string name="reader_moire_threshold_summary">显示比例不超过原图的 %1$d%% 时启用；100%% 表示所有缩小比例。</string>
     <string name="name">名称</string>
     <string name="categories">分类</string>
     <string name="manga">书架中的作品</string>
@@ -2191,4 +2188,18 @@
     <string name="suwayomi_clear_queue_confirm">取消所有服务端排队下载？已下载完成的文件会保留。</string>
     <string name="suwayomi_add_library">加入服务端书库</string>
     <string name="suwayomi_remove_library">移出服务端书库</string>
+
+    <string name="reader_resampling_enabled">自定义图像插值</string>
+    <string name="reader_resampling_summary">选择静态漫画图片的缩放算法，处理可能增加显示等待时间。</string>
+    <string name="reader_resampling_algorithm">插值算法</string>
+    <string name="reader_resampling_mitchell">Mitchell（兼容模式）</string>
+    <string name="reader_resampling_bilinear">Bilinear（双线性）</string>
+    <string name="reader_resampling_bicubic">Bicubic（Catmull–Rom）</string>
+    <string name="reader_resampling_lanczos">Lanczos3</string>
+    <string name="reader_resampling_quality">处理档位</string>
+    <string name="reader_resampling_speed">速度优先</string>
+    <string name="reader_resampling_balanced">均衡</string>
+    <string name="reader_resampling_detail">细节优先</string>
+    <string name="reader_resampling_quality_summary">档位调整缩小时的输入采样，不更换算法。速度优先可能损失细节；细节优先可能增加摩尔纹与耗时。放大时各档均使用完整输入。</string>
+    <string name="reader_resampling_scale_summary">缩小和放大时均生效；原尺寸直接显示，不额外重采样。</string>
 </resources>

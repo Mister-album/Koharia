@@ -170,7 +170,7 @@ class MoireThresholdDeviceTest {
         override fun init(context: Context, provider: InputProvider) = Point(1024, 1024)
         override fun isReady() = ready
         override fun isFilteringEnabled() = true
-        override fun shouldFilter(displayScale: Float) = MoireReductionPolicy.shouldFilter(displayScale, 50)
+        override fun shouldFilter(displayScale: Float) = (displayScale > 0f && displayScale <= .5f)
         override fun recycle() {
             ready = false
         }

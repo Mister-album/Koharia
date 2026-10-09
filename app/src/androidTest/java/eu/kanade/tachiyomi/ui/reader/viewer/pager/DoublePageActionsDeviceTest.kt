@@ -138,7 +138,6 @@ class DoublePageActionsDeviceTest {
             check(Injekt.get<SourceManager>().get(sourceId) != null)
             override(preferences.persistReaderSettingsChanges, false)
             override(preferences.moireReduction, filtering)
-            override(preferences.moireReductionThreshold, 100)
             override(preferences.doublePageSaveMode, DoublePageSaveMode.MERGED)
             preferences.doublePageSaveMode.delete()
             override(preferences.mergedPageLayout, eu.kanade.tachiyomi.ui.reader.setting.MergedPageLayout.MATCH_HEIGHT)

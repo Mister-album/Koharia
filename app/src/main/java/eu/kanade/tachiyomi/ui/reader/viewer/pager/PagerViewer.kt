@@ -27,6 +27,7 @@ import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
+import eu.kanade.tachiyomi.ui.reader.viewer.refreshReaderResampling
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -303,6 +304,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             }
             pendingProgressCommitAnchor = anchor.takeIf { state?.commitPending == true }
             requestSlotRebuild(anchor)
+        }
+
+        config.resamplingChangedListener = {
+            if (!pager.refreshReaderResampling()) refreshAdapter()
         }
 
         config.imagePropertyChangedListener = {

@@ -26,8 +26,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -43,12 +42,12 @@ class MitchellReaderDeviceTest {
     fun realReaderReducesQuarterScaleInterferenceAndCapturesOtherFitScales() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         check(context.packageName == "app.koharia.dev.devicefixture")
-        assertTrue(MitchellResampler.available)
-        val preferences = Injekt.get<ReaderPreferences>()
+        assertTrue(ImageResampler.available)
+        val preferences = ReaderPreferences(InMemoryPreferenceStore())
         val old = preferences.moireReduction.get()
         val wasSet = preferences.moireReduction.isSet()
-        val oldThreshold = preferences.moireReductionThreshold.get()
-        val thresholdWasSet = preferences.moireReductionThreshold.isSet()
+        val oldKernel = preferences.resamplingKernel.get()
+        val kernelWasSet = preferences.resamplingKernel.isSet()
         val input = File.createTempFile("moire-", ".png", context.cacheDir)
         val output = File(context.getExternalFilesDir(null), "moire-integration").apply { mkdirs() }
         val original = Bitmap.createBitmap(1024, 1024, Bitmap.Config.ARGB_8888)
@@ -62,13 +61,13 @@ class MitchellReaderDeviceTest {
         original.recycle()
         val results = StringBuilder("percent,enabled,ready_ms,capture_ms,interference\n")
         try {
-            preferences.moireReductionThreshold.set(100)
+            preferences.resamplingKernel.set(ResamplingKernel.MITCHELL)
             for (percent in listOf(25, 33, 50, 75)) {
                 val measures = mutableListOf<Double>()
                 for (enabled in listOf(false, true)) {
                     preferences.moireReduction.set(enabled)
                     val start = SystemClock.elapsedRealtime()
-                    val (bitmap, readyMs) = capture(input, (1024 * percent / 100.0).toInt())
+                    val (bitmap, readyMs) = capture(input, (1024 * percent / 100.0).toInt(), preferences)
                     try {
                         val metric = interference(bitmap)
                         measures += metric
@@ -86,25 +85,21 @@ class MitchellReaderDeviceTest {
         } finally {
             File(output, "display.csv").writeText(results.toString())
             if (wasSet) preferences.moireReduction.set(old) else preferences.moireReduction.delete()
-            if (thresholdWasSet) {
-                preferences.moireReductionThreshold.set(
-                    oldThreshold,
-                )
-            } else {
-                preferences.moireReductionThreshold.delete()
-            }
+            if (kernelWasSet) preferences.resamplingKernel.set(oldKernel) else preferences.resamplingKernel.delete()
             input.delete()
         }
     }
 
     private fun assertMatchesWholeRegion(input: File, display: Bitmap) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val decoder = MitchellRegionDecoder(false, byteArrayOf())
+        val decoder = ResamplingRegionDecoder(false, byteArrayOf())
         decoder.init(context, OpenStreamProvider(input.inputStream()))
         try {
             val scale = display.width / 1024f
             val reference = decoder.decodeRegion(Rect(0, 0, 1024, 1024), 4, scale * 4, BooleanSupplier { false })
             try {
+                File(context.getExternalFilesDir(null), "moire-integration/reference-${display.width}.png")
+                    .outputStream().use { reference.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 var maximum = 0
                 for (y in 0 until display.height) {
                     for (x in 0 until display.width) {
@@ -125,7 +120,8 @@ class MitchellReaderDeviceTest {
     fun replacingPagesThenRotatingAndZoomingDoesNotPublishPreviousImage() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         check(context.packageName == "app.koharia.dev.devicefixture")
-        val preference = Injekt.get<ReaderPreferences>().moireReduction
+        val preferences = ReaderPreferences(InMemoryPreferenceStore())
+        val preference = preferences.moireReduction
         val old = preference.get()
         val wasSet = preference.isSet()
         val files = mutableListOf<File>()
@@ -141,7 +137,7 @@ class MitchellReaderDeviceTest {
                 bitmap.recycle()
             }
             activity.scenario.onActivity { host ->
-                val image = ReaderPageImageView(host).also { view = it }
+                val image = ReaderPageImageView(host, readerPreferences = preferences).also { view = it }
                 host.setContentView(FrameLayout(host).apply { addView(image, FrameLayout.LayoutParams(512, 512)) })
                 image.onImageLoaded = { loaded.countDown() }
                 files.forEach { image.setImage(it.source().buffer(), false, ReaderPageImageView.Config(0)) }
@@ -190,12 +186,12 @@ class MitchellReaderDeviceTest {
         }
     }
 
-    private fun capture(input: File, size: Int): Pair<Bitmap, Long> {
+    private fun capture(input: File, size: Int, preferences: ReaderPreferences): Pair<Bitmap, Long> {
         val start = SystemClock.elapsedRealtime()
         val loaded = CountDownLatch(1)
         lateinit var view: ReaderPageImageView
         activity.scenario.onActivity { host ->
-            view = ReaderPageImageView(host)
+            view = ReaderPageImageView(host, readerPreferences = preferences)
             val frame = FrameLayout(host)
             frame.addView(view, FrameLayout.LayoutParams(size, size))
             host.setContentView(frame)

@@ -50,6 +50,7 @@ class PagerPageHolder(
 ) : ReaderPageImageView(
     context = readerThemedContext,
     basePreferences = viewer.activity.basePreferences,
+    readerPreferences = viewer.activity.readerPreferences,
 ),
     ViewPagerAdapter.PositionableView {
 
@@ -383,6 +384,7 @@ class PagerPageHolder(
                     children += ReaderPageImageView(
                         context = context,
                         basePreferences = viewer.activity.basePreferences,
+                        readerPreferences = viewer.activity.readerPreferences,
                     ).apply {
                         onImageLoaded = {
                             container.updateViewport()

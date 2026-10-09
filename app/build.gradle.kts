@@ -36,6 +36,12 @@ val useEInkDeviceFixture = providers.gradleProperty("einkDeviceFixture")
 val useDeviceTestFixture = providers.gradleProperty("deviceTestFixture")
     .map(String::toBoolean)
     .getOrElse(false)
+val optimizeResamplingBenchmark = providers.gradleProperty("resamplingBenchmarkOptimized")
+    .map(String::toBoolean)
+    .getOrElse(false)
+check(!optimizeResamplingBenchmark || useDeviceTestFixture) {
+    "Resampling benchmark optimization requires -PdeviceTestFixture=true."
+}
 
 tasks.matching { it.name.startsWith("connected") && it.name.endsWith("AndroidTest") }.configureEach {
     doFirst {
@@ -85,6 +91,13 @@ android {
         buildConfigField("boolean", "LANRARAGI_DIAGNOSTICS", "false")
 
         testInstrumentationRunner = "koharia.testing.KohariaDeviceTestRunner"
+        if (optimizeResamplingBenchmark) {
+            externalNativeBuild {
+                ndkBuild {
+                    arguments += "KOHARIA_RESAMPLING_OPTIMIZED=1"
+                }
+            }
+        }
     }
 
     testOptions {
@@ -108,6 +121,13 @@ android {
     buildTypes {
         val debug = getByName("debug") {
             buildConfigField("boolean", "LANRARAGI_DIAGNOSTICS", "true")
+            if (!useDeviceTestFixture && !useEInkDeviceFixture) {
+                externalNativeBuild {
+                    ndkBuild {
+                        arguments += "KOHARIA_RESAMPLING_OPTIMIZED=1"
+                    }
+                }
+            }
             applicationIdSuffix = when {
                 useEInkDeviceFixture -> ".dev.einkfixture"
                 useDeviceTestFixture -> ".dev.devicefixture"

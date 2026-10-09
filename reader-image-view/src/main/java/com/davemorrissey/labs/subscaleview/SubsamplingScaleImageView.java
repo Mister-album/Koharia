@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -179,6 +180,32 @@ public class SubsamplingScaleImageView extends View {
     private int maxTileHeight = TILE_SIZE_AUTO;
     // An executor service for loading of images
     private Executor executor = AsyncTask.THREAD_POOL_EXECUTOR;
+    // Keep preview tasks ahead of detail tasks; unbounded AsyncTask workers can starve them at the decoder gate.
+    private static final Executor FILTERED_TILE_EXECUTOR = Executors.newFixedThreadPool(2);
+    private final Executor filteredTileExecutor = new SerialTileExecutor();
+
+    /** Preserve scanline locality within a page while allowing two different pages to decode. */
+    private static final class SerialTileExecutor implements Executor {
+        private final java.util.ArrayDeque<Runnable> tasks = new java.util.ArrayDeque<>();
+        private Runnable active;
+
+        @Override
+        public synchronized void execute(Runnable command) {
+            tasks.add(() -> {
+                try {
+                    command.run();
+                } finally {
+                    scheduleNext();
+                }
+            });
+            if (active == null) scheduleNext();
+        }
+
+        private synchronized void scheduleNext() {
+            active = tasks.poll();
+            if (active != null) FILTERED_TILE_EXECUTOR.execute(active);
+        }
+    }
     // Whether tiles should be loaded while gestures and animations are still in progress
     private boolean eagerLoadingEnabled = true;
     // Gesture detection settings
@@ -231,6 +258,71 @@ public class SubsamplingScaleImageView extends View {
     private RegionDecoderFactory regionDecoderFactory = Decoder::new;
     private volatile long imageGeneration;
     private float tileScaleFactor = 1f;
+    private float upscaleGridBucket = 0f;
+    private volatile long decoderRevision;
+    private boolean configurationPending;
+
+    public interface DecoderReplacement {
+        ImageRegionDecoder create(ImageRegionDecoder previous) throws Exception;
+    }
+
+    /** Prepare a new immutable decoder without losing the viewport or the displayed layer. */
+    public final boolean replaceFilteredDecoder(DecoderReplacement replacement) {
+        if (!hasFilteredDecoder()) return false;
+        final long revision = ++decoderRevision;
+        final long generation = imageGeneration;
+        final ImageRegionDecoder previous = decoder;
+        executor.execute(() -> {
+            ImageRegionDecoder next = null;
+            try {
+                decoderLock.readLock().lock();
+                try {
+                    if (revision == decoderRevision && previous == decoder && generation == imageGeneration) {
+                        next = replacement.create(previous);
+                    }
+                } finally {
+                    decoderLock.readLock().unlock();
+                }
+                final ImageRegionDecoder prepared = next;
+                handler.post(() -> {
+                    if (prepared == null) return;
+                    if (revision != decoderRevision || generation != imageGeneration || decoder != previous) {
+                        executor.execute(prepared::recycle);
+                        return;
+                    }
+                    imageGeneration++;
+                    decoder = prepared;
+                    configurationPending = true;
+                    if (tileMap != null) {
+                        for (Map.Entry<Integer, List<Tile>> entry : tileMap.entrySet()) {
+                            if (entry.getKey() < 0) continue;
+                            for (Tile tile : entry.getValue()) {
+                                tile.loading = false;
+                                tile.clearPending();
+                                tile.requestedRevision++;
+                            }
+                        }
+                        refreshRequiredTiles(!isZooming && anim == null);
+                    }
+                    executor.execute(() -> {
+                        decoderLock.writeLock().lock();
+                        try { previous.recycle(); } finally { decoderLock.writeLock().unlock(); }
+                    });
+                    invalidate();
+                });
+            } catch (Exception | OutOfMemoryError error) {
+                if (next != null) next.recycle();
+                handler.post(() -> {
+                    if (generation == imageGeneration && revision == decoderRevision && onImageEventListener != null) {
+                        onImageEventListener.onTileLoadError(error instanceof Exception
+                                ? (Exception) error : new RuntimeException(error));
+                    }
+                });
+            }
+        });
+        return true;
+    }
+    private float lastDisplayScale;
     private boolean filteringForTiles;
     private float lastExternalScale = 1f;
 
@@ -413,6 +505,8 @@ public class SubsamplingScaleImageView extends View {
      * Reset all state before setting/changing image or setting new rotation.
      */
     private void reset(boolean newImage) {
+        upscaleGridBucket = 0f;
+        configurationPending = false;
         imageGeneration++;
         debug("reset newImage=" + newImage);
         scale = 0f;
@@ -466,6 +560,7 @@ public class SubsamplingScaleImageView extends View {
             for (Map.Entry<Integer, List<Tile>> tileMapEntry : tileMap.entrySet()) {
                 for (Tile tile : tileMapEntry.getValue()) {
                     tile.visible = false;
+                    tile.clearPending();
                     if (tile.bitmap != null) {
                         tile.bitmap.recycle();
                         tile.bitmap = null;
@@ -969,7 +1064,8 @@ public class SubsamplingScaleImageView extends View {
             invalidate();
         }
 
-        if (tileMap != null && (lastExternalScale != getTileExternalScale()
+        if (tileMap != null && ((hasFilteredDecoder() && lastDisplayScale != scale * getTileExternalScale())
+                || lastExternalScale != getTileExternalScale()
                 || filteringForTiles != shouldFilterAtScale(scale * getTileExternalScale()))) {
             refreshRequiredTiles(!isZooming && anim == null);
         }
@@ -984,7 +1080,7 @@ public class SubsamplingScaleImageView extends View {
             for (Map.Entry<Integer, List<Tile>> tileMapEntry : tileMap.entrySet()) {
                 if (tileMapEntry.getKey() == sampleSize) {
                     for (Tile tile : tileMapEntry.getValue()) {
-                        if (tile.visible && (tile.loading || tile.bitmap == null)) {
+                        if (tile.visible && (tile.bitmap == null || (!hasFilteredDecoder() && tile.loading))) {
                             hasMissingTiles = true;
                             break;
                         }
@@ -994,7 +1090,10 @@ public class SubsamplingScaleImageView extends View {
 
             // Render all loaded tiles. LinkedHashMap used for bottom up rendering - lower res tiles underneath.
             for (Map.Entry<Integer, List<Tile>> tileMapEntry : tileMap.entrySet()) {
-                if (tileMapEntry.getKey() == sampleSize || hasMissingTiles) {
+                if (hasFilteredDecoder()
+                        ? (tileMapEntry.getKey() == (hasMissingTiles ? fullImageSampleSize : sampleSize)
+                            || (hasMissingTiles && tileMapEntry.getKey() == -1))
+                        : (tileMapEntry.getKey() == sampleSize || hasMissingTiles)) {
                     for (Tile tile : tileMapEntry.getValue()) {
                         sourceToViewRect(tile.sRect, tile.vRect);
                         if (tile.bitmap != null) {
@@ -1116,7 +1215,7 @@ public class SubsamplingScaleImageView extends View {
 
     // Preserve the image-wide pixel grid instead of independently stretching rounded tiles.
     private void setFilteredTileDestination(Tile tile) {
-        double targetScale = Math.min(1.0, (double) tileScaleFactor / tile.sampleSize);
+        double targetScale = tile.bitmapScale;
         Rect region = tile.fileSRect;
         float left = (float) (Math.round(region.left * targetScale) / targetScale);
         float top = (float) (Math.round(region.top * targetScale) / targetScale);
@@ -1142,8 +1241,9 @@ public class SubsamplingScaleImageView extends View {
                 case ROTATION_180 -> { dstArray[i] = sWidth - x; dstArray[i + 1] = sHeight - y; }
                 case ROTATION_270 -> { dstArray[i] = y; dstArray[i + 1] = sWidth - x; }
             }
-            dstArray[i] = Math.round(sourceToViewX(dstArray[i]));
-            dstArray[i + 1] = Math.round(sourceToViewY(dstArray[i + 1]));
+            float externalScale = getTileExternalScale();
+            dstArray[i] = Math.round(sourceToViewX(dstArray[i]) * externalScale) / externalScale;
+            dstArray[i + 1] = Math.round(sourceToViewY(dstArray[i + 1]) * externalScale) / externalScale;
         }
     }
 
@@ -1257,14 +1357,6 @@ public class SubsamplingScaleImageView extends View {
 
         initialiseTileMap(maxTileDimensions);
 
-        List<Tile> baseGrid = tileMap.get(fullImageSampleSize);
-        if (baseGrid != null) {
-            for (Tile baseTile : baseGrid) {
-                baseTile.requestedFiltering = filteringForTiles;
-                TileLoadTask task = new TileLoadTask(this, decoder, baseTile);
-                execute(task);
-            }
-        }
         refreshRequiredTiles(true);
     }
 
@@ -1281,44 +1373,129 @@ public class SubsamplingScaleImageView extends View {
 
         lastExternalScale = getTileExternalScale();
         float displayScale = (scale > 0 ? scale : minScale()) * lastExternalScale;
+        lastDisplayScale = displayScale;
         filteringForTiles = shouldFilterAtScale(displayScale);
+        ensureUpscaleGrid(displayScale);
         int sampleSize = Math.min(fullImageSampleSize, calculateInSampleSize(displayScale));
 
-        // Load tiles of the correct sample size that are on screen. Discard tiles off screen, and those that are higher
-        // resolution than required, or lower res than required but not the base layer, so the base layer is always present.
-        for (Map.Entry<Integer, List<Tile>> tileMapEntry : tileMap.entrySet()) {
-            for (Tile tile : tileMapEntry.getValue()) {
-                tile.requestedFiltering = filteringForTiles;
-                if (tile.sampleSize < sampleSize || (tile.sampleSize > sampleSize && tile.sampleSize != fullImageSampleSize)) {
-                    tile.visible = false;
+        for (Map.Entry<Integer, List<Tile>> entry : tileMap.entrySet()) {
+            if (entry.getKey() == -1) continue;
+            List<Tile> tiles = entry.getValue();
+            for (Tile tile : tiles) {
+                float target = filteringForTiles
+                        ? (entry.getKey() == 0 ? displayScale : Math.min(displayScale, tileScaleFactor / tile.sampleSize))
+                        : tileScaleFactor / tile.sampleSize;
+                if (tile.requestedFiltering != filteringForTiles || tile.requestedScale != target) {
+                    tile.requestedFiltering = filteringForTiles;
+                    tile.requestedScale = target;
+                    tile.clearPending();
+                }
+                tile.visible = entry.getKey() == fullImageSampleSize
+                        || (entry.getKey() == sampleSize && tileVisible(tile));
+                if (!tile.visible) {
+                    tile.clearPending();
                     if (tile.bitmap != null) {
                         tile.bitmap.recycle();
                         tile.bitmap = null;
                     }
-                }
-                if (tile.sampleSize == sampleSize) {
-                    if (tileVisible(tile)) {
-                        tile.visible = true;
-                        if (!tile.loading && (tile.bitmap == null || tile.bitmapFiltered != filteringForTiles) && load) {
-                            TileLoadTask task = new TileLoadTask(this, decoder, tile);
-                            execute(task);
-                        }
-                    } else if (tile.sampleSize != fullImageSampleSize) {
-                        tile.visible = false;
-                        if (tile.bitmap != null) {
-                            tile.bitmap.recycle();
-                            tile.bitmap = null;
-                        }
-                    }
-                } else if (tile.sampleSize == fullImageSampleSize) {
-                    tile.visible = true;
-                    if (!tile.loading && (tile.bitmap == null || tile.bitmapFiltered != filteringForTiles) && load) {
-                        execute(new TileLoadTask(this, decoder, tile));
-                    }
+                } else if (load && !tile.loading && tile.pendingBitmap == null && !tile.matchesRequest()) {
+                    execute(new TileLoadTask(this, decoder, tile));
                 }
             }
         }
+        publishCompleteLayers();
+    }
 
+    // The extra level is indexed by output scale, not by an impossible fractional decode sample.
+    private void ensureUpscaleGrid(float displayScale) {
+        if (!hasFilteredDecoder()) return;
+        float bucket = 0f;
+        if (filteringForTiles && displayScale > 1f) {
+            bucket = 1f;
+            while (bucket < displayScale) bucket *= 2f;
+        }
+        if (bucket == upscaleGridBucket) return;
+        List<Tile> previous = tileMap.remove(0);
+        if (previous != null) {
+            boolean published = previous.stream().anyMatch(tile -> tile.bitmap != null);
+            for (Tile tile : previous) {
+                tile.visible = false;
+                tile.clearPending();
+            }
+            if (published) {
+                discardRetiredGrid();
+                tileMap.put(-1, previous);
+            }
+        }
+        upscaleGridBucket = bucket;
+        if (bucket == 0f) return;
+        int edge = Math.max(1, (int) (Math.min(1024, Math.min(maxTileWidth, maxTileHeight)) / bucket) - 1);
+        int width = getEffectiveSWidth();
+        int height = getEffectiveSHeight();
+        int columns = TileGrid.count(width, edge, 1);
+        int rows = TileGrid.count(height, edge, 1);
+        List<Tile> tiles = new ArrayList<>();
+        for (int y = 0; y < rows; y++) {
+            for (int x = 0; x < columns; x++) {
+                Tile tile = new Tile();
+                tile.sampleSize = 1;
+                tile.sRect = new Rect(TileGrid.boundary(x, columns, width), TileGrid.boundary(y, rows, height),
+                        TileGrid.boundary(x + 1, columns, width), TileGrid.boundary(y + 1, rows, height));
+                tile.vRect = new Rect();
+                tile.fileSRect = new Rect(tile.sRect);
+                tiles.add(tile);
+            }
+        }
+        tileMap.put(0, tiles);
+    }
+
+    private void discardRetiredGrid() {
+        List<Tile> retired = tileMap.remove(-1);
+        if (retired == null) return;
+        for (Tile tile : retired) {
+            tile.visible = false;
+            tile.clearPending();
+            if (tile.bitmap != null) tile.bitmap.recycle();
+            tile.bitmap = null;
+        }
+    }
+
+    // A visible layer changes as a unit, including threshold changes within the same LOD.
+    private void publishCompleteLayers() {
+        if (tileMap == null) return;
+        if (configurationPending) {
+            // The base and detail layers must switch configuration in the same frame.
+            for (List<Tile> tiles : tileMap.values()) {
+                for (Tile tile : tiles) {
+                    if (tile.visible && !tile.matchesRequest() && tile.pendingBitmap == null) return;
+                }
+            }
+            configurationPending = false;
+        }
+        for (List<Tile> tiles : tileMap.values()) {
+            boolean complete = true;
+            for (Tile tile : tiles) {
+                if (tile.visible && !tile.matchesRequest() && tile.pendingBitmap == null) {
+                    complete = false;
+                    break;
+                }
+            }
+            if (!complete) continue;
+            for (Tile tile : tiles) {
+                if (!tile.visible || tile.pendingBitmap == null) continue;
+                if (tile.bitmap != null) tile.bitmap.recycle();
+                tile.bitmap = tile.pendingBitmap;
+                tile.pendingBitmap = null;
+                tile.bitmapFiltered = tile.pendingFiltered;
+                tile.bitmapScale = tile.requestedScale;
+                tile.completedFiltering = tile.requestedFiltering;
+                tile.completedRevision = tile.requestedRevision;
+            }
+        }
+        List<Tile> current = tileMap.get(Math.min(fullImageSampleSize, calculateInSampleSize(lastDisplayScale)));
+        if (current != null && current.stream().filter(tile -> tile.visible).allMatch(Tile::matchesRequest)) {
+            discardRetiredGrid();
+        }
     }
 
     /**
@@ -1363,6 +1540,7 @@ public class SubsamplingScaleImageView extends View {
      */
     private int calculateInSampleSize(float scale) {
         if (hasFilteredDecoder()) {
+            if (scale > 1f && shouldFilterAtScale(scale)) return 0;
             int sample = 1;
             while (sample < 1 << 28 && sample * 2f <= tileScaleFactor / Math.max(scale, 0.000001f) + 0.00001f) sample *= 2;
             return sample;
@@ -1514,8 +1692,8 @@ public class SubsamplingScaleImageView extends View {
             int xTiles = TileGrid.count(sWidth, maxWidth, decodedSample);
             int yTiles = TileGrid.count(sHeight, maxHeight, decodedSample);
             List<Tile> tileGrid = new ArrayList<>(xTiles * yTiles);
-            for (int x = 0; x < xTiles; x++) {
-                for (int y = 0; y < yTiles; y++) {
+            for (int y = 0; y < yTiles; y++) {
+                for (int x = 0; x < xTiles; x++) {
                     Tile tile = new Tile();
                     tile.sampleSize = sampleSize;
                     tile.visible = sampleSize == fullImageSampleSize;
@@ -1610,7 +1788,8 @@ public class SubsamplingScaleImageView extends View {
     }
 
     private void execute(AsyncTask<Void, Void, ?> asyncTask) {
-        asyncTask.executeOnExecutor(executor);
+        asyncTask.executeOnExecutor(asyncTask instanceof TileLoadTask && hasFilteredDecoder()
+                && executor == AsyncTask.THREAD_POOL_EXECUTOR ? filteredTileExecutor : executor);
     }
 
     /**
@@ -2912,10 +3091,16 @@ public class SubsamplingScaleImageView extends View {
         private final long generation;
         private final float scaleFactor;
         private final boolean filtering;
+        private final float targetScale;
+        private boolean actuallyFiltered;
+        private final long queuedAtNanos;
 
         TileLoadTask(SubsamplingScaleImageView view, ImageRegionDecoder decoder, Tile tile) {
+            this.queuedAtNanos = decoder instanceof FilteredRegionDecoder
+                    && ((FilteredRegionDecoder) decoder).recordsTaskQueueTiming() ? System.nanoTime() : 0;
             this.generation = view.imageGeneration;
-            this.scaleFactor = view.tileScaleFactor;
+            this.targetScale = tile.requestedScale;
+            this.scaleFactor = targetScale * tile.sampleSize;
             this.filtering = tile.requestedFiltering;
             this.viewRef = new WeakReference<>(view);
             this.decoderRef = new WeakReference<>(decoder);
@@ -2929,19 +3114,25 @@ public class SubsamplingScaleImageView extends View {
                 SubsamplingScaleImageView view = viewRef.get();
                 ImageRegionDecoder decoder = decoderRef.get();
                 Tile tile = tileRef.get();
+                if (queuedAtNanos != 0 && decoder instanceof FilteredRegionDecoder) {
+                    ((FilteredRegionDecoder) decoder).recordTaskQueueWait(System.nanoTime() - queuedAtNanos);
+                }
                 if (decoder != null && tile != null && view != null && decoder.isReady() && tile.visible) {
                     view.debug("TileLoadTask.doInBackground, tile.sRect=%s, tile.sampleSize=%d", tile.sRect, tile.sampleSize);
                     view.decoderLock.readLock().lock();
                     try {
-                        if (decoder.isReady() && generation == view.imageGeneration && tile.visible && filtering == tile.requestedFiltering) {
+                        if (decoder.isReady() && generation == view.imageGeneration && tile.visible && filtering == tile.requestedFiltering && targetScale == tile.requestedScale) {
                             // Update tile's file sRect according to rotation
                             view.fileSRect(tile.sRect, tile.fileSRect);
                             if (view.sRegion != null) {
                                 tile.fileSRect.offset(view.sRegion.left, view.sRegion.top);
                             }
                             if (decoder instanceof FilteredRegionDecoder) {
-                                return ((FilteredRegionDecoder) decoder).decodeRegion(tile.fileSRect, tile.sampleSize,
-                                        scaleFactor, filtering, () -> generation != view.imageGeneration || !tile.visible || filtering != tile.requestedFiltering);
+                                FilteredRegionDecoder.Result result = ((FilteredRegionDecoder) decoder).decodeResult(tile.fileSRect, tile.sampleSize,
+                                        scaleFactor, filtering, () -> generation != view.imageGeneration || !tile.visible
+                                                || filtering != tile.requestedFiltering || targetScale != tile.requestedScale);
+                                actuallyFiltered = result.filtered;
+                                return result.bitmap;
                             }
                             return decoder.decodeRegion(tile.fileSRect, tile.sampleSize);
                         }
@@ -2965,12 +3156,20 @@ public class SubsamplingScaleImageView extends View {
         protected void onPostExecute(Bitmap bitmap) {
             final SubsamplingScaleImageView view = viewRef.get();
             final Tile tile = tileRef.get();
-            if (tile != null) tile.loading = false;
+            if (tile != null && view != null && generation == view.imageGeneration) tile.loading = false;
             if (view != null && tile != null && generation == view.imageGeneration && tile.visible) {
-                if (bitmap != null && filtering == tile.requestedFiltering) {
-                    if (tile.bitmap != null) tile.bitmap.recycle();
-                    tile.bitmap = bitmap;
-                    tile.bitmapFiltered = filtering;
+                if (bitmap != null && filtering == tile.requestedFiltering && targetScale == tile.requestedScale) {
+                    if (view.hasFilteredDecoder()) {
+                        tile.pendingBitmap = bitmap;
+                        tile.pendingFiltered = actuallyFiltered;
+                        // A decoder failure can disable filtering for this image. Invalidate all pending requests together.
+                        view.refreshRequiredTiles(!view.isZooming && view.anim == null);
+                    } else {
+                        if (tile.bitmap != null) tile.bitmap.recycle();
+                        tile.bitmap = bitmap;
+                        tile.bitmapScale = targetScale;
+                        tile.completedFiltering = filtering;
+                    }
                     view.onTileLoaded();
                 } else {
                     if (bitmap != null) bitmap.recycle();
@@ -2995,7 +3194,24 @@ public class SubsamplingScaleImageView extends View {
         private Bitmap bitmap;
         private boolean loading;
         private boolean bitmapFiltered;
+        private boolean completedFiltering;
+        private float bitmapScale;
+        private Bitmap pendingBitmap;
+        private boolean pendingFiltered;
+        private volatile float requestedScale;
         private volatile boolean requestedFiltering;
+        private int requestedRevision;
+        private int completedRevision;
+
+        private boolean matchesRequest() {
+            return bitmap != null && completedFiltering == requestedFiltering && bitmapScale == requestedScale
+                    && completedRevision == requestedRevision;
+        }
+
+        private void clearPending() {
+            if (pendingBitmap != null) pendingBitmap.recycle();
+            pendingBitmap = null;
+        }
         private volatile boolean visible;
 
         // Volatile fields instantiated once then updated before use to reduce GC.

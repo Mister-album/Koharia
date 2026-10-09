@@ -4,9 +4,12 @@ import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -18,6 +21,7 @@ import uy.kohesive.injekt.api.get
 /**
  * Common configuration for all viewers.
  */
+@OptIn(FlowPreview::class)
 abstract class ViewerConfig(
     readerPreferences: ReaderPreferences,
     private val scope: CoroutineScope,
@@ -25,6 +29,8 @@ abstract class ViewerConfig(
 ) {
 
     var imagePropertyChangedListener: (() -> Unit)? = null
+
+    var resamplingChangedListener: (() -> Unit)? = null
 
     var navigationModeChangedListener: (() -> Unit)? = null
 
@@ -61,10 +67,11 @@ abstract class ViewerConfig(
         protected set
 
     init {
-        readerPreferences.moireReduction
-            .register({}, { imagePropertyChangedListener?.invoke() })
-        readerPreferences.moireReductionThreshold
-            .register({}, { imagePropertyChangedListener?.invoke() })
+        readerPreferences.resamplingChanges()
+            .drop(1)
+            .debounce(80)
+            .onEach { resamplingChangedListener?.invoke() }
+            .launchIn(scope)
 
         readerPreferences.readWithLongTap
             .register({ longTapEnabled = it })

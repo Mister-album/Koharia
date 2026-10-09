@@ -28,7 +28,9 @@ import koharia.epub.settings.EpubBackgroundSettingsPreference
 import koharia.epub.settings.EpubFontPreference
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
-import koharia.reader.resampling.MoireReductionPolicy
+import koharia.reader.resampling.ResamplingKernel
+import koharia.reader.resampling.ResamplingQuality
+import koharia.reader.resampling.stringRes
 import koharia.tts.ui.settings.TtsSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
@@ -140,22 +142,27 @@ object SettingsReaderScreen : SearchableSettings {
     @Composable
     internal fun comicPreferences(readerPreferences: ReaderPreferences): List<Preference> {
         val moireEnabled by readerPreferences.moireReduction.collectAsState()
-        return listOf(
+        return listOfNotNull(
             Preference.PreferenceItem.SwitchPreference(
                 preference = readerPreferences.moireReduction,
-                title = stringResource(MR.strings.reader_moire_reduction),
-                subtitle = stringResource(MR.strings.reader_moire_reduction_summary),
+                title = stringResource(MR.strings.reader_resampling_enabled),
+                subtitle = stringResource(MR.strings.reader_resampling_summary),
             ),
             Preference.PreferenceItem.ListPreference(
-                preference = readerPreferences.moireReductionThreshold,
-                title = stringResource(MR.strings.reader_moire_threshold),
+                preference = readerPreferences.resamplingKernel,
+                title = stringResource(MR.strings.reader_resampling_algorithm),
                 enabled = moireEnabled,
-                entries = MoireReductionPolicy.thresholds.associateWith {
-                    stringResource(MR.strings.reader_moire_threshold_percent, it)
-                }.toImmutableMap(),
-                subtitleProvider = { value, _ ->
-                    stringResource(MR.strings.reader_moire_threshold_summary, MoireReductionPolicy.normalize(value))
-                },
+                entries = ResamplingKernel.entries.associateWith { stringResource(it.stringRes) }.toImmutableMap(),
+            ),
+            Preference.PreferenceItem.ListPreference(
+                preference = readerPreferences.resamplingQuality,
+                title = stringResource(MR.strings.reader_resampling_quality),
+                enabled = moireEnabled,
+                entries = ResamplingQuality.entries.associateWith { stringResource(it.stringRes) }.toImmutableMap(),
+                subtitle = stringResource(MR.strings.reader_resampling_quality_summary),
+            ),
+            Preference.PreferenceItem.InfoPreference(
+                title = stringResource(MR.strings.reader_resampling_scale_summary),
             ),
             Preference.PreferenceItem.ListPreference(
                 preference = readerPreferences.defaultReadingMode,

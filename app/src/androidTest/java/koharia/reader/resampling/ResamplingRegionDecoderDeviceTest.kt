@@ -25,10 +25,10 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 @RunWith(AndroidJUnit4::class)
-class MitchellRegionDecoderDeviceTest {
+class ResamplingRegionDecoderDeviceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext.also {
         check(it.packageName == "app.koharia.dev.devicefixture")
-        check(MitchellResampler.available)
+        check(ImageResampler.available)
     }
 
     private fun source(width: Int, height: Int, alpha: Boolean = false): Bitmap =
@@ -48,8 +48,62 @@ class MitchellRegionDecoderDeviceTest {
             output.toByteArray()
         }
 
-    private fun decoder(bytes: ByteArray) = MitchellRegionDecoder(false, byteArrayOf()).apply {
+    private fun decoder(bytes: ByteArray) = ResamplingRegionDecoder(false, byteArrayOf()).apply {
         init(context, OpenStreamProvider(ByteArrayInputStream(bytes)))
+    }
+
+    @Test
+    fun jpegBandReuseMatchesRegionalDecodeAndPreservesFallbackBudgets() {
+        val original = source(1051, 739)
+        val bytes = encoded(original, Bitmap.CompressFormat.JPEG)
+        original.recycle()
+        for (kernel in ResamplingKernel.entries.filter { it != ResamplingKernel.MITCHELL }) {
+            for (scale in listOf(.18f, .42f, .75f, 1.024f, 4f)) {
+                val options = ResamplingOptions(kernel)
+                val reference = ResamplingRegionDecoder(false, byteArrayOf(), options = options)
+                val cached = ResamplingRegionDecoder(
+                    false,
+                    byteArrayOf(),
+                    options = options,
+                    budget = ResamplingBudget(reuseJpegBands = true),
+                )
+                val bounded = ResamplingRegionDecoder(
+                    false,
+                    byteArrayOf(),
+                    options = options,
+                    budget = ResamplingBudget(cacheBytes = 1024, reuseJpegBands = true),
+                )
+                try {
+                    for (decoder in listOf(reference, cached, bounded)) {
+                        decoder.init(context, OpenStreamProvider(bytes.inputStream()))
+                    }
+                    for (region in listOf(Rect(0, 0, 127, 111), Rect(121, 97, 301, 253), Rect(911, 601, 1051, 739))) {
+                        val expected = reference.decodeResult(region, 1, scale, true, BooleanSupplier { false })
+                        try {
+                            for (decoder in listOf(cached, bounded)) {
+                                val actual = decoder.decodeResult(region, 1, scale, true, BooleanSupplier { false })
+                                try {
+                                    assertTrue(actual.filtered)
+                                    assertEquals(expected.bitmap.width, actual.bitmap.width)
+                                    assertEquals(expected.bitmap.height, actual.bitmap.height)
+                                    assertPixels(actual.bitmap, expected.bitmap, 0, 0, "$kernel/$scale/cache")
+                                } finally {
+                                    actual.bitmap.recycle()
+                                }
+                            }
+                        } finally {
+                            expected.bitmap.recycle()
+                        }
+                    }
+                    if (scale < 1f) assertTrue(cached.nativeDecodeCount.get() < reference.nativeDecodeCount.get())
+                    assertEquals(reference.nativeDecodeCount.get(), bounded.nativeDecodeCount.get())
+                } finally {
+                    reference.recycle()
+                    cached.recycle()
+                    bounded.recycle()
+                }
+            }
+        }
     }
 
     @Test
@@ -60,7 +114,7 @@ class MitchellRegionDecoderDeviceTest {
         val native = checkNotNull(ImageDecoder.newInstance(bytes.inputStream(), false, byteArrayOf()))
         try {
             assertTrue(decoder.shouldFilter(.5f))
-            assertTrue(!decoder.shouldFilter(.51f))
+            assertTrue(decoder.shouldFilter(.51f))
             for ((sample, factor, nativeSample) in listOf(Triple(2, 1.6f, 1), Triple(4, 1.6f, 2))) {
                 val output = decoder.decodeRegion(
                     Rect(0, 0, 512, 512),
@@ -75,7 +129,7 @@ class MitchellRegionDecoderDeviceTest {
                 try {
                     assertEquals(reference.width, output.width)
                     assertEquals(reference.height, output.height)
-                    assertPixels(output, reference, 0, 0, "threshold bypass")
+                    assertPixels(output, reference, 0, 0, "explicit bypass")
                 } finally {
                     output.recycle()
                     reference.recycle()
@@ -151,7 +205,7 @@ class MitchellRegionDecoderDeviceTest {
 
     @Test
     fun rectangularInputWithMatchingAxisScaleDoesNotReuseDifferentEdgeBounds() {
-        check(MitchellResampler.available)
+        check(ImageResampler.available)
         val input = source(268, 262)
         val square = Bitmap.createBitmap(268, 268, Bitmap.Config.ARGB_8888)
         val actual = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888)
@@ -162,8 +216,8 @@ class MitchellRegionDecoderDeviceTest {
                 input.getPixels(row, 0, 268, 0, minOf(y, 261), 268, 1)
                 square.setPixels(row, 0, 268, 0, y, 268, 1)
             }
-            assertTrue(MitchellResampler.resize(input, actual, 6.0, 6.0, 262.0, 262.0, 0, 0, 128, 128))
-            assertTrue(MitchellResampler.resize(square, expected, 6.0, 6.0, 262.0, 262.0, 0, 0, 128, 128))
+            assertTrue(ImageResampler.resize(input, actual, 6.0, 6.0, 262.0, 262.0, 0, 0, 128, 128))
+            assertTrue(ImageResampler.resize(square, expected, 6.0, 6.0, 262.0, 262.0, 0, 0, 128, 128))
             assertPixels(actual, expected, 0, 0, "rectangular edge clamp")
         } finally {
             input.recycle()
@@ -237,7 +291,7 @@ class MitchellRegionDecoderDeviceTest {
             val higher = checkNotNull(raw.decode(sampleSize = 2))
             val reference = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
             try {
-                assertTrue(MitchellResampler.resize(higher, reference, 0.0, 0.0, 512.0, 512.0, 0, 0, 256, 256))
+                assertTrue(ImageResampler.resize(higher, reference, 0.0, 0.0, 512.0, 512.0, 0, 0, 256, 256))
                 var difference = 0
                 for (y in 0 until 256) {
                     for (x in 0 until 256) {
@@ -285,6 +339,26 @@ class MitchellRegionDecoderDeviceTest {
         assertTrue(!decoder.isReady())
     }
 
+    @Test
+    fun allocationGuardReportsRawFallbackAndDisablesFilteringForThisPage() {
+        val original = source(1300, 1300)
+        val decoder = decoder(encoded(original))
+        original.recycle()
+        try {
+            val result = decoder.decodeResult(Rect(0, 0, 1300, 1300), 1, .9f, true, BooleanSupplier { false })
+            try {
+                assertTrue(!result.filtered)
+                assertEquals(1300, result.bitmap.width)
+                assertTrue(!decoder.shouldFilter(.25f))
+                assertTrue(decoder.isFilteringEnabled)
+            } finally {
+                result.bitmap.recycle()
+            }
+        } finally {
+            decoder.recycle()
+        }
+    }
+
     private fun interference(bitmap: Bitmap): Double {
         val blocks = mutableListOf<Double>()
         for (y in 0 until bitmap.height - 7 step 8) {
@@ -310,7 +384,11 @@ class MitchellRegionDecoderDeviceTest {
                         ((color ushr shift) and 255) * Color.alpha(color) / 255
                     }
                     val delta = abs(channel(a) - channel(b))
-                    assertTrue("$label tile=$left,$top pixel=$x,$y channel=$shift delta=$delta", delta <= 2)
+                    if (delta >
+                        2
+                    ) {
+                        throw AssertionError("$label tile=$left,$top pixel=$x,$y channel=$shift delta=$delta")
+                    }
                 }
             }
         }

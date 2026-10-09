@@ -41,9 +41,9 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
-import koharia.reader.resampling.MitchellRegionDecoder
-import koharia.reader.resampling.MitchellResampler
-import koharia.reader.resampling.MoireReductionPolicy
+import koharia.reader.resampling.ImageResampler
+import koharia.reader.resampling.ReaderResamplingSettings
+import koharia.reader.resampling.ResamplingRegionDecoder
 import okio.BufferedSource
 import tachiyomi.core.common.util.system.ImageUtil
 import uy.kohesive.injekt.Injekt
@@ -64,6 +64,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @StyleRes defStyleRes: Int = 0,
     private val isWebtoon: Boolean = false,
     private val basePreferences: BasePreferences = Injekt.get(),
+    private val readerPreferences: ReaderPreferences = Injekt.get(),
 ) : FrameLayout(context, attrs, defStyleAttrs, defStyleRes) {
 
     private val alwaysDecodeLongStripWithSSIV by lazy {
@@ -72,7 +73,27 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private var pageView: View? = null
     private var moireReduction = false
-    private var moireThreshold = MoireReductionPolicy.DEFAULT_THRESHOLD
+    private var resamplingSettings: ReaderResamplingSettings? = null
+
+    // Live decoder replacement does not change the factory captured for the next image.
+    private var resamplingFactorySettings: ReaderResamplingSettings? = null
+
+    /** Replace the decoder snapshot while retaining the displayed layer and viewport. */
+    fun refreshResampling(): Boolean {
+        val settings = readerPreferences.resamplingSettings()
+        if (settings == resamplingSettings) return true
+        val image = pageView as? SubsamplingScaleImageView ?: return true
+        if (!image.isReady) return true // onReady applies the latest snapshot.
+        if (!ImageResampler.available) return true
+        if (!image.replaceFilteredDecoder { previous ->
+                (previous as? ResamplingRegionDecoder)?.reconfigured(context, settings)
+            }
+        ) {
+            return !settings.enabled
+        }
+        resamplingSettings = settings
+        return true
+    }
 
     private var config: Config? = null
     private var pendingLandscapeZoom: Runnable? = null
@@ -134,6 +155,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
                         override fun onReady() {
                             setupZoom(config)
+                            refreshResampling()
                             landscapeZoom(forward)
                             this@ReaderPageImageView.onImageLoaded()
                         }
@@ -358,13 +380,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun prepareNonAnimatedImageView() {
-        val preferences = Injekt.get<ReaderPreferences>()
-        val filtering = preferences.moireReduction.get() && MitchellResampler.available
-        val threshold = MoireReductionPolicy.normalize(preferences.moireReductionThreshold.get())
-        if (pageView is SubsamplingScaleImageView && filtering == moireReduction && threshold == moireThreshold) return
+        val preferences = readerPreferences
+        val settings = preferences.resamplingSettings()
+        val filtering = preferences.moireReduction.get() && ImageResampler.available
+        if (pageView is SubsamplingScaleImageView && settings == resamplingFactorySettings) return
         (pageView as? SubsamplingScaleImageView)?.recycle()
         moireReduction = filtering
-        moireThreshold = threshold
+        resamplingSettings = settings
+        resamplingFactorySettings = settings
         removeView(pageView)
 
         pageView = if (isWebtoon) {
@@ -372,12 +395,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
         } else {
             SubsamplingScaleImageView(context)
         }.apply {
-            if (filtering) {
+            if (ImageResampler.available) {
                 setRegionDecoderFactory { cropBorders, _, profile ->
-                    MitchellRegionDecoder(cropBorders, profile, threshold)
+                    ResamplingRegionDecoder(cropBorders, profile, settings.options, enabled = filtering)
                 }
             }
-            setMaxTileSize(if (filtering) 256 else ImageUtil.hardwareBitmapThreshold)
+            setMaxTileSize(
+                if (ImageResampler.available) {
+                    ResamplingRegionDecoder.MAX_TILE_SIZE
+                } else {
+                    ImageUtil.hardwareBitmapThreshold
+                },
+            )
             setDoubleTapZoomStyle(SubsamplingScaleImageView.ZOOM_FOCUS_CENTER)
             setPanLimit(SubsamplingScaleImageView.PAN_LIMIT_INSIDE)
             setMinimumTileDpi(180)
@@ -456,6 +485,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
                 override fun onReady() {
                     setupZoom(config)
+                    refreshResampling()
                     if (isVisibleOnScreen()) landscapeZoom(true)
                     this@ReaderPageImageView.onImageLoaded()
                 }
