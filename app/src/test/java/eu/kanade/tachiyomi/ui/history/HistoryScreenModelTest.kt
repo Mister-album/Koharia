@@ -224,8 +224,15 @@ class HistoryScreenModelTest {
         try {
             fixture.awaitVisible(1)
             fixture.initialSync.await()
+            val searchResult = history(1, 100).copy(title = "Book 1 search result")
+            every { fixture.getHistory.subscribe("Book", 7) } returnsMany listOf(
+                flowOf(listOf(searchResult)),
+                flowOf(listOf(history(2, 300))),
+            )
             fixture.model.updateSearchQuery("Book")
-            fixture.awaitVisible(1)
+            fixture.model.state.first { state ->
+                state.list?.filterIsInstance<HistoryUiModel.Item>()?.singleOrNull()?.item == searchResult
+            }
             coEvery { fixture.adapter.syncConnectionHistory() } coAnswers {
                 fixture.allowed = setOf(2)
             }
