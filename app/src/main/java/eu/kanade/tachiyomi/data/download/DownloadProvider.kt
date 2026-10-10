@@ -132,7 +132,18 @@ class DownloadProvider(
             .mapNotNull { mangaDir?.findFile(it) }
             .firstOrNull()
         val storageAdapter = storageAdapter(source)
-        val result = directResult ?: when {
+        val aliasResult = if (directResult == null) {
+            (source as? koharia.connection.ConnectionDownloadAliasAdapter)?.downloadAliases(chapterUrl).orEmpty()
+                .asSequence().flatMap { alias ->
+                    val names = getValidChapterDirNames(alias.chapterName, alias.scanlator, alias.chapterUrl)
+                    findMangaDirs(alias.mangaTitle, source).asSequence().flatMap { directory ->
+                        names.asSequence().mapNotNull(directory::findFile)
+                    }
+                }.firstOrNull()
+        } else {
+            null
+        }
+        val result = directResult ?: aliasResult ?: when {
             storageAdapter?.usesSharedDownloadStorage == true -> {
                 storageAdapter.findSharedChapterFile(chapterUrl, mangaTitle)
             }

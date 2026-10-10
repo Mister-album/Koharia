@@ -125,6 +125,12 @@ class MangaScreen(
         }
 
         val successState = state as MangaScreenModel.State.Success
+        val organizationDestination = (successState.source as? koharia.connection.ConnectionOrganizationAdapter)
+            ?.organizationEntryDestination(successState.manga.url)
+        if (organizationDestination != null) {
+            organizationDestination.Content()
+            return
+        }
         val isHttpSource = remember { successState.source is HttpSource }
         val mangaBehavior = remember(successState.source) {
             (successState.source as? ConnectionMangaBehaviorAdapter)?.mangaBehavior

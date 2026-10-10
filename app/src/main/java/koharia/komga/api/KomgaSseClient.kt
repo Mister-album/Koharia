@@ -26,6 +26,7 @@ import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import org.json.JSONObject
 import tachiyomi.core.common.util.system.logcat
+import uy.kohesive.injekt.api.get
 import java.util.concurrent.TimeUnit
 
 class KomgaSseClient(
@@ -224,7 +225,51 @@ class KomgaSseClient(
 
     private fun handleEvent(target: KomgaSseConnectionTarget, type: String?, data: String) {
         if (type == null) return
-        if (type in setOf(
+        val organizationKind = when {
+            type.startsWith(
+                "Collection",
+            ) || type.startsWith("ThumbnailSeriesCollection") -> KomgaOrganizationKind.COLLECTION
+            type.startsWith("ReadList") || type.startsWith("ThumbnailReadList") -> KomgaOrganizationKind.READ_LIST
+            else -> null
+        }
+        var organizationNotified = false
+        if (organizationKind != null ||
+            type in
+            setOf(
+                "BookAdded",
+                "BookChanged",
+                "BookDeleted",
+                "SeriesAdded",
+                "SeriesChanged",
+                "SeriesDeleted",
+                "LibraryChanged",
+                "LibraryAdded",
+                "LibraryDeleted",
+            )
+        ) {
+            val source = uy.kohesive.injekt.Injekt.get<tachiyomi.domain.source.service.SourceManager>().get(
+                target.sourceId,
+            ) as? koharia.source.komga.KomgaSource
+            val resourceId = runCatching {
+                JSONObject(data).optString(
+                    if (organizationKind ==
+                        KomgaOrganizationKind.COLLECTION
+                    ) {
+                        "collectionId"
+                    } else {
+                        "readListId"
+                    },
+                )
+            }.getOrNull()?.takeIf(String::isNotBlank)
+            if (source?.baseUrl == target.baseUrl) {
+                source.organizationChanged(organizationKind, resourceId)
+                organizationNotified = true
+            }
+        }
+        if (type == "ReadProgressChanged" || type == "ReadProgressDeleted") {
+            KomgaOrganizationUpdates.notify(KomgaOrganizationUpdate(target.sourceId, progressOnly = true))
+        }
+        if (!organizationNotified && type in setOf(
                 "BookAdded", "BookChanged", "BookUpdated", "BookDeleted",
                 "SeriesAdded", "SeriesChanged", "SeriesUpdated", "SeriesDeleted",
                 "LibraryAdded", "LibraryChanged", "LibraryUpdated", "LibraryDeleted",

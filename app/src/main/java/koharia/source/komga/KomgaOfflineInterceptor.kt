@@ -24,6 +24,10 @@ class KomgaOfflineInterceptor(
         val originalRequest = chain.request()
         val cachedOnly = cachedOnlyProvider()
         val progressSync = originalRequest.isKomgaProgressSync
+        if (originalRequest.isKomgaNetworkRequired) {
+            if (!context.isOnline()) throw IOException(context.stringResource(MR.strings.exception_offline))
+            return chain.proceed(originalRequest.newBuilder().cacheControl(CacheControl.FORCE_NETWORK).build())
+        }
         val canUseNetwork = shouldUseKomgaNetwork(cachedOnly, context.isOnline(), progressSync)
         if (progressSync && !canUseNetwork) {
             throw IOException(context.stringResource(MR.strings.exception_offline))
@@ -31,7 +35,11 @@ class KomgaOfflineInterceptor(
         if (!progressSync &&
             (!canUseNetwork || originalRequest.tag(KomgaCachePolicy::class.java) == KomgaCachePolicy.Default)
         ) {
-            metadataCacheStore.load(originalRequest, if (canUseNetwork) minimumFetchedAt() else 0L)?.let { return it }
+            val minimum = originalRequest.tag(KomgaCacheNamespace::class.java)?.minimumFetchedAt ?: minimumFetchedAt()
+            metadataCacheStore.load(originalRequest, if (canUseNetwork) minimum else 0L)?.let { return it }
+        }
+        if (!canUseNetwork && originalRequest.tag(KomgaCacheNamespace::class.java) != null) {
+            throw IOException(context.stringResource(MR.strings.exception_offline))
         }
         val request = if (canUseNetwork) {
             originalRequest

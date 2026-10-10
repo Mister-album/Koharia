@@ -216,10 +216,13 @@ class DownloadCache(
 
                 // Older cache snapshots stripped extensions from downloaded files. Check the
                 // actual provider entry while those snapshots are being replaced by a full scan.
-                return validNames.any { name ->
-                    name.substringAfterLast('.', missingDelimiterValue = "") in
-                        DownloadProvider.SUPPORTED_CHAPTER_FILE_EXTENSIONS &&
-                        mangaDir.dir?.findFile(name) != null
+                if (validNames.any { name ->
+                        name.substringAfterLast('.', missingDelimiterValue = "") in
+                            DownloadProvider.SUPPORTED_CHAPTER_FILE_EXTENSIONS &&
+                            mangaDir.dir?.findFile(name) != null
+                    }
+                ) {
+                    return true
                 }
             }
         }
@@ -227,7 +230,13 @@ class DownloadCache(
         val source = sourceManager.getOrStub(sourceId)
         if (
             allowSharedLookup &&
-            provider.usesSharedDownloadStorage(source)
+            (
+                provider.usesSharedDownloadStorage(source) ||
+                    (source as? koharia.connection.ConnectionDownloadAliasAdapter)?.downloadAliases(
+                        chapterUrl,
+                    )?.isNotEmpty() ==
+                    true
+                )
         ) {
             return provider.findChapterDir(chapterName, chapterScanlator, chapterUrl, mangaTitle, source) != null
         }

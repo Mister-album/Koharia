@@ -172,7 +172,12 @@ data class BookDto(
     val size: String = "",
     val media: MediaDto = MediaDto(),
     val metadata: BookMetadataDto,
+    val readProgress: BookReadProgressDto? = null,
+    val oneshot: Boolean = false,
 )
+
+@Serializable
+data class BookReadProgressDto(val page: Int = 0, val completed: Boolean = false, val lastModified: String = "")
 
 val MediaDto.isEpub: Boolean
     get() = mediaProfile == "EPUB"
@@ -202,6 +207,7 @@ data class ReadListDto(
     val createdDate: String,
     val lastModifiedDate: String,
     val filtered: Boolean = false,
+    val ordered: Boolean = true,
 )
 
 fun SeriesDto.toSManga(baseUrl: String): SManga = SManga.create().apply {

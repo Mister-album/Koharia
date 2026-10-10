@@ -116,10 +116,54 @@ object SettingsLibraryScreen : SearchableSettings {
                 )
             },
             getDisplayGroup(libraryPreferences),
+            getOrganizationGroup(
+                libraryPreferences,
+                (activeSource as? koharia.connection.ConnectionOrganizationAdapter)?.organizationPages.orEmpty(),
+            ),
             getEntryOpeningGroup(entrySettings, activeProvider?.displayName.orEmpty()),
             if (showSeriesSettings) getChapterSettingsGroup(libraryPreferences) else null,
             getGlobalUpdateGroup(libraryPreferences),
             if (showSeriesSettings) getBehaviorGroup(libraryPreferences) else null,
+        )
+    }
+
+    @Composable
+    internal fun getOrganizationGroup(
+        preferences: LibraryPreferences,
+        pages: Set<koharia.connection.ConnectionOrganizationPage>,
+    ): Preference.PreferenceGroup? {
+        if (pages.isEmpty()) return null
+        val collectionsSupported = koharia.connection.ConnectionOrganizationPage.COLLECTIONS in pages
+        val readListsSupported = koharia.connection.ConnectionOrganizationPage.READ_LISTS in pages
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_organization_navigation),
+            preferenceItems = listOfNotNull(
+                if (collectionsSupported) {
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = preferences.showCollections,
+                        title = stringResource(MR.strings.pref_show_collections),
+                    )
+                } else {
+                    null
+                },
+                if (readListsSupported) {
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = preferences.showReadLists,
+                        title = stringResource(MR.strings.pref_show_read_lists),
+                    )
+                } else {
+                    null
+                },
+                if (collectionsSupported && readListsSupported) {
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = preferences.mergeOrganizationPages,
+                        title = stringResource(MR.strings.pref_merge_organization_pages),
+                        subtitle = stringResource(MR.strings.pref_merge_organization_pages_summary),
+                    )
+                } else {
+                    null
+                },
+            ).toImmutableList(),
         )
     }
 

@@ -12,6 +12,12 @@ class LibraryPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
 
+    val showCollections: Preference<Boolean> = preferenceStore.getBoolean("show_collections", true)
+
+    val showReadLists: Preference<Boolean> = preferenceStore.getBoolean("show_read_lists", true)
+
+    val mergeOrganizationPages: Preference<Boolean> = preferenceStore.getBoolean("merge_organization_pages", false)
+
     fun defaultChapterFlags(): Long =
         (filterChapterByRead.get() and Manga.CHAPTER_UNREAD_MASK) or
             (filterChapterByDownloaded.get() and Manga.CHAPTER_DOWNLOADED_MASK) or

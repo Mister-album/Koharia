@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PlaylistAdd
 import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material.icons.outlined.SwapCalls
 import androidx.compose.material3.DropdownMenuItem
@@ -81,6 +82,7 @@ fun MangaBottomActionMenu(
     onDownloadClicked: (() -> Unit)? = null,
     onDeleteClicked: (() -> Unit)? = null,
     onServerDownloadClicked: (() -> Unit)? = null,
+    onOrganizationClicked: (() -> Unit)? = null,
     isConnectionCacheMode: Boolean = false,
 ) {
     EInkAnimatedVisibility(
@@ -187,6 +189,15 @@ fun MangaBottomActionMenu(
                         toConfirm = confirm[6],
                         onLongClick = { onLongClickItem(6) },
                         onClick = onDeleteClicked,
+                    )
+                }
+                if (onOrganizationClicked != null) {
+                    Button(
+                        title = stringResource(MR.strings.komga_organization_actions),
+                        icon = Icons.Outlined.PlaylistAdd,
+                        toConfirm = false,
+                        onLongClick = {},
+                        onClick = onOrganizationClicked,
                     )
                 }
             }

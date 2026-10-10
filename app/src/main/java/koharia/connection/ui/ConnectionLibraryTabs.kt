@@ -20,8 +20,9 @@ internal fun <T> ConnectionLibraryTabs(
     onSelect: (T) -> Unit,
     allSelected: Boolean = false,
     onSelectAll: (() -> Unit)? = null,
+    showAllWhenEmpty: Boolean = false,
 ) {
-    if (entries.isEmpty()) return
+    if (entries.isEmpty() && !showAllWhenEmpty) return
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (onSelectAll != null) {
             item(key = "all") {

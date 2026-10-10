@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 class KomgaServerRemovalManager(
     private val serverPreferences: KomgaServerPreferences,
@@ -43,6 +45,13 @@ class KomgaServerRemovalManager(
                         "cleanupMode=$options"
                 }
                 epubCacheManager.clearServer(serverId)
+                val organizationRoot = java.io.File(
+                    Injekt.get<android.app.Application>().filesDir,
+                    "komga-organization",
+                ).canonicalFile
+                val organizationDirectory = java.io.File(organizationRoot, serverId.toString()).canonicalFile
+                check(organizationDirectory.parentFile == organizationRoot)
+                check(!organizationDirectory.exists() || organizationDirectory.deleteRecursively())
                 libraryClassificationManager.clearServer(serverId)
                 localConfigManager.clearScopeForConnection(serverId)
                 clearServerSettings(serverId)

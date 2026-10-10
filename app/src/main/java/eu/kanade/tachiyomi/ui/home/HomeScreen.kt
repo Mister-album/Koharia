@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBarItem
@@ -26,6 +28,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEach
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -37,7 +40,6 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
-import eu.kanade.tachiyomi.ui.home.SuwayomiBrowseTab
 import eu.kanade.tachiyomi.ui.library.BooksTab
 import eu.kanade.tachiyomi.ui.library.ComicsTab
 import eu.kanade.tachiyomi.ui.library.ConnectionLibraryTab
@@ -88,15 +90,39 @@ object HomeScreen : Screen() {
             LibraryContentScope.BOOK in contentScopes
         val connectionPreferences = remember { Injekt.get<ConnectionPreferences>() }
         val activeConnectionId by connectionPreferences.activeConnectionId.collectPreferenceAsState()
-        val suwayomiActive = remember(activeConnectionId) {
-            Injekt.get<SourceManager>().get(activeConnectionId) is SuwayomiSource
-        }
+        val registeredSources by
+            Injekt.get<SourceManager>().catalogueSources.collectAsState(emptyList())
+        val suwayomiActive =
+            remember(activeConnectionId, registeredSources) {
+                Injekt.get<SourceManager>().get(activeConnectionId) is SuwayomiSource
+            }
+        val organizationPages =
+            remember(activeConnectionId, registeredSources) {
+                (
+                    Injekt.get<SourceManager>().get(activeConnectionId)
+                        as? koharia.connection.ConnectionOrganizationAdapter
+                    )
+                    ?.organizationPages
+                    .orEmpty()
+            }
+        val libraryPreferences = remember { Injekt.get<tachiyomi.domain.library.service.LibraryPreferences>() }
+        val showCollections by libraryPreferences.showCollections.collectPreferenceAsState()
+        val showReadLists by libraryPreferences.showReadLists.collectPreferenceAsState()
+        val mergeOrganizations by libraryPreferences.mergeOrganizationPages.collectPreferenceAsState()
+        val organizationNavigation = koharia.connection.ConnectionOrganizationNavigation.create(
+            organizationPages,
+            showCollections,
+            showReadLists,
+            mergeOrganizations,
+        )
+        val organizationTabs = koharia.connection.ui.organizationNavigationTabs(organizationNavigation)
         val defaultLibraryTab: ConnectionLibraryTab = if (classificationEnabled) ComicsTab else LibraryTab
         val tabs = if (classificationEnabled) {
             buildList<eu.kanade.presentation.util.Tab> {
                 add(ComicsTab)
                 add(BooksTab)
                 if (suwayomiActive) add(SuwayomiBrowseTab)
+                addAll(organizationTabs)
                 add(HistoryTab)
                 add(MoreTab)
             }
@@ -104,14 +130,12 @@ object HomeScreen : Screen() {
             buildList<eu.kanade.presentation.util.Tab> {
                 add(LibraryTab)
                 if (suwayomiActive) add(SuwayomiBrowseTab)
+                addAll(organizationTabs)
                 add(HistoryTab)
                 add(MoreTab)
             }
         }
-        TabNavigator(
-            tab = defaultLibraryTab,
-            key = TabNavigatorKey,
-        ) { tabNavigator ->
+        TabNavigator(tab = defaultLibraryTab, key = TabNavigatorKey) { tabNavigator ->
             val activity = LocalContext.current as? Activity
 
             // Provide usable navigator to content screen
@@ -136,11 +160,7 @@ object HomeScreen : Screen() {
                                 enter = expandVertically(),
                                 exit = shrinkVertically(),
                             ) {
-                                NavigationBar {
-                                    tabs.fastForEach {
-                                        NavigationBarItem(it)
-                                    }
-                                }
+                                BottomNavigationBar(tabs)
                             }
                         }
                     },
@@ -185,14 +205,22 @@ object HomeScreen : Screen() {
                 activity?.finish()
             }
 
-            LaunchedEffect(classificationEnabled, suwayomiActive) {
-                tabNavigator.current = when {
-                    !suwayomiActive && tabNavigator.current == SuwayomiBrowseTab -> defaultLibraryTab
-                    classificationEnabled && tabNavigator.current == LibraryTab -> ComicsTab
-                    !classificationEnabled &&
-                        (tabNavigator.current == ComicsTab || tabNavigator.current == BooksTab) -> LibraryTab
-                    else -> tabNavigator.current
-                }
+            LaunchedEffect(classificationEnabled, suwayomiActive, organizationNavigation) {
+                tabNavigator.current =
+                    when {
+                        tabNavigator.current !in tabs -> {
+                            if (tabNavigator.current is koharia.connection.ui.ConnectionOrganizationTab) {
+                                organizationTabs.firstOrNull() ?: defaultLibraryTab
+                            } else {
+                                defaultLibraryTab
+                            }
+                        }
+                        !suwayomiActive && tabNavigator.current == SuwayomiBrowseTab -> defaultLibraryTab
+                        classificationEnabled && tabNavigator.current == LibraryTab -> ComicsTab
+                        !classificationEnabled &&
+                            (tabNavigator.current == ComicsTab || tabNavigator.current == BooksTab) -> LibraryTab
+                        else -> tabNavigator.current
+                    }
             }
 
             LaunchedEffect(classificationEnabled, suwayomiActive) {
@@ -238,12 +266,24 @@ object HomeScreen : Screen() {
     }
 
     @Composable
+    internal fun BottomNavigationBar(tabs: List<eu.kanade.presentation.util.Tab>) {
+        NavigationBar(
+            minimumContentWidth = if (tabs.size > 5) 64.dp * tabs.size else 0.dp,
+        ) {
+            tabs.fastForEach { NavigationBarItem(it) }
+        }
+    }
+
+    @Composable
     private fun RowScope.NavigationBarItem(tab: eu.kanade.presentation.util.Tab) {
         val tabNavigator = LocalTabNavigator.current
         val navigator = LocalNavigator.currentOrThrow
         val scope = rememberCoroutineScope()
         val selected = tabNavigator.current.key == tab.key
+        val bringIntoView = remember { BringIntoViewRequester() }
+        LaunchedEffect(selected) { if (selected) bringIntoView.bringIntoView() }
         NavigationBarItem(
+            modifier = Modifier.bringIntoViewRequester(bringIntoView),
             selected = selected,
             onClick = {
                 if (!selected) {

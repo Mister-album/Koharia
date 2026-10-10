@@ -359,6 +359,9 @@ class KomgaRepository(
         }
     }
 
+    internal fun bookChapter(book: BookDto, chapterNameTemplate: String): SChapter =
+        book.toChapter(baseUrl, chapterNameTemplate, false, book.metadata.numberSort)
+
     private fun BookDto.toChapter(
         baseUrl: String,
         chapterNameTemplate: String,

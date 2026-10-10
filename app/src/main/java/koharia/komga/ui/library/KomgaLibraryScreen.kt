@@ -1,6 +1,7 @@
 package koharia.komga.ui.library
 
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,6 +59,8 @@ import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
+import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.more.settings.screen.KomgaLibraryClassificationScreen
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
@@ -68,6 +72,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionOrganizationActionsAdapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.EntryOpenMode
 import koharia.connection.EntryOpenPreferences
@@ -179,6 +184,10 @@ data class KomgaLibraryScreen(
             )
         }
         val state by screenModel.state.collectAsState()
+        val organizationSelection = remember(sourceId) {
+            mutableStateMapOf<String, tachiyomi.domain.manga.model.Manga>()
+        }
+        BackHandler(organizationSelection.isNotEmpty()) { organizationSelection.clear() }
         val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
         val lifecycleOwner = LocalLifecycleOwner.current
         val configuration = LocalConfiguration.current
@@ -280,26 +289,48 @@ data class KomgaLibraryScreen(
                         .background(MaterialTheme.colorScheme.surface)
                         .pointerInput(Unit) {},
                 ) {
-                    KomgaLibraryToolbar(
-                        searchQuery = state.toolbarQuery,
-                        onSearchQueryChange = screenModel::setToolbarQuery,
-                        displayMode = screenModel.displayMode,
-                        onDisplayModeChange = { screenModel.displayMode = it },
-                        connectionProfiles = connectionProfiles,
-                        activeConnectionId = sourceId,
-                        onConnectionSelect = { connectionId ->
-                            if (connectionId != sourceId) {
-                                connectionPreferences.activeConnectionId.set(connectionId)
-                            }
-                        },
-                        showFilterAction = state.filters.isNotEmpty(),
-                        onFilterClick = screenModel::openFilterSheet,
-                        navigateUp = navigateUp.takeIf { showNavigationUp },
-                        onSearch = screenModel::search,
-                        onClickCloseSearch = screenModel::exitSearch,
-                        searchType = state.searchType,
-                        onSearchTypeSelect = screenModel::setSearchType,
-                    )
+                    if (organizationSelection.isNotEmpty()) {
+                        AppBar(
+                            title = null,
+                            actionModeCounter = organizationSelection.size,
+                            onCancelActionMode = { organizationSelection.clear() },
+                            actionModeActions = {
+                                AppBarActions(
+                                    persistentListOf(
+                                        AppBar.OverflowAction(stringResource(MR.strings.komga_organization_actions)) {
+                                            val adapter = screenModel.source as? ConnectionOrganizationActionsAdapter
+                                            adapter?.let {
+                                                navigator.push(
+                                                    it.entryOrganizationScreen(organizationSelection.keys.toList()),
+                                                )
+                                            }
+                                        },
+                                    ),
+                                )
+                            },
+                        )
+                    } else {
+                        KomgaLibraryToolbar(
+                            searchQuery = state.toolbarQuery,
+                            onSearchQueryChange = screenModel::setToolbarQuery,
+                            displayMode = screenModel.displayMode,
+                            onDisplayModeChange = { screenModel.displayMode = it },
+                            connectionProfiles = connectionProfiles,
+                            activeConnectionId = sourceId,
+                            onConnectionSelect = { connectionId ->
+                                if (connectionId != sourceId) {
+                                    connectionPreferences.activeConnectionId.set(connectionId)
+                                }
+                            },
+                            showFilterAction = state.filters.isNotEmpty(),
+                            onFilterClick = screenModel::openFilterSheet,
+                            navigateUp = navigateUp.takeIf { showNavigationUp },
+                            onSearch = screenModel::search,
+                            onClickCloseSearch = screenModel::exitSearch,
+                            searchType = state.searchType,
+                            onSearchTypeSelect = screenModel::setSearchType,
+                        )
+                    }
 
                     if (state.isUserQuery) {
                         val sort = state.listing.filters.filterIsInstance<SeriesSort>().firstOrNull()
@@ -383,6 +414,7 @@ data class KomgaLibraryScreen(
                         snackbarHostState = snackbarHostState,
                         contentPadding = paddingValues,
                         showLibraryBadges = false,
+                        selectedMangaIds = organizationSelection.values.map { it.id }.toSet(),
                         readProgress = if (showLibraryReadProgress) {
                             { manga -> readProgressByUrl[manga.url.trimEnd('/')] }
                         } else {
@@ -391,36 +423,47 @@ data class KomgaLibraryScreen(
                         onWebViewClick = onWebViewClick,
                         onHelpClick = onHelpClick,
                         onMangaClick = {
-                            val mode = if (it.url.contains("/api/v1/books/")) {
-                                entryOpenPreferences.komgaMode()
+                            if (organizationSelection.isNotEmpty()) {
+                                if (it.url in organizationSelection) {
+                                    organizationSelection.remove(it.url)
+                                } else {
+                                    organizationSelection[it.url] = it
+                                }
                             } else {
-                                EntryOpenMode.DETAILS
-                            }
-                            if (mode == EntryOpenMode.DETAILS) {
-                                navigator.push(MangaScreen(it.id, true, it.source, it.url))
-                            } else if (!openingBook) {
-                                openingBook = true
-                                scope.launch {
-                                    runCatching { screenModel.prepareSingleBook(it) }
-                                        .onSuccess { (manga, chapter) ->
-                                            if (mode == EntryOpenMode.PAGE_PREVIEW) {
-                                                navigator.push(LanraragiArchivePreviewScreen(manga.id, manga.source))
-                                            } else {
-                                                context.startActivity(
-                                                    readerLauncher.resolveIntent(context, manga.id, chapter.id),
+                                val mode = if (it.url.contains("/api/v1/books/")) {
+                                    entryOpenPreferences.komgaMode()
+                                } else {
+                                    EntryOpenMode.DETAILS
+                                }
+                                if (mode == EntryOpenMode.DETAILS) {
+                                    navigator.push(MangaScreen(it.id, true, it.source, it.url))
+                                } else if (!openingBook) {
+                                    openingBook = true
+                                    scope.launch {
+                                        runCatching { screenModel.prepareSingleBook(it) }
+                                            .onSuccess { (manga, chapter) ->
+                                                if (mode == EntryOpenMode.PAGE_PREVIEW) {
+                                                    navigator.push(
+                                                        LanraragiArchivePreviewScreen(manga.id, manga.source),
+                                                    )
+                                                } else {
+                                                    context.startActivity(
+                                                        readerLauncher.resolveIntent(context, manga.id, chapter.id),
+                                                    )
+                                                }
+                                            }
+                                            .onFailure { error ->
+                                                snackbarHostState.showSnackbar(
+                                                    error.localizedMessage
+                                                        ?: context.getString(R.string.unknown_error),
                                                 )
                                             }
-                                        }
-                                        .onFailure { error ->
-                                            snackbarHostState.showSnackbar(
-                                                error.localizedMessage ?: context.getString(R.string.unknown_error),
-                                            )
-                                        }
-                                    openingBook = false
+                                        openingBook = false
+                                    }
                                 }
                             }
                         },
-                        onMangaLongClick = {},
+                        onMangaLongClick = { organizationSelection[it.url] = it },
                         modifier = Modifier.offset { IntOffset(x = 0, y = pullOffsetPx.roundToInt()) },
                     )
                 }

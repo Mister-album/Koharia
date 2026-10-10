@@ -14,6 +14,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -168,6 +169,51 @@ class KomgaShelfCacheTest {
         } finally {
             server.stop(0)
         }
+    }
+
+    @Test
+    fun `organization cache misses offline cannot fall back to another account http cache`() {
+        val client =
+            OkHttpClient.Builder()
+                .addInterceptor(KomgaOfflineInterceptor(context(), { "account-b" }) { true })
+                .addInterceptor { throw AssertionError("HTTP cache fallback must not run") }
+                .build()
+        val request =
+            Request.Builder()
+                .url("https://komga.test/api/v1/readlists")
+                .tag(KomgaCacheNamespace::class.java, KomgaCacheNamespace("account-b"))
+                .tag(KomgaCachePolicy::class.java, KomgaCachePolicy.Default)
+                .build()
+        assertThrows(IOException::class.java) { client.newCall(request).execute().close() }
+    }
+
+    @Test
+    fun `strict permissions cannot be satisfied by a previously successful metadata response`() {
+        val context = context()
+        val store = KomgaMetadataCacheStore(context) { "account-a" }
+        val request = Request.Builder().url("https://komga.test/api/v1/collections/id").build()
+        val response =
+            Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body("{}".toResponseBody("application/json".toMediaType()))
+                .build()
+        store.save(request, response).close()
+        var networkCalls = 0
+        val client =
+            OkHttpClient.Builder()
+                .addInterceptor(KomgaOfflineInterceptor(context, { "account-a" }) { false })
+                .addInterceptor {
+                    networkCalls++
+                    throw IOException("server unavailable")
+                }
+                .build()
+        assertThrows(IOException::class.java) {
+            client.newCall(request.newBuilder().komgaRequireNetwork().build()).execute().close()
+        }
+        assertEquals(1, networkCalls)
     }
 
     private fun context(): Context {

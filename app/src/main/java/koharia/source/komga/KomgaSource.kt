@@ -112,7 +112,138 @@ class KomgaSource(
     ConnectionPageProgressAdapter,
     ConnectionLocalPageProgressAdapter,
     ConnectionChapterTitleAdapter,
-    ConnectionEpubProgressAdapter {
+    ConnectionEpubProgressAdapter,
+    koharia.connection.ConnectionOrganizationAdapter,
+    koharia.connection.ConnectionOrganizationActionsAdapter,
+    koharia.connection.ConnectionDownloadAliasAdapter,
+    koharia.connection.ConnectionSeriesActionsAdapter,
+    koharia.connection.ConnectionReadingQueueAdapter,
+    koharia.connection.ConnectionDownloadAuthorizationAdapter {
+
+    override val organizationPages = koharia.connection.ConnectionOrganizationPage.entries.toSet()
+
+    private val organizationAliases =
+        java.util.concurrent.ConcurrentHashMap<
+            String,
+            List<koharia.connection.ConnectionDownloadAlias>,
+            >()
+
+    @Volatile private var organizationAliasNamespace: String? = null
+
+    fun registerOrganizationAliases(
+        namespace: String,
+        aliases: Map<String, List<koharia.connection.ConnectionDownloadAlias>>,
+    ) {
+        if (namespace != shelfCacheNamespace()) return
+        if (organizationAliasNamespace != namespace) organizationAliases.clear()
+        organizationAliasNamespace = namespace
+        organizationAliases.putAll(aliases)
+    }
+
+    override fun downloadAliases(
+        chapterUrl: String,
+    ): List<koharia.connection.ConnectionDownloadAlias> =
+        if (organizationAliasNamespace == shelfCacheNamespace()) {
+            organizationAliases[chapterUrl.substringBefore('?').substringAfterLast('/')].orEmpty()
+        } else {
+            emptyList()
+        }
+
+    override fun organizationScreen(page: koharia.connection.ConnectionOrganizationPage) =
+        koharia.komga.ui.organization.KomgaOrganizationScreen(
+            id,
+            if (page == koharia.connection.ConnectionOrganizationPage.COLLECTIONS) {
+                koharia.komga.api.KomgaOrganizationKind.COLLECTION
+            } else {
+                koharia.komga.api.KomgaOrganizationKind.READ_LIST
+            },
+            showNavigationUp = false,
+        )
+
+    @androidx.compose.runtime.Composable
+    override fun OrganizationContent(
+        page: koharia.connection.ConnectionOrganizationPage,
+        entryId: String?,
+        pageTabs: @androidx.compose.runtime.Composable () -> Unit,
+        onRefresh: () -> Unit,
+    ) {
+        organizationScreen(page).copy(organizationId = entryId).Content(pageTabs, onRefresh)
+    }
+
+    override val organizationNamespace: String get() = shelfCacheNamespace()
+
+    override fun organizationDirectory() =
+        koharia.komga.domain.repository.KomgaOrganizationDirectory(organizationRepository())
+
+    override fun seriesActionsScreen(manga: tachiyomi.domain.manga.model.Manga) =
+        entryOrganizationScreen(listOf(manga.url))
+
+    override fun organizationEntryDestination(resourceUrl: String) =
+        if (resourceUrl.contains("/api/v1/readlists/")) {
+            koharia.komga.ui.organization.KomgaOrganizationScreen(
+                id,
+                koharia.komga.api.KomgaOrganizationKind.READ_LIST,
+                resourceUrl.substringBefore('?').substringAfterLast('/'),
+            )
+        } else {
+            null
+        }
+
+    override fun entryOrganizationScreen(resourceUrls: List<String>) =
+        koharia.komga.ui.organization.KomgaSeriesOrganizationScreen(id, resourceUrls)
+
+    override fun chapterOrganizationScreen(chapterUrls: List<String>) =
+        koharia.komga.ui.organization.KomgaAddToOrganizationScreen(
+            id,
+            koharia.komga.api.KomgaOrganizationKind.READ_LIST,
+            chapterUrls.map { it.substringBefore('?').substringAfterLast('/') }.distinct(),
+        )
+
+    fun organizationRepository(): koharia.komga.domain.repository.KomgaOrganizationRepository {
+        val organizationClient =
+            KomgaApiClient(
+                baseUrl,
+                currentHeaders(),
+                client.newBuilder().retryOnConnectionFailure(false).build(),
+                json,
+                shelfCache = { request -> metadataCacheStore.load(request, organizationRevision()) },
+            )
+        return koharia.komga.domain.repository.KomgaOrganizationRepository(
+            this,
+            koharia.komga.api.KomgaOrganizationApi(
+                baseUrl,
+                currentHeaders(),
+                organizationClient,
+                json,
+                shelfCacheNamespace(),
+                ::organizationRevision,
+            ),
+        )
+    }
+
+    internal fun organizationRevision() =
+        shelfStateStore().read("organizationRevision")?.toLongOrNull() ?: 0L
+
+    fun organizationChanged(
+        kind: koharia.komga.api.KomgaOrganizationKind? = null,
+        resourceId: String? = null,
+    ) {
+        shelfStateStore().write("organizationRevision", System.currentTimeMillis().toString())
+        koharia.connection.ConnectionShelfUpdates.notify(id)
+        koharia.komga.api.KomgaOrganizationUpdates.notify(
+            koharia.komga.api.KomgaOrganizationUpdate(id, kind, resourceId),
+        )
+    }
+
+    override suspend fun authorizeDownload(resourceUrl: String) {
+        organizationRepository().authorize("FILE_DOWNLOAD")
+    }
+
+    override suspend fun readingQueuePosition(context: String, chapterUrl: String) =
+        organizationRepository().queuePosition(context, chapterUrl)
+
+    override suspend fun resolveReadingQueueChapter(context: String, chapterUrl: String) =
+        organizationRepository().queueChapter(context, chapterUrl)
 
     private val preferences: SharedPreferences by lazy { sourcePreferences() }
     private val json: Json by injectLazy()
@@ -240,6 +371,8 @@ class KomgaSource(
 
     fun currentHeaders(): Headers = headersBuilder().build()
 
+    internal fun organizationBookChapter(book: BookDto) = repository.bookChapter(book, chapterNameTemplate)
+
     fun connectionSettingsChanged(store: androidx.preference.PreferenceDataStore): Boolean {
         fun changed(key: String) = store.getString(key, "").orEmpty() != preferences.getString(key, "").orEmpty()
         val draftMode = store.getString(PREF_AUTH_MODE, null) ?: defaultAuthMode()
@@ -326,6 +459,10 @@ class KomgaSource(
         .addInterceptor(KomgaCacheControlInterceptor(application, ::shelfCacheNamespace))
         .addInterceptor { chain ->
             val original = chain.request()
+            val capturedAccount = original.tag(KomgaCacheNamespace::class.java)?.value
+            if (capturedAccount != null && capturedAccount != shelfCacheNamespace()) {
+                throw java.io.IOException(application.stringResource(MR.strings.komga_organization_account_changed))
+            }
             val newBuilder = original.newBuilder()
 
             if (authMode == AUTH_MODE_API_KEY && apiKey.isNotBlank()) {

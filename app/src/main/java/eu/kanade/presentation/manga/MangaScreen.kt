@@ -351,7 +351,20 @@ private fun MangaScreenImpl(
             )
         },
         bottomBar = {
+            val organizationAdapter = state.source as? koharia.connection.ConnectionOrganizationActionsAdapter
+            val organizationNavigator = cafe.adriel.voyager.navigator.LocalNavigator.current
             SharedMangaBottomActionMenu(
+                onOrganizationClicked = organizationAdapter?.let { adapter ->
+                    {
+                        organizationNavigator?.push(
+                            adapter.chapterOrganizationScreen(
+                                chapters.filter {
+                                    it.selected
+                                }.map { it.chapter.url },
+                            ),
+                        )
+                    }
+                },
                 serverDownloads = serverDownloads,
                 selected = chapters.filter { it.selected },
                 isConnectionCacheMode = isConnectionCacheMode,
@@ -390,6 +403,7 @@ private fun MangaScreenImpl(
 
 @Composable
 private fun SharedMangaBottomActionMenu(
+    onOrganizationClicked: (() -> Unit)?,
     serverDownloads: koharia.connection.ui.ConnectionServerDownloadActions?,
     selected: List<ChapterList.Item>,
     isConnectionCacheMode: Boolean,
@@ -402,6 +416,7 @@ private fun SharedMangaBottomActionMenu(
     modifier: Modifier = Modifier,
 ) {
     MangaBottomActionMenu(
+        onOrganizationClicked = onOrganizationClicked,
         onServerDownloadClicked = serverDownloads?.takeUnless { it.busy }?.let { actions ->
             { actions.enqueue(selected.map { it.chapter.url }) }
         },

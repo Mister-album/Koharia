@@ -116,6 +116,41 @@ class KomgaMetadataCacheStoreTest {
         assertNull(store.load(request))
     }
 
+    @Test
+    fun `successful empty organization cache is retained after refresh failure`() {
+        val store = KomgaMetadataCacheStore(context())
+        val request = Request.Builder().url("https://komga.test/api/v1/readlists?page=0").build()
+        val empty = """{"content":[],"totalElements":0}"""
+        store.save(request, response(request, empty)).close()
+        store.save(request, response(request, "failed").newBuilder().code(503).build()).close()
+        assertEquals(empty, store.load(request)?.body?.string())
+        assertNull(store.load(request, Long.MAX_VALUE))
+        assertEquals(empty, store.load(request)?.body?.string())
+    }
+
+    @Test
+    fun `late response is stored only in captured account and strict requests bypass cache`() {
+        var selectedAccount = "account-a"
+        val store = KomgaMetadataCacheStore(context()) { selectedAccount }
+        val request = Request.Builder().url("https://komga.test/api/v1/collections")
+            .tag(KomgaCacheNamespace::class.java, KomgaCacheNamespace("account-a")).build()
+        selectedAccount = "account-b"
+        store.save(request, response(request, "account a")).close()
+        assertEquals("account a", store.load(request)?.body?.string())
+        assertNull(store.load(request.newBuilder().tag(KomgaCacheNamespace::class.java, null).build()))
+        val strict = request.newBuilder().komgaRequireNetwork().build()
+        assertFalse(store.isEligible(strict))
+        assertNull(store.load(strict))
+    }
+
+    @Test
+    fun `organization reference choices remain cacheable behind a base path`() {
+        listOf("authors", "age-ratings", "languages").forEach { path ->
+            val version = if (path == "authors") 2 else 1
+            assertTrue(KomgaMetadataCacheStore.isEligibleUrl("https://komga.test/komga/api/v$version/$path"))
+        }
+    }
+
     private fun context(): Context = mockk {
         every { getExternalFilesDir(any()) } returns File(tempDir, "external")
         every { cacheDir } returns File(tempDir, "legacy")

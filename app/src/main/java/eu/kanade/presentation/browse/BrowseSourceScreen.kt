@@ -68,6 +68,7 @@ fun BrowseSourceContent(
     entryLabel: ((Manga) -> String)? = null,
     contentHeader: (@Composable () -> Unit)? = null,
     entryBadge: (@Composable (Manga) -> Unit)? = null,
+    manualDownloadState: ((Manga) -> MangaDownloadState?)? = null,
 ) {
     val context = LocalContext.current
     val localEntries = rememberConnectionShelfEntries(source, mangaList)
@@ -87,7 +88,7 @@ fun BrowseSourceContent(
     }
     val downloadState: (Manga) -> MangaDownloadState? = { manga ->
         val local = localEntries[manga.url]
-        local?.downloads(expectedTotal(manga) ?: local.total)
+        manualDownloadState?.invoke(manga) ?: local?.downloads(expectedTotal(manga) ?: local.total)
     }
 
     val errorState = mangaList.loadState.refresh.takeIf { it is LoadState.Error }

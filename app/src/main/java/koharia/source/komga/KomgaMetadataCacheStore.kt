@@ -30,7 +30,7 @@ internal class KomgaMetadataCacheStore(
     private val cacheDir = LocalTempCacheDirectoryProvider.metadataCacheDir(context)
 
     fun isEligible(request: Request): Boolean {
-        if (request.isKomgaProgressSync) return false
+        if (request.isKomgaProgressSync || request.isKomgaNetworkRequired) return false
         return when (request.method) {
             "GET" -> isEligibleUrl(request.url.toString())
             "POST" -> request.body?.contentType()?.subtype == "json" &&
@@ -42,7 +42,7 @@ internal class KomgaMetadataCacheStore(
     fun load(request: Request, minimumFetchedAt: Long = 0): Response? {
         if (!isEligible(request)) return null
 
-        val identity = request.cacheIdentity()?.let(::scopedIdentity) ?: return null
+        val identity = request.cacheIdentity()?.let { scopedIdentity(it, request) } ?: return null
         return synchronized(cacheLock) {
             runCatching {
                 val metadata = metaFile(identity).readLines()
@@ -69,7 +69,7 @@ internal class KomgaMetadataCacheStore(
     fun save(request: Request, response: Response): Response = synchronized(cacheLock) {
         if (!isEligible(request) || !response.isSuccessful) return@synchronized response
 
-        val identity = request.cacheIdentity()?.let(::scopedIdentity) ?: return@synchronized response
+        val identity = request.cacheIdentity()?.let { scopedIdentity(it, request) } ?: return@synchronized response
         val body = response.body
         val contentType = body.contentType()
         if (contentType?.subtype?.let { it == "json" || it.endsWith("+json") } != true) return@synchronized response
@@ -185,8 +185,13 @@ internal class KomgaMetadataCacheStore(
             ?.takeIf { it.isNotBlank() }
     }
 
-    private fun scopedIdentity(identity: String): String = namespace().takeIf { it.isNotEmpty() }
-        ?.let { "$it:$identity" } ?: identity
+    private fun scopedIdentity(identity: String, request: Request? = null): String =
+        (
+            request?.tag(KomgaCacheNamespace::class.java)?.value?.takeIf {
+                it.isNotEmpty()
+            } ?: namespace()
+            ).takeIf { it.isNotEmpty() }
+            ?.let { "$it:$identity" } ?: identity
 
     private fun readJsonObject(url: String) = readEntry(scopedIdentity(url))
         ?.let { entry -> runCatching { Json.parseToJsonElement(entry.body.decodeToString()).jsonObject }.getOrNull() }
@@ -266,6 +271,7 @@ internal class KomgaMetadataCacheStore(
 
         fun isEligibleUrl(url: String): Boolean {
             val path = url.toHttpUrlOrNull()?.encodedPath ?: return false
+            if (path.endsWith("/api/v2/authors")) return true
             if (!path.contains("/api/v1/")) return false
             if (path.endsWith("/file")) return false
             if (PAGE_IMAGE_REGEX.containsMatchIn(url)) return false
@@ -279,6 +285,8 @@ internal class KomgaMetadataCacheStore(
                 path.contains("/api/v1/genres") ||
                 path.contains("/api/v1/tags") ||
                 path.contains("/api/v1/publishers") ||
+                path.contains("/api/v1/age-ratings") ||
+                path.contains("/api/v1/languages") ||
                 path.contains("/api/v1/authors")
         }
 
