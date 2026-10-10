@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+
 /**
  * Decides when a page turn has to wait for its destination page instead of moving the pager
  * immediately, and keeps the turns requested while waiting.
@@ -15,6 +17,10 @@ internal object PagerPageTurnPolicy {
      * keep up must not accumulate an unbounded backlog of turns behind one slow page.
      */
     const val MAX_PENDING_TURNS = 24
+
+    fun shouldInterceptSwipe(effect: PageTransitionEffect, horizontal: Boolean, animationsEnabled: Boolean): Boolean =
+        !animationsEnabled || effect == PageTransitionEffect.NONE ||
+            (horizontal && effect == PageTransitionEffect.CURL)
 
     /**
      * Whether the turn must be deferred until its destination page is rendered.

@@ -9,15 +9,19 @@ import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.presentation.history.HistoryUiModel
 import eu.kanade.tachiyomi.util.lang.toLocalDate
+import koharia.connection.ConnectionEpubHistorySyncAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.NO_ACTIVE_CONNECTION
 import koharia.connection.isConnectionLibraryEntry
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
@@ -33,6 +37,8 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
@@ -76,6 +82,10 @@ class HistoryScreenModel(
     private val _events: Channel<Event> = Channel(Channel.UNLIMITED)
     val events: Flow<Event> = _events.receiveAsFlow()
 
+    private val historyReloads = MutableStateFlow(0L)
+    private val historySyncMutex = Mutex()
+    private var refreshJob: Job? = null
+    private var refreshScopeGeneration: Long? = null
     private val historyScopeGeneration = AtomicLong()
     private val historyScopes = combine(
         connectionPreferences.activeConnectionId.changes().distinctUntilChanged(),
@@ -90,9 +100,22 @@ class HistoryScreenModel(
         .shareIn(screenModelScope, SharingStarted.Eagerly, replay = 1)
 
     init {
-        screenModelScope.launchIO {
+        screenModelScope.launch {
             historyScopes
-                .collectLatest(::syncConnectionHistory)
+                .collectLatest { scope ->
+                    if (refreshScopeGeneration != scope.generation) {
+                        refreshJob?.cancel()
+                        refreshScopeGeneration = null
+                        mutableState.update { it.copy(isRefreshing = false) }
+                    }
+                    try {
+                        withIOContext { syncConnectionHistory(scope) }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        logcat(LogPriority.WARN, error) { "Failed to sync connection history from provider" }
+                    }
+                }
         }
 
         screenModelScope.launch {
@@ -105,10 +128,11 @@ class HistoryScreenModel(
                     val history = if (scope.sourceId == NO_ACTIVE_CONNECTION) {
                         flowOf(emptyList())
                     } else {
-                        getHistory.subscribe(query ?: "", scope.sourceId)
+                        historyReloads.flatMapLatest {
+                            getHistory.subscribe(query ?: "", scope.sourceId).distinctUntilChanged()
+                        }
                     }
                     history
-                        .distinctUntilChanged()
                         .map { rows ->
                             val allowed = scope.adapter?.historyMangaIds()
                             if (!scope.isCurrent() || sourceManager.get(scope.sourceId) == null) {
@@ -139,13 +163,40 @@ class HistoryScreenModel(
         }
     }
 
-    private suspend fun syncConnectionHistory(scope: HistoryScope) {
-        if (scope.sourceId == NO_ACTIVE_CONNECTION) return
-        val progressAdapter = scope.adapter ?: return
-        runCatching { progressAdapter.syncConnectionHistory() }
-            .onFailure { error ->
-                logcat(LogPriority.WARN, error) { "Failed to sync connection history from provider" }
+    private suspend fun syncConnectionHistory(scope: HistoryScope, includeEpubProgress: Boolean = false) {
+        historySyncMutex.withLock {
+            if (!scope.isCurrent() || scope.sourceId == NO_ACTIVE_CONNECTION) return
+            scope.adapter?.syncConnectionHistory()
+            if (includeEpubProgress && scope.isCurrent()) {
+                (scope.adapter as? ConnectionEpubHistorySyncAdapter)?.syncConnectionEpubProgress()
             }
+        }
+    }
+
+    fun refreshHistory() {
+        if (refreshJob?.isActive == true) return
+        val scope = historyScopes.replayCache.lastOrNull()
+            ?.takeIf { it.isCurrent() && it.sourceId != NO_ACTIVE_CONNECTION }
+            ?: return
+        refreshScopeGeneration = scope.generation
+        mutableState.update { it.copy(isRefreshing = true) }
+        refreshJob = screenModelScope.launch {
+            try {
+                withIOContext { syncConnectionHistory(scope, includeEpubProgress = true) }
+                if (scope.isCurrent()) historyReloads.value++
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                logcat(LogPriority.WARN, error) { "Failed to refresh connection history" }
+                if (scope.isCurrent()) _events.send(Event.HistoryRefreshFailed)
+            } finally {
+                if (refreshScopeGeneration == scope.generation) {
+                    refreshScopeGeneration = null
+                    refreshJob = null
+                    mutableState.update { it.copy(isRefreshing = false) }
+                }
+            }
+        }
     }
 
     private fun List<HistoryWithRelations>.toHistoryUiModels(): List<HistoryUiModel> {
@@ -363,6 +414,7 @@ class HistoryScreenModel(
         val searchQuery: String? = null,
         val list: List<HistoryUiModel>? = null,
         val dialog: Dialog? = null,
+        val isRefreshing: Boolean = false,
     )
 
     sealed interface Dialog {
@@ -380,5 +432,6 @@ class HistoryScreenModel(
         data class OpenChapter(val chapter: Chapter?) : Event
         data object InternalError : Event
         data object HistoryCleared : Event
+        data object HistoryRefreshFailed : Event
     }
 }

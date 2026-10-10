@@ -6,6 +6,7 @@ import androidx.paging.PagingDataPresenter
 import cafe.adriel.voyager.core.annotation.InternalVoyagerApi
 import cafe.adriel.voyager.core.model.ScreenModelStore
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.tachiyomi.data.download.DownloadManager
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -35,10 +37,12 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.core.common.preference.Preference
+import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.library.model.LibraryDisplayMode
-import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
@@ -161,7 +165,6 @@ class LocalLibraryLoadingTest {
         val finished = Manga.create().copy(id = 2, source = 42, url = "finished")
         val fixture = fixture(
             mangas = flowOf(listOf(partial, finished)),
-            showReadProgress = true,
             progressChapters = mapOf(
                 partial.id to listOf(Chapter.create().copy(id = 1, mangaId = partial.id, lastPageRead = 12)),
                 finished.id to listOf(Chapter.create().copy(id = 2, mangaId = finished.id, read = true)),
@@ -196,6 +199,108 @@ class LocalLibraryLoadingTest {
         }
     }
 
+    @Test
+    fun `reading filters apply immediately with progress hidden and keep the settings sheet open`() = runTest {
+        val dispatcher = UnconfinedTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        val unread = Manga.create().copy(id = 1, source = 42, url = "unread")
+        val read = Manga.create().copy(id = 2, source = 42, url = "read")
+        val fixture = fixture(
+            flowOf(listOf(unread, read)),
+            progressChapters = mapOf(read.id to listOf(Chapter.create().copy(id = 2, mangaId = read.id, read = true))),
+        )
+        try {
+            val presenter = presenter()
+            backgroundScope.launch(dispatcher) { fixture.model.mangaPagerFlow.collectLatest(presenter::collectFrom) }
+            presenter.presentedIds.first { it.size == 2 }
+            fixture.model.openFilterDialog()
+            fixture.model.updateFilters(LocalLibraryFilters(unread = TriState.ENABLED_IS), false)
+            presenter.presentedIds.first { it == listOf(unread.id) }
+            assertEquals(LocalLibraryScreenModel.Dialog.Filter, fixture.model.state.value.dialog)
+            fixture.model.updateFilters(LocalLibraryFilters(unread = TriState.ENABLED_NOT), false)
+            presenter.presentedIds.first { it == listOf(read.id) }
+            fixture.model.updateFilters(LocalLibraryFilters(), false)
+            presenter.presentedIds.first { it.size == 2 }
+            coVerify(exactly = 0) { fixture.source.refreshLibrary() }
+        } finally {
+            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `bookmark filter observes chapter changes without a manual refresh`() = runTest {
+        val dispatcher = UnconfinedTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        val manga = Manga.create().copy(id = 1, source = 42, url = "book")
+        val chapter = Chapter.create().copy(id = 1, mangaId = manga.id)
+        val chapters = MutableStateFlow(mapOf(manga.id to listOf(chapter)))
+        val fixture = fixture(flowOf(listOf(manga)), chapterStates = chapters)
+        try {
+            val presenter = presenter()
+            backgroundScope.launch(dispatcher) { fixture.model.mangaPagerFlow.collectLatest(presenter::collectFrom) }
+            presenter.presentedIds.first { it == listOf(manga.id) }
+            fixture.model.updateFilters(LocalLibraryFilters(bookmarked = TriState.ENABLED_IS), false)
+            presenter.presentedIds.first { it.isEmpty() }
+            chapters.value = mapOf(manga.id to listOf(chapter.copy(bookmark = true)))
+            presenter.presentedIds.first { it == listOf(manga.id) }
+            chapters.value = mapOf(manga.id to listOf(chapter))
+            presenter.presentedIds.first { it.isEmpty() }
+            coVerify(exactly = 0) { fixture.source.refreshLibrary() }
+        } finally {
+            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `network download filter reacts to deletion without confusing it with reading progress`() = runTest {
+        val dispatcher = UnconfinedTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        val manga = Manga.create().copy(id = 1, source = 42, url = "book")
+        val counts = mutableMapOf(manga.id to 1)
+        val changes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        val fixture =
+            fixture(flowOf(listOf(manga)), networkStorage = true, downloadCounts = counts, downloadChanges = changes)
+        try {
+            val presenter = presenter()
+            backgroundScope.launch(dispatcher) { fixture.model.mangaPagerFlow.collectLatest(presenter::collectFrom) }
+            fixture.model.updateFilters(LocalLibraryFilters(downloaded = TriState.ENABLED_IS), false)
+            presenter.presentedIds.first { it == listOf(manga.id) }
+            counts[manga.id] = 0
+            changes.emit(Unit)
+            presenter.presentedIds.first { it.isEmpty() }
+            fixture.model.updateFilters(LocalLibraryFilters(downloaded = TriState.ENABLED_NOT), false)
+            presenter.presentedIds.first { it == listOf(manga.id) }
+            coVerify(exactly = 0) { fixture.source.refreshLibrary() }
+        } finally {
+            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `folder title mode updates the owning manga through shared chapter settings`() = runTest {
+        val dispatcher = UnconfinedTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        val folder = Manga.create().copy(id = 9, source = 42, url = "folder")
+        val flags = mockk<SetMangaChapterFlags>()
+        val applied = CompletableDeferred<Unit>()
+        coEvery { flags.awaitSetDisplayMode(folder, Manga.CHAPTER_DISPLAY_FILE_NAME) } coAnswers {
+            applied.complete(Unit)
+            true
+        }
+        val fixture = fixture(flowOf(listOf(folder)), parentUrl = folder.url, setMangaChapterFlags = flags)
+        try {
+            fixture.model.setTitleDisplayMode(Manga.CHAPTER_DISPLAY_FILE_NAME)
+            applied.await()
+            coVerify(exactly = 1) { flags.awaitSetDisplayMode(folder, Manga.CHAPTER_DISPLAY_FILE_NAME) }
+        } finally {
+            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun presenter() = RecordingPresenter()
 
     private class RecordingPresenter : PagingDataPresenter<StateFlow<Manga>>(Dispatchers.Main) {
@@ -208,9 +313,13 @@ class LocalLibraryLoadingTest {
     private fun fixture(
         mangas: Flow<List<Manga>>,
         needsScan: Boolean = false,
-        showReadProgress: Boolean = false,
         networkStorage: Boolean = false,
         progressChapters: Map<Long, List<Chapter>> = emptyMap(),
+        chapterStates: MutableStateFlow<Map<Long, List<Chapter>>> = MutableStateFlow(progressChapters),
+        downloadCounts: Map<Long, Int> = emptyMap(),
+        downloadChanges: MutableSharedFlow<Unit> = MutableSharedFlow(extraBufferCapacity = 1),
+        parentUrl: String? = null,
+        setMangaChapterFlags: SetMangaChapterFlags = mockk(),
         refresh: suspend () -> Result<ConnectionLibraryRefreshResult> = {
             Result.success(ConnectionLibraryRefreshResult(0, 1))
         },
@@ -219,21 +328,32 @@ class LocalLibraryLoadingTest {
         every { source.supportsFileTransfers } returns networkStorage
         val sourceManager = mockk<SourceManager>()
         val sourcePreferences = mockk<SourcePreferences>()
-        val libraryPreferences = mockk<LibraryPreferences>()
         val mangaRepository = mockk<MangaRepository>()
         val getChapters = mockk<GetChaptersByMangaId>()
         val getProgress = mockk<GetEpubProgress>()
-        coEvery { getChapters.await(any<Collection<Long>>()) } returns progressChapters
+        val chapters = mockk<ChapterRepository>()
+        val downloads = mockk<DownloadManager>()
+        every { downloads.cacheChanges } returns downloadChanges
+        every { downloads.getDownloadCount(any<Manga>()) } answers { downloadCounts[firstArg<Manga>().id] ?: 0 }
+        coEvery { chapters.getChapterByMangaIdAsFlow(any(), any()) } answers {
+            val mangaId = firstArg<Long>()
+            chapterStates.map { it[mangaId].orEmpty() }
+        }
+        every { getProgress.subscribeByMangaId(any()) } returns flowOf(emptyList())
+        coEvery { getChapters.await(any<Collection<Long>>()) } coAnswers { chapterStates.value }
         coEvery { getProgress.await(any<Collection<Long>>()) } returns emptyMap()
         coEvery { mangaRepository.getMangaBySourceId(42) } coAnswers { mangas.first() }
+        coEvery { mangaRepository.getMangaByUrlAndSourceId(any(), 42) } coAnswers {
+            mangas.first().firstOrNull { it.url == firstArg<String>() }
+        }
         every { source.readProgressIndexes(any()) } answers {
             firstArg<Collection<String>>().associateWith { LocalReadProgressIndex(1, true) }
         }
+        every { source.indexedEntry(any()) } returns null
         coEvery { source.documentPageCount(any()) } returns 20
         every { sourceManager.getOrStub(42) } returns source
         every { sourcePreferences.sourceDisplayMode } returns
             preference<LibraryDisplayMode>(LibraryDisplayMode.CompactGrid)
-        every { libraryPreferences.showLibraryReadProgress } returns preference(showReadProgress)
         every { source.libraryRefreshes } returns MutableSharedFlow()
         every { source.libraryShelves } returns flowOf(emptyList())
         coEvery { source.needsInitialScan() } returns needsScan
@@ -247,8 +367,10 @@ class LocalLibraryLoadingTest {
                 sourceId = 42, scope = LibraryContentScope.ALL, initialQuery = null,
                 sourceManager = sourceManager, sourcePreferences = sourcePreferences, mangaRepository = mangaRepository,
                 getChaptersByMangaId = getChapters, getEpubProgress = getProgress,
-                libraryPreferences = libraryPreferences, entryOpenManager = mockk(), updateManga = mockk(),
+                setMangaChapterFlags = setMangaChapterFlags, entryOpenManager = mockk(), updateManga = mockk(),
                 coverCache = mockk(), itemActions = mockk(),
+                chapterRepository = chapters, downloadManager = downloads,
+                parentUrl = parentUrl,
             )
         }
         return Fixture(model, source, holderKey)

@@ -1,10 +1,12 @@
 package eu.kanade.presentation.history
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
@@ -25,6 +27,7 @@ import tachiyomi.domain.history.model.HistoryWithRelations
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.components.ListGroupHeader
+import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
@@ -36,6 +39,7 @@ fun HistoryScreen(
     state: HistoryScreenModel.State,
     snackbarHostState: SnackbarHostState,
     onSearchQueryChange: (String?) -> Unit,
+    onRefresh: () -> Unit,
     onClickCover: (mangaId: Long) -> Unit,
     onClickResume: (mangaId: Long, chapterId: Long) -> Unit,
     onDialogChange: (HistoryScreenModel.Dialog?) -> Unit,
@@ -49,6 +53,12 @@ fun HistoryScreen(
                 actions = {
                     AppBarActions(
                         persistentListOf(
+                            AppBar.Action(
+                                title = stringResource(MR.strings.action_webview_refresh),
+                                icon = Icons.Outlined.Refresh,
+                                onClick = onRefresh,
+                                enabled = !state.isRefreshing && state.list != null,
+                            ),
                             AppBar.Action(
                                 title = stringResource(MR.strings.pref_clear_history),
                                 icon = Icons.Outlined.DeleteSweep,
@@ -64,27 +74,35 @@ fun HistoryScreen(
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { contentPadding ->
-        state.list.let {
-            if (it == null) {
-                LoadingScreen(Modifier.padding(contentPadding))
-            } else if (it.isEmpty()) {
-                val msg = if (!state.searchQuery.isNullOrEmpty()) {
-                    MR.strings.no_results_found
+        PullRefresh(
+            refreshing = state.isRefreshing,
+            enabled = !state.isRefreshing && state.list != null,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize(),
+            indicatorPadding = PaddingValues(top = contentPadding.calculateTopPadding()),
+        ) {
+            state.list.let {
+                if (it == null) {
+                    LoadingScreen(Modifier.padding(contentPadding))
+                } else if (it.isEmpty()) {
+                    val msg = if (!state.searchQuery.isNullOrEmpty()) {
+                        MR.strings.no_results_found
+                    } else {
+                        MR.strings.information_no_recent_manga
+                    }
+                    EmptyScreen(
+                        stringRes = msg,
+                        modifier = Modifier.padding(contentPadding),
+                    )
                 } else {
-                    MR.strings.information_no_recent_manga
+                    HistoryScreenContent(
+                        history = it,
+                        contentPadding = contentPadding,
+                        onClickCover = { history -> onClickCover(history.mangaId) },
+                        onClickResume = { history -> onClickResume(history.mangaId, history.chapterId) },
+                        onClickDelete = { item -> onDialogChange(HistoryScreenModel.Dialog.Delete(item)) },
+                    )
                 }
-                EmptyScreen(
-                    stringRes = msg,
-                    modifier = Modifier.padding(contentPadding),
-                )
-            } else {
-                HistoryScreenContent(
-                    history = it,
-                    contentPadding = contentPadding,
-                    onClickCover = { history -> onClickCover(history.mangaId) },
-                    onClickResume = { history -> onClickResume(history.mangaId, history.chapterId) },
-                    onClickDelete = { item -> onDialogChange(HistoryScreenModel.Dialog.Delete(item)) },
-                )
             }
         }
     }
@@ -99,6 +117,7 @@ private fun HistoryScreenContent(
     onClickDelete: (HistoryWithRelations) -> Unit,
 ) {
     FastScrollLazyColumn(
+        modifier = Modifier.fillMaxSize(),
         contentPadding = contentPadding,
     ) {
         items(
@@ -149,6 +168,7 @@ internal fun HistoryScreenPreviews(
             state = historyState,
             snackbarHostState = SnackbarHostState(),
             onSearchQueryChange = {},
+            onRefresh = {},
             onClickCover = {},
             onClickResume = { _, _ -> run {} },
             onDialogChange = {},

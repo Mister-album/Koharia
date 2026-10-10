@@ -144,6 +144,18 @@ class PagerPageHolder(
         pairContainer?.canPanRight() == true
     }
 
+    fun canNavigatePanUp(): Boolean = if (pairViews.isEmpty()) {
+        canPanUp()
+    } else {
+        pairContainer?.canPanUp() == true
+    }
+
+    fun canNavigatePanDown(): Boolean = if (pairViews.isEmpty()) {
+        canPanDown()
+    } else {
+        pairContainer?.canPanDown() == true
+    }
+
     fun navigatePanLeft() {
         if (pairViews.isEmpty()) panLeft() else pairContainer?.panLeft()
     }

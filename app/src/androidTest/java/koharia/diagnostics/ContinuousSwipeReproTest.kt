@@ -76,7 +76,11 @@ class ContinuousSwipeReproTest {
             lateinit var gate: koharia.epub.SwipePageTurnGate
             val actions = mutableListOf<Int>()
             scenario.onActivity { activity ->
-                gate = koharia.epub.SwipePageTurnGate(activity) { true }
+                gate = koharia.epub.SwipePageTurnGate(
+                    activity,
+                    onPageTurnSwipe = { _, _ -> error("Disabled swipes must not turn pages") },
+                    interceptPageTurns = { false },
+                ) { true }
                 gate.addView(
                     object : View(activity) {
                         override fun onTouchEvent(event: MotionEvent): Boolean {

@@ -17,6 +17,7 @@ import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import koharia.connection.ConnectionPreferences
 import koharia.connection.LibraryConnectionProfile
@@ -54,7 +55,43 @@ class PagerVolumeKeyReadyDeviceTest {
     @Test
     fun rapidVolumeKeysNeverRevealAPageThatIsStillRendering() = verify(presses = 10)
 
-    private fun verify(presses: Int) = runBlocking(Dispatchers.IO) {
+    @Test
+    fun queuedReverseKeysDrainWithoutAnimation() = verify(presses = 3, reverseAfterWaiting = true, eInkMode = false)
+
+    @Test
+    fun queuedReverseKeysDrainInEInkMode() = verify(presses = 3, reverseAfterWaiting = true)
+
+    @Test
+    fun queuedReverseKeysDrainWithDefaultPrefetch() = verify(
+        presses = 3,
+        reverseAfterWaiting = true,
+        eInkMode = false,
+        retainReadyTargets = false,
+    )
+
+    @Test
+    fun queuedReverseKeysDrainRightToLeft() = verify(
+        presses = 3,
+        reverseAfterWaiting = true,
+        eInkMode = false,
+        mode = ReadingMode.RIGHT_TO_LEFT,
+    )
+
+    @Test
+    fun queuedReverseKeysDrainVertically() = verify(
+        presses = 3,
+        reverseAfterWaiting = true,
+        eInkMode = false,
+        mode = ReadingMode.VERTICAL,
+    )
+
+    private fun verify(
+        presses: Int,
+        reverseAfterWaiting: Boolean = false,
+        eInkMode: Boolean = true,
+        retainReadyTargets: Boolean = true,
+        mode: ReadingMode = ReadingMode.LEFT_TO_RIGHT,
+    ) = runBlocking(Dispatchers.IO) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         check(context.packageName == "app.koharia.dev.devicefixture")
         val connections = Injekt.get<ConnectionPreferences>()
@@ -90,21 +127,24 @@ class PagerVolumeKeyReadyDeviceTest {
             override(preferences.pageLayout, PageLayout.SINGLE_PAGE.value)
             override(preferences.dualPageSplitPaged, false)
             override(preferences.navigateToPan, false)
+            override(preferences.pagerPageTransitionEffect, PageTransitionEffect.NONE.value)
             override(Injekt.get<BasePreferences>().shownOnboardingFlow, true)
             // E-Ink mode is what forces the transition effect to NONE on e-ink hardware.
-            override(eInkPreferences.enabled, true)
+            override(eInkPreferences.enabled, eInkMode)
 
             val comic = File(directory, "volume-key-test.cbz")
+            val pageWidth = if (reverseAfterWaiting) 600 else PAGE_WIDTH
+            val pageHeight = if (reverseAfterWaiting) 900 else PAGE_HEIGHT
             ZipOutputStream(comic.outputStream()).use { zip ->
                 repeat(PAGE_COUNT) { index ->
-                    val image = Bitmap.createBitmap(PAGE_WIDTH, PAGE_HEIGHT, Bitmap.Config.ARGB_8888)
+                    val image = Bitmap.createBitmap(pageWidth, pageHeight, Bitmap.Config.ARGB_8888)
                     val canvas = Canvas(image)
                     canvas.drawColor(Color.rgb(220, 220, 220))
                     canvas.drawRect(
                         0f,
                         0f,
-                        PAGE_WIDTH.toFloat(),
-                        PAGE_HEIGHT / 4f,
+                        pageWidth.toFloat(),
+                        pageHeight / 4f,
                         Paint().apply { color = Color.rgb(30, 60 + index * 12, 140) },
                     )
                     zip.putNextEntry(ZipEntry("%03d.png".format(index)))
@@ -119,7 +159,7 @@ class PagerVolumeKeyReadyDeviceTest {
                         url = IncomingMediaSessionLocator.seriesUrl(sourceId, sessionId)
                         title = "Volume key readiness $sessionId"
                         initialized = true
-                    }.toDomainManga(sourceId),
+                    }.toDomainManga(sourceId).copy(viewerFlags = mode.flagValue.toLong()),
                 ),
             ).single()
             mangaId = manga.id
@@ -133,9 +173,23 @@ class PagerVolumeKeyReadyDeviceTest {
                     ),
                 ),
             ).single()
-            val intent = ReaderActivity.newIntent(context, manga.id, chapter.id, sourceId, pageIndex = 0)
+            val initialPage = if (reverseAfterWaiting) 5 else 0
+            val intent = ReaderActivity.newIntent(context, manga.id, chapter.id, sourceId, pageIndex = initialPage)
             FixtureActivityLauncher.launch<ReaderActivity>(intent).use { scenario ->
-                awaitRenderedPage(scenario, 0)
+                awaitRenderedPage(scenario, initialPage)
+                if (reverseAfterWaiting) {
+                    if (retainReadyTargets) {
+                        scenario.onActivity { activity ->
+                            val viewer = activity.viewModel.state.value.viewer as PagerViewer
+                            viewer.pager.offscreenPageLimit = presses + 1
+                        }
+                        for (page in initialPage + 1 - presses..initialPage + 1) {
+                            awaitRenderedPage(scenario, page, requireSelected = false)
+                        }
+                    } else {
+                        awaitRenderedPage(scenario, initialPage + 1, requireSelected = false)
+                    }
+                }
                 val revealedWhileLoading = mutableListOf<String>()
                 scenario.onActivity { activity ->
                     activity.hideMenu()
@@ -162,13 +216,43 @@ class PagerVolumeKeyReadyDeviceTest {
                             }
                         },
                     )
-                    repeat(presses) {
-                        viewer.handleKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_DOWN))
-                        viewer.handleKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_VOLUME_DOWN))
+                    fun press(key: Int) {
+                        viewer.handleKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, key))
+                        viewer.handleKeyEvent(KeyEvent(KeyEvent.ACTION_UP, key))
+                    }
+                    if (reverseAfterWaiting) {
+                        val currentPosition = viewer.pager.currentItem
+                        val target = adapter(viewer).slots.filterIsInstance<PagerSlot.Pages>()
+                            .single { it.first.index == initialPage + 1 }
+                        val holder = viewer.pager.children.filterIsInstance<PagerPageHolder>().single {
+                            it.slot ==
+                                target
+                        }
+                        // Hold readiness to reproduce a slow offscreen render without timing a network response.
+                        val readiness = PagerPageHolder::class.java.getDeclaredField("spreadDisplayed")
+                            .apply { isAccessible = true }
+                        readiness.setBoolean(holder, false)
+                        try {
+                            press(KeyEvent.KEYCODE_VOLUME_DOWN)
+                            assertEquals(currentPosition, viewer.pager.currentItem)
+                            repeat(presses) { press(KeyEvent.KEYCODE_VOLUME_UP) }
+                            assertEquals(
+                                if (mode == ReadingMode.RIGHT_TO_LEFT) presses else -presses,
+                                pendingPageTurnDelta(viewer),
+                            )
+                        } finally {
+                            readiness.setBoolean(holder, true)
+                        }
+                        viewer.onTransitionTargetReady(target)
+                    } else {
+                        repeat(presses) { press(KeyEvent.KEYCODE_VOLUME_DOWN) }
                     }
                 }
                 // Every requested turn must still be honoured, however slowly pages arrive.
-                awaitRenderedPage(scenario, presses)
+                awaitRenderedPage(scenario, if (reverseAfterWaiting) initialPage + 1 - presses else presses)
+                scenario.onActivity { activity ->
+                    assertEquals(0, pendingPageTurnDelta(activity.viewModel.state.value.viewer as PagerViewer))
+                }
                 logcat {
                     "PagerVolumeKeyReady: revealedWhileLoading=$revealedWhileLoading"
                 }
@@ -190,7 +274,11 @@ class PagerVolumeKeyReadyDeviceTest {
         }
     }
 
-    private fun awaitRenderedPage(scenario: ActivityScenario<ReaderActivity>, pageIndex: Int) {
+    private fun awaitRenderedPage(
+        scenario: ActivityScenario<ReaderActivity>,
+        pageIndex: Int,
+        requireSelected: Boolean = true,
+    ) {
         val deadline = SystemClock.uptimeMillis() + 30_000
         var diagnostic = ""
         while (SystemClock.uptimeMillis() < deadline) {
@@ -198,7 +286,11 @@ class PagerVolumeKeyReadyDeviceTest {
             scenario.onActivity { activity ->
                 val viewer = activity.viewModel.state.value.viewer as? PagerViewer ?: return@onActivity
                 val adapter = adapter(viewer)
-                val slot = adapter.currentSlot() as? PagerSlot.Pages
+                val slot = if (requireSelected) {
+                    adapter.currentSlot() as? PagerSlot.Pages
+                } else {
+                    adapter.slots.filterIsInstance<PagerSlot.Pages>().firstOrNull { it.first.index == pageIndex }
+                }
                 diagnostic = "position=${viewer.pager.currentItem} count=${adapter.count} " +
                     "slots=${adapter.slots.mapIndexed { index, value ->
                         "$index:${value::class.simpleName}"

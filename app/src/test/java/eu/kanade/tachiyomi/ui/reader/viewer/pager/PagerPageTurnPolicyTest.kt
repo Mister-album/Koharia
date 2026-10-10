@@ -1,11 +1,39 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class PagerPageTurnPolicyTest {
+
+    @Test
+    fun `no animation uses discrete swipes on either paging axis`() {
+        for (horizontal in listOf(true, false)) {
+            assertTrue(PagerPageTurnPolicy.shouldInterceptSwipe(PageTransitionEffect.NONE, horizontal, true))
+        }
+    }
+
+    @Test
+    fun `disabled system animations use discrete swipes for every effect`() {
+        for (effect in PageTransitionEffect.entries) {
+            for (horizontal in listOf(true, false)) {
+                assertTrue(PagerPageTurnPolicy.shouldInterceptSwipe(effect, horizontal, false))
+            }
+        }
+    }
+
+    @Test
+    fun `native page transformers retain dragging except horizontal curl`() {
+        for (effect in PageTransitionEffect.entries.filter { it != PageTransitionEffect.NONE }) {
+            assertEquals(
+                effect == PageTransitionEffect.CURL,
+                PagerPageTurnPolicy.shouldInterceptSwipe(effect, true, true),
+            )
+            assertFalse(PagerPageTurnPolicy.shouldInterceptSwipe(effect, false, true))
+        }
+    }
 
     @Test
     fun `rendered destination page turns immediately`() {

@@ -84,6 +84,8 @@ internal class DoublePageLayout(
 
     fun canPanLeft(): Boolean = bounds[0].left < -1f
     fun canPanRight(): Boolean = bounds[1].right > width + 1f
+    fun canPanUp(): Boolean = bounds.any { it.top < -1f }
+    fun canPanDown(): Boolean = bounds.any { it.bottom > height + 1f }
     fun panLeft() {
         offsetX += width
         updateViewport()

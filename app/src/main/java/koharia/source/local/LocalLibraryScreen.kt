@@ -163,7 +163,7 @@ data class LocalLibraryScreen(
                 mangaRepository = mangaRepository,
                 getChaptersByMangaId = Injekt.get(),
                 getEpubProgress = getEpubProgress,
-                libraryPreferences = libraryPreferences,
+                setMangaChapterFlags = Injekt.get(),
                 entryOpenManager = LocalLibraryEntryOpenManager(
                     syncChaptersWithSource = syncChaptersWithSource,
                     chapterRepository = chapterRepository,
@@ -171,6 +171,8 @@ data class LocalLibraryScreen(
                 ),
                 updateManga = updateManga,
                 coverCache = coverCache,
+                chapterRepository = chapterRepository,
+                downloadManager = Injekt.get(),
                 itemActions = LocalLibraryItemActions(
                     syncChaptersWithSource = syncChaptersWithSource,
                     chapterRepository = chapterRepository,
@@ -210,6 +212,7 @@ data class LocalLibraryScreen(
         }
         val showLibraryReadProgress by readProgressPreference.collectAsState()
         val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
+        val entryStates by screenModel.entryStates.collectAsState()
         val readingUnitCounts by screenModel.readingUnitCounts.collectAsState()
         val configuration = LocalConfiguration.current
         val columnsPreference = if (parentUrl != null) {
@@ -392,6 +395,8 @@ data class LocalLibraryScreen(
                     selectedIds = selectedIds, displayMode = seriesDisplayMode,
                     columns = columns.takeIf { it >= 0 } ?: libraryPreferences.chapterCoverGridColumns.get(),
                     readProgress = readProgressByUrl,
+                    entryStates = entryStates.orEmpty(),
+                    titleDisplayMode = folder.displayMode,
                     showReadProgress = showChapterProgress,
                     showFileSize = showFileSize,
                     refreshing = isRefreshing || mangaList.loadState.refresh is LoadState.Loading,
@@ -708,8 +713,16 @@ data class LocalLibraryScreen(
                 LocalLibraryFilterDialog(
                     filters = state.filters,
                     rememberFilters = state.rememberFilters,
+                    isFolder = parentUrl != null,
+                    networkStorage = localFolderSource?.supportsFileTransfers == true,
+                    availableScanlators = state.availableScanlators,
+                    libraryPreferences = libraryPreferences,
+                    displayMode = screenModel.displayMode,
+                    onDisplayModeChanged = { screenModel.displayMode = it },
+                    titleDisplayMode = parentManga?.displayMode ?: Manga.CHAPTER_DISPLAY_NAME,
+                    onTitleDisplayModeChanged = screenModel::setTitleDisplayMode,
                     onDismissRequest = screenModel::dismissDialog,
-                    onApply = screenModel::applyFilters,
+                    onFiltersChanged = screenModel::updateFilters,
                 )
             }
             is LocalLibraryScreenModel.Dialog.MoveToBookshelf -> {

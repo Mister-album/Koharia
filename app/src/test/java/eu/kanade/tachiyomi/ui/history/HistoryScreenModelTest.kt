@@ -9,22 +9,29 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import koharia.connection.ConnectionEpubHistorySyncAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
 import koharia.connection.ConnectionPreferences
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.chapter.model.Chapter
@@ -34,6 +41,7 @@ import tachiyomi.domain.history.interactor.RemoveHistory
 import tachiyomi.domain.history.model.HistoryWithRelations
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.source.service.SourceManager
+import java.io.IOException
 import java.util.Date
 import java.util.UUID
 
@@ -209,8 +217,238 @@ class HistoryScreenModelTest {
         }
     }
 
-    private class Fixture(initialAllowed: Set<Long>?) {
-        val source = mockk<CatalogueSource>(moreInterfaces = arrayOf(ConnectionHistorySyncAdapter::class))
+    @Test
+    fun `manual refresh synchronizes and reloads account membership without losing the search`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val fixture = Fixture(setOf(1))
+        try {
+            fixture.awaitVisible(1)
+            fixture.initialSync.await()
+            fixture.model.updateSearchQuery("Book")
+            fixture.awaitVisible(1)
+            coEvery { fixture.adapter.syncConnectionHistory() } coAnswers {
+                fixture.allowed = setOf(2)
+            }
+
+            fixture.model.refreshHistory()
+            fixture.awaitVisible(2)
+            fixture.model.state.first { !it.isRefreshing }
+
+            assertEquals("Book", fixture.model.state.value.searchQuery)
+            coVerify(exactly = 2) { fixture.adapter.syncConnectionHistory() }
+            io.mockk.verify(exactly = 2) { fixture.getHistory.subscribe("Book", 7) }
+        } finally {
+            fixture.dispose()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `refresh keeps the current rows visible and ignores repeated requests while syncing`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val fixture = Fixture(setOf(1))
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        try {
+            fixture.awaitVisible(1)
+            fixture.initialSync.await()
+            coEvery { fixture.adapter.syncConnectionHistory() } coAnswers {
+                entered.complete(Unit)
+                release.await()
+            }
+
+            fixture.model.refreshHistory()
+            entered.await()
+            fixture.model.refreshHistory()
+            fixture.model.refreshHistory()
+
+            assertTrue(fixture.model.state.value.isRefreshing)
+            assertEquals(listOf(1L), fixture.visible())
+            coVerify(exactly = 2) { fixture.adapter.syncConnectionHistory() }
+
+            release.complete(Unit)
+            fixture.model.state.first { !it.isRefreshing }
+            coVerify(exactly = 2) { fixture.adapter.syncConnectionHistory() }
+        } finally {
+            release.complete(Unit)
+            fixture.dispose()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `failed refresh retains history reports an error and can be retried`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val fixture = Fixture(setOf(1))
+        try {
+            fixture.awaitVisible(1)
+            fixture.initialSync.await()
+            coEvery { fixture.adapter.syncConnectionHistory() } throws IOException("offline")
+
+            fixture.model.refreshHistory()
+            fixture.model.events.first { it == HistoryScreenModel.Event.HistoryRefreshFailed }
+            fixture.model.state.first { !it.isRefreshing }
+
+            assertEquals(listOf(1L), fixture.visible())
+            coEvery { fixture.adapter.syncConnectionHistory() } returns Unit
+            fixture.model.refreshHistory()
+            fixture.model.state.first { !it.isRefreshing }
+
+            coVerify(exactly = 3) { fixture.adapter.syncConnectionHistory() }
+            assertEquals(listOf(1L), fixture.visible())
+        } finally {
+            fixture.dispose()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `switching account cancels the old refresh without reporting a refresh failure`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val fixture = Fixture(setOf(1))
+        val entered = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        try {
+            fixture.awaitVisible(1)
+            fixture.initialSync.await()
+            coEvery { fixture.adapter.syncConnectionHistory() } coAnswers {
+                entered.complete(Unit)
+                try {
+                    CompletableDeferred<Unit>().await()
+                } catch (error: CancellationException) {
+                    cancelled.complete(Unit)
+                    throw error
+                }
+            }
+
+            fixture.model.refreshHistory()
+            entered.await()
+            coEvery { fixture.adapter.syncConnectionHistory() } returns Unit
+            fixture.allowed = setOf(2)
+            fixture.changeAccount()
+            cancelled.await()
+            fixture.awaitVisible(2)
+
+            assertFalse(fixture.model.state.value.isRefreshing)
+            assertEquals(listOf(2L), fixture.visible())
+            fixture.model.refreshHistory()
+            fixture.model.state.first { !it.isRefreshing }
+            assertEquals(listOf(2L), fixture.visible())
+        } finally {
+            fixture.dispose()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `providers without history sync still reload their local history`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val fixture = Fixture(null)
+        try {
+            fixture.awaitVisible(2, 3, 1)
+            fixture.initialSync.await()
+            val localSource = mockk<CatalogueSource>()
+            every { localSource.id } returns 7
+            fixture.activeSource = localSource
+            fixture.catalogue.value = listOf(localSource)
+            fixture.awaitVisible(2, 3, 1)
+            every { fixture.getHistory.subscribe("", 7) } returns flowOf(listOf(history(4, 400)))
+
+            fixture.model.refreshHistory()
+            fixture.awaitVisible(4)
+            fixture.model.state.first { !it.isRefreshing }
+
+            coVerify(exactly = 1) { fixture.adapter.syncConnectionHistory() }
+        } finally {
+            fixture.dispose()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `late failure from an obsolete account cannot stop the new refresh`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val fixture = Fixture(setOf(1))
+        val oldEntered = CompletableDeferred<Unit>()
+        val oldRelease = CompletableDeferred<Unit>()
+        val newEntered = CompletableDeferred<Unit>()
+        val newRelease = CompletableDeferred<Unit>()
+        val failure = backgroundScope.async(UnconfinedTestDispatcher(testScheduler)) {
+            fixture.model.events.first { it == HistoryScreenModel.Event.HistoryRefreshFailed }
+        }
+        var calls = 0
+        try {
+            fixture.awaitVisible(1)
+            fixture.initialSync.await()
+            coEvery { fixture.adapter.syncConnectionHistory() } coAnswers {
+                when (calls++) {
+                    0 -> withContext(NonCancellable) {
+                        oldEntered.complete(Unit)
+                        oldRelease.await()
+                        throw IOException("obsolete account")
+                    }
+                    1 -> Unit
+                    else -> {
+                        newEntered.complete(Unit)
+                        newRelease.await()
+                    }
+                }
+            }
+
+            fixture.model.refreshHistory()
+            oldEntered.await()
+            fixture.allowed = setOf(2)
+            fixture.changeAccount()
+            fixture.awaitVisible(2)
+            fixture.model.state.first { !it.isRefreshing }
+            fixture.model.refreshHistory()
+            oldRelease.complete(Unit)
+            newEntered.await()
+
+            assertTrue(fixture.model.state.value.isRefreshing)
+            assertFalse(failure.isCompleted)
+            assertEquals(listOf(2L), fixture.visible())
+
+            newRelease.complete(Unit)
+            fixture.model.state.first { !it.isRefreshing }
+            assertFalse(failure.isCompleted)
+        } finally {
+            oldRelease.complete(Unit)
+            newRelease.complete(Unit)
+            fixture.dispose()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `explicit refresh also synchronizes EPUB progress when the provider supports it`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val fixture = Fixture(null, includeEpubSync = true)
+        val epubAdapter = fixture.source as ConnectionEpubHistorySyncAdapter
+        try {
+            fixture.awaitVisible(2, 3, 1)
+            fixture.initialSync.await()
+            coVerify(exactly = 0) { epubAdapter.syncConnectionEpubProgress() }
+
+            fixture.model.refreshHistory()
+            fixture.model.state.first { !it.isRefreshing }
+
+            coVerify(exactly = 2) { fixture.adapter.syncConnectionHistory() }
+            coVerify(exactly = 1) { epubAdapter.syncConnectionEpubProgress() }
+        } finally {
+            fixture.dispose()
+            Dispatchers.resetMain()
+        }
+    }
+
+    private class Fixture(initialAllowed: Set<Long>?, includeEpubSync: Boolean = false) {
+        val source = mockk<CatalogueSource>(
+            moreInterfaces = if (includeEpubSync) {
+                arrayOf(ConnectionHistorySyncAdapter::class, ConnectionEpubHistorySyncAdapter::class)
+            } else {
+                arrayOf(ConnectionHistorySyncAdapter::class)
+            },
+        )
         val adapter = source as ConnectionHistorySyncAdapter
         var activeSource: CatalogueSource = source
         var allowed: Set<Long>? = initialAllowed
@@ -219,7 +457,8 @@ class HistoryScreenModelTest {
         val history = MutableStateFlow(listOf(history(2, 300), history(3, 200), history(1, 100)))
         val nextChapters = mockk<GetNextChapters>()
         val removeHistory = mockk<RemoveHistory>()
-        private val getHistory = mockk<GetHistory>()
+        val getHistory = mockk<GetHistory>()
+        val initialSync = CompletableDeferred<Unit>()
         private val sourceManager = object : SourceManager {
             override val isInitialized = MutableStateFlow(true)
             override val catalogueSources get() = catalogue
@@ -242,7 +481,13 @@ class HistoryScreenModelTest {
             every { activePreference.changes() } returns MutableStateFlow(7L)
             every { adapter.historyScopeChanges } returns scopeChanges.map { Unit }
             coEvery { adapter.historyMangaIds() } coAnswers { allowed }
-            coEvery { adapter.syncConnectionHistory() } returns Unit
+            coEvery { adapter.syncConnectionHistory() } coAnswers {
+                initialSync.complete(Unit)
+                Unit
+            }
+            if (includeEpubSync) {
+                coEvery { (source as ConnectionEpubHistorySyncAdapter).syncConnectionEpubProgress() } returns Unit
+            }
             every { getHistory.subscribe(any(), 7) } returns history
             coEvery { removeHistory.await(any<Long>()) } returns Unit
             coEvery { removeHistory.await(any<HistoryWithRelations>()) } returns Unit

@@ -107,9 +107,11 @@ fun ChapterSettingsDialog(
         ) {
             when (page) {
                 0 -> {
-                    FilterPage(
+                    ChapterFilterPage(
                         downloadFilter = manga?.downloadedFilter ?: TriState.DISABLED,
-                        isConnectionCacheMode = isConnectionCacheMode,
+                        downloadFilterLabel = stringResource(
+                            if (isConnectionCacheMode) MR.strings.komga_label_cached else MR.strings.label_downloaded,
+                        ),
                         onDownloadFilterChanged = onDownloadFilterChanged
                             .takeUnless { downloadedOnly },
                         unreadFilter = manga?.unreadFilter ?: TriState.DISABLED,
@@ -121,21 +123,20 @@ fun ChapterSettingsDialog(
                     )
                 }
                 1 -> {
-                    SortPage(
+                    ChapterSortPage(
                         sortingMode = manga?.sorting ?: 0,
                         sortDescending = manga?.sortDescending() ?: false,
                         onItemSelected = onSortModeChanged,
                     )
                 }
                 2 -> {
-                    DisplayPage(
+                    ChapterDisplayPage(
                         displayMode = manga?.displayMode ?: 0,
                         onDisplayModeSelected = onDisplayModeChanged,
                         showChapterReadProgress = showChapterReadProgress,
                         onShowChapterReadProgressChanged = onShowChapterReadProgressChanged,
                         showChapterFileSize = showChapterFileSize,
                         onShowChapterFileSizeChanged = onShowChapterFileSizeChanged,
-                        showChapterFileSizeOption = isConnectionCacheMode,
                         hideMissingChapters = hideMissingChapters,
                         onHideMissingChaptersChanged = onHideMissingChaptersChanged,
                     )
@@ -146,9 +147,9 @@ fun ChapterSettingsDialog(
 }
 
 @Composable
-private fun ColumnScope.FilterPage(
+internal fun ColumnScope.ChapterFilterPage(
     downloadFilter: TriState,
-    isConnectionCacheMode: Boolean,
+    downloadFilterLabel: String,
     onDownloadFilterChanged: ((TriState) -> Unit)?,
     unreadFilter: TriState,
     onUnreadFilterChanged: (TriState) -> Unit,
@@ -158,9 +159,7 @@ private fun ColumnScope.FilterPage(
     onScanlatorFilterClicked: (() -> Unit),
 ) {
     TriStateItem(
-        label = stringResource(
-            if (isConnectionCacheMode) MR.strings.komga_label_cached else MR.strings.label_downloaded,
-        ),
+        label = downloadFilterLabel,
         state = downloadFilter,
         onClick = onDownloadFilterChanged,
     )
@@ -210,7 +209,7 @@ fun ScanlatorFilterItem(
 }
 
 @Composable
-private fun ColumnScope.SortPage(
+internal fun ColumnScope.ChapterSortPage(
     sortingMode: Long,
     sortDescending: Boolean,
     onItemSelected: (Long) -> Unit,
@@ -230,16 +229,16 @@ private fun ColumnScope.SortPage(
 }
 
 @Composable
-private fun ColumnScope.DisplayPage(
+internal fun ColumnScope.ChapterDisplayPage(
     displayMode: Long,
     onDisplayModeSelected: (Long) -> Unit,
     showChapterReadProgress: Boolean,
     onShowChapterReadProgressChanged: (Boolean) -> Unit,
     showChapterFileSize: Boolean,
     onShowChapterFileSizeChanged: (Boolean) -> Unit,
-    showChapterFileSizeOption: Boolean,
     hideMissingChapters: Boolean,
     onHideMissingChaptersChanged: (Boolean) -> Unit,
+    showMissingChaptersOption: Boolean = true,
 ) {
     SwitchPreferenceWidget(
         title = stringResource(MR.strings.pref_show_chapter_read_progress),
@@ -247,18 +246,18 @@ private fun ColumnScope.DisplayPage(
         checked = showChapterReadProgress,
         onCheckedChanged = onShowChapterReadProgressChanged,
     )
-    if (showChapterFileSizeOption) {
+    SwitchPreferenceWidget(
+        title = stringResource(MR.strings.pref_show_chapter_file_size),
+        checked = showChapterFileSize,
+        onCheckedChanged = onShowChapterFileSizeChanged,
+    )
+    if (showMissingChaptersOption) {
         SwitchPreferenceWidget(
-            title = stringResource(MR.strings.pref_show_chapter_file_size),
-            checked = showChapterFileSize,
-            onCheckedChanged = onShowChapterFileSizeChanged,
+            title = stringResource(MR.strings.pref_show_missing_chapter_indicators),
+            checked = !hideMissingChapters,
+            onCheckedChanged = { onHideMissingChaptersChanged(!it) },
         )
     }
-    SwitchPreferenceWidget(
-        title = stringResource(MR.strings.pref_show_missing_chapter_indicators),
-        checked = !hideMissingChapters,
-        onCheckedChanged = { onHideMissingChaptersChanged(!it) },
-    )
 
     Text(
         text = stringResource(MR.strings.chapter_title_display_mode),

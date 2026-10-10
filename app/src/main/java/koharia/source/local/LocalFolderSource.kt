@@ -680,6 +680,16 @@ class LocalFolderSource(
                     libraryItems[LocalLibraryLocator.itemKey(rootId, location.relativePath)]?.modifiedAt
                 } ?: 0L
             }
+            3 -> filtered.sortedWith(
+                compareBy<Manga> {
+                    ChapterRecognition.parseChapterNumber(
+                        parent?.relativePath?.substringAfterLast('/').orEmpty(),
+                        it.title,
+                        -1.0,
+                    )
+                }
+                    .thenComparator { first, second -> first.title.compareToCaseInsensitiveNaturalOrder(second.title) },
+            )
             else -> filtered.sortedWith { first, second ->
                 first.title.compareToCaseInsensitiveNaturalOrder(second.title)
             }

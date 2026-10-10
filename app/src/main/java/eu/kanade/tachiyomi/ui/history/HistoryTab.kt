@@ -75,6 +75,7 @@ data object HistoryTab : Tab {
             state = state,
             snackbarHostState = snackbarHostState,
             onSearchQueryChange = screenModel::updateSearchQuery,
+            onRefresh = screenModel::refreshHistory,
             onClickCover = { navigator.push(MangaScreen(it)) },
             onClickResume = screenModel::getNextChapterForManga,
             onDialogChange = screenModel::setDialog,
@@ -136,6 +137,8 @@ data object HistoryTab : Tab {
                         snackbarHostState.showSnackbar(context.stringResource(MR.strings.internal_error))
                     HistoryScreenModel.Event.HistoryCleared ->
                         snackbarHostState.showSnackbar(context.stringResource(MR.strings.clear_history_completed))
+                    HistoryScreenModel.Event.HistoryRefreshFailed ->
+                        snackbarHostState.showSnackbar(context.stringResource(MR.strings.history_refresh_failed))
                     is HistoryScreenModel.Event.OpenChapter -> openChapter(
                         context,
                         scope,

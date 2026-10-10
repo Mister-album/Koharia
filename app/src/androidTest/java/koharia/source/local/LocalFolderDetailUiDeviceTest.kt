@@ -152,6 +152,8 @@ class LocalFolderDetailUiDeviceTest {
                                 displayMode = displayMode,
                                 columns = 2,
                                 readProgress = mapOf("another-folder" to MangaReadProgress(1, 2)),
+                                entryStates = emptyMap(),
+                                titleDisplayMode = Manga.CHAPTER_DISPLAY_NAME,
                                 showReadProgress = true,
                                 showFileSize = false,
                                 refreshing = false,

@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import koharia.connection.LibraryContentScope
 import kotlinx.serialization.Serializable
+import tachiyomi.core.common.preference.TriState
 
 @Immutable
 @Serializable
@@ -18,6 +19,12 @@ data class LocalLibraryFilters(
     val sort: Int = 0,
     val descending: Boolean = false,
     val foldersFirst: Boolean = false,
+    val downloaded: TriState = TriState.DISABLED,
+    val unread: TriState = TriState.DISABLED,
+    val started: TriState = TriState.DISABLED,
+    val bookmarked: TriState = TriState.DISABLED,
+    val completed: TriState = TriState.DISABLED,
+    val excludedScanlators: Set<String> = emptySet(),
 ) {
     val isActive: Boolean
         get() = series.isNotBlank() ||
@@ -27,7 +34,14 @@ data class LocalLibraryFilters(
             genre.isNotBlank() ||
             format.isNotBlank() ||
             sort != 0 ||
-            descending
+            descending ||
+            foldersFirst ||
+            hasEntryStateFilters ||
+            completed != TriState.DISABLED
+
+    val hasEntryStateFilters: Boolean
+        get() = downloaded != TriState.DISABLED || unread != TriState.DISABLED ||
+            started != TriState.DISABLED || bookmarked != TriState.DISABLED || excludedScanlators.isNotEmpty()
 
     fun toFilterList(scope: LibraryContentScope, bookshelfId: String? = null): FilterList = FilterList(
         LocalLibraryScopeFilter(scope),

@@ -1115,30 +1115,6 @@ class Downloader(
     }
 
     /**
-     * Some Android document providers reject an in-tree rename even though reading and writing
-     * the same directory is allowed. Copying through the provider keeps downloads usable on
-     * those devices while retaining the fast atomic rename where it works.
-     */
-    private fun finalizeDownloadedFile(tmpDir: UniFile, file: UniFile, targetName: String): UniFile {
-        if (tryRenameDownloadedEntry(file, targetName)) {
-            return tmpDir.findFile(targetName) ?: file
-        }
-
-        val target = tmpDir.createFile(targetName)
-            ?: throw IOException("Failed to create downloaded file: $targetName")
-        try {
-            file.openInputStream().use { input ->
-                target.openOutputStream().use { output -> input.copyTo(output) }
-            }
-            if (!file.delete()) throw IOException("Failed to remove temporary download: ${file.name}")
-            return target
-        } catch (error: Throwable) {
-            target.delete()
-            throw error
-        }
-    }
-
-    /**
      * Returns the extension of the downloaded image from the network response, or if it's null,
      * analyze the file. If everything fails, assume it's a jpg.
      *
@@ -1216,47 +1192,6 @@ class Downloader(
         val finalized = finalizeDownloadedFile(mangaDir, zip, "$dirname.cbz")
         deleteDownloadedTree(tmpDir)
         return finalized
-    }
-
-    private fun finalizeDownloadedDirectory(parent: UniFile, directory: UniFile, targetName: String): UniFile {
-        if (tryRenameDownloadedEntry(directory, targetName)) {
-            return parent.findFile(targetName) ?: directory
-        }
-
-        val target = parent.createDirectory(targetName)
-            ?: throw IOException("Failed to create downloaded directory: $targetName")
-        try {
-            directory.listFiles().orEmpty().forEach { child ->
-                val name = child.name ?: throw IOException("Downloaded file has no name")
-                if (child.isDirectory) {
-                    finalizeDownloadedDirectory(target, child, name)
-                } else {
-                    finalizeDownloadedFile(target, child, name)
-                }
-            }
-            if (!directory.delete()) throw IOException("Failed to remove temporary download: ${directory.name}")
-            return target
-        } catch (error: Throwable) {
-            deleteDownloadedTree(target)
-            throw error
-        }
-    }
-
-    private fun deleteDownloadedTree(file: UniFile): Boolean {
-        if (file.isDirectory) file.listFiles().orEmpty().forEach(::deleteDownloadedTree)
-        return file.delete()
-    }
-
-    private fun tryRenameDownloadedEntry(file: UniFile, targetName: String): Boolean {
-        return try {
-            file.renameTo(targetName)
-        } catch (error: Throwable) {
-            if (error is CancellationException) throw error
-            logcat(LogPriority.WARN, error) {
-                "Downloader: SAF rename failed for ${file.name}, using copy fallback"
-            }
-            false
-        }
     }
 
     /**

@@ -38,10 +38,12 @@ import eu.kanade.presentation.manga.components.MangaChapterListItem
 import eu.kanade.presentation.manga.components.MangaDetailLayout
 import eu.kanade.presentation.manga.components.MangaInfoBox
 import eu.kanade.presentation.manga.components.MangaToolbar
+import eu.kanade.presentation.util.formatChapterNumber
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import kotlinx.coroutines.flow.StateFlow
+import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
@@ -59,6 +61,8 @@ internal fun LocalFolderDetailContent(
     displayMode: Long,
     columns: Int,
     readProgress: Map<String, MangaReadProgress>,
+    entryStates: Map<String, LocalLibraryEntryState>,
+    titleDisplayMode: Long,
     showReadProgress: Boolean,
     showFileSize: Boolean,
     refreshing: Boolean,
@@ -194,13 +198,17 @@ internal fun LocalFolderDetailContent(
                         it.readCount > 0
                 }?.displayText()
                 MangaChapterListItem(
-                    title = folderEntryTitle(manga, entry, showFileSize),
+                    title = folderEntryTitle(folder, manga, entry, titleDisplayMode, showFileSize),
                     date = entry?.modifiedAt?.let { relativeDateText(it) },
                     readProgress = progressText,
-                    scanlator = null,
+                    scanlator = entryStates[
+                        manga.url.trimEnd(
+                            '/',
+                        ),
+                    ]?.scanlators?.sorted()?.joinToString(", ")?.takeIf(String::isNotEmpty),
                     read = progress.isComplete(),
                     showReadStatus = showReadProgress && progress != null,
-                    bookmark = false,
+                    bookmark = entryStates[manga.url.trimEnd('/')]?.bookmarked == true,
                     selected = manga.id in selectedIds,
                     downloadIndicatorEnabled = false,
                     isConnectionCacheMode = false,
@@ -247,7 +255,7 @@ internal fun LocalFolderDetailContent(
                     MangaCover(manga.id, manga.source, manga.favorite, manga.thumbnailUrl, manga.coverLastModified)
                 if (displayMode == Manga.CHAPTER_COVER_DISPLAY_COMFORTABLE) {
                     MangaComfortableGridItem(
-                        title = folderEntryTitle(manga, entry, showFileSize),
+                        title = folderEntryTitle(folder, manga, entry, titleDisplayMode, showFileSize),
                         coverData = cover,
                         isSelected = manga.id in selectedIds,
                         coverOverlay = overlay,
@@ -257,7 +265,7 @@ internal fun LocalFolderDetailContent(
                 } else {
                     MangaCompactGridItem(
                         title = if (displayMode == Manga.CHAPTER_COVER_DISPLAY_COVER_AND_TITLE) {
-                            folderEntryTitle(manga, entry, showFileSize)
+                            folderEntryTitle(folder, manga, entry, titleDisplayMode, showFileSize)
                         } else {
                             null
                         },
@@ -317,9 +325,27 @@ private fun MangaReadProgress?.isComplete(): Boolean =
     this != null && totalChapterCount > 0 && readCount >= totalChapterCount
 
 @Composable
-private fun folderEntryTitle(manga: Manga, entry: LocalLibraryItem?, showSize: Boolean): String {
+private fun folderEntryTitle(
+    folder: Manga,
+    manga: Manga,
+    entry: LocalLibraryItem?,
+    displayMode: Long,
+    showSize: Boolean,
+): String {
+    val number = ChapterRecognition.parseChapterNumber(folder.title, manga.title, -1.0)
+    val title = when (displayMode) {
+        Manga.CHAPTER_DISPLAY_FILE_NAME -> entry?.relativePath?.substringAfterLast('/') ?: manga.title
+        Manga.CHAPTER_DISPLAY_NUMBER -> {
+            if (number >= 0) {
+                stringResource(MR.strings.display_mode_chapter, formatChapterNumber(number))
+            } else {
+                manga.title
+            }
+        }
+        else -> manga.title
+    }
     val size = entry?.sizeBytes?.takeIf { showSize && it > 0 && entry.kind != LocalLibraryItem.Kind.FOLDER }
-    return if (size != null) "${manga.title} (${Formatter.formatFileSize(LocalContext.current, size)})" else manga.title
+    return if (size != null) "$title (${Formatter.formatFileSize(LocalContext.current, size)})" else title
 }
 
 @Composable

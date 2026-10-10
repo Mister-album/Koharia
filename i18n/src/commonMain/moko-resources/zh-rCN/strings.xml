@@ -266,6 +266,7 @@
     <string name="entry_open_local_single">本地单文件漫画</string>
     <string name="entry_open_local_single_book">本地单文件书籍</string>
     <string name="entry_open_komga_book">单册作品</string>
+    <string name="local_library_available">本地可用</string>
     <string name="local_library_sort_added">添加时间</string>
     <string name="local_library_sort_modified">最近修改</string>
     <string name="lanraragi_open_details">标准详情</string>
@@ -774,6 +775,7 @@
     <string name="pref_clear_history">清除历史记录</string>
     <string name="clear_history_confirmation">你确定吗？所有历史记录都会丢失。</string>
     <string name="clear_history_completed">历史记录已删除</string>
+    <string name="history_refresh_failed">无法刷新历史，请重试。</string>
     <string name="spen_next_page">下一页</string>
     <string name="spen_previous_page">上一页</string>
     <string name="migration_help_guide">图源迁移指南</string>

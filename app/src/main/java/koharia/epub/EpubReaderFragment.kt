@@ -280,7 +280,20 @@ class EpubReaderFragment : Fragment() {
         container: android.view.ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        return SwipePageTurnGate(requireContext(), onVerticalSwipe = ::navigateShortUnstitchedResource) {
+        return SwipePageTurnGate(
+            requireContext(),
+            onVerticalSwipe = ::navigateShortUnstitchedResource,
+            onPageTurnSwipe = { delta, origin ->
+                val navigator = readyNavigatorFragment()
+                val rightToLeft = navigator?.settings?.value?.readingProgression ==
+                    org.readium.r2.navigator.preferences.ReadingProgression.RTL
+                if ((delta > 0) != rightToLeft) goForward(origin) else goBackward(origin)
+            },
+            interceptPageTurns = {
+                epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
+                    host?.swipePageTurnsEnabled() != false && readyNavigatorFragment() != null
+            },
+        ) {
             epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
                 host?.swipePageTurnsEnabled() == false
         }.apply {
@@ -361,7 +374,8 @@ class EpubReaderFragment : Fragment() {
                     }
                 },
                 rightToLeftProvider = {
-                    epubLayoutPreferences.pageDirection.get() == EpubLayoutPreferences.PageDirection.RIGHT_TO_LEFT
+                    navigator.settings.value.readingProgression ==
+                        org.readium.r2.navigator.preferences.ReadingProgression.RTL
                 },
                 currentLocationProvider = {
                     navigator.currentLocator.value.href.toString() to currentTransitionPageIndex
@@ -970,7 +984,7 @@ class EpubReaderFragment : Fragment() {
                 } else if (event.type == DragEvent.Type.End) {
                     host?.onManualReadingDragEnded()
                 }
-                // R2WebView owns the complete drag and settling animation, including resource boundaries.
+                // The outer gate handles paginated page turns; Readium retains selection and scrolling.
                 return false
             }
         }

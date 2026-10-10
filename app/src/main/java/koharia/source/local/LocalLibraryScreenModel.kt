@@ -15,6 +15,7 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.library.components.MangaReadProgress
 import eu.kanade.presentation.library.components.MangaReadProgressDisplay
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.util.editCover
 import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionLibraryRefreshAdapter
@@ -32,14 +33,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.chapter.repository.ChapterRepository
+import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
@@ -54,11 +61,13 @@ internal class LocalLibraryScreenModel(
     private val mangaRepository: MangaRepository,
     private val getChaptersByMangaId: GetChaptersByMangaId,
     private val getEpubProgress: GetEpubProgress,
-    private val libraryPreferences: LibraryPreferences,
+    private val setMangaChapterFlags: SetMangaChapterFlags,
     private val entryOpenManager: LocalLibraryEntryOpenManager,
     private val updateManga: UpdateManga,
     private val coverCache: CoverCache,
     private val itemActions: LocalLibraryItemActions,
+    private val chapterRepository: ChapterRepository,
+    private val downloadManager: DownloadManager,
     private val parentUrl: String? = null,
 ) : StateScreenModel<LocalLibraryScreenModel.State>(
     State(
@@ -77,19 +86,16 @@ internal class LocalLibraryScreenModel(
     private val readProgressRefreshRequests = Channel<Unit>(Channel.CONFLATED)
     private val localReadProgress = MutableStateFlow<Map<String, MangaReadProgress>>(emptyMap())
     private val mangaStates = LocalMangaStates()
-    private val filterPreferences = runCatching { LocalLibraryFilterPreferences(sourceId) }.getOrNull()
+    private val filterPreferences = runCatching { LocalLibraryFilterPreferences(sourceId, parentUrl) }.getOrNull()
+    private val localEntryStates = MutableStateFlow<Map<String, LocalLibraryEntryState>?>(null)
+    private val chapterSettingsMutex = Mutex()
 
     val events = eventChannel.receiveAsFlow()
     val readProgressByUrl: StateFlow<Map<String, MangaReadProgress>> = localReadProgress.asStateFlow()
+    val entryStates: StateFlow<Map<String, LocalLibraryEntryState>?> = localEntryStates.asStateFlow()
     private val localReadingUnitCounts = MutableStateFlow<Map<String, Long>>(emptyMap())
     val readingUnitCounts = localReadingUnitCounts.asStateFlow()
     private val needsDownloadCounts get() = (source as? LocalFolderSource)?.supportsFileTransfers == true
-
-    private val showReadProgress = if (parentUrl == null) {
-        libraryPreferences.showLibraryReadProgress
-    } else {
-        libraryPreferences.showChapterReadProgress
-    }
 
     val parentManga = mangaRepository.getMangaBySourceIdAsFlow(sourceId).map { mangas ->
         mangas.firstOrNull { it.url == parentUrl }
@@ -119,25 +125,32 @@ internal class LocalLibraryScreenModel(
                 refreshLocalReadProgress()
             }
         }
-        if (parentUrl != null || showReadProgress.get() || needsDownloadCounts) {
-            refreshReadProgress()
-        }
+        refreshReadProgress()
         screenModelScope.launchIO {
-            showReadProgress.changes().collect { enabled ->
-                if (parentUrl != null || enabled || needsDownloadCounts) {
-                    refreshReadProgress()
+            mangaRepository.getMangaBySourceIdAsFlow(sourceId).flatMapLatest { mangas ->
+                if (mangas.isEmpty()) {
+                    flowOf(Unit)
                 } else {
-                    localReadProgress.value = emptyMap()
+                    val observations = mangas.map { manga ->
+                        combine(
+                            chapterRepository.getChapterByMangaIdAsFlow(manga.id),
+                            getEpubProgress.subscribeByMangaId(manga.id),
+                        ) { _, _ -> Unit }
+                    }
+                    combine(observations) { Unit }
                 }
+            }.collect { refreshReadProgress() }
+        }
+        if (needsDownloadCounts) {
+            screenModelScope.launchIO {
+                downloadManager.cacheChanges.collect { refreshReadProgress() }
             }
         }
         (source as? ConnectionLibraryRefreshAdapter)?.let { refreshAdapter ->
             screenModelScope.launchIO {
                 refreshAdapter.libraryRefreshes.collect {
                     refreshSignal.value += 1
-                    if (parentUrl != null || showReadProgress.get() || needsDownloadCounts) {
-                        refreshReadProgress()
-                    }
+                    refreshReadProgress()
                 }
             }
         }
@@ -163,8 +176,6 @@ internal class LocalLibraryScreenModel(
 
     private suspend fun refreshLocalReadProgress() {
         val localSource = source as? LocalFolderSource ?: return
-        if (parentUrl == null && !showReadProgress.get() && !needsDownloadCounts) return
-
         val mangas = mangaRepository.getMangaBySourceId(sourceId)
         val chaptersByMangaId = getChaptersByMangaId.await(mangas.map(Manga::id))
         val readProgressIndexes = localSource.readProgressIndexes(mangas.map(Manga::url))
@@ -186,6 +197,8 @@ internal class LocalLibraryScreenModel(
         )
         val progressByUrl = mutableMapOf<String, MangaReadProgress>()
         val progressByItemKey = mutableMapOf<String, MangaReadProgress>()
+        val statesByUrl = mutableMapOf<String, LocalLibraryEntryState>()
+        val statesByItemKey = mutableMapOf<String, LocalLibraryEntryState>()
         entries.forEach { entry ->
             val index = entry.index
             val epubProgression = entry.chapters.firstOrNull()?.id?.let { chapterId ->
@@ -204,6 +217,28 @@ internal class LocalLibraryScreenModel(
                     progressByItemKey[itemKey] = progress
                 }
             }
+            val progress = progressByUrl[entry.manga.url.trimEnd('/')]
+            val total = index?.indexedChapterCount ?: entry.chapters.size
+            val entryState = LocalLibraryEntryState(
+                unread = localLibraryEntryIsUnread(
+                    total,
+                    entry.chapters,
+                    index?.isIndividualFile == true,
+                    epubProgression,
+                ),
+                started = entry.chapters.any { it.read || it.lastPageRead > 0 } ||
+                    (epubProgression ?: 0.0) > 0.0,
+                bookmarked = entry.chapters.any(Chapter::bookmark),
+                available = if (needsDownloadCounts) {
+                    downloadManager.getDownloadCount(entry.manga) > 0
+                } else {
+                    localSource.indexedEntry(entry.manga.url)?.missing != true
+                },
+                scanlators = entry.chapters.mapNotNullTo(mutableSetOf()) { it.scanlator?.takeIf(String::isNotBlank) },
+                progress = progress,
+            )
+            statesByUrl[entry.manga.url.trimEnd('/')] = entryState
+            index?.itemKey?.takeIf(String::isNotEmpty)?.let { statesByItemKey[it] = entryState }
         }
         entries.forEach { entry ->
             val index = entry.index ?: return@forEach
@@ -215,10 +250,14 @@ internal class LocalLibraryScreenModel(
             )?.let { progress ->
                 progressByUrl[entry.manga.url.trimEnd('/')] = progress
             }
+            statesByUrl[entry.manga.url.trimEnd('/')] = aggregateLocalFolderEntryState(
+                total = index.indexedChapterCount,
+                descendants = index.descendantItemKeys.mapNotNull(statesByItemKey::get),
+                progress = progressByUrl[entry.manga.url.trimEnd('/')],
+            )
         }
-        if (parentUrl != null || showReadProgress.get()) {
-            localReadProgress.value = progressByUrl.toMap()
-        }
+        localReadProgress.value = progressByUrl.toMap()
+        localEntryStates.value = statesByUrl.toMap()
     }
 
     private val browseRequests = combine(
@@ -234,7 +273,8 @@ internal class LocalLibraryScreenModel(
         .combine(mangaRepository.getMangaBySourceIdAsFlow(sourceId)) { request, mangas ->
             request to mangas
         }
-        .mapLatest { (request, mangas) ->
+        .combine(localEntryStates) { (request, mangas), entries -> Triple(request, mangas, entries) }
+        .mapLatest { (request, mangas, entries) ->
             val filteredMangas = (source as? LocalFolderSource)?.browseIndexedLibrary(
                 mangas = mangas,
                 query = request.query,
@@ -243,8 +283,21 @@ internal class LocalLibraryScreenModel(
                 bookshelfId = request.bookshelfId.takeIf { parentUrl == null },
                 parentUrl = parentUrl,
             ).orEmpty()
-            mangaStates.update(filteredMangas)
+            if (request.filters.hasEntryStateFilters &&
+                (entries == null || filteredMangas.any { it.url.trimEnd('/') !in entries })
+            ) {
+                return@mapLatest null
+            }
+            mutableState.update {
+                it.copy(
+                    availableScanlators = filteredMangas.flatMapTo(mutableSetOf()) { manga ->
+                        entries?.get(manga.url.trimEnd('/'))?.scanlators.orEmpty()
+                    },
+                )
+            }
+            mangaStates.update(filteredMangas.filter { request.filters.matches(it, entries?.get(it.url.trimEnd('/'))) })
         }
+        .filterNotNull()
         .distinctUntilChanged()
         .map { mangas ->
             PagingData.from(
@@ -319,9 +372,24 @@ internal class LocalLibraryScreenModel(
     }
 
     fun applyFilters(filters: LocalLibraryFilters, rememberFilters: Boolean) {
+        updateFilters(filters, rememberFilters)
+        dismissDialog()
+    }
+
+    fun updateFilters(filters: LocalLibraryFilters, rememberFilters: Boolean) {
         appliedFilters.value = filters
         filterPreferences?.write(filters, selectedBookshelfId.value, rememberFilters)
-        mutableState.update { it.copy(filters = filters, rememberFilters = rememberFilters, dialog = null) }
+        mutableState.update { it.copy(filters = filters, rememberFilters = rememberFilters) }
+    }
+
+    fun setTitleDisplayMode(mode: Long) {
+        if (parentUrl == null) return
+        screenModelScope.launchIO {
+            chapterSettingsMutex.withLock {
+                val folder = mangaRepository.getMangaByUrlAndSourceId(parentUrl, sourceId) ?: return@withLock
+                setMangaChapterFlags.awaitSetDisplayMode(folder, mode)
+            }
+        }
     }
 
     fun selectSearchSort(index: Int, ascending: Boolean) {
@@ -504,6 +572,7 @@ internal class LocalLibraryScreenModel(
         val bookshelves: List<ConnectionLibraryShelf> = emptyList(),
         val selectedBookshelfId: String? = null,
         val rememberFilters: Boolean = false,
+        val availableScanlators: Set<String> = emptySet(),
         val isRefreshing: Boolean = false,
         val refreshError: Throwable? = null,
         val dialog: Dialog? = null,

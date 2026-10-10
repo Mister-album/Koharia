@@ -6,26 +6,32 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-internal class LocalLibraryFilterPreferences(sourceId: Long) {
+internal class LocalLibraryFilterPreferences(sourceId: Long, parentUrl: String? = null) {
     private val preferences = sourcePreferences("source_$sourceId")
+    private val scope = parentUrl?.let {
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(it.toByteArray(Charsets.UTF_8)).joinToString("") { byte -> "%02x".format(byte) }
+    }?.let { "_$it" }.orEmpty()
+    private val enabledKey = "local_remember_filters$scope"
+    private val snapshotKey = "local_saved_filters$scope"
 
-    val enabled: Boolean get() = preferences.getBoolean("local_remember_filters", false)
+    val enabled: Boolean get() = preferences.getBoolean(enabledKey, false)
 
-    fun read(): Snapshot? = preferences.getString("local_saved_filters", null)
+    fun read(): Snapshot? = preferences.getString(snapshotKey, null)
         ?.let { runCatching { Json.decodeFromString<Snapshot>(it) }.getOrNull() }
         ?.takeIf { it.version == FILTER_SNAPSHOT_VERSION }
 
     fun write(filters: LocalLibraryFilters, bookshelfId: String?, enabled: Boolean) {
         preferences.edit()
-            .putBoolean("local_remember_filters", enabled)
+            .putBoolean(enabledKey, enabled)
             .apply {
                 if (enabled) {
                     putString(
-                        "local_saved_filters",
+                        snapshotKey,
                         Json.encodeToString(Snapshot(filters = filters, bookshelfId = bookshelfId)),
                     )
                 } else {
-                    remove("local_saved_filters")
+                    remove(snapshotKey)
                 }
             }
             .apply()

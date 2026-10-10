@@ -257,7 +257,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 NavigationRegion.LEFT -> withPageTurnOrigin(turnOrigin) { moveLeft() }
             }
         }
-        pager.canInterceptPageTurnSwipe = { delta -> canInterceptCurlSwipe(delta) }
+        pager.canInterceptPageTurnSwipe = ::canInterceptPageTurnSwipe
         pager.pageTurnSwipeListener = { delta, xFraction, yFraction ->
             val origin = PageTurnOrigin(xFraction, yFraction, PageTurnCause.GESTURE).normalized()
             withPageTurnOrigin(origin) {
@@ -777,6 +777,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             }
             pendingPageTurn = null
             pendingPageTurnTimeout = null
+            markPendingUserNavigation(waiting.target)
             pager.setCurrentItem(waiting.target, false)
             pager.post(::drainPendingPageTurn)
         }
@@ -796,22 +797,29 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
     }
 
-    private fun canInterceptCurlSwipe(delta: Int): Boolean {
-        if (!pager.horizontalPaging ||
-            config.pageTransitionEffect != PageTransitionEffect.CURL ||
-            !ValueAnimator.areAnimatorsEnabled() ||
-            pageFlipController.isRunning
+    private fun canInterceptPageTurnSwipe(delta: Int): Boolean {
+        if (!PagerPageTurnPolicy.shouldInterceptSwipe(
+                config.pageTransitionEffect,
+                pager.horizontalPaging,
+                ValueAnimator.areAnimatorsEnabled(),
+            ) || pageFlipController.isRunning
         ) {
             return false
         }
-        val sourceSlot = adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages ?: return false
         val target = pager.currentItem + delta
-        if (adapter.slots.getOrNull(target) !is PagerSlot.Pages) return false
+        if (target !in adapter.slots.indices) return false
+        val sourceSlot = adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages
+        if (shouldAnimatePageTurn() &&
+            (sourceSlot == null || adapter.slots.getOrNull(target) !is PagerSlot.Pages)
+        ) {
+            return false
+        }
+        if (sourceSlot == null) return true
         val holder = getPageHolder(sourceSlot.progressPage) ?: return false
-        val canPanTowardSwipe = if (delta > 0) {
-            holder.canNavigatePanRight()
+        val canPanTowardSwipe = if (pager.horizontalPaging) {
+            if (delta > 0) holder.canNavigatePanRight() else holder.canNavigatePanLeft()
         } else {
-            holder.canNavigatePanLeft()
+            if (delta > 0) holder.canNavigatePanDown() else holder.canNavigatePanUp()
         }
         return !canPanTowardSwipe
     }
@@ -828,6 +836,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             val committed = pendingPageTurn?.takeIf { it == pending } ?: return@post
             pendingPageTurn = null
             if (adapter.slots.getOrNull(committed.target) == slot && pager.currentItem != committed.target) {
+                markPendingUserNavigation(committed.target)
                 pager.setCurrentItem(committed.target, shouldAnimatePageTurn())
             } else {
                 pendingPageTurnDelta = 0
@@ -841,6 +850,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pendingPageTurn = null
         pendingPageTurnTimeout?.cancel()
         pendingPageTurnTimeout = null
+        markPendingUserNavigation(pending.target)
         pager.setCurrentItem(pending.target, false)
         pager.post(::drainPendingPageTurn)
     }
@@ -866,6 +876,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
         pendingPageTurnDelta -= step
         setCurrentItemForPageTurn(target)
+        // Instant page turns do not emit another idle event.
+        if (!shouldAnimatePageTurn() && isIdle && pendingPageTurn == null &&
+            pager.currentItem == target && pendingPageTurnDelta != 0
+        ) {
+            pager.post(::drainPendingPageTurn)
+        }
     }
 
     private fun cancelPendingPageTurn(

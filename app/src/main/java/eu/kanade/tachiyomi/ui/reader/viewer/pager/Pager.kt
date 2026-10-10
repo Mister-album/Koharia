@@ -5,10 +5,10 @@ import android.os.Bundle
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.VelocityTracker
 import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.viewpager.widget.DirectionalViewPager
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSwipeHandler
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
 import kotlin.math.abs
 
@@ -32,10 +32,10 @@ open class Pager(
      */
     var longTapListener: ((MotionEvent) -> Boolean)? = null
 
-    /** Whether a horizontal swipe should be handled as a discrete page turn. */
+    /** Whether a swipe along the paging axis should be handled as a discrete page turn. */
     var canInterceptPageTurnSwipe: ((Int) -> Boolean)? = null
 
-    /** Called after an intercepted horizontal swipe is released. */
+    /** Called after an intercepted page swipe is released. */
     var pageTurnSwipeListener: ((Int, Float, Float) -> Unit)? = null
 
     /** Called before the inherited accessibility delegate changes the current page. */
@@ -77,25 +77,19 @@ open class Pager(
 
     private val viewConfiguration = ViewConfiguration.get(context)
     private val touchSlop = viewConfiguration.scaledTouchSlop
-    private val minimumFlingVelocity = maxOf(
-        viewConfiguration.scaledMinimumFlingVelocity,
-        (MINIMUM_FLING_VELOCITY_DP * resources.displayMetrics.density).toInt(),
-    )
-    private val minimumFlingDistance = maxOf(
-        touchSlop * 2f,
-        MINIMUM_FLING_DISTANCE_DP * resources.displayMetrics.density,
-    )
     private var queuedTapEligible = false
     private var queuedTapDownX = 0f
     private var queuedTapDownY = 0f
 
-    private var pageTurnSwipeCandidate = false
-    private var pageTurnSwipeConsumed = false
-    private var pageTurnSwipeCanceled = false
-    private var pageTurnSwipeDelta = 0
-    private var pageTurnSwipeDownX = 0f
-    private var pageTurnSwipeDownY = 0f
-    private var pageTurnSwipeVelocityTracker: VelocityTracker? = null
+    private val pageTurnSwipe = PageTurnSwipeHandler(
+        context = context,
+        horizontal = horizontalPaging,
+        viewportSize = { width to height },
+        enabled = { swipePageTurnsEnabled() && pageTurnSwipeListener != null && canInterceptPageTurnSwipe != null },
+        canIntercept = { canInterceptPageTurnSwipe?.invoke(it) == true },
+        cancelChildren = ::cancelTouchForChildren,
+        onTurn = { delta, origin -> pageTurnSwipeListener?.invoke(delta, origin.xFraction, origin.yFraction) },
+    )
 
     /**
      * Dispatches a touch event.
@@ -105,97 +99,12 @@ open class Pager(
             handleQueuedPageFlipTap(ev)
             return true
         }
-        if (handlePageTurnSwipe(ev)) return true
+        if (pageTurnSwipe.handle(ev)) return true
         val handled = super.dispatchTouchEvent(ev)
         if (isGestureDetectorEnabled) {
             gestureDetector.onTouchEvent(ev)
         }
         return handled
-    }
-
-    private fun handlePageTurnSwipe(ev: MotionEvent): Boolean {
-        if (!swipePageTurnsEnabled() || pageTurnSwipeListener == null || canInterceptPageTurnSwipe == null) {
-            resetPageTurnSwipe()
-            return false
-        }
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-            resetPageTurnSwipe()
-            pageTurnSwipeVelocityTracker = VelocityTracker.obtain().also { it.addMovement(ev) }
-        } else {
-            pageTurnSwipeVelocityTracker?.addMovement(ev)
-        }
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                pageTurnSwipeCandidate = true
-                pageTurnSwipeConsumed = false
-                pageTurnSwipeCanceled = false
-                pageTurnSwipeDelta = 0
-                pageTurnSwipeDownX = ev.x
-                pageTurnSwipeDownY = ev.y
-            }
-            MotionEvent.ACTION_POINTER_DOWN -> {
-                pageTurnSwipeCandidate = false
-                if (pageTurnSwipeConsumed) {
-                    pageTurnSwipeCanceled = true
-                    return true
-                }
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (pageTurnSwipeConsumed) return true
-                if (!pageTurnSwipeCandidate || ev.pointerCount != 1) return false
-                val deltaX = ev.x - pageTurnSwipeDownX
-                val deltaY = ev.y - pageTurnSwipeDownY
-                val horizontalDistance = abs(deltaX)
-                val verticalDistance = abs(deltaY)
-                if (verticalDistance > touchSlop && verticalDistance >= horizontalDistance) {
-                    pageTurnSwipeCandidate = false
-                    return false
-                }
-                if (horizontalDistance > touchSlop && horizontalDistance > verticalDistance * SWIPE_AXIS_RATIO) {
-                    val itemDelta = if (deltaX < 0f) 1 else -1
-                    if (canInterceptPageTurnSwipe?.invoke(itemDelta) == true) {
-                        cancelTouchForChildren(ev)
-                        pageTurnSwipeCandidate = false
-                        pageTurnSwipeConsumed = true
-                        pageTurnSwipeDelta = itemDelta
-                        return true
-                    }
-                    pageTurnSwipeCandidate = false
-                }
-            }
-            MotionEvent.ACTION_UP -> {
-                if (pageTurnSwipeConsumed) {
-                    if (!pageTurnSwipeCanceled && shouldCommitPageTurnSwipe(ev)) {
-                        val originX = (pageTurnSwipeDownX / width.coerceAtLeast(1)).coerceIn(0f, 1f)
-                        val originY = (pageTurnSwipeDownY / height.coerceAtLeast(1)).coerceIn(0f, 1f)
-                        pageTurnSwipeListener?.invoke(pageTurnSwipeDelta, originX, originY)
-                    }
-                    resetPageTurnSwipe()
-                    return true
-                }
-                resetPageTurnSwipe()
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                val consumed = pageTurnSwipeConsumed
-                resetPageTurnSwipe()
-                return consumed
-            }
-        }
-        return false
-    }
-
-    private fun shouldCommitPageTurnSwipe(ev: MotionEvent): Boolean {
-        val displacement = ev.x - pageTurnSwipeDownX
-        val directionMatches = if (pageTurnSwipeDelta > 0) displacement < 0f else displacement > 0f
-        if (!directionMatches) return false
-        val distance = abs(displacement)
-        val distanceThreshold = maxOf(touchSlop * 2f, width * SWIPE_COMMIT_FRACTION)
-        if (distance >= distanceThreshold) return true
-
-        pageTurnSwipeVelocityTracker?.computeCurrentVelocity(1_000)
-        val velocity = pageTurnSwipeVelocityTracker?.xVelocity ?: 0f
-        val velocityMatches = if (pageTurnSwipeDelta > 0) velocity < 0f else velocity > 0f
-        return distance >= minimumFlingDistance && velocityMatches && abs(velocity) >= minimumFlingVelocity
     }
 
     private fun cancelTouchForChildren(ev: MotionEvent) {
@@ -211,15 +120,6 @@ open class Pager(
             gestureDetector.onTouchEvent(cancel)
         }
         cancel.recycle()
-    }
-
-    private fun resetPageTurnSwipe() {
-        pageTurnSwipeCandidate = false
-        pageTurnSwipeConsumed = false
-        pageTurnSwipeCanceled = false
-        pageTurnSwipeDelta = 0
-        pageTurnSwipeVelocityTracker?.recycle()
-        pageTurnSwipeVelocityTracker = null
     }
 
     private fun handleQueuedPageFlipTap(ev: MotionEvent) {
@@ -308,14 +208,12 @@ open class Pager(
         isTouchNavigationEnabled = enabled
         if (enabled) {
             queuedTapEligible = false
-            resetPageTurnSwipe()
+            pageTurnSwipe.reset()
         }
     }
 
-    private companion object {
-        const val SWIPE_AXIS_RATIO = 1.25f
-        const val SWIPE_COMMIT_FRACTION = 0.18f
-        const val MINIMUM_FLING_DISTANCE_DP = 25f
-        const val MINIMUM_FLING_VELOCITY_DP = 400f
+    override fun onDetachedFromWindow() {
+        pageTurnSwipe.reset()
+        super.onDetachedFromWindow()
     }
 }
