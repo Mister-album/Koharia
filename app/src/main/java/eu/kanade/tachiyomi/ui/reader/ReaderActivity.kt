@@ -501,6 +501,7 @@ class ReaderActivity : BaseActivity() {
         val settingsScreenModel = remember {
             ReaderSettingsScreenModel(
                 readerState = viewModel.state,
+                scope = lifecycleScope,
                 onChangeReadingMode = viewModel::setMangaReadingMode,
                 onChangeOrientation = viewModel::setMangaOrientationType,
                 preferences = readerPreferences,
@@ -660,21 +661,26 @@ class ReaderActivity : BaseActivity() {
                     onDismissRequest = {},
                     title = { Text(stringResource(MR.strings.epub_reader_remote_progress_title)) },
                     text = {
-                        Text(
-                            stringResource(
-                                if (conflict.requiresPageMappingConfirmation) {
-                                    MR.strings.reader_remote_mapping_message
-                                } else {
-                                    MR.strings.reader_remote_progress_message
-                                },
-                                conflict.localPageIndex + 1,
-                                conflict.localTotalPages,
-                                conflict.localPercent,
-                                conflict.remotePageIndex + 1,
-                                conflict.remoteTotalPages,
-                                conflict.remotePercent,
-                            ),
-                        )
+                        androidx.compose.foundation.layout.Column {
+                            Text(
+                                stringResource(
+                                    if (conflict.requiresPageMappingConfirmation) {
+                                        MR.strings.reader_remote_mapping_message
+                                    } else {
+                                        MR.strings.reader_remote_progress_message
+                                    },
+                                    conflict.localPageIndex + 1,
+                                    conflict.localTotalPages,
+                                    conflict.localPercent,
+                                    conflict.remotePageIndex + 1,
+                                    conflict.remoteTotalPages,
+                                    conflict.remotePercent,
+                                ),
+                            )
+                            if (conflict.snapshot.uncertainRequest) {
+                                Text(stringResource(MR.strings.reader_remote_uncertain_request))
+                            }
+                        }
                     },
                     dismissButton = {
                         TextButton(onClick = viewModel::keepLocalProgress) {

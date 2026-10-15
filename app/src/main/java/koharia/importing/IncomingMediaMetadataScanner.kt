@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.hippo.unifile.UniFile
 import koharia.connection.ConnectionMediaImportItem
+import koharia.core.archive.BoundedXml
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
 import koharia.source.local.parseLocalOpfMetadata
@@ -11,8 +12,6 @@ import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import nl.adaptivity.xmlutil.core.AndroidXmlReader
 import nl.adaptivity.xmlutil.serialization.XML
-import org.jsoup.Jsoup
-import org.jsoup.parser.Parser
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.core.metadata.comicinfo.COMIC_INFO_FILE
@@ -98,11 +97,9 @@ internal object IncomingMediaMetadataScanner {
             file.epubReader(context).use { epub ->
                 val packageHref = epub.getPackageHref()
                 val packageDocument = epub.getInputStream(packageHref)?.use { input ->
-                    Jsoup.parse(
+                    BoundedXml.parse(
                         ByteArrayInputStream(input.readUpTo(MAX_METADATA_BYTES)),
                         StandardCharsets.UTF_8.name(),
-                        "",
-                        Parser.xmlParser(),
                     )
                 } ?: return null
                 val metadata = parseLocalOpfMetadata(packageDocument)

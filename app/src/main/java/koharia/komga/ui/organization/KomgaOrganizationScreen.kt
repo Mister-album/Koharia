@@ -461,15 +461,15 @@ data class KomgaOrganizationScreen(
                                 openBook(model, id)
                             } else {
                                 model.action {
-                                    val localId =
+                                    val (localId, chapterId) =
                                         if (kind == KomgaOrganizationKind.COLLECTION) {
                                             repository
                                                 .materialize(state.series.first { it.id == id })
-                                                .id
+                                                .id to null
                                         } else {
                                             repository
                                                 .resolveBook(state.books.first { it.id == id })
-                                                .mangaId
+                                                .let { it.mangaId to it.chapterId }
                                         }
                                     withContext(Dispatchers.Main) {
                                         if (
@@ -481,6 +481,7 @@ data class KomgaOrganizationScreen(
                                                 koharia.lanraragi.ui.LanraragiArchivePreviewScreen(
                                                     localId,
                                                     sourceId,
+                                                    checkNotNull(chapterId),
                                                 ),
                                             )
                                         } else {

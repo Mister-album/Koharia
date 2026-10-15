@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionAccount
 import koharia.connection.ConnectionAccountAdapter
 import koharia.connection.ConnectionAddressRouter
@@ -24,25 +25,29 @@ import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionDownloadStorageAdapter
 import koharia.connection.ConnectionHealthAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
-import koharia.connection.ConnectionLocalPageProgressAdapter
 import koharia.connection.ConnectionManagedLifecycle
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
 import koharia.connection.ConnectionPageAdapter
 import koharia.connection.ConnectionPageList
-import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPdfFileAdapter
 import koharia.connection.ConnectionRawDownloadAdapter
 import koharia.connection.ConnectionRawDownloadResumePolicy
+import koharia.connection.ConnectionReadStatus
 import koharia.connection.ConnectionReadStatusAdapter
 import koharia.connection.ConnectionReaderRoutingAdapter
 import koharia.connection.ConnectionRestoreState
 import koharia.connection.ConnectionSource
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryContentScope
+import koharia.connection.ProgressStatusTargets
+import koharia.connection.observeProgressStatusSessions
+import koharia.connection.withConnectionWriteGuard
+import koharia.connection.withProgressStatusOwner
 import koharia.domain.smanga.SmangaReadState
 import koharia.domain.smanga.SmangaRepository
+import koharia.smanga.SMANGA_SHELF_METADATA
 import koharia.smanga.SmangaApi
 import koharia.smanga.SmangaCatalog
 import koharia.smanga.SmangaChapter
@@ -52,6 +57,7 @@ import koharia.smanga.SmangaPdfCache
 import koharia.smanga.SmangaReadingCoordinator
 import koharia.smanga.checkedSmangaImageResponse
 import koharia.smanga.selectSmangaHistoryState
+import koharia.smanga.shelfMetadata
 import koharia.smanga.ui.SmangaLibraryScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -92,6 +98,7 @@ class SmangaSource(private val context: Context, override val connectionProfile:
     ConfigurableSource,
     UnmeteredSource,
     ConnectionSource,
+    koharia.connection.ConnectionChapterSessionAdapter,
     ConnectionManagedLifecycle,
     ConnectionBrowseAdapter,
     ConnectionCatalogAdapter,
@@ -99,12 +106,14 @@ class SmangaSource(private val context: Context, override val connectionProfile:
     ConnectionAccountAdapter,
     ConnectionHealthAdapter,
     ConnectionMangaBehaviorAdapter,
+    koharia.connection.ConnectionShelfLocalStateAdapter,
     ConnectionDownloadStorageAdapter,
     ConnectionReaderRoutingAdapter,
-    ConnectionPageProgressAdapter,
-    ConnectionLocalPageProgressAdapter,
+    koharia.connection.ConnectionPageProgressSessionAdapter,
+    koharia.connection.ConnectionReflowProgressSessionAdapter,
     ConnectionMangaProgressAdapter,
     ConnectionReadStatusAdapter,
+    koharia.connection.ConnectionProgressSyncStatusAdapter,
     ConnectionHistorySyncAdapter,
     ConnectionBackupRestoreAdapter,
     ConnectionRawDownloadAdapter,
@@ -112,6 +121,24 @@ class SmangaSource(private val context: Context, override val connectionProfile:
     AutoCloseable {
     override val id = connectionProfile.id
     override val name = connectionProfile.name
+
+    override fun captureChapterOwner(): koharia.connection.ConnectionChapterOwner {
+        val captured = session()
+        return koharia.connection.ConnectionChapterOwner(captured.chapterOwnerKey) {
+            captured.checkActive()
+            if (chapterConfigurationKey() != captured.chapterOwnerKey) {
+                throw CancellationException("Chapter account changed")
+            }
+        }
+    }
+
+    private fun chapterConfigurationKey() = koharia.connection.chapterOwnerKey(
+        preferences.accountKey,
+        preferences.address,
+        preferences.internalAddress,
+        preferences.username,
+        preferences.password,
+    )
     override val lang = "other"
     override val supportsLatest = true
     val preferences = SmangaPreferences(id)
@@ -138,11 +165,12 @@ class SmangaSource(private val context: Context, override val connectionProfile:
     private var registered = false
 
     inner class Session internal constructor(val accountKey: String) : AutoCloseable {
+        val chapterOwnerKey = chapterConfigurationKey()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private val publicAddress = preferences.address
         private val internalAddress = preferences.internalAddress
         val api = SmangaApi(
-            network.client,
+            network.client.withConnectionWriteGuard(id),
             json,
             publicAddress,
             preferences.username,
@@ -159,7 +187,11 @@ class SmangaSource(private val context: Context, override val connectionProfile:
         val catalog = SmangaCatalog(id, accountKey, repository, api, json, ::checkActive)
         val pdf = SmangaPdfCache(context, id, accountKey)
         val reading =
-            SmangaReadingCoordinator(id, accountKey, api, repository, scope, ::checkActive) { applyState(this, it) }
+            SmangaReadingCoordinator(id, accountKey, api, repository, scope, ::checkActive, {
+                if (Injekt.get<koharia.connection.ConnectionIdentityChanges>().isPaused(id)) {
+                    throw koharia.connection.ConnectionWritesPaused()
+                }
+            }) { applyState(this, it) }
         val prefix = "/smanga/$id/$accountKey/"
         fun checkActive() {
             if (closed || active !== this) throw CancellationException("Connection session changed")
@@ -214,6 +246,7 @@ class SmangaSource(private val context: Context, override val connectionProfile:
     }
 
     @Synchronized override fun onRegistered() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (registered || closed) return
         registered = true
         if (hasValidConnection()) observeReading(session())
@@ -233,6 +266,9 @@ class SmangaSource(private val context: Context, override val connectionProfile:
     override val preserveDownloadPageBoundaries = true
     override val allowsUnvalidatedNetwork = true
     override val usesSharedDownloadStorage = false
+    override fun mergeShelfLocalState(remote: Manga, local: Manga?): Manga =
+        koharia.connection.mergeShelfMangaMetadata(remote, local)
+
     override val mangaBehavior =
         ConnectionMangaBehavior(
             allowsTagSearch = true,
@@ -274,7 +310,8 @@ class SmangaSource(private val context: Context, override val connectionProfile:
         status = SManga.UNKNOWN
         thumbnail_url = session.api.coverUrl(entry.id)
         memo = buildJsonObject {
-            if (entry.chapterCount > 0) put("booksCount", entry.chapterCount)
+            put(SMANGA_SHELF_METADATA, entry.shelfMetadata())
+            if (entry.chapterCount >= 0) put("booksCount", entry.chapterCount)
         }
         initialized = true
     }
@@ -384,55 +421,208 @@ class SmangaSource(private val context: Context, override val connectionProfile:
         val session = session()
         return session.pdf.prepare(pdfKey(chapterUrl), session.chapterId(chapterUrl), session.api, session::checkActive)
     }
+    override fun observeProgressSyncStatus(
+        chapterUrls: List<String>,
+    ) = observeProgressStatusSessions(epoch, chapterUrls) {
+        val captured = session()
+        captured.checkActive()
+        val targets = ProgressStatusTargets(chapterUrls, captured::chapterId)
+        val keys = targets.keys.values.filterNotNull()
+        kotlinx.coroutines.flow.combine(
+            repository.observeReadStates(id, captured.accountKey, keys),
+            repository.observeCacheEntries(
+                id,
+                captured.accountKey,
+                SmangaReadingCoordinator.CONFIRMATION_GROUP,
+                keys.map {
+                    it.toString()
+                },
+            ),
+        ) { rows, confirmations ->
+            val states = rows.associateBy { it.chapterId }
+            val pauses = confirmations.associateBy { it.key }
+            targets.project(
+                keys.associateWith {
+                    koharia.smanga.smangaProgressSyncStatus(states[it], pauses[it.toString()])
+                },
+            )
+        }.withProgressStatusOwner(
+            id,
+            Injekt.get<koharia.connection.ConnectionIdentityChanges>().pausedIds,
+            captured::checkActive,
+        )
+    }
+
+    override suspend fun capturePageProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.connection.ConnectionReaderPageProgressAdapter> {
+        val captured = session()
+        captured.checkActive()
+        captured.chapterId(chapter.url)
+        val check: suspend () -> Unit = { captured.checkActive() }
+        return koharia.connection.ConnectionProgressSession(
+            koharia.connection.CapturedPageProgress(chapter.url, PageProgress(captured), check),
+            check,
+        )
+    }
+    override suspend fun captureReflowProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.connection.ConnectionReflowProgressAdapter> {
+        val captured = session()
+        captured.checkActive()
+        require(chapter.url.endsWith(".pdf")) { "PDF progress requires an original PDF" }
+        captured.reading.beginSession(captured.chapterId(chapter.url))
+        return koharia.connection.ConnectionProgressSession(PdfProgress(captured, chapter), captured::checkActive)
+    }
+    override suspend fun reviewPageProgress(chapterUrl: String, chapterMemo: JsonObject) = session().let {
+        it.reading.reviewPdf(it.chapterFromUrl(chapterUrl), chapterMemo).snapshot
+    }
+    override suspend fun isPageProgressConfirmed(chapterUrl: String, page: Int, total: Int, modifiedAt: Long) =
+        session().let { it.reading.isPageConfirmed(it.chapterId(chapterUrl), page, total, modifiedAt) }
+
+    override suspend fun beginReadingSession(
+        chapterUrl: String,
+    ) = PageProgress(session()).beginReadingSession(chapterUrl)
+    override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject) =
+        PageProgress(session()).pullPageProgress(chapterUrl, chapterMemo)
+    override suspend fun pushPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int) =
+        PageProgress(session()).pushPageProgress(chapterUrl, pageIndex, totalPages)
     override suspend fun recordLocalPageProgress(
         chapterUrl: String,
         pageIndex: Int,
         totalPages: Int,
         readAt: Long,
         initialPage: Boolean,
-    ) {
-        val session = session()
-        session.reading.record(session.chapterFromUrl(chapterUrl), pageIndex, totalPages, readAt, initialPage)
-    }
-    override suspend fun pushPageProgress(
-        chapterUrl: String,
-        pageIndex: Int,
-        totalPages: Int,
-    ) {
-        session().reading.retryPending()
-    }
-    override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject) = session().let { session ->
-        val snapshot = session.reading.pull(session.chapterFromUrl(chapterUrl), chapterMemo)
-        if (snapshot == null || chapterUrl.endsWith(".pdf")) {
-            snapshot
-        } else {
-            val manifest = session.catalog.manifest(session.chapterId(chapterUrl), refresh = true)
-            val oldVersion = chapterMemo["smangaManifestVersion"]?.jsonPrimitive?.contentOrNull
-            val mappingChanged = (oldVersion != null && oldVersion != manifest.version) ||
-                (snapshot.totalPages > 0 && snapshot.totalPages != manifest.pageCount)
-            if (mappingChanged) session.reading.requireMappingConfirmation(session.chapterId(chapterUrl))
-            snapshot.copy(
-                previousPublicationVersion = oldVersion,
-                publicationVersion = manifest.version,
-                updatedChapterMemo = buildJsonObject {
-                    snapshot.updatedChapterMemo.forEach { (key, value) -> put(key, value) }
-                    put("smangaManifestVersion", manifest.version)
-                },
-                requiresConfirmation = snapshot.requiresConfirmation || mappingChanged,
-                requiresPageMappingConfirmation = snapshot.requiresPageMappingConfirmation || mappingChanged,
-            )
+    ) = PageProgress(session()).recordLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt, initialPage)
+    override suspend fun confirmLocalPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) =
+        PageProgress(session()).confirmLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt)
+    override suspend fun acceptRemotePageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) =
+        PageProgress(session()).acceptRemotePageProgress(chapterUrl, pageIndex, totalPages, readAt)
+
+    private inner class PageProgress(private val captured: Session) :
+        koharia.connection.ConnectionReaderPageProgressAdapter {
+        private fun session() = captured.also { it.checkActive() }
+        override suspend fun recordLocalPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+            initialPage: Boolean,
+        ) {
+            val session = session()
+            session.reading.record(session.chapterFromUrl(chapterUrl), pageIndex, totalPages, readAt, initialPage)
+        }
+        override suspend fun pushPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+        ) {
+            session().reading.retryPending()
+        }
+        override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject) = session().let { session ->
+            val snapshot = session.reading.pull(session.chapterFromUrl(chapterUrl), chapterMemo)
+            if (snapshot == null || chapterUrl.endsWith(".pdf")) {
+                snapshot
+            } else {
+                val manifest = session.catalog.manifest(session.chapterId(chapterUrl), refresh = true)
+                val oldVersion = chapterMemo["smangaManifestVersion"]?.jsonPrimitive?.contentOrNull
+                val mappingChanged = (oldVersion != null && oldVersion != manifest.version) ||
+                    (snapshot.totalPages > 0 && snapshot.totalPages != manifest.pageCount)
+                if (mappingChanged) session.reading.requireMappingConfirmation(session.chapterId(chapterUrl))
+                snapshot.copy(
+                    previousPublicationVersion = oldVersion,
+                    publicationVersion = manifest.version,
+                    updatedChapterMemo = buildJsonObject {
+                        snapshot.updatedChapterMemo.forEach { (key, value) -> put(key, value) }
+                        put("smangaManifestVersion", manifest.version)
+                    },
+                    requiresConfirmation = snapshot.requiresConfirmation || mappingChanged,
+                    requiresPageMappingConfirmation = snapshot.requiresPageMappingConfirmation || mappingChanged,
+                )
+            }
+        }
+        override suspend fun acceptRemotePageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+        ) {
+            session().let { it.reading.accept(it.chapterFromUrl(chapterUrl), pageIndex, totalPages, readAt) }
+        }
+        override suspend fun beginReadingSession(chapterUrl: String) {
+            session().let { it.reading.beginSession(it.chapterId(chapterUrl)) }
+        }
+        override suspend fun confirmLocalPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+        ) {
+            session().let { it.reading.confirmLocal(it.chapterFromUrl(chapterUrl), pageIndex, totalPages, readAt) }
         }
     }
-    override suspend fun acceptRemotePageProgress(
-        chapterUrl: String,
-        pageIndex: Int,
-        totalPages: Int,
-        readAt: Long,
-    ) {
-        session().let { it.reading.accept(it.chapterFromUrl(chapterUrl), pageIndex, totalPages, readAt) }
+    private inner class PdfProgress(private val captured: Session, private val chapter: Chapter) :
+        koharia.connection.ConnectionReflowProgressAdapter,
+        koharia.connection.ConnectionReaderPageProgressAdapter by koharia.connection.CapturedPageProgress(
+            chapter.url,
+            PageProgress(captured),
+            captured::checkActive,
+        ) {
+        private var reviewed: SmangaReadingCoordinator.PdfProgressReview? = null
+        private suspend fun <T> checked(url: String, action: suspend () -> T): T {
+            require(url == chapter.url) { "Reading resource changed" }
+            captured.checkActive()
+            return action().also { captured.checkActive() }
+        }
+        override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject) = checked(chapterUrl) {
+            captured.reading.pull(captured.chapterFromUrl(chapterUrl), chapterMemo, pdf = true)
+        }
+        override suspend fun reviewPageProgress(chapterUrl: String, chapterMemo: JsonObject) = checked(chapterUrl) {
+            captured.reading.reviewPdf(captured.chapterFromUrl(chapterUrl), chapterMemo)
+                .also { reviewed = it }.snapshot
+        }
+        override suspend fun isPageProgressConfirmed(chapterUrl: String, page: Int, total: Int, modifiedAt: Long) =
+            checked(chapterUrl) {
+                captured.reading.isPageConfirmed(captured.chapterId(chapterUrl), page, total, modifiedAt)
+            }
+        override suspend fun acceptRemotePageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+        ) =
+            resolve(chapterUrl, pageIndex, totalPages, readAt, useRemote = true)
+        override suspend fun confirmLocalPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+        ) =
+            resolve(chapterUrl, pageIndex, totalPages, readAt, useRemote = false)
+        private suspend fun resolve(
+            url: String,
+            page: Int,
+            total: Int,
+            readAt: Long,
+            useRemote: Boolean,
+        ) = checked(url) {
+            captured.reading.resolvePdfReview(
+                checkNotNull(reviewed) { "PDF progress was not reviewed" },
+                page,
+                total,
+                readAt,
+                useRemote,
+                checkAcceptance = {
+                    captured.checkActive()
+                    if (Injekt.get<koharia.connection.ConnectionIdentityChanges>().isPaused(id)) {
+                        throw koharia.connection.ConnectionWritesPaused()
+                    }
+                },
+            )
+            reviewed = null
+        }
     }
-    override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) {
-        session().let { session ->
+
+    override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean): ConnectionReadStatus {
+        return session().let { session ->
             val descriptor = session.chapterFromUrl(chapterUrl)
             val manga = mangas.getMangaByUrlAndSourceId(session.mangaUrl(descriptor.mangaId), id)
             val local = manga?.let { chapters.getChapterByMangaId(it.id) }?.firstOrNull { it.url == chapterUrl }
@@ -443,12 +633,6 @@ class SmangaSource(private val context: Context, override val connectionProfile:
                 read,
             )
         }
-    }
-    override fun beginReadingSession(chapterUrl: String) {
-        session().let { it.reading.beginSession(it.chapterId(chapterUrl)) }
-    }
-    override suspend fun confirmLocalPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {
-        session().let { it.reading.confirmLocal(it.chapterFromUrl(chapterUrl), pageIndex, totalPages, readAt) }
     }
     override suspend fun syncMangaProgress(manga: Manga) {
         session().let { it.reading.syncManga(it.mangaId(manga.url)) }
@@ -477,6 +661,7 @@ class SmangaSource(private val context: Context, override val connectionProfile:
         )
     }
     override suspend fun syncConnectionHistory() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (ConnectionRestoreState.isRestoring) return
         val session = session()
         session.reading.retryPending()
@@ -489,7 +674,7 @@ class SmangaSource(private val context: Context, override val connectionProfile:
                 if (ConnectionRestoreState.isRestoring) return
                 if (!visitedManga.add(entry.mangaId)) continue
                 val manga = materialize(toManga(session.catalog.manga(entry.mangaId), session))
-                Injekt.get<SyncChaptersWithSource>().await(getChapterList(manga.toSManga()), manga, this)
+                Injekt.get<SyncChaptersWithSource>().fetchAndSync(manga, this, ChapterFetchOrigin.PROGRESS)
                 session.reading.syncManga(entry.mangaId)
                 // Aggregates only discover manga; MAX(chapterId) is not a resume location.
                 val selected = selectSmangaHistoryState(

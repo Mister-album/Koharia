@@ -4,6 +4,10 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
+import eu.kanade.domain.manga.model.toSManga
+import eu.kanade.tachiyomi.ui.reader.loader.LocalPageLoader
+import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import koharia.connection.ConnectionMediaImportItem
 import koharia.connection.ConnectionMediaImportRequest
 import koharia.connection.LibraryConnectionProfile
@@ -11,7 +15,7 @@ import koharia.source.local.LocalBookshelf
 import koharia.source.local.LocalFolderSource
 import koharia.source.local.LocalLibraryConfig
 import koharia.source.local.LocalLibraryContentType
-import koharia.source.local.LocalLibraryLocator
+import koharia.source.local.LocalLibraryItem
 import koharia.source.local.LocalLibraryOrganizationMode
 import koharia.source.local.LocalLibraryPreferences
 import koharia.source.local.LocalLibraryRootConfig
@@ -24,6 +28,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.repository.MangaRepository
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -107,8 +112,38 @@ class ImageComicImportDeviceTest {
                 red.copyTo(File(loose, "1.png"))
                 blue.copyTo(File(loose, "2.png"))
                 source.refreshLibrary().getOrThrow()
-                assertTrue(source.browseIndexedLibrary(query = "").any { it.url.endsWith("/loose") })
-                val cover = source.loadChapterThumbnail(LocalLibraryLocator.chapterUrl(sourceId, "root", "loose"))
+                val imageComic = source.browseIndexedLibrary(query = "").single {
+                    source.indexedEntry(it.url)?.let { item ->
+                        item.rootId == "root" && item.relativePath == "loose"
+                    } == true
+                }
+                val indexed = checkNotNull(source.indexedEntry(imageComic.url))
+                assertEquals(LocalLibraryItem.Kind.FILE_ENTRY, indexed.kind)
+                assertEquals("directory", indexed.format)
+                Injekt.get<SyncChaptersWithSource>().fetchAndSync(
+                    imageComic,
+                    source,
+                    koharia.connection.ChapterFetchOrigin.OPEN,
+                )
+                val chapter = Injekt.get<ChapterRepository>().getChapterByMangaId(imageComic.id).single()
+                val loader = LocalPageLoader(ReaderChapter(chapter), source, source)
+                try {
+                    val pages = loader.getPages()
+                    assertEquals(2, pages.size)
+                    assertTrue(
+                        checkNotNull(pages[0].stream).invoke().use {
+                            it.readBytes()
+                        }.contentEquals(red.readBytes()),
+                    )
+                    assertTrue(
+                        checkNotNull(pages[1].stream).invoke().use {
+                            it.readBytes()
+                        }.contentEquals(blue.readBytes()),
+                    )
+                } finally {
+                    loader.recycle()
+                }
+                val cover = source.loadChapterThumbnail(chapter.url)
                 assertTrue(cover != null && cover.contentEquals(red.readBytes()))
             } finally {
                 repository.deleteMangaBySourceId(sourceId)

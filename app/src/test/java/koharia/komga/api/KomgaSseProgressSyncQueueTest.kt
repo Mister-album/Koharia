@@ -9,8 +9,8 @@ class KomgaSseProgressSyncQueueTest {
     @Test
     fun `book events remain bound to their originating connection`() {
         val queue = KomgaSseProgressSyncQueue()
-        val serverA = KomgaSseConnectionTarget(1L, "https://a.test", generation = 1L)
-        val serverB = KomgaSseConnectionTarget(2L, "https://b.test", generation = 2L)
+        val serverA = KomgaSseConnectionTarget(1L, "https://a.test", generation = 1L, chapterOwnerKey = "a")
+        val serverB = KomgaSseConnectionTarget(2L, "https://b.test", generation = 2L, chapterOwnerKey = "b")
 
         queue.add(PendingKomgaProgressSync(serverA, "shared-book-id"))
         queue.add(PendingKomgaProgressSync(serverA, "shared-book-id"))
@@ -28,7 +28,7 @@ class KomgaSseProgressSyncQueueTest {
     @Test
     fun `clearing queue drops pending full and incremental syncs`() {
         val queue = KomgaSseProgressSyncQueue()
-        val target = KomgaSseConnectionTarget(1L, "https://komga.test", generation = 1L)
+        val target = KomgaSseConnectionTarget(1L, "https://komga.test", generation = 1L, chapterOwnerKey = "a")
         queue.add(PendingKomgaProgressSync(target, null))
         queue.add(PendingKomgaProgressSync(target, "book-1"))
 

@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 class KomgaServerProfileManager(
     private val serverPreferences: KomgaServerPreferences,
@@ -39,20 +41,22 @@ class KomgaServerProfileManager(
         if (currentProfile.name == newName) return@withContext Result.success(Unit)
 
         runCatching {
-            val renamedDirectory = downloadProvider.renameKomgaServerDir(
-                source = KomgaSource(currentProfile.id, currentProfile.name),
-                newServerName = newName,
-            ).getOrThrow()
-            serverPreferences.rememberDirectoryAlias(serverId, currentProfile.name)
+            var renamedDirectory: com.hippo.unifile.UniFile? = null
+            Injekt.get<koharia.connection.ConnectionProfileManager>().rename(serverId, newName) { before, after ->
+                renamedDirectory = downloadProvider.renameKomgaServerDir(
+                    source = KomgaSource(before.id, before.name),
+                    newServerName = after.name,
+                ).getOrThrow()
+                serverPreferences.rememberDirectoryAlias(serverId, before.name)
 
-            val latestProfiles = serverPreferences.getProfiles()
-            val updatedProfiles = latestProfiles.map { profile ->
-                if (profile.id == serverId) profile.copy(name = newName) else profile
+                val latestProfiles = serverPreferences.getProfiles()
+                val updatedProfiles = latestProfiles.map { profile ->
+                    if (profile.id == serverId) profile.copy(name = newName) else profile
+                }
+                check(updatedProfiles.any { it.id == serverId }) { "Server profile was removed during rename" }
+
+                downloadCache.suppressNextProfileRefresh(updatedProfiles.mapTo(mutableSetOf()) { it.id })
             }
-            check(updatedProfiles.any { it.id == serverId }) { "Server profile was removed during rename" }
-
-            downloadCache.suppressNextProfileRefresh(updatedProfiles.mapTo(mutableSetOf()) { it.id })
-            serverPreferences.setProfiles(updatedProfiles)
 
             if (renamedDirectory != null) {
                 runCatching {

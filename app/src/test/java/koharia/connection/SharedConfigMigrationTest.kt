@@ -14,6 +14,68 @@ class SharedConfigMigrationTest {
     private val profile = LibraryConnectionProfile(7, "lanraragi", "Library")
     private val defaults = mapOf<String, Any>("theme" to 1, "font" to "original", "enabled" to true)
 
+    @Test
+    fun `completed startup does not instantiate migration preference defaults`() {
+        val storage = Storage(mapOf(SharedConfigMigration.COMPLETED to true, "connection_shared::theme" to 3))
+        val before = storage.values()
+        val migration = SharedConfigMigration(
+            storage,
+            { error("Startup must not build defaults") },
+            { listOf(profile) },
+            Json,
+        )
+        migration.captureUpgradeSelection()
+        assertTrue(migration.initialize())
+        assertFalse(migration.isPending())
+        assertEquals(before, storage.values())
+    }
+
+    @Test
+    fun `deferred defaults remain available once for migration and later restore`() {
+        val storage = Storage(mapOf("theme" to 2))
+        var builds = 0
+        val migration = SharedConfigMigration(
+            storage,
+            {
+                builds++
+                defaults
+            },
+            { listOf(profile) },
+            Json,
+        )
+        assertEquals(0, builds)
+        assertTrue(migration.initialize())
+        assertEquals(1, builds)
+        assertEquals(2, storage.data["connection_shared::theme"])
+        assertTrue(migration.initialize())
+        assertEquals("connection_shared::theme", migration.restoreKey("theme", false))
+        assertEquals(1, builds)
+    }
+
+    @Test
+    fun `completed installation can still lazily classify an imported preference`() {
+        val storage = Storage(mapOf(SharedConfigMigration.COMPLETED to true))
+        var builds = 0
+        val migration = SharedConfigMigration(
+            storage,
+            {
+                builds++
+                defaults
+            },
+            { listOf(profile) },
+            Json,
+        )
+        assertTrue(migration.initialize())
+        assertEquals(0, builds)
+        assertEquals(
+            SharedConfigMigration.RESTORE_PREFIX + "connection_7::theme",
+            migration.restoreKey("connection_7::theme", true),
+        )
+        assertEquals(1, builds)
+        assertEquals("connection_shared::font", migration.restoreKey("font", false))
+        assertEquals(1, builds)
+    }
+
     private class Storage(initial: Map<String, Any> = emptyMap()) : SharedConfigStorage {
         val data = initial.toMutableMap()
         var fail = false

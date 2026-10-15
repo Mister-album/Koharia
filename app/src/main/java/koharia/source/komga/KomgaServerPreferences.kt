@@ -75,8 +75,6 @@ class KomgaServerPreferences(
     }
 
     fun setProfiles(profiles: Collection<KomgaServerProfile>) {
-        val otherProviders = connectionPreferences.getProfiles()
-            .filterNot { it.providerId == KomgaConnectionProvider.ID }
         val komgaProfiles = profiles.map { profile ->
             LibraryConnectionProfile(
                 id = profile.id,
@@ -84,7 +82,14 @@ class KomgaServerPreferences(
                 name = profile.name,
             )
         }
-        connectionPreferences.setProfiles(otherProviders + komgaProfiles)
+        connectionPreferences.mutateProfiles { current ->
+            current.filterNot { it.providerId == KomgaConnectionProvider.ID } + komgaProfiles
+        }
+    }
+
+    fun removeProfile(serverId: Long) {
+        connectionPreferences.mutateProfiles { current -> current.filterNot { it.id == serverId } }
+        connectionPreferences.flush()
     }
 
     fun ensureProfilesInitialized() {

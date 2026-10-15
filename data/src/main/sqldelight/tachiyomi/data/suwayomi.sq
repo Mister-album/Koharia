@@ -27,6 +27,30 @@ WHERE connection_id = :connectionId AND account_key = :account AND group_key = :
 putCache:
 INSERT OR REPLACE INTO suwayomi_cache VALUES (:connectionId, :account, :groupKey, :key, :payload, :generation);
 
+putMissingCache:
+INSERT OR IGNORE INTO suwayomi_cache VALUES (:connectionId, :account, :groupKey, :key, :payload, :generation);
+
+removeCacheGroup:
+DELETE FROM suwayomi_cache WHERE connection_id = :connectionId AND account_key = :account AND group_key = :groupKey;
+
+removeDiscoveryCache:
+DELETE FROM suwayomi_cache WHERE connection_id = :connectionId AND account_key = :account
+AND (group_key = 'discovery' OR group_key LIKE 'discovery/%');
+
+CREATE INDEX suwayomi_operation_pending_index ON suwayomi_operation(connection_id, account_key, pending);
+
+getOperation:
+SELECT operation_key, payload, revision, pending FROM suwayomi_operation
+WHERE connection_id = :connectionId AND account_key = :account AND operation_key = :key;
+
+getPendingOperations:
+SELECT operation_key, payload, revision, pending FROM suwayomi_operation
+WHERE connection_id = :connectionId AND account_key = :account AND pending = 1;
+
+getOperationsForKeys:
+SELECT operation_key, payload, revision, pending FROM suwayomi_operation
+WHERE connection_id = :connectionId AND account_key = :account AND operation_key IN :keys;
+
 getOperations:
 SELECT operation_key, payload, revision, pending FROM suwayomi_operation
 WHERE connection_id = :connectionId AND account_key = :account;

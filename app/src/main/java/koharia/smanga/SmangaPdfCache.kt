@@ -5,6 +5,7 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.network.await
+import koharia.pdf.cache.PdfCacheFileLeases
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -124,7 +125,7 @@ class SmangaPdfCache(private val context: Context, connectionId: Long, accountKe
             .filter { it.isFile }.sumOf { it.length() }
 
         fun clear(context: Context): Int = File(context.cacheDir, "smanga-pdf").walkBottomUp()
-            .filter { it.isFile && it.absolutePath !in activeFiles }.count { it.delete() }
+            .filter { it.isFile && it.absolutePath !in activeFiles }.count(PdfCacheFileLeases::deleteIfUnused)
 
         suspend fun validate(
             file: UniFile,

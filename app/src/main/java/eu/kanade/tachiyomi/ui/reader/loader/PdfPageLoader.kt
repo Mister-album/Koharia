@@ -8,6 +8,7 @@ import android.os.SystemClock
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import koharia.pdf.cache.PdfCacheFileLeases
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import tachiyomi.core.common.util.system.logcat
+import java.io.File
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -44,16 +46,22 @@ internal class PdfPageLoader(
     private val viewportHeight = context.resources.displayMetrics.heightPixels
     private val fileDescriptor: android.os.ParcelFileDescriptor
     private val renderer: PdfRenderer
+    private val cacheLease = file.uri.takeIf { it.scheme == "file" }?.path?.let { PdfCacheFileLeases.acquire(File(it)) }
 
     init {
-        val fd = context.contentResolver.openFileDescriptor(file.uri, "r")
-            ?: error("Failed to open pdf file descriptor: ${file.uri}")
-
         try {
-            fileDescriptor = fd
-            renderer = PdfRenderer(fd)
+            val fd = context.contentResolver.openFileDescriptor(file.uri, "r")
+                ?: error("Failed to open pdf file descriptor: ${file.uri}")
+            try {
+                fileDescriptor = fd
+                renderer = PdfRenderer(fd)
+            } catch (e: Throwable) {
+                fd.close()
+                throw e
+            }
         } catch (e: Throwable) {
-            fd.close()
+            cacheLease?.close()
+            renderScope.cancel()
             throw e
         }
     }
@@ -236,8 +244,15 @@ internal class PdfPageLoader(
         }
         cachedBitmaps.forEach(Bitmap::recycle)
         synchronized(renderLock) {
-            renderer.close()
-            fileDescriptor.close()
+            try {
+                renderer.close()
+            } finally {
+                try {
+                    fileDescriptor.close()
+                } finally {
+                    cacheLease?.close()
+                }
+            }
         }
     }
 }

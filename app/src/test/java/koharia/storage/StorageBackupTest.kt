@@ -43,7 +43,27 @@ class StorageBackupTest {
         val restored = MemoryStorageRepository()
         StorageBackup(restored, Json).restore(2, "root", payload)
         val target = StorageRecordStore(StorageSession(2, "account", "root") { true }, restored, Json)
-        assertEquals(StoragePendingProgress(event, true), target.get<StoragePendingProgress>("progress", "book"))
+        assertEquals(StoragePendingProgress(event, true, true), target.get<StoragePendingProgress>("progress", "book"))
+        val backend = MemoryStorageBackend()
+        var progress = StorageProgress(backend, target, "new-device")
+        progress.flush()
+        assertEquals(0, backend.uploads)
+        assertEquals(emptySet<String>(), backend.createdDirectories)
+        assertEquals(koharia.connection.ConnectionReadStatus.HELD, progress.readStatus("book"))
+        val continued = progress.record("book", "v1", 200, 8, 20)
+        progress = StorageProgress(backend, target, "new-device")
+        progress.flush()
+        assertEquals(0, backend.uploads)
+        assertEquals(8, progress.cached("book")?.page)
+        assertNotEquals(event.device, continued.device)
+        assertEquals(continued.device, progress.cached("book")?.device)
+        assertEquals(koharia.connection.ConnectionReadStatus.HELD, progress.readStatus("book"))
+        val replay = StorageBackup(restored, Json).create(2, "account", "root")
+        StorageBackup(restored, Json).restore(3, "root", replay)
+        assertEquals(
+            target.get<StoragePendingProgress>("progress", "book"),
+            Json.decodeFromString<StoragePendingProgress>(restored.get(3, "account", "root", "progress", "book")!!),
+        )
         assertNull(target.get<Long>("progress-device", "old-device"))
         assertNull(target.get<String>("directories", ""))
         assertThrows(IllegalArgumentException::class.java) {
@@ -68,5 +88,19 @@ class StorageBackupTest {
         source.put("progress", "book", reread)
         backup.restore(1, "root", payload)
         assertEquals(reread, source.get<StoragePendingProgress>("progress", "book"))
+    }
+
+    @Test fun `repeated restore cannot pause an identical live event or revive its acknowledgement`() = runBlocking {
+        val repository = MemoryStorageRepository()
+        val store = StorageRecordStore(StorageSession(1, "account", "root") { true }, repository, Json)
+        val pending = StoragePendingProgress(StorageProgressRecord("book", "v1", "device", 1, 100), true)
+        store.put("progress", "book", pending)
+        val backup = StorageBackup(repository, Json)
+        val payload = backup.create(1, "account", "root")
+        backup.restore(1, "root", payload)
+        assertEquals(pending, store.get<StoragePendingProgress>("progress", "book"))
+        store.put("progress", "book", pending.copy(pending = false))
+        backup.restore(1, "root", payload)
+        assertEquals(pending.copy(pending = false), store.get<StoragePendingProgress>("progress", "book"))
     }
 }

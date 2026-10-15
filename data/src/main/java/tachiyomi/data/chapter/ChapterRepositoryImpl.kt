@@ -4,6 +4,8 @@ import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.serialization.json.JsonObject
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.toLong
@@ -12,6 +14,8 @@ import tachiyomi.data.Database
 import tachiyomi.data.MemoColumnAdapter
 import tachiyomi.data.subscribeToList
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.ChapterProgressOwner
+import tachiyomi.domain.chapter.model.ChapterSourceUpdate
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
 
@@ -22,30 +26,69 @@ class ChapterRepositoryImpl(
     override suspend fun addAll(chapters: List<Chapter>): List<Chapter> {
         return try {
             database.transactionWithResult {
-                chapters.map { chapter ->
-                    val chapterId = database.chaptersQueries.insertReturningId(
-                        chapter.mangaId,
-                        chapter.url,
-                        chapter.name,
-                        chapter.scanlator,
-                        chapter.read,
-                        chapter.bookmark,
-                        chapter.lastPageRead,
-                        chapter.chapterNumber,
-                        chapter.sourceOrder,
-                        chapter.dateFetch,
-                        chapter.dateUpload,
-                        chapter.version,
-                        chapter.memo,
-                    )
-                        .awaitAsOne()
-                    chapter.copy(id = chapterId)
-                }
+                insertChapters(chapters)
             }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
             emptyList()
         }
+    }
+
+    private suspend fun insertChapters(chapters: List<Chapter>): List<Chapter> = chapters.map { chapter ->
+        val chapterId = database.chaptersQueries.insertReturningId(
+            chapter.mangaId,
+            chapter.url,
+            chapter.name,
+            chapter.scanlator,
+            chapter.read,
+            chapter.bookmark,
+            chapter.lastPageRead,
+            chapter.chapterNumber,
+            chapter.sourceOrder,
+            chapter.dateFetch,
+            chapter.dateUpload,
+            chapter.version,
+            chapter.memo,
+        ).awaitAsOne()
+        chapter.copy(id = chapterId)
+    }
+
+    override suspend fun applySourceUpdate(
+        update: ChapterSourceUpdate,
+        checkCurrent: suspend () -> Unit,
+    ): List<Chapter>? = database.transactionWithResult {
+        checkCurrent()
+        val expectedById = update.expected.associateBy { it.id }
+        val removedIds = update.removed.toSet()
+        require(expectedById.size == update.expected.size && update.expected.all { it.mangaId == update.mangaId })
+        require(removedIds.size == update.removed.size && expectedById.keys.containsAll(removedIds))
+        require(update.added.all { it.mangaId == update.mangaId })
+        require(update.added.map { it.url }.distinct().size == update.added.size)
+        val retainedUrls = update.expected.filterNot { it.id in removedIds }.mapTo(hashSetOf()) { it.url }
+        require(update.added.none { it.url in retainedUrls })
+        require(update.updated.map { it.id }.distinct().size == update.updated.size)
+        update.updated.forEach {
+            require(it.id in expectedById && it.id !in removedIds)
+            require(
+                it.mangaId == null && it.url == null && it.read == null && it.bookmark == null &&
+                    it.lastPageRead == null && it.version == null,
+            ) {
+                "Source metadata cannot replace ownership or reading state"
+            }
+        }
+        val manga = database.mangasQueries.getMangaById(update.mangaId).awaitAsOneOrNull()
+        check(manga != null && manga.source == update.sourceId && manga.url == update.mangaUrl) {
+            "Source chapter ownership changed"
+        }
+        if (getChapterByMangaId(update.mangaId).associateBy { it.id } != expectedById) {
+            return@transactionWithResult null
+        }
+        checkCurrent()
+        if (removedIds.isNotEmpty()) database.chaptersQueries.removeChaptersWithIds(update.removed)
+        val inserted = insertChapters(update.added)
+        partialUpdate(*update.updated.toTypedArray())
+        checkCurrent()
+        inserted
     }
 
     override suspend fun update(chapterUpdate: ChapterUpdate) {
@@ -54,6 +97,29 @@ class ChapterRepositoryImpl(
 
     override suspend fun updateAll(chapterUpdates: List<ChapterUpdate>) {
         partialUpdate(*chapterUpdates.toTypedArray())
+    }
+
+    override suspend fun updateForReader(
+        updates: List<Pair<ChapterProgressOwner, ChapterUpdate>>,
+        checkCurrent: suspend () -> Unit,
+    ) {
+        database.transaction {
+            checkCurrent()
+            require(updates.map { it.first.chapterId }.distinct().size == updates.size)
+            updates.forEach { (owner, update) ->
+                require(update.id == owner.chapterId)
+                require(update.mangaId == null && update.url == null) { "Reader cannot replace chapter ownership" }
+                val chapter = getChapterById(owner.chapterId)
+                check(chapter != null && chapter.mangaId == owner.mangaId && chapter.url == owner.url) {
+                    "Reader chapter ownership changed"
+                }
+                check(database.mangasQueries.getMangaById(owner.mangaId).awaitAsOneOrNull()?.source == owner.sourceId) {
+                    "Reader connection ownership changed"
+                }
+            }
+            partialUpdate(*updates.map { it.second }.toTypedArray())
+            checkCurrent()
+        }
     }
 
     private suspend fun partialUpdate(vararg chapterUpdates: ChapterUpdate) {
@@ -99,6 +165,17 @@ class ChapterRepositoryImpl(
         return database.chaptersQueries
             .getChaptersByMangaIds(mangaIds.toList(), ::mapChapter)
             .awaitAsList()
+    }
+
+    override fun getChaptersByMangaIdsAsFlow(mangaIds: Collection<Long>): Flow<List<Chapter>> {
+        val batches = mangaIds.distinct().chunked(900).map {
+            database.chaptersQueries.getChaptersByMangaIds(it, ::mapChapter).subscribeToList()
+        }
+        return when (batches.size) {
+            0 -> flowOf(emptyList())
+            1 -> batches.single()
+            else -> combine(batches) { it.flatMap { rows -> rows } }
+        }
     }
 
     override suspend fun getScanlatorsByMangaId(mangaId: Long): List<String> {

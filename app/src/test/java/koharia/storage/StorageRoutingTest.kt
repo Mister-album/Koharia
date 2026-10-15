@@ -6,10 +6,14 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 class StorageRoutingTest {
-    @Test fun `LAN network failure falls back but authentication and root errors never do`() = runBlocking {
+    @Test fun `LAN network failure falls back but authentication root and protocol errors never do`() = runBlocking {
         val primary = MemoryStorageBackend().apply { seed("book", "primary") }
         val internal = MemoryStorageBackend().apply { seed("book", "internal") }
-        for (reason in listOf(StorageFailure.Reason.AUTH, StorageFailure.Reason.UNVERIFIED)) {
+        for (reason in listOf(
+            StorageFailure.Reason.AUTH,
+            StorageFailure.Reason.UNVERIFIED,
+            StorageFailure.Reason.PROTOCOL,
+        )) {
             val router = StorageEndpointRouter(primary, internal, { "wifi" }, { backend ->
                 if (backend === internal) throw StorageFailure(reason)
             })

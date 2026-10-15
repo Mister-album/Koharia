@@ -31,6 +31,7 @@ CREATE TABLE lanraragi_read_state (
     pending INTEGER NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1,
     initial_page INTEGER NOT NULL DEFAULT 0,
+    requires_confirmation INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (connection_id, archive_id)
 );
 
@@ -38,6 +39,11 @@ getEntries:
 SELECT C.payload FROM lanraragi_catalog C JOIN lanraragi_sync S
 ON C.connection_id = S.connection_id AND C.generation = S.generation
 WHERE C.connection_id = :connectionId;
+
+getEntry:
+SELECT C.payload FROM lanraragi_catalog C JOIN lanraragi_sync S
+ON C.connection_id = S.connection_id AND C.generation = S.generation
+WHERE C.connection_id = :connectionId AND C.resource_id = :resourceId;
 
 getSync:
 SELECT completed_at FROM lanraragi_sync WHERE connection_id = :connectionId;
@@ -65,19 +71,33 @@ abortMembers:
 DELETE FROM lanraragi_members WHERE connection_id = :connectionId AND generation = :generation
 AND generation NOT IN (SELECT generation FROM lanraragi_sync WHERE connection_id = :connectionId);
 
+CREATE INDEX lanraragi_read_state_pending_index
+ON lanraragi_read_state(connection_id, pending, local_unread, requires_confirmation);
+
+getReadState:
+SELECT * FROM lanraragi_read_state WHERE connection_id = :connectionId AND archive_id = :archiveId;
+
+getReadStatesForArchives:
+SELECT * FROM lanraragi_read_state WHERE connection_id = :connectionId AND archive_id IN :archiveIds;
+
+getPendingReadStates:
+SELECT * FROM lanraragi_read_state
+WHERE connection_id = :connectionId AND pending = 1 AND local_unread = 0 AND requires_confirmation = 0;
+
 getReadStates:
 SELECT * FROM lanraragi_read_state WHERE connection_id = :connectionId;
 
 record:
-INSERT INTO lanraragi_read_state VALUES (:connectionId, :archiveId, :pageIndex, :totalPages, :readAt, :localUnread, :pending, 1, :initialPage)
+INSERT INTO lanraragi_read_state VALUES (:connectionId, :archiveId, :pageIndex, :totalPages, :readAt, :localUnread, :pending, 1, :initialPage, :requiresConfirmation)
 ON CONFLICT(connection_id, archive_id) DO UPDATE SET
 page_index = excluded.page_index, total_pages = excluded.total_pages, read_at = excluded.read_at,
 local_unread = excluded.local_unread, pending = excluded.pending, revision = revision + 1,
-initial_page = excluded.initial_page;
+initial_page = excluded.initial_page,
+requires_confirmation = MAX(requires_confirmation, excluded.requires_confirmation);
 
 acknowledge:
 UPDATE lanraragi_read_state SET pending = 0
-WHERE connection_id = :connectionId AND archive_id = :archiveId AND revision = :revision;
+WHERE connection_id = :connectionId AND archive_id = :archiveId AND revision = :revision AND requires_confirmation = 0;
 
 removeCatalog:
 DELETE FROM lanraragi_catalog WHERE connection_id = :connectionId;

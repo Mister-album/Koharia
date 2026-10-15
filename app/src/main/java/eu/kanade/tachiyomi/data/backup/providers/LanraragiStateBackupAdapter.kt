@@ -38,6 +38,7 @@ class LanraragiStateBackupAdapter(
                     localUnread = state.local_unread != 0L,
                     pending = state.pending != 0L,
                     initialPage = state.initial_page != 0L,
+                    requiresConfirmation = state.requires_confirmation != 0L,
                 )
             }
     }
@@ -82,6 +83,7 @@ class LanraragiStateBackupAdapter(
                     if (state.localUnread) 1 else 0,
                     if (state.pending) 1 else 0,
                     if (state.initialPage) 1 else 0,
+                    if (state.requiresConfirmation || (state.pending && !state.localUnread)) 1 else 0,
                 )
                 latestReadAtByArchive[archiveId] = state.readAt
             }

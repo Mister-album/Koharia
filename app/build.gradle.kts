@@ -30,12 +30,28 @@ val hasReleaseKeystore = keystorePropertiesFile.exists().also { exists ->
     }
 }
 
+val devReadOnlyValidation = providers.gradleProperty("devReadOnlyValidation")
+    .map(String::toBoolean)
+    .getOrElse(false)
+
 val useEInkDeviceFixture = providers.gradleProperty("einkDeviceFixture")
     .map(String::toBoolean)
     .getOrElse(false)
 val useDeviceTestFixture = providers.gradleProperty("deviceTestFixture")
     .map(String::toBoolean)
     .getOrElse(false)
+val useMinifiedDeviceTestFixture = providers.gradleProperty("minifiedDeviceTestFixture")
+    .map(String::toBoolean)
+    .getOrElse(false)
+val collectBaselineProfileFixture = providers.gradleProperty("baselineProfileFixture")
+    .map(String::toBoolean)
+    .getOrElse(false)
+check(!collectBaselineProfileFixture || (useDeviceTestFixture && !useEInkDeviceFixture)) {
+    "Baseline profile collection requires -PdeviceTestFixture=true."
+}
+check(!useMinifiedDeviceTestFixture || (useDeviceTestFixture && !useEInkDeviceFixture)) {
+    "Minified device tests require -PdeviceTestFixture=true and cannot target the E-Ink fixture."
+}
 val optimizeResamplingBenchmark = providers.gradleProperty("resamplingBenchmarkOptimized")
     .map(String::toBoolean)
     .getOrElse(false)
@@ -44,8 +60,9 @@ check(!optimizeResamplingBenchmark || useDeviceTestFixture) {
 }
 
 tasks.matching { it.name.startsWith("connected") && it.name.endsWith("AndroidTest") }.configureEach {
+    inputs.property("isolatedDeviceFixture", useDeviceTestFixture || useEInkDeviceFixture)
     doFirst {
-        check(useDeviceTestFixture || useEInkDeviceFixture) {
+        check(inputs.properties["isolatedDeviceFixture"] == true) {
             "Device tests must use -PdeviceTestFixture=true (or -PeinkDeviceFixture=true). " +
                 "Refusing to test against the manually used app package."
         }
@@ -59,6 +76,7 @@ fun requireKeystoreProperty(name: String): String {
 
 android {
     namespace = "eu.kanade.tachiyomi"
+    if (useMinifiedDeviceTestFixture) testBuildType = "minifiedFixture"
 
     signingConfigs {
         if (hasReleaseKeystore) {
@@ -89,6 +107,7 @@ android {
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
         buildConfigField("boolean", "LANRARAGI_DIAGNOSTICS", "false")
+        buildConfigField("boolean", "DEV_READ_ONLY_VALIDATION", "false")
 
         testInstrumentationRunner = "koharia.testing.KohariaDeviceTestRunner"
         if (optimizeResamplingBenchmark) {
@@ -121,6 +140,7 @@ android {
     buildTypes {
         val debug = getByName("debug") {
             buildConfigField("boolean", "LANRARAGI_DIAGNOSTICS", "true")
+            buildConfigField("boolean", "DEV_READ_ONLY_VALIDATION", "$devReadOnlyValidation")
             if (!useDeviceTestFixture && !useEInkDeviceFixture) {
                 externalNativeBuild {
                     ndkBuild {
@@ -137,7 +157,7 @@ android {
                 manifestPlaceholders["kohariaAppLabel"] =
                     if (useEInkDeviceFixture) "Koharia E-Ink Tests" else "Koharia Auto Tests"
             }
-            versionNameSuffix = "-${getLatestCommitCount()}"
+            versionNameSuffix = "-${getLatestCommitCount()}" + if (devReadOnlyValidation) "-readonly" else ""
             isPseudoLocalesEnabled = true
         }
         val release = getByName("release") {
@@ -153,6 +173,20 @@ android {
         }
 
         val commonMatchingFallbacks = listOf(release.name)
+
+        if (useMinifiedDeviceTestFixture) {
+            create("minifiedFixture") {
+                initWith(release)
+                applicationIdSuffix = ".dev.devicefixture"
+                manifestPlaceholders["kohariaAppLabel"] = "Koharia Auto Tests"
+                signingConfig = debug.signingConfig
+                isDebuggable = false
+                isMinifyEnabled = true
+                isShrinkResources = true
+                proguardFiles("proguard-device-fixture.pro")
+                matchingFallbacks.addAll(commonMatchingFallbacks)
+            }
+        }
 
         create("foss") {
             initWith(release)
@@ -183,6 +217,15 @@ android {
             isProfileable = true
             versionNameSuffix = "-benchmark"
             applicationIdSuffix = ".benchmark"
+            if (useDeviceTestFixture) {
+                applicationIdSuffix = ".dev.devicefixture"
+                manifestPlaceholders["kohariaAppLabel"] = "Koharia Auto Tests"
+            }
+            if (collectBaselineProfileFixture) {
+                // Source profiles need original symbols; timing runs keep release shrinking.
+                isMinifyEnabled = false
+                isShrinkResources = false
+            }
 
             signingConfig = debug.signingConfig
 
@@ -193,6 +236,13 @@ android {
     sourceSets {
         getByName("preview").res.directories.add("src/debug/res")
         getByName("benchmark").res.directories.add("src/debug/res")
+        if (useMinifiedDeviceTestFixture) {
+            getByName("minifiedFixture") {
+                kotlin.directories.add("src/debug/java")
+                res.directories.add("src/debug/res")
+                manifest.srcFile("src/debug/AndroidManifest.xml")
+            }
+        }
     }
 
     splits {
@@ -210,8 +260,6 @@ android {
                 "libandroidx.graphics.path",
                 "libarchive-jni",
                 "libconscrypt_jni",
-                "libimagedecoder",
-                "libquickjs",
                 "libsqlite3x",
             )
                 .map { "**/$it.so" }
@@ -358,7 +406,7 @@ dependencies {
     // Image loading
     implementation(libs.bundles.coil)
     implementation(projects.readerImageView)
-    implementation(libs.image.decoder)
+    implementation(projects.core.imageDecoder)
 
     // UI libraries
     implementation(libs.material)
@@ -389,12 +437,16 @@ dependencies {
 
     // Tests
     testImplementation(libs.bundles.test)
+    testImplementation(libs.kxml)
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.compose.uiTestJunit4)
     debugImplementation(libs.androidx.compose.uiTestManifest)
+    if (useMinifiedDeviceTestFixture) {
+        add("minifiedFixtureImplementation", libs.androidx.compose.uiTestManifest)
+    }
 
     // For detecting memory leaks; see https://square.github.io/leakcanary/
     // debugImplementation(libs.leakCanary.android)

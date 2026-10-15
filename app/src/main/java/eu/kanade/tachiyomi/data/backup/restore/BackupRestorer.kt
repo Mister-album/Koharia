@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceRestorer
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import koharia.connection.ConnectionBackupRestoreAdapter
 import koharia.connection.ConnectionRestoreState
+import koharia.connection.ConnectionSourceRestorer
 import koharia.cover.CustomCoverStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
@@ -38,6 +39,8 @@ class BackupRestorer(
     private val categoriesRestorer: CategoriesRestorer = CategoriesRestorer(),
     private val preferenceRestorer: PreferenceRestorer = PreferenceRestorer(context),
     private val mangaRestorer: MangaRestorer = MangaRestorer(),
+    private val sourceManager: SourceManager = Injekt.get(),
+    private val connectionProfileManager: koharia.connection.ConnectionProfileManager = Injekt.get(),
 ) {
 
     private var restoreAmount = 0
@@ -79,8 +82,38 @@ class BackupRestorer(
         directoryBindings: Map<String, String>,
     ) {
         val backup = BackupDecoder(context).decode(uri, password)
+        val inventory = BackupConnectionInventory.read(backup)
+        val recoveryKey = BackupRestoreKey.create(backup, options, directoryBindings)
+        val libraryOwners = if (options.libraryEntries) {
+            backup.backupManga.mapTo(mutableSetOf()) {
+                it.source
+            } + backup.backupKomgaReadStatus.map { it.connectionId } +
+                backup.backupKomgaPages.map { it.connectionId } +
+                backup.backupKomgaPageAttempts.map { it.connectionId } +
+                backup.backupKomgaReadStatusAttempts.map { it.connectionId }
+        } else {
+            emptySet()
+        }
+        val importedOwners = inventory.filter { options.connectionSettings || it.id in libraryOwners }
+        val ownerIds = importedOwners.mapTo(mutableSetOf()) { it.id }
+        var appPreferences = BackupAppConnectionReferences.remap(backup.backupPreferences, emptyMap())
+        var heldReadStatus = emptyList<koharia.domain.komga.KomgaReadStatusIntent>()
+        var heldJournal = BackupKomgaProgressJournal.Held()
+        require(ownerIds.containsAll(libraryOwners)) { "Backup is missing connection ownership information" }
+        if (options.connectionSettings) {
+            require(
+                backup.backupSourcePreferences.all {
+                    it.sourceKey.startsWith("source_") &&
+                        it.sourceKey.removePrefix("source_").toLongOrNull() in ownerIds
+                },
+            ) { "Backup settings are missing connection ownership information" }
+            require(
+                backup.backupSourcePreferences.map { it.sourceKey }.distinct().size ==
+                    backup.backupSourcePreferences.size,
+            ) { "Duplicate backup source settings" }
+        }
         // Resolve every directory before changing preferences or library data.
-        val sourcePreferences = if (options.connectionSettings) {
+        var sourcePreferences = if (options.connectionSettings) {
             BackupDirectoryRemapper.remap(context, backup.backupSourcePreferences, directoryBindings)
         } else {
             emptyList()
@@ -111,39 +144,100 @@ class BackupRestorer(
             restoreAmount += 1
         }
 
-        ConnectionRestoreState.duringRestore {
-            if (options.libraryEntries) {
-                val sourceManager = Injekt.get<SourceManager>()
-                val chaptersBySource = backup.backupManga.groupBy { it.source }
-                chaptersBySource.forEach { (sourceId, mangas) ->
-                    val adapter = sourceManager.get(sourceId) as? ConnectionBackupRestoreAdapter
-                    adapter?.prepareReadingStateRestore(mangas.flatMap { it.chapters }.map { it.url })
-                }
-            }
-            coroutineScope {
-                if (options.categories) {
-                    restoreCategories(backup.backupCategories).join()
-                }
-                if (options.appSettings) {
-                    restoreAppPreferences(
-                        backup.backupPreferences,
-                        backup.backupCategories.takeIf { options.categories },
-                    ).join()
-                    storageDirectory?.let { Injekt.get<StoragePreferences>().baseStorageDirectory.set(it) }
-                }
-                if (options.connectionSettings) {
-                    restoreSourcePreferences(sourcePreferences).join()
-                }
+        val restoreData: suspend () -> Unit = {
+            ConnectionRestoreState.duringRestore {
                 if (options.libraryEntries) {
-                    restoreManga(
-                        backup.backupManga,
-                        if (options.categories) backup.backupCategories else emptyList(),
-                    ).join()
+                    val chaptersBySource = backup.backupManga.groupBy { it.source }
+                    chaptersBySource.forEach { (sourceId, mangas) ->
+                        val adapter = sourceManager.get(sourceId) as? ConnectionBackupRestoreAdapter
+                        adapter?.prepareReadingStateRestore(mangas.flatMap { it.chapters }.map { it.url })
+                    }
                 }
-                // TODO: optionally trigger online library + tracker update
+                coroutineScope {
+                    if (options.categories) {
+                        restoreCategories(backup.backupCategories).join()
+                    }
+                    if (options.appSettings) {
+                        restoreAppPreferences(
+                            appPreferences,
+                            backup.backupCategories.takeIf { options.categories },
+                        ).join()
+                        storageDirectory?.let { Injekt.get<StoragePreferences>().baseStorageDirectory.set(it) }
+                    }
+                    if (options.connectionSettings) {
+                        restoreSourcePreferences(sourcePreferences).join()
+                    }
+                    if (options.libraryEntries) {
+                        restoreManga(
+                            backup.backupManga,
+                            if (options.categories) backup.backupCategories else emptyList(),
+                        ).join()
+                        Injekt.get<tachiyomi.data.Database>().transaction {
+                            val intents = Injekt.get<koharia.domain.komga.KomgaReadStatusRepository>()
+                            intents.restoreHeld(heldReadStatus)
+                            Injekt.get<koharia.domain.komga.KomgaPageEventRepository>().restoreHeld(heldJournal.pages)
+                            intents.restoreHeldAttempts(heldJournal.readAttempts)
+                        }
+                    }
+                    // TODO: optionally trigger online library + tracker update
+                }
+                if (options.appSettings) preferenceRestorer.finishRestore()
+                Injekt.get<CustomCoverStore>().invalidate()
             }
-            if (options.appSettings) preferenceRestorer.finishRestore()
-            Injekt.get<CustomCoverStore>().invalidate()
+        }
+        if (options.appSettings || options.connectionSettings || importedOwners.isNotEmpty()) {
+            val sourceRestorer = checkNotNull(sourceManager as? ConnectionSourceRestorer) {
+                "Source manager must coordinate connection settings restore"
+            }
+            // Registration starts provider observers; run it after the restore write pause ends.
+            sourceRestorer.withSourceUpdatesDeferred {
+                if (importedOwners.isEmpty()) {
+                    restoreData()
+                } else {
+                    connectionProfileManager.importConnections(
+                        importedOwners.map {
+                            koharia.connection.LibraryConnectionProfile(it.id, it.providerId, it.name)
+                        },
+                        recoveryKey = recoveryKey,
+                    ) { targets ->
+                        appPreferences = BackupAppConnectionReferences.remap(backup.backupPreferences, targets)
+                        val references = targets.mapValues { (old, profile) ->
+                            BackupConnectionReferences(old, profile.id)
+                        }
+                        sourcePreferences = sourcePreferences.map { source ->
+                            val oldId = source.sourceKey.removePrefix("source_").toLong()
+                            references.getValue(oldId).preferences(source).let { mapped ->
+                                mapped.copy(
+                                    prefs = mapped.prefs.map { preference ->
+                                        if (preference.key == "Koharia server profile name") {
+                                            preference.copy(
+                                                value = eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue(
+                                                    targets.getValue(oldId).name,
+                                                ),
+                                            )
+                                        } else {
+                                            preference
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        if (options.libraryEntries) {
+                            heldReadStatus = BackupKomgaReadStatusIntents.remap(
+                                backup.backupKomgaReadStatus,
+                                targets,
+                                recoveryKey,
+                            )
+                            heldJournal = BackupKomgaProgressJournal.remap(backup, targets, recoveryKey)
+                            backup.backupManga.forEach { references.getValue(it.source).manga(it) }
+                        }
+                        sourceMapping = sourceMapping.mapKeys { (old, _) -> targets[old]?.id ?: old }
+                        restoreData()
+                    }
+                }
+            }
+        } else {
+            restoreData()
         }
     }
 
@@ -171,6 +265,7 @@ class BackupRestorer(
                 try {
                     mangaRestorer.restore(it, backupCategories)
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     val sourceName = sourceMapping[it.source] ?: it.source.toString()
                     errors.add(Date() to "${it.title} [$sourceName]: ${e.message}")
                 }
@@ -188,6 +283,7 @@ class BackupRestorer(
         preferenceRestorer.restoreApp(
             preferences,
             categories,
+            preserveConnectionInventory = true,
         )
 
         restoreProgress += 1
@@ -201,7 +297,7 @@ class BackupRestorer(
 
     private fun CoroutineScope.restoreSourcePreferences(preferences: List<BackupSourcePreferences>) = launch {
         ensureActive()
-        preferenceRestorer.restoreSource(preferences)
+        preferenceRestorer.restoreSource(preferences, initializeLegacyInventory = false)
 
         restoreProgress += 1
         notifier.showRestoreProgress(

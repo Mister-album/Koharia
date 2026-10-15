@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
+import eu.kanade.tachiyomi.data.backup.models.BackupConnection
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
@@ -11,6 +12,7 @@ import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.preferenceKey
 import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.connection.ConnectionIdentityChanges
 import koharia.connection.ConnectionPreferences
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
@@ -22,7 +24,25 @@ class PreferenceBackupCreator(
     private val sourceManager: SourceManager = Injekt.get(),
     private val preferenceStore: PreferenceStore = Injekt.get(),
     private val connectionPreferences: ConnectionPreferences = Injekt.get(),
+    private val identityChanges: ConnectionIdentityChanges = Injekt.get(),
 ) {
+
+    fun createConnections(sourceIds: Set<Long>, includeAll: Boolean): List<BackupConnection> {
+        val profiles = connectionPreferences.getProfiles().associateBy { it.id }
+        val ids = sourceIds + if (includeAll) profiles.keys else emptySet()
+        return ids.mapNotNull { id ->
+            val profile = profiles[id]
+            // Provider mappings survive removal; an unavailable owner's history still belongs to that provider.
+            val provider = profile?.providerId ?: connectionPreferences.providerIdForSource(id)
+                ?: return@mapNotNull null
+            BackupConnection(
+                id,
+                provider,
+                profile?.name ?: sourceManager.getOrStub(id).name.ifBlank { provider },
+                profile == null || identityChanges.isPaused(id),
+            )
+        }
+    }
 
     fun createApp(includePrivatePreferences: Boolean): List<BackupPreference> {
         val all = preferenceStore.getAll()
@@ -84,9 +104,15 @@ class PreferenceBackupCreator(
         if (include) {
             this
         } else {
-            this.filter { !Preference.isPrivate(it.key.withoutScopePrefix()) }
+            this.filter {
+                val key = it.key.withoutScopePrefix()
+                !Preference.isPrivate(key) && key !in LEGACY_KOMGA_CREDENTIAL_KEYS
+            }
         }
 }
+
+// Komga retains these upstream keys for configuration/backup compatibility. They predate __PRIVATE_.
+private val LEGACY_KOMGA_CREDENTIAL_KEYS = setOf("Username", "Password", "API key", "Api key")
 
 private fun String.withoutScopePrefix(): String {
     return substringAfterLast("::", this)

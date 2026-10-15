@@ -7,7 +7,7 @@ import koharia.connection.ConnectionManagedLifecycle
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionRegistry
 import koharia.connection.ConnectionSource
-import koharia.connection.LibraryConnectionProfile
+import koharia.connection.ConnectionSourceRestorer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,14 +33,17 @@ class AndroidSourceManager(
     private val sourceRepository: StubSourceRepository,
     private val connectionPreferences: ConnectionPreferences,
     private val connectionRegistry: ConnectionRegistry,
-) : SourceManager {
+    private val scope: CoroutineScope = CoroutineScope(Job() + Dispatchers.IO),
+    private val configurationPending: (Long) -> Boolean = { false },
+) : SourceManager, ConnectionSourceRestorer {
 
     private val _isInitialized = MutableStateFlow(false)
     override val isInitialized: StateFlow<Boolean> = _isInitialized.asStateFlow()
 
     private val downloadManager: DownloadManager by injectLazy()
 
-    private val scope = CoroutineScope(Job() + Dispatchers.IO)
+    private val sourceUpdatesLock = Any()
+    private var deferredSourceUpdates = 0
 
     private val sourcesMapFlow = MutableStateFlow(ConcurrentHashMap<Long, Source>())
 
@@ -51,12 +54,12 @@ class AndroidSourceManager(
     }
 
     init {
-        refreshSources(connectionPreferences.getProfiles())
+        refreshSources()
         _isInitialized.value = true
 
         scope.launch {
             connectionPreferences.profilesChanges()
-                .collectLatest(::refreshSources)
+                .collectLatest { refreshSources() }
         }
 
         scope.launch {
@@ -109,11 +112,49 @@ class AndroidSourceManager(
         return StubSource(id = id, lang = "", name = "")
     }
 
-    private fun refreshSources(profiles: List<LibraryConnectionProfile>) {
+    override suspend fun <T> withSourceUpdatesDeferred(block: suspend () -> T): T {
+        synchronized(sourceUpdatesLock) { deferredSourceUpdates++ }
+        return try {
+            block()
+        } finally {
+            // This synchronous finalizer also runs on cancellation and after a partial restore.
+            synchronized(sourceUpdatesLock) {
+                deferredSourceUpdates--
+                if (deferredSourceUpdates == 0) refreshSourcesLocked(recreate = true)
+            }
+        }
+    }
+
+    override suspend fun <T> withSourceConfiguration(id: Long, block: suspend () -> T): T {
+        val previous = synchronized(sourceUpdatesLock) {
+            check(deferredSourceUpdates == 0) { "Connection sources are being restored" }
+            deferredSourceUpdates++
+            val previous = sourcesMapFlow.value[id]
+            sourcesMapFlow.value = ConcurrentHashMap(sourcesMapFlow.value.filterKeys { it != id })
+            previous
+        }
+        return try {
+            (previous as? AutoCloseable)?.close()
+            block()
+        } finally {
+            synchronized(sourceUpdatesLock) {
+                deferredSourceUpdates--
+                if (deferredSourceUpdates == 0) refreshSourcesLocked()
+            }
+        }
+    }
+
+    private fun refreshSources() = synchronized(sourceUpdatesLock) {
+        if (deferredSourceUpdates == 0) refreshSourcesLocked()
+    }
+
+    private fun refreshSourcesLocked(recreate: Boolean = false) {
+        // Read inside the lock: an already queued profile emission may predate the restore.
+        val profiles = connectionPreferences.getProfiles()
         val previousSources = sourcesMapFlow.value
         val sources = profiles.mapNotNull { profile ->
             val existing = previousSources[profile.id] as? ConnectionSource
-            if (existing?.connectionProfile == profile) {
+            if (!recreate && existing?.connectionProfile == profile) {
                 existing
             } else {
                 runCatching { connectionRegistry.createSource(profile) }
@@ -134,7 +175,7 @@ class AndroidSourceManager(
 
         sourcesMapFlow.value = ConcurrentHashMap(sources.associateBy(Source::id))
         sources.forEach { source ->
-            (source as? ConnectionManagedLifecycle)?.onRegistered()
+            if (!configurationPending(source.id)) (source as? ConnectionManagedLifecycle)?.onRegistered()
             registerStubSource(StubSource.from(source))
         }
     }

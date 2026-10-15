@@ -534,6 +534,7 @@ class HistoryScreenModelTest {
             id = mangaId,
             chapterId = mangaId * 10 + 1,
             mangaId = mangaId,
+            mangaUrl = "/series/fixture",
             title = "Book $mangaId",
             chapterNumber = 1.0,
             readAt = Date(readAt),

@@ -26,11 +26,13 @@ internal class KomgaSortedSearchSession(
     private val fetch: suspend (SearchType, Int) -> MangasPage,
 ) {
     private data class Cursor(var page: Int = 1, var offset: Int = 0, var ended: Boolean = false)
+    private data class Position(val books: Cursor, val series: Cursor)
 
     private val mutex = Mutex()
     private val pages = ConcurrentHashMap<Pair<SearchType, Int>, MangasPage>()
-    private var books = Cursor()
-    private var series = Cursor()
+
+    // Cursor metadata lets a dropped output page replay without retaining its Manga payloads.
+    private val positions = mutableMapOf(1 to Position(Cursor(), Cursor()))
     private var lastPage = 0
     private var lastResult: MangasPage? = null
 
@@ -38,9 +40,9 @@ internal class KomgaSortedSearchSession(
         currentCoroutineContext().ensureActive()
         validate()
         if (page == lastPage) return@withLock checkNotNull(lastResult)
-        require(page == lastPage + 1)
-        val nextBooks = books.copy()
-        val nextSeries = series.copy()
+        val position = requireNotNull(positions[page]) { "Search page has no cursor" }
+        val nextBooks = position.books.copy()
+        val nextSeries = position.series.copy()
         suspend fun head(type: SearchType, cursor: Cursor): SManga? {
             while (!cursor.ended) {
                 val key = type to cursor.page
@@ -88,18 +90,17 @@ internal class KomgaSortedSearchSession(
         }
         currentCoroutineContext().ensureActive()
         validate()
-        books = nextBooks
-        series = nextSeries
+        positions[page + 1] = Position(nextBooks.copy(), nextSeries.copy())
         lastPage = page
         MangasPage(result, hasNext).also {
             lastResult = it
             pages.keys.removeAll { (type, number) ->
-                number < if (type ==
+                number != if (type ==
                     SearchType.BOOKS
                 ) {
-                    books.page
+                    nextBooks.page
                 } else {
-                    series.page
+                    nextSeries.page
                 }
             }
         }

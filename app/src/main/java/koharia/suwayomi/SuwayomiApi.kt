@@ -5,6 +5,7 @@ package koharia.suwayomi
 import eu.kanade.tachiyomi.network.await
 import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionAddressVerification
+import koharia.connection.connectionReadOnly
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -153,7 +154,9 @@ class SuwayomiApi(
             SuwayomiAuthMode.NONE, SuwayomiAuthMode.BASIC_AUTH -> Unit
             SuwayomiAuthMode.SIMPLE_LOGIN -> {
                 val request = Request.Builder().url(checkNotNull(endpoint.resolve("login.html")))
-                    .post(FormBody.Builder().add("user", username).add("pass", password).build()).build()
+                    .post(
+                        FormBody.Builder().add("user", username).add("pass", password).build(),
+                    ).connectionReadOnly().build()
                 rawClient.newCall(request).execute().use { response ->
                     val cookies = Cookie.parseAll(request.url, response.headers)
                     if (response.code !in setOf(302, 303) || cookies.isEmpty()) {
@@ -195,7 +198,9 @@ class SuwayomiApi(
     }
 
     private fun loginOperation(base: HttpUrl, query: String, variables: JsonObject, field: String): JsonObject =
-        rawClient.newCall(graphqlRequest(base, query, variables)).execute().use { response ->
+        rawClient.newCall(
+            graphqlRequest(base, query, variables).newBuilder().connectionReadOnly().build(),
+        ).execute().use { response ->
             if (!response.isSuccessful) throw SuwayomiException(SuwayomiException.Reason.AUTH, response.code)
             val root = runCatching { json.parseToJsonElement(response.body.string()).jsonObject }.getOrNull()
                 ?: throw SuwayomiException(SuwayomiException.Reason.AUTH)

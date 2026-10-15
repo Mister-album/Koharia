@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Text
@@ -22,9 +23,11 @@ import androidx.compose.ui.platform.LocalUriHandler
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.library.components.ManualDownloadIndicator
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import koharia.connection.SharedAppPreferences
+import koharia.connection.rememberConnectionShelfEntries
 import koharia.kavita.KavitaException
 import koharia.kavita.KavitaProfileImport
 import koharia.kavita.KavitaScrobbleStatus
@@ -85,6 +88,22 @@ class KavitaPersonalScreen(
         var hold by remember { mutableStateOf<Boolean?>(null) }
         var allowed by remember { mutableStateOf<Boolean?>(null) }
         var nextSync by remember { mutableStateOf("") }
+        val listState = rememberLazyListState()
+        val ownedSeries = remember(session, data) {
+            val recommendations = data?.get("recommendations") as? JsonObject
+            (recommendations?.get("ownedSeries") as? JsonArray).orEmpty().map {
+                session.api.decode<KavitaSeries>(it.jsonObject.getValue("series").toString())
+            }
+        }
+        val leadingItems = (if (error != null) 1 else 0) + (if (licensed == false) 1 else 0) +
+            (if (data?.get("series") is JsonObject) 1 else 0) +
+            (data?.get("ratings") as? JsonArray).orEmpty().size +
+            (data?.get("reviews") as? JsonArray).orEmpty().size
+        val localEntries = rememberConnectionShelfEntries(
+            source,
+            ownedSeries.map { session.identity.series(it.id) },
+            leadingItems,
+        ) { listState.layoutInfo.visibleItemsInfo.map { it.index } }
         fun run(block: suspend () -> Unit) {
             if (busy) return
             busy = true
@@ -177,7 +196,7 @@ class KavitaPersonalScreen(
                 },
             )
         }) { padding ->
-            LazyColumn(Modifier.padding(padding)) {
+            LazyColumn(Modifier.padding(padding), state = listState) {
                 error?.let { item { Text(it) } }
                 when (section) {
                     "stats" -> {
@@ -249,10 +268,14 @@ class KavitaPersonalScreen(
                             )
                         }
                         val recommendations = data?.get("recommendations") as? JsonObject
-                        items((recommendations?.get("ownedSeries") as? JsonArray).orEmpty()) { item ->
-                            val series = session.api.decode<KavitaSeries>(item.jsonObject.getValue("series").toString())
+                        items(ownedSeries) { series ->
                             ListItem(
                                 headlineContent = { Text(series.name) },
+                                trailingContent = {
+                                    localEntries[session.identity.series(series.id)]?.let {
+                                        ManualDownloadIndicator(it.downloads())
+                                    }
+                                },
                                 modifier = Modifier.clickable(!busy) {
                                     run {
                                         val manga = source.materialize(source.toManga(series))

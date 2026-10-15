@@ -34,11 +34,10 @@ data class KavitaAccountIdentity(
             (createdUtc.isBlank() || other.createdUtc.isBlank() || createdUtc == other.createdUtc) &&
             (installId.isBlank() || other.installId.isBlank() || installId == other.installId)
 
-    fun sameServerVerified(other: KavitaAccountIdentity): Boolean = matches(other) &&
-        (
-            (installId.isNotBlank() && other.installId.isNotBlank()) ||
-                (createdUtc.isNotBlank() && other.createdUtc.isNotBlank())
-            )
+    // A user creation timestamp is not a server identity, and a name can be reused by another account.
+    fun sameServerVerified(other: KavitaAccountIdentity): Boolean =
+        installId.isNotBlank() && installId == other.installId &&
+            userId > 0 && userId == other.userId && createdUtc == other.createdUtc
 
     fun retainingKnownFields(previous: KavitaAccountIdentity?) = copy(
         userId = userId.takeIf { it > 0 } ?: previous?.userId ?: 0,
@@ -63,6 +62,11 @@ data class KavitaSeries(
     val pages: Int = 0,
     val pagesRead: Int = 0,
     val coverImage: String = "",
+    val sortName: String? = null,
+    val created: String? = null,
+    val lastChapterAdded: String? = null,
+    val latestReadDate: String? = null,
+    val avgHoursToRead: Double? = null,
 )
 
 @Serializable
@@ -79,6 +83,7 @@ data class KavitaMetadata(
     val genres: List<KavitaTag> = emptyList(),
     val tags: List<KavitaTag> = emptyList(),
     val publicationStatus: Int = 0,
+    val releaseYear: Int? = null,
 )
 
 @Serializable

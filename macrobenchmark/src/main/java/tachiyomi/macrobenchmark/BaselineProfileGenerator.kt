@@ -2,8 +2,10 @@ package tachiyomi.macrobenchmark
 
 import androidx.benchmark.macro.junit4.BaselineProfileRule
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Until
 import org.junit.Rule
 import org.junit.Test
+import java.util.regex.Pattern
 
 class BaselineProfileGenerator {
 
@@ -11,23 +13,31 @@ class BaselineProfileGenerator {
     val baselineProfileRule = BaselineProfileRule()
 
     @Test
-    fun generate() = baselineProfileRule.collect(
-        packageName = "eu.kanade.tachiyomi.benchmark",
-        profileBlock = {
-            pressHome()
-            startActivityAndWait()
+    fun generate() = ReaderProfileJourney().use { reader ->
+        baselineProfileRule.collect(
+            packageName = BenchmarkTarget.PACKAGE,
+            maxIterations = 15,
+            stableIterations = 3,
+            strictStability = true,
+            profileBlock = {
+                pressHome()
+                startActivityAndWait()
 
-            device.findObject(By.text("Updates")).click()
-
-            device.findObject(By.text("History")).click()
-
-            // TODO: automate storage permissions and possibly open manga details screen too?
-            // device.findObject(By.text("Browse")).click()
-            // device.findObject(By.text("Extensions")).click()
-            // device.swipe(150, 150, 50, 150, 1)
-
-            device.findObject(By.text("More")).click()
-            device.findObject(By.text("Settings")).click()
-        },
-    )
+                fun click(label: String) {
+                    val node = device.wait(Until.findObject(By.text(Pattern.compile(label))), 10_000)
+                    checkNotNull(node) { "Missing current navigation entry: $label; complete fixture onboarding first" }
+                    node.click()
+                    device.waitForIdle()
+                }
+                click("History|历史")
+                click("More|更多")
+                click("Settings|设置")
+                check(device.wait(Until.hasObject(By.text(Pattern.compile("Appearance|外观"))), 10_000)) {
+                    "Current settings categories did not appear"
+                }
+                device.pressBack()
+                reader.readAll()
+            },
+        )
+    }
 }

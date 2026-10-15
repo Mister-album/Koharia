@@ -13,6 +13,34 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SuwayomiReadingCoordinatorTest {
+    @Test
+    fun `record pull and flush never load unrelated progress history`() = runTest {
+        repeat(1_000) {
+            repository.putOperation(
+                identity.connectionId,
+                identity.account,
+                SuwayomiOperation("other-$it", "{}", 1, false),
+            )
+        }
+        val reader = coordinator()
+        reader.pull(3, 11, memo)
+        reader.record(3, 11, 2, 10, 100, false)
+        reader.flush()
+        assertFalse(reader.operation(11)!!.pending)
+        assertEquals(2, api.remote.lastPageRead)
+        assertEquals(0, repository.fullHistoryReads)
+    }
+
+    @Test
+    fun `explicit marking reports a durable queue and rejects restore-time submissions`() = runTest {
+        val reading = coordinator()
+        ConnectionRestoreState.duringRestore {
+            assertEquals(koharia.connection.ConnectionReadStatus.UNAVAILABLE, reading.markRead(3, 11, true))
+        }
+        assertTrue(repository.operations(identity.connectionId, identity.account).isEmpty())
+        assertEquals(koharia.connection.ConnectionReadStatus.PENDING, reading.markRead(3, 11, true))
+        assertTrue(repository.operations(identity.connectionId, identity.account).single().pending)
+    }
     private val repository = MemorySuwayomiRepository()
     private val api = FakeSuwayomiService()
     private val json = Json { ignoreUnknownKeys = true }

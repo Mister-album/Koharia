@@ -5,6 +5,8 @@ import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.SmbConfig
 import com.hierynomus.smbj.auth.AuthenticationContext
+import com.hierynomus.smbj.connection.Connection
+import com.hierynomus.smbj.session.Session
 import com.rapid7.client.dcerpc.RPCException
 import com.rapid7.client.dcerpc.mssrvs.ServerService
 import com.rapid7.client.dcerpc.transport.SMBTransportFactories
@@ -53,19 +55,32 @@ internal fun newSmbClient() = SMBClient(
         .withTimeout(20, TimeUnit.SECONDS).withSoTimeout(0, TimeUnit.SECONDS).build(),
 )
 
+internal fun Connection.authenticateStorage(username: String, password: String, domain: String): Session {
+    val context = if (username.isEmpty()) {
+        AuthenticationContext.anonymous()
+    } else {
+        AuthenticationContext(username, password.toCharArray(), domain)
+    }
+    return try {
+        authenticate(context)
+    } catch (error: NullPointerException) {
+        // SMBJ derives an absent anonymous session key when SMB3 omits both NULL and GUEST flags.
+        if ((!context.isAnonymous && !context.isGuest) || !negotiatedProtocol.dialect.isSmb3x) {
+            throw error
+        }
+        runCatching { close() }.onFailure { error.addSuppressed(it) }
+        throw StorageFailure(StorageFailure.Reason.PROTOCOL, error)
+    }
+}
+
 /** Server-level enumeration uses SRVSVC over the authenticated SMB2/3 IPC pipe. */
 internal suspend fun authenticateSmbServer(address: String, username: String, password: String, domain: String) =
     withContext(Dispatchers.IO) {
         val endpoint = URI(SmbAddress.parse(address).server)
         newSmbClient().use { client ->
             client.connect(endpoint.host, endpoint.port.takeIf { it > 0 } ?: 445).use { connection ->
-                connection.authenticate(
-                    if (username.isEmpty()) {
-                        AuthenticationContext.anonymous()
-                    } else {
-                        AuthenticationContext(username, password.toCharArray(), domain)
-                    },
-                ).use { /* Authentication only: no share connection or directory enumeration. */ }
+                connection.authenticateStorage(username, password, domain)
+                    .use { /* Authentication only: no share connection or directory enumeration. */ }
             }
         }
     }
@@ -92,13 +107,7 @@ internal suspend fun browseSmbServer(
             val endpoint = URI(server.server)
             newSmbClient().use { client ->
                 client.connect(endpoint.host, endpoint.port.takeIf { it > 0 } ?: 445).use { connection ->
-                    connection.authenticate(
-                        if (username.isEmpty()) {
-                            AuthenticationContext.anonymous()
-                        } else {
-                            AuthenticationContext(username, password.toCharArray(), domain)
-                        },
-                    ).use { session ->
+                    connection.authenticateStorage(username, password, domain).use { session ->
                         ServerService(SMBTransportFactories.SRVSVC.getTransport(session)).shares1
                             .filter { it.type and 0xffff == 0 }
                             .map { it.netName.trimEnd('\u0000') }

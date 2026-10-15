@@ -14,6 +14,7 @@ import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.asState
 import eu.kanade.core.util.addOrRemove
 import eu.kanade.core.util.insertSeparators
+import eu.kanade.domain.chapter.interactor.DownloadNewChapters
 import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.chapter.interactor.SetReadStatus
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
@@ -34,6 +35,7 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.data.track.usesAutomaticChapterCounts
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.isLocalOrStub
@@ -41,6 +43,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionLibraryMembershipAdapter
 import koharia.connection.ConnectionLibraryShelf
@@ -50,9 +53,11 @@ import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
 import koharia.connection.ConnectionPublicationAdapter
+import koharia.connection.ConnectionReadStatus
 import koharia.connection.ConnectionViewerSettingsAdapter
 import koharia.connection.SharedAppPreferences
-import koharia.domain.chapter.interactor.FilterChaptersForDownload
+import koharia.connection.fetchChapters
+import koharia.connection.ui.readStatusMessages
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
 import koharia.domain.epub.model.EpubProgress
@@ -60,6 +65,7 @@ import koharia.domain.epub.model.EpubRemoteProgressCache
 import koharia.epub.cache.EpubCacheManager
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -166,7 +172,7 @@ class MangaScreenModel(
     private val addTracks: AddTracks = Injekt.get(),
     private val setMangaCategories: SetMangaCategories = Injekt.get(),
     private val mangaRepository: MangaRepository = Injekt.get(),
-    private val filterChaptersForDownload: FilterChaptersForDownload = Injekt.get(),
+    private val downloadNewChapters: DownloadNewChapters = Injekt.get(),
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
     private val getEpubRemoteProgressCache: GetEpubRemoteProgressCache = Injekt.get(),
     private val epubCacheManager: EpubCacheManager = Injekt.get(),
@@ -426,12 +432,15 @@ class MangaScreenModel(
     fun fetchAllFromSource(manualFetch: Boolean = true) {
         screenModelScope.launch {
             updateSuccessState { it.copy(isRefreshingData = true) }
-            val fetchFromSourceTasks = listOf(
-                async { fetchMangaFromSource(manualFetch) },
-                async { fetchChaptersFromSource(manualFetch) },
-            )
-            fetchFromSourceTasks.awaitAll()
-            updateSuccessState { it.copy(isRefreshingData = false) }
+            try {
+                val fetchFromSourceTasks = listOf(
+                    async { fetchMangaFromSource(manualFetch) },
+                    async { fetchChaptersFromSource(manualFetch) },
+                )
+                fetchFromSourceTasks.awaitAll()
+            } finally {
+                updateSuccessState { it.copy(isRefreshingData = false) }
+            }
             successState?.let { syncConnectionProgressInBackground(it.source) }
             successState?.let { state ->
                 syncEpubProgressInBackground(
@@ -448,9 +457,12 @@ class MangaScreenModel(
         chapters: List<Chapter>,
         force: Boolean = false,
     ) {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         val progressAdapter = source as? ConnectionEpubProgressAdapter ?: return
         screenModelScope.launchIO {
+            val session = koharia.connection.ConnectionSourceSession.capture(source)
             if (!force) delay(EPUB_REMOTE_PROGRESS_DELAY_MS)
+            session.checkCurrent()
             val remote = runCatching {
                 progressAdapter.syncMangaEpubProgress(
                     mangaId = currentMangaId,
@@ -458,11 +470,14 @@ class MangaScreenModel(
                     force = force,
                 )
             }.onFailure { error ->
+                if (error is CancellationException) throw error
+                session.checkCurrent()
                 logcat(LogPriority.WARN, error) {
                     "Failed to refresh EPUB remote progress for mangaId=$currentMangaId"
                 }
             }.getOrDefault(emptyList()).associateBy { it.chapterId }
             val local = getEpubProgress.awaitByMangaId(currentMangaId).associateBy { it.chapterId }
+            session.checkCurrent()
             updateSuccessState { state ->
                 state.copy(
                     chapters = state.chapters.map { item ->
@@ -488,6 +503,7 @@ class MangaScreenModel(
     }
 
     private fun syncConnectionProgressInBackground(source: Source) {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         val progressAdapter = source as? ConnectionMangaProgressAdapter ?: return
 
         screenModelScope.launchIO {
@@ -510,33 +526,41 @@ class MangaScreenModel(
      */
     private suspend fun fetchMangaFromSource(manualFetch: Boolean = false) {
         val state = successState ?: return
+        val session = koharia.connection.ConnectionSourceSession.capture(state.source)
         try {
             withIOContext {
+                session.checkCurrent()
                 val networkManga = (state.source as? koharia.connection.ConnectionCatalogAdapter)
                     ?.getMangaDetails(state.manga.toSManga(), manualFetch)
                     ?: state.source.getMangaDetails(state.manga.toSManga())
-                updateManga.awaitUpdateFromSource(state.manga, networkManga, manualFetch)
+                updateManga.awaitUpdateFromSource(state.manga, networkManga, manualFetch, session::checkCurrent)
 
                 val progressAdapter = state.source as? ConnectionViewerSettingsAdapter
                 if (progressAdapter != null) {
                     val flags = progressAdapter.getViewerFlags(state.manga.url)
+                    session.checkCurrent()
                     val currentManga = mangaRepository.getMangaById(state.manga.id)
                     if (flags != null && flags != currentManga.viewerFlags) {
-                        mangaRepository.update(
+                        mangaRepository.updateFromSource(
+                            state.manga,
                             tachiyomi.domain.manga.model.MangaUpdate(
                                 id = currentManga.id,
                                 viewerFlags = flags,
                             ),
+                            session::checkCurrent,
                         )
                     }
                 }
             }
         } catch (e: Throwable) {
+            session.checkCurrent()
+            if (e is CancellationException) throw e
             // Ignore early hints "errors" that aren't handled by OkHttp
             if (e is HttpException && e.code == 103) return
 
             logcat(LogPriority.ERROR, e)
             screenModelScope.launch {
+                session.checkCurrent()
                 snackbarHostState.showSnackbar(message = with(context) { e.formattedMessage })
             }
         }
@@ -851,22 +875,24 @@ class MangaScreenModel(
         val state = successState ?: return
         try {
             withIOContext {
-                val chapters = (state.source as? koharia.connection.ConnectionCatalogAdapter)
-                    ?.getChapterList(state.manga.toSManga(), manualFetch)
-                    ?: state.source.getChapterList(state.manga.toSManga())
+                val chapters = state.source.fetchChapters(
+                    state.manga.toSManga(),
+                    if (manualFetch) ChapterFetchOrigin.EXPLICIT_REFRESH else ChapterFetchOrigin.OPEN,
+                    manualFetch,
+                )
 
                 val newChapters = syncChaptersWithSource.await(
                     chapters,
                     state.manga,
-                    state.source,
                     manualFetch,
                 )
 
                 if (manualFetch) {
-                    downloadNewChapters(newChapters)
+                    downloadNewChapters.await(state.manga, chapters, newChapters)
                 }
             }
         } catch (e: Throwable) {
+            if (e is CancellationException) throw e
             val message = if (e is NoChaptersException) {
                 context.stringResource(MR.strings.no_chapters_error)
             } else {
@@ -984,9 +1010,7 @@ class MangaScreenModel(
         when (action) {
             ChapterDownloadAction.START -> {
                 startDownload(items.map { it.chapter }, false)
-                if (items.any { it.downloadState == Download.State.ERROR }) {
-                    downloadManager.startDownloads()
-                }
+                downloadManager.resumeDownloads(items.map { it.chapter.id })
             }
             ChapterDownloadAction.START_NOW -> {
                 val chapter = items.singleOrNull()?.chapter ?: return
@@ -1040,12 +1064,29 @@ class MangaScreenModel(
         toggleAllSelection(false)
         if (chapters.isEmpty()) return
         screenModelScope.launchIO {
-            setReadStatus.await(
+            val readResult = setReadStatus.await(
                 read = read,
                 chapters = chapters.toTypedArray(),
             )
 
+            val messages = listOf(readResult).readStatusMessages()
+            if (messages.isNotEmpty()) {
+                snackbarHostState.showSnackbar(messages.joinToString("\n") { context.stringResource(it) })
+            }
+            if (readResult !is SetReadStatus.Result.Completed ||
+                readResult.chapters.values.any { it != ConnectionReadStatus.SYNCED }
+            ) {
+                return@launchIO
+            }
+
             if (!read || successState?.hasLoggedInTrackers == false || autoTrackState == AutoTrackState.NEVER) {
+                return@launchIO
+            }
+
+            if (getTracks.await(currentMangaId).none {
+                    trackerManager.get(it.trackerId)?.usesAutomaticChapterCounts() == true
+                }
+            ) {
                 return@launchIO
             }
 
@@ -1053,7 +1094,10 @@ class MangaScreenModel(
 
             val tracks = getTracks.await(currentMangaId)
             val maxChapterNumber = chapters.maxOf { it.chapterNumber }
-            val shouldPromptTrackingUpdate = tracks.any { track -> maxChapterNumber > track.lastChapterRead }
+            val shouldPromptTrackingUpdate = tracks.any { track ->
+                trackerManager.get(track.trackerId)?.usesAutomaticChapterCounts() == true &&
+                    maxChapterNumber > track.lastChapterRead
+            }
 
             if (!shouldPromptTrackingUpdate) return@launchIO
             if (autoTrackState == AutoTrackState.ALWAYS) {
@@ -1139,18 +1183,6 @@ class MangaScreenModel(
                 }
             } catch (e: Throwable) {
                 logcat(LogPriority.ERROR, e)
-            }
-        }
-    }
-
-    private fun downloadNewChapters(chapters: List<Chapter>) {
-        if (!allowsChapterDownloads()) return
-        screenModelScope.launchNonCancellable {
-            val manga = successState?.manga ?: return@launchNonCancellable
-            val chaptersToDownload = filterChaptersForDownload.await(manga, chapters)
-
-            if (chaptersToDownload.isNotEmpty()) {
-                downloadChapters(chaptersToDownload)
             }
         }
     }

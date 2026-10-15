@@ -1,7 +1,6 @@
 package koharia.smanga.ui
 
 import androidx.paging.Pager
-import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
@@ -14,7 +13,10 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import koharia.connection.ConnectionShelfUpdates
 import koharia.connection.ui.CONNECTION_SHELF_STATIC_LOAD_STATES
+import koharia.smanga.SMANGA_SHELF_METADATA
 import koharia.smanga.SmangaMedia
+import koharia.smanga.downloadedSmangaShelf
+import koharia.smanga.persistSmangaDownloadedMetadata
 import koharia.source.smanga.SmangaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -41,16 +43,8 @@ import tachiyomi.domain.manga.repository.MangaRepository
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-internal fun mergeSmangaShelfManga(remote: Manga, local: Manga?): Manga {
-    return local?.copy(
-        title = remote.title,
-        author = remote.author,
-        description = remote.description,
-        genre = remote.genre,
-        thumbnailUrl = remote.thumbnailUrl,
-        memo = kotlinx.serialization.json.JsonObject(local.memo + remote.memo),
-    ) ?: remote
-}
+internal fun mergeSmangaShelfManga(remote: Manga, local: Manga?): Manga =
+    koharia.connection.mergeShelfMangaMetadata(remote, local)
 
 class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) :
     StateScreenModel<SmangaLibraryScreenModel.State>(
@@ -102,6 +96,7 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
     }
     private data class Request(
         val media: List<Long>,
+        val selectedMedia: Long,
         val query: String,
         val order: String,
         val downloads: Boolean,
@@ -112,6 +107,7 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
             it.media.filter { media ->
                 it.selectedMedia == 0L || media.id == it.selectedMedia
             }.map { media -> media.id },
+            it.selectedMedia,
             it.query,
             it.order,
             it.downloadedOnly,
@@ -120,26 +116,34 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
     }.distinctUntilChanged()
     val pages: Flow<PagingData<StateFlow<Manga>>> = request.flatMapLatest { request ->
         if (request.downloads) {
+            val cached = session.catalog.downloadedMetadata()
             combine(
                 repository.getMangaBySourceIdAsFlow(source.id),
                 downloads.cacheChanges.onStart { emit(Unit) },
             ) { local, _ ->
+                val entries = downloadedSmangaShelf(
+                    local.filter { it.url.startsWith(session.prefix) && downloads.getDownloadCount(it) > 0 },
+                    session.prefix,
+                    request.selectedMedia,
+                    request.query,
+                    request.order,
+                    cached,
+                )
+                val originals = local.associateBy { it.id }
+                val backfill = entries.filter {
+                    it.memo[SMANGA_SHELF_METADATA] != originals[it.id]?.memo?.get(SMANGA_SHELF_METADATA)
+                }
+                persistSmangaDownloadedMetadata(repository, backfill, session::checkActive)
+                repository.refreshShelfUnitCounts(entries, session::checkActive)
                 PagingData.from(
-                    data = local.filter {
-                        it.url.startsWith(session.prefix) &&
-                            (
-                                it.title.contains(request.query, true) ||
-                                    it.genre.orEmpty().any { tag -> tag.contains(request.query, true) }
-                                ) &&
-                            downloads.getDownloadCount(it) > 0
-                    }.map { MutableStateFlow(it) as StateFlow<Manga> },
+                    data = entries.map { MutableStateFlow(it) as StateFlow<Manga> },
                     sourceLoadStates = CONNECTION_SHELF_STATIC_LOAD_STATES,
                 )
             }
         } else if (request.media.isEmpty()) {
             flowOf(PagingData.empty())
         } else {
-            Pager(PagingConfig(pageSize = 50, initialLoadSize = 50, prefetchDistance = 5, enablePlaceholders = false)) {
+            Pager(koharia.connection.connectionShelfPagingConfig()) {
                 object : PagingSource<Int, Manga>() {
                     override fun getRefreshKey(state: PagingState<Int, Manga>): Int? = null
                     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Manga> =
@@ -148,8 +152,10 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
                                 val page = params.key ?: 1
                                 val result = session.catalog.page(request.media, request.query, request.order, page)
                                 session.checkActive()
+                                val entries = result.data.map { source.toManga(it, session) }
+                                repository.refreshShelfUnitCounts(entries, session::checkActive)
                                 LoadResult.Page(
-                                    data = result.data.map { source.toManga(it, session) },
+                                    data = entries,
                                     prevKey = (page - 1).takeIf { page > 1 },
                                     nextKey = (page + 1).takeIf { result.hasNext },
                                 )
@@ -159,9 +165,8 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
                             }
                         }
                 }
-            }.flow.cachedIn(screenModelScope).combine(repository.getMangaBySourceIdAsFlow(source.id)) { paging, local ->
-                val byUrl = local.associateBy { it.url }
-                paging.map { MutableStateFlow(mergeSmangaShelfManga(it, byUrl[it.url])) as StateFlow<Manga> }
+            }.flow.map { paging ->
+                paging.map { MutableStateFlow(it) as StateFlow<Manga> }
             }
         }
     }.flowOn(Dispatchers.IO).cachedIn(screenModelScope)
@@ -227,7 +232,7 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
         mutableState.update { it.copy(persistentFilters = persistentFilters) }
     }
     fun selectSearchSort(field: String, ascending: Boolean) {
-        if (field !in listOf("mangaName", "updateTime", "createTime") || state.value.downloadedOnly) return
+        if (field !in listOf("mangaName", "updateTime", "createTime")) return
         // A direct sort change applies for this visit only; the sheet is what stores it.
         applyOrder("$field ${if (ascending) "asc" else "desc"}", state.value.downloadedOnly)
     }
@@ -246,6 +251,12 @@ class SmangaLibraryScreenModel(val source: SmangaSource, initialQuery: String?) 
                 )
                 session.checkActive()
                 refreshed = true
+                if (!request.downloadedOnly) {
+                    eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(
+                        source,
+                        koharia.connection.ChapterFetchOrigin.EXPLICIT_REFRESH,
+                    )
+                }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 mutableState.update { it.copy(error = error) }

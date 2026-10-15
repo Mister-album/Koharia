@@ -1,0 +1,50 @@
+[
+  {
+    "file": "v0.4.0-plain.kohariabk",
+    "sha256": "f6cdaa394e4d35e4a85cec7d02ae04fccff1c5a0cbeda6bc51b8a5252ffd8b00",
+    "tag": "v0.4.0",
+    "commit": "421c3596c6a0bb9500a2805802efeb06e88102f5",
+    "sources": {
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/Backup.kt": "266021fe741b47edd0359141d8155b20eb7678400510157c2f368658f4a2067f",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupManga.kt": "79df267502e90920428b1aa60eebd1cbd7951ec6405c0372934df9a97f24c029",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupChapter.kt": "bec872c1a64b184b22a5bd14bfb2879dd31ca748e1eb1bc3c6c471ecd39c084f",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupCategory.kt": "4a1257454fd8951bc0410c106d273d78573011bf7a94614bab545ca4ee183750",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupSource.kt": "6bfe980f5e07fbf7148185dd0959b42bc9fb0acfd0ca57246988c5839de3881f",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupHistory.kt": "f68531bd7024677497dc9cfad523884203e3529c986eef480148d345f6e2107e",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupPreference.kt": "99ad107ed933b381e147262321b12c3dbb5b08bfff9d46659cc2de40d8972087",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/KohariaBackupEnvelope.kt": "c76e88ee9b0e8d91ff017e368663d127117b77f72615285cab92e7d77d88bb93",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/MangaBackupCreator.kt": "56a7ca88bd313b3a0a6ea53ed542d4403bb5cdd01b6ba2e655fa753fc4314916"
+    },
+    "providers": [
+      "komga"
+    ]
+  },
+  {
+    "file": "v0.6.0-encrypted.kohariabk",
+    "sha256": "216e527a22f44aa2c4f7a3aea93d6f64419648bb68b796986c70737cc4f03c2c",
+    "tag": "v0.6.0",
+    "commit": "e9fe432ad4190125c19639bf00f82ba63d5a5dc2",
+    "sources": {
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/Backup.kt": "b6d0a5c65675a095df3e7cd8a0a7863f237272b931f1e88aafd38f16d319f6a8",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupManga.kt": "e866fc03118c89bdbf07e1f7de5f5a25b2f826056e4c830614237fb0ae61e0cd",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupChapter.kt": "bec872c1a64b184b22a5bd14bfb2879dd31ca748e1eb1bc3c6c471ecd39c084f",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupCategory.kt": "4a1257454fd8951bc0410c106d273d78573011bf7a94614bab545ca4ee183750",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupSource.kt": "6bfe980f5e07fbf7148185dd0959b42bc9fb0acfd0ca57246988c5839de3881f",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupHistory.kt": "f68531bd7024677497dc9cfad523884203e3529c986eef480148d345f6e2107e",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupPreference.kt": "99ad107ed933b381e147262321b12c3dbb5b08bfff9d46659cc2de40d8972087",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/KohariaBackupEnvelope.kt": "c9a0bdf5d2fbec2456dfe5c957c272c5a8dbe80b36b12f430236123753f58ffc",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/MangaBackupCreator.kt": "c17432bf6840b50fa64332d0ee8989121821da8486c275ee26ee8592dc863dd6",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupEpubProgress.kt": "7be1f28bb67090931ceb8ea9053d12586c4e08b31af0d54696c7dabbc6307610",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupEpubBookmark.kt": "2109942e39e291aa7ac3aeb5439e24332fb3076248176736e3e45579e8eb8c2a",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupTtsProgress.kt": "f560717748171a7cd3f4b031102aa512a9696119e47b52c6b020621d62f802cd",
+      "app/src/main/java/eu/kanade/tachiyomi/data/backup/BackupCrypto.kt": "285c10bd4ea7c0925902da841d909533bac938bfcfbf2f58b7bfeaa3e3a9decf",
+      "app/src/main/java/koharia/connection/LibraryConnectionProfile.kt": "7c979955245bc7b6e1f2f636536de6e017c48bbf750ed21a34e5dfaea3326544"
+    },
+    "providers": [
+      "komga",
+      "local-folder",
+      "lanraragi",
+      "smanga"
+    ]
+  }
+]

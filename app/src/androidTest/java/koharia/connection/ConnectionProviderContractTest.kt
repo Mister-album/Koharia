@@ -40,11 +40,22 @@ class ConnectionProviderContractTest {
                 assertEquals(profile, source.connectionProfile)
                 assertTrue(provider.id, source is ConnectionBrowseAdapter)
                 assertTrue(provider.id, source is ConnectionMangaBehaviorAdapter)
+                assertTrue(provider.id, source is ConnectionChapterSessionAdapter)
                 assertTrue(
                     provider.id,
                     (source as ConnectionMangaBehaviorAdapter).mangaBehavior.supportsChapterCoverGrid,
                 )
                 val browse = source as ConnectionBrowseAdapter
+                for (scope in browse.availableContentScopes()) {
+                    assertTrue(
+                        "${provider.id}/$scope shelf must observe Source replacement",
+                        browse.createBrowseScreen(scope) is ConnectionBrowseSourceScreen,
+                    )
+                    assertTrue(
+                        "${provider.id}/$scope nested shelf must observe Source replacement",
+                        browse.createBrowseScreen(scope, "fixture", true) is ConnectionBrowseSourceScreen,
+                    )
+                }
                 val entrySettings = (source as? ConnectionEntryOpeningAdapter)?.entryOpeningSettings().orEmpty()
                 when (provider.id) {
                     "komga" -> {

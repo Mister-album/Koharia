@@ -141,10 +141,12 @@ class LanraragiSettingsScreen(
             scope.launch {
                 try {
                     val normalized = LanraragiApi.normalizeBase(address).toString()
+                    val reconnect = manager.requiresIdentityReplacement(sourceId)
                     if (ConnectionValidation.required(
                             isNew,
                             address != initialAddress || internalAddress != initialInternalAddress ||
                                 apiKey != initialKey,
+                            reconnect,
                         )
                     ) {
                         val headers = okhttp3.Headers.Builder().apply {
@@ -160,18 +162,35 @@ class LanraragiSettingsScreen(
                         )
                     }
                     val profile = manager.profiles().first { it.id == sourceId }
-                    withContext(Dispatchers.IO) {
-                        prefs.save(
+                    val identityChanged = !isNew && (
+                        reconnect || normalized != initialAddress ||
+                            internalAddress != initialInternalAddress || apiKey.trim() != initialKey
+                        )
+                    suspend fun write(id: Long) = withContext(Dispatchers.IO) {
+                        LanraragiPreferences(id).save(
                             normalized,
                             apiKey.trim(),
                             archiveOpenMode,
-                            defaultCategory,
+                            if (identityChanged) "" else defaultCategory,
                             grouped,
                             internalAddress,
                         )
                     }
-                    manager.update(profile.copy(name = name.trim()))
-                    (Injekt.get<SourceManager>().get(sourceId) as? LanraragiSource)?.reload()
+                    if (identityChanged) {
+                        manager.replaceIdentity(sourceId, name, ::write)
+                    } else {
+                        manager.commitConfiguration(sourceId) { draft ->
+                            LanraragiPreferences(sourceId, draft).save(
+                                normalized,
+                                apiKey.trim(),
+                                archiveOpenMode,
+                                defaultCategory,
+                                grouped,
+                                internalAddress,
+                            )
+                        }
+                        manager.update(profile.copy(name = name.trim()))
+                    }
                     if (completeOnboarding) {
                         Injekt.get<BasePreferences>().shownOnboardingFlow.set(true)
                         navigator.popUntilRoot()
@@ -218,11 +237,15 @@ class LanraragiSettingsScreen(
                     onClick = { save() },
                 ) {
                     if (saving) EInkCircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text(stringResource(MR.strings.action_save), Modifier.padding(start = if (saving) 8.dp else 0.dp))
+                    Text(
+                        koharia.connection.ui.connectionSaveLabel(sourceId),
+                        Modifier.padding(start = if (saving) 8.dp else 0.dp),
+                    )
                 }
             },
         ) { padding ->
             LazyColumn(Modifier.padding(padding)) {
+                item { koharia.connection.ui.ConnectionReconnectionNotice(sourceId) }
                 item {
                     PreferenceGroupHeader(stringResource(MR.strings.pref_connection_settings))
                     LanraragiTextSetting(

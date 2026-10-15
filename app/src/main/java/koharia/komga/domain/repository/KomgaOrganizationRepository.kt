@@ -5,6 +5,10 @@ import android.util.AtomicFile
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import koharia.connection.ChapterFetchOrigin
+import koharia.connection.ChapterFetchSession
+import koharia.connection.ConnectionReadStatus
+import koharia.connection.ConnectionReadStatusException
 import koharia.connection.ConnectionReadingQueueChapter
 import koharia.connection.ConnectionReadingQueuePosition
 import koharia.connection.ConnectionShelfStateStore
@@ -213,10 +217,11 @@ class KomgaOrganizationRepository(val source: KomgaSource, val api: KomgaOrganiz
         if (chapter == null) {
             checkActive()
             try {
-                val remoteChapters =
+                val remoteChapters = ChapterFetchSession.capture(source, ChapterFetchOrigin.OPEN).fetch {
                     api.seriesBooks(book.seriesId).map(source::organizationBookChapter)
+                }
                 checkActive()
-                Injekt.get<SyncChaptersWithSource>().await(remoteChapters, manga, source)
+                Injekt.get<SyncChaptersWithSource>().await(remoteChapters, manga)
             } catch (_: java.io.IOException) {
                 val mapped = source.organizationBookChapter(book)
                 checkActive()
@@ -378,7 +383,10 @@ class KomgaOrganizationRepository(val source: KomgaSource, val api: KomgaOrganiz
     suspend fun markRead(books: List<BookDto>, read: Boolean) {
         for (book in books.distinctBy { it.id }) {
             checkActive()
-            source.setChapterReadStatus("${source.baseUrl}/api/v1/books/${book.id}", read)
+            val status = source.setChapterReadStatus("${source.baseUrl}/api/v1/books/${book.id}", read)
+            if (status != ConnectionReadStatus.SYNCED) {
+                throw ConnectionReadStatusException(status)
+            }
             checkActive()
             val chapters: ChapterRepository = Injekt.get()
             val aliases =

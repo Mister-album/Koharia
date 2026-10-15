@@ -1,5 +1,6 @@
 package koharia.kavita
 
+import koharia.connection.DevReadOnlyValidation
 import koharia.domain.kavita.KavitaOperation
 import koharia.domain.kavita.KavitaRepository
 import kotlinx.coroutines.CancellationException
@@ -91,15 +92,15 @@ class KavitaBookmarks(
             catalog.resource(template.path, refresh).jsonArray.map { it.jsonObject }
         } catch (failure: java.io.IOException) {
             if (failure is KavitaException && failure.reason != KavitaException.Reason.NETWORK) throw failure
-            val pending = repository.operations(connectionId, account).any {
-                it.pending && it.key.startsWith("bookmark/${kind.name}/${ref.chapterId}/")
+            val pending = repository.pendingOperations(connectionId, account).any {
+                it.key.startsWith("bookmark/${kind.name}/${ref.chapterId}/")
             }
             if (!pending) throw failure
             emptyList()
         }
         val result = remote.toMutableList()
-        for (operation in repository.operations(connectionId, account).filter {
-            it.pending && it.key.startsWith("bookmark/${kind.name}/${ref.chapterId}/")
+        for (operation in repository.pendingOperations(connectionId, account).filter {
+            it.key.startsWith("bookmark/${kind.name}/${ref.chapterId}/")
         }) {
             val state = api.decode<KavitaBookmarkState>(operation.payload)
             result.removeAll(state::matches)
@@ -123,7 +124,8 @@ class KavitaBookmarks(
         require(value.page >= 0 && value.imageOffset >= 0)
         require(value.kind != KavitaBookmarkKind.TOC || value.title.isNotBlank())
         stateMutex.withLock {
-            val old = repository.operations(connectionId, account).firstOrNull { it.key == value.key }
+            checkSession()
+            val old = repository.operation(connectionId, account, value.key)
             repository.putOperation(
                 connectionId,
                 account,
@@ -138,7 +140,7 @@ class KavitaBookmarks(
         stateMutex.withLock state@{
             checkSession()
             require(key.startsWith("bookmark/"))
-            val current = repository.operations(connectionId, account).firstOrNull { it.key == key }
+            val current = repository.operation(connectionId, account, key)
                 ?: return@state
             if (current.revision != revision) throw KavitaException(KavitaException.Reason.CONFLICT)
             repository.acknowledge(connectionId, account, key, revision)
@@ -147,8 +149,9 @@ class KavitaBookmarks(
     }
 
     suspend fun flush() = flushMutex.withLock {
-        for (operation in repository.operations(connectionId, account).filter {
-            it.pending && it.key.startsWith("bookmark/")
+        if (DevReadOnlyValidation.enabled) return@withLock
+        for (operation in repository.pendingOperations(connectionId, account).filter {
+            it.key.startsWith("bookmark/")
         }) {
             checkSession()
             val state = api.decode<KavitaBookmarkState>(operation.payload)
@@ -198,7 +201,10 @@ class KavitaBookmarks(
         }
     }
 
+    internal suspend fun awaitClosedWriters() = flushMutex.withLock { stateMutex.withLock {} }
+
     @Synchronized fun retryPending() {
+        if (DevReadOnlyValidation.enabled) return
         if (!scope.isActive) return
         scheduled.set(true)
         if (job?.isActive == true) return

@@ -20,6 +20,7 @@ class KavitaAnnotationCoordinatorTest {
     private var remote: KavitaAnnotation? = null
     private var creates = 0
     private var localWritesAllowed = true
+    private var remoteWritesPaused = false
     private var likes = 0
     private var loseCreateResponse = false
     private var createActuallySaved = true
@@ -82,12 +83,50 @@ class KavitaAnnotationCoordinatorTest {
         KavitaCatalog(1, account, repository, api) {},
         CoroutineScope(Dispatchers.Default + Job().apply { cancel() }),
         {},
+        { if (remoteWritesPaused) throw koharia.connection.ConnectionWritesPaused() },
         { localWritesAllowed },
     )
 
     @AfterEach fun close() {
         api.close()
         server.stop(0)
+    }
+
+    @Test fun activatedLegacyAnnotationsStayHeldWhenRemoteMatchesOrDisappears() = runBlocking {
+        val reading = coordinator()
+        val key = reading.create(draft, "locator")
+        repository.quarantineForActivation(1, "one") {}
+        reading.flush()
+        assertEquals(0, creates)
+        remote = draft.copy(id = 10)
+        reading.load(3, refresh = true)
+        var held = repository.annotations(1, "one").first { it.key == key }
+        assertTrue(held.pending)
+        assertTrue(json.decodeFromString<KavitaAnnotationState>(held.payload).needsConfirmation)
+        remote = null
+        reading.load(3, refresh = true)
+        held = repository.annotations(1, "one").first { it.key == key }
+        assertTrue(held.pending)
+        assertTrue(json.decodeFromString<KavitaAnnotationState>(held.payload).needsConfirmation)
+        reading.resolve(key, held.revision, KavitaAnnotationResolution.LOCAL)
+        assertFalse(reading.cached(3).first { it.entry.key == key }.state.needsConfirmation)
+        reading.flush()
+        assertEquals(1, creates)
+    }
+
+    @Test fun pausedIdentityRetainsUnsubmittedAnnotationUntilWritesAreAllowed() = runBlocking {
+        val reading = coordinator()
+        reading.create(draft, "locator")
+        val before = repository.annotations(1, "one")
+        remoteWritesPaused = true
+        val failure = runCatching { reading.flush() }.exceptionOrNull()
+        assertTrue(failure is koharia.connection.ConnectionWritesPaused)
+        assertEquals(before, repository.annotations(1, "one"))
+        assertEquals(0, creates)
+        remoteWritesPaused = false
+        reading.flush()
+        assertEquals(1, creates)
+        assertFalse(repository.annotations(1, "one").single().pending)
     }
 
     @Test fun lostCreateResponseIsReconciledAfterRestartWithoutDuplicateCreation() = runBlocking {

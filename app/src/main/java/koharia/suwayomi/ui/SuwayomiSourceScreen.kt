@@ -56,10 +56,9 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
-import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.util.system.LocaleHelper
-import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionBrowseSourceScreen
 import koharia.source.suwayomi.SuwayomiSettingsScreen
 import koharia.source.suwayomi.SuwayomiSource
 import koharia.suwayomi.SuwayomiSourceInfo
@@ -90,7 +89,7 @@ class SuwayomiSourceScreen(
     override val sourceId: Long,
     private val sourceInfoId: Long,
     private val initialMode: SuwayomiSourceMangaType = SuwayomiSourceMangaType.POPULAR,
-) : Screen(), ConnectionBrowseScreen {
+) : ConnectionBrowseSourceScreen() {
     override val refreshOnReselect = false
 
     @Transient private var runtimeModel: SuwayomiSourceScreenModel? = null
@@ -113,7 +112,7 @@ class SuwayomiSourceScreen(
     @OptIn(androidx.compose.material.ExperimentalMaterialApi::class, ExperimentalMaterial3Api::class)
     @Composable
     override fun Content() {
-        val source = Injekt.get<SourceManager>().get(sourceId) as? SuwayomiSource
+        val source = observeConnectionSource() as? SuwayomiSource
         if (source == null || !source.hasValidConnection()) {
             EmptyScreen(stringRes = MR.strings.connection_unavailable)
             return
@@ -121,7 +120,7 @@ class SuwayomiSourceScreen(
         val epoch by source.epoch.collectAsState()
         val model =
             rememberScreenModel(
-                tag = "${source.instanceKey}:$epoch:suwayomi-source-$sourceId-$sourceInfoId-${initialMode.name}",
+                tag = "$connectionSourceGeneration:$epoch:suwayomi-source-$sourceInfoId-${initialMode.name}",
             ) {
                 SuwayomiSourceScreenModel(source, sourceInfoId, initialMode)
             }

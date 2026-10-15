@@ -2,6 +2,7 @@ package eu.kanade.presentation.browse.components
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -25,7 +26,9 @@ import tachiyomi.presentation.core.util.plus
 @Composable
 fun BrowseSourceList(
     modifier: Modifier = Modifier,
+    state: LazyListState,
     mangaList: LazyPagingItems<StateFlow<Manga>>,
+    resolveManga: (Manga) -> Manga,
     contentPadding: PaddingValues,
     selectedMangaIds: Set<Long> = emptySet(),
     showLibraryBadges: Boolean,
@@ -40,6 +43,7 @@ fun BrowseSourceList(
 ) {
     LazyColumn(
         modifier = modifier,
+        state = state,
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
     ) {
         contentHeader?.let { header -> item { header() } }
@@ -50,7 +54,8 @@ fun BrowseSourceList(
         }
 
         items(count = mangaList.itemCount) { index ->
-            val manga by mangaList[index]?.collectAsState() ?: return@items
+            val row by mangaList[index]?.collectAsState() ?: return@items
+            val manga = resolveManga(row)
             BrowseSourceListItem(
                 manga = manga,
                 label = entryLabel?.invoke(manga) ?: manga.title,

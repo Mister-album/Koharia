@@ -2,48 +2,39 @@ package eu.kanade.tachiyomi.data.library
 
 import android.content.Context
 import android.content.pm.ServiceInfo
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Build
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
-import androidx.work.WorkQuery
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import eu.kanade.domain.chapter.interactor.DownloadNewChapters
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
-import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.manga.model.toSManga
-import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.notification.Notifications
-import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
-import eu.kanade.tachiyomi.util.system.isConnectedToWifi
-import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
 import eu.kanade.tachiyomi.util.system.workManager
-import koharia.domain.chapter.interactor.FilterChaptersForDownload
+import koharia.connection.ChapterFetchOrigin
+import koharia.connection.FetchedChapters
+import koharia.connection.fetchChapters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
 import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.model.Category
@@ -51,13 +42,6 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.library.service.LibraryPreferences
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_CHARGING
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_NETWORK_NOT_METERED
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY_ON_WIFI
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_HAS_UNREAD
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_COMPLETED
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_READ
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_OUTSIDE_RELEASE_PERIOD
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.interactor.GetLibraryManga
 import tachiyomi.domain.manga.interactor.GetManga
@@ -84,57 +68,61 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
     private val sourceManager: SourceManager = Injekt.get()
     private val libraryPreferences: LibraryPreferences = Injekt.get()
     private val downloadManager: DownloadManager = Injekt.get()
-    private val coverCache: CoverCache = Injekt.get()
     private val getLibraryManga: GetLibraryManga = Injekt.get()
     private val getManga: GetManga = Injekt.get()
-    private val updateManga: UpdateManga = Injekt.get()
     private val syncChaptersWithSource: SyncChaptersWithSource = Injekt.get()
     private val fetchInterval: FetchInterval = Injekt.get()
-    private val filterChaptersForDownload: FilterChaptersForDownload = Injekt.get()
+    private val downloadNewChapters: DownloadNewChapters = Injekt.get()
 
     private val notifier = LibraryUpdateNotifier(context)
 
     private var mangaToUpdate: List<LibraryManga> = mutableListOf()
 
+    private lateinit var requestedSource: Source
+    private lateinit var requestedOwner: koharia.connection.ConnectionChapterOwner
+    private lateinit var requestedOrigin: ChapterFetchOrigin
+
     override suspend fun doWork(): Result {
-        if (uy.kohesive.injekt.Injekt.get<koharia.connection.SharedConfigMigration>().isPending()) return Result.retry()
-
-        if (tags.contains(WORK_NAME_AUTO)) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                val preferences = Injekt.get<LibraryPreferences>()
-                val restrictions = preferences.autoUpdateDeviceRestrictions.get()
-                if ((DEVICE_ONLY_ON_WIFI in restrictions) && !context.isConnectedToWifi()) {
-                    return Result.retry()
-                }
-            }
-
-            // Find a running manual worker. If exists, try again later
-            if (context.workManager.isRunning(WORK_NAME_MANUAL)) {
-                return Result.retry()
-            }
+        if (koharia.connection.DevReadOnlyValidation.enabled) return Result.retry()
+        setupTask(context)
+        val sourceId = inputData.keyValueMap[KEY_SOURCE] as? Long ?: return Result.success()
+        val ownerKey = inputData.getString(KEY_OWNER) ?: return Result.success()
+        requestedOrigin = inputData.getString(KEY_ORIGIN)?.let {
+            runCatching { ChapterFetchOrigin.valueOf(it) }.getOrNull()
+        }?.takeIf { it == ChapterFetchOrigin.EXPLICIT_REFRESH || it == ChapterFetchOrigin.SERVER_UPDATE }
+            ?: return Result.success()
+        if (koharia.connection.ConnectionRestoreState.isRestoring ||
+            Injekt.get<koharia.connection.SharedConfigMigration>().isPending()
+        ) {
+            return Result.retry()
         }
-
-        setForegroundSafely()
-
-        libraryPreferences.lastUpdatedTimestamp.set(Instant.now().toEpochMilli())
-
-        val categoryId = inputData.getLong(KEY_CATEGORY, -1L)
-        addMangaToQueue(categoryId)
-
-        return withIOContext {
-            try {
-                updateChapterList()
-                Result.success()
-            } catch (e: Exception) {
-                if (e is CancellationException) {
-                    // Assume success although cancelled
+        val source = sourceManager.get(sourceId) ?: return Result.success()
+        val owner = (source as? koharia.connection.ConnectionChapterSessionAdapter)?.captureChapterOwner()
+            ?: return Result.failure()
+        if (owner.key != ownerKey) return Result.success()
+        requestedSource = source
+        requestedOwner = owner
+        owner.checkCurrent()
+        // The retained notifier uses shared IDs, so only one connection owns it at a time.
+        return execution.withLock {
+            withIOContext {
+                try {
+                    checkRequestedSource()
+                    setForegroundSafely()
+                    libraryPreferences.lastUpdatedTimestamp.set(Instant.now().toEpochMilli())
+                    addMangaToQueue()
+                    updateChapterList()
                     Result.success()
-                } else {
-                    logcat(LogPriority.ERROR, e)
-                    Result.failure()
+                } catch (e: Exception) {
+                    if (e is CancellationException) {
+                        throw e
+                    } else {
+                        logcat(LogPriority.ERROR, e)
+                        Result.failure()
+                    }
+                } finally {
+                    notifier.cancelProgressNotification()
                 }
-            } finally {
-                notifier.cancelProgressNotification()
             }
         }
     }
@@ -154,75 +142,13 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
     /**
      * Adds list of manga to be updated.
-     *
-     * @param categoryId the ID of the category to update, or -1 if no category specified.
      */
-    private suspend fun addMangaToQueue(categoryId: Long) {
-        val libraryManga = getLibraryManga.await()
-
-        val listToUpdate = if (categoryId != -1L) {
-            libraryManga.filter { categoryId in it.categories }
-        } else {
-            val includedCategories = libraryPreferences.updateCategories.get().map { it.toLong() }
-            val excludedCategories = libraryPreferences.updateCategoriesExclude.get().map { it.toLong() }
-
-            libraryManga.filter {
-                val included = includedCategories.isEmpty() || it.categories.intersect(includedCategories).isNotEmpty()
-                val excluded = it.categories.intersect(excludedCategories).isNotEmpty()
-                included && !excluded
-            }
-        }
-
-        val restrictions = libraryPreferences.autoUpdateMangaRestrictions.get()
-        val skippedUpdates = mutableListOf<Pair<Manga, String?>>()
-        val (_, fetchWindowUpperBound) = fetchInterval.getWindow(ZonedDateTime.now())
-
-        mangaToUpdate = listToUpdate
-            .filter {
-                when {
-                    it.manga.updateStrategy == UpdateStrategy.ONLY_FETCH_ONCE && it.totalChapters > 0L -> {
-                        skippedUpdates.add(
-                            it.manga to context.stringResource(MR.strings.skipped_reason_not_always_update),
-                        )
-                        false
-                    }
-
-                    MANGA_NON_COMPLETED in restrictions && it.manga.status.toInt() == SManga.COMPLETED -> {
-                        skippedUpdates.add(it.manga to context.stringResource(MR.strings.skipped_reason_completed))
-                        false
-                    }
-
-                    MANGA_HAS_UNREAD in restrictions && it.unreadCount != 0L -> {
-                        skippedUpdates.add(it.manga to context.stringResource(MR.strings.skipped_reason_not_caught_up))
-                        false
-                    }
-
-                    MANGA_NON_READ in restrictions && it.totalChapters > 0L && !it.hasStarted -> {
-                        skippedUpdates.add(it.manga to context.stringResource(MR.strings.skipped_reason_not_started))
-                        false
-                    }
-
-                    MANGA_OUTSIDE_RELEASE_PERIOD in restrictions && it.manga.nextUpdate > fetchWindowUpperBound -> {
-                        skippedUpdates.add(
-                            it.manga to context.stringResource(MR.strings.skipped_reason_not_in_release_period),
-                        )
-                        false
-                    }
-
-                    else -> true
-                }
-            }
+    private suspend fun addMangaToQueue() {
+        requestedOwner.checkCurrent()
+        mangaToUpdate = getLibraryManga.await()
+            .filter { it.manga.source == requestedSource.id }
             .sortedBy { it.manga.title }
-
-        if (skippedUpdates.isNotEmpty()) {
-            // TODO: surface skipped reasons to user?
-            logcat {
-                skippedUpdates
-                    .groupBy { it.second }
-                    .map { (reason, entries) -> "$reason: [${entries.map { it.first.title }.sorted().joinToString()}]" }
-                    .joinToString()
-            }
-        }
+        requestedOwner.checkCurrent()
     }
 
     /**
@@ -262,14 +188,19 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                                     manga,
                                 ) {
                                     try {
-                                        val newChapters = updateManga(manga, fetchWindow)
-                                            .sortedByDescending { it.sourceOrder }
+                                        val source = requestedSource
+                                        checkRequestedSource()
+                                        val (fetched, added) = updateManga(manga, source, fetchWindow)
+                                        val newChapters = added.sortedByDescending { it.sourceOrder }
 
                                         if (newChapters.isNotEmpty()) {
-                                            val chaptersToDownload = filterChaptersForDownload.await(manga, newChapters)
-
-                                            if (chaptersToDownload.isNotEmpty()) {
-                                                downloadChapters(manga, chaptersToDownload)
+                                            if (downloadNewChapters.await(
+                                                    manga,
+                                                    fetched,
+                                                    newChapters,
+                                                    autoStart = false,
+                                                )
+                                            ) {
                                                 hasDownloads.store(true)
                                             }
 
@@ -277,6 +208,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                                             newUpdates.add(manga to newChapters.toTypedArray())
                                         }
                                     } catch (e: Throwable) {
+                                        if (e is CancellationException) throw e
                                         val errorMessage = when (e) {
                                             is NoChaptersException -> context.stringResource(
                                                 MR.strings.no_chapters_error,
@@ -300,10 +232,11 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         notifier.cancelProgressNotification()
 
         if (newUpdates.isNotEmpty()) {
-            notifier.showUpdateNotifications(newUpdates)
+            checkRequestedSource()
             if (hasDownloads.load()) {
-                downloadManager.startDownloads()
+                downloadManager.startQueuedDownloadsOnly()
             }
+            notifier.showUpdateNotifications(newUpdates)
         }
 
         if (failedUpdates.isNotEmpty()) {
@@ -315,36 +248,33 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         }
     }
 
-    private fun downloadChapters(manga: Manga, chapters: List<Chapter>) {
-        // We don't want to start downloading while the library is updating, because websites
-        // may don't like it and they could ban the user.
-        downloadManager.downloadChapters(manga, chapters, false)
-    }
-
     /**
      * Updates the chapters for the given manga and adds them to the database.
      *
      * @param manga the manga to update.
      * @return a pair of the inserted and removed chapters.
      */
-    private suspend fun updateManga(manga: Manga, fetchWindow: Pair<Long, Long>): List<Chapter> {
-        val source = sourceManager.getOrStub(manga.source)
-
-        // Update manga metadata if needed
-        if (libraryPreferences.autoUpdateMetadata.get()) {
-            val networkManga = source.getMangaDetails(manga.toSManga())
-            updateManga.awaitUpdateFromSource(manga, networkManga, manualFetch = false, coverCache)
-        }
-
-        val chapters = source.getChapterList(manga.toSManga())
-
+    private suspend fun updateManga(
+        manga: Manga,
+        source: Source,
+        fetchWindow: Pair<Long, Long>,
+    ): Pair<FetchedChapters, List<Chapter>> {
+        checkRequestedSource()
+        val chapters = source.fetchChapters(manga.toSManga(), requestedOrigin, forceNetwork = true)
+        checkRequestedSource()
         // Get manga from database to account for if it was removed during the update and
         // to get latest data so it doesn't get overwritten later on
-        val dbManga = getManga.await(manga.id)?.takeIf { it.favorite } ?: return emptyList()
+        val dbManga = getManga.await(manga.id)?.takeIf { it.favorite } ?: return chapters to emptyList()
 
-        return syncChaptersWithSource.await(chapters, dbManga, source, false, fetchWindow)
+        return chapters to syncChaptersWithSource.await(chapters, dbManga, false, fetchWindow)
     }
 
+    private fun checkRequestedSource() {
+        if (sourceManager.get(requestedSource.id) !== requestedSource) {
+            throw CancellationException("Chapter refresh source replaced")
+        }
+        requestedOwner.checkCurrent()
+    }
     private suspend fun withUpdateNotification(
         updatingManga: CopyOnWriteArrayList<Manga>,
         completed: AtomicInt,
@@ -409,105 +339,69 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
     }
 
     companion object {
-        private const val TAG = "LibraryUpdate"
+        private const val TAG = "ConnectionChapterRefresh"
         private const val WORK_NAME_AUTO = "LibraryUpdate-auto"
         private const val WORK_NAME_MANUAL = "LibraryUpdate-manual"
+        private const val KEY_SOURCE = "connection"
+        private const val KEY_OWNER = "owner"
+        private const val KEY_ORIGIN = "origin"
+        private val scheduling = kotlinx.coroutines.sync.Mutex()
+        private val execution = kotlinx.coroutines.sync.Mutex()
 
-        /**
-         * Key for category to update.
-         */
-        private const val KEY_CATEGORY = "category"
+        internal fun workName(sourceId: Long, ownerKey: String) = "$TAG-$sourceId-$ownerKey"
 
-        fun setupTask(
-            context: Context,
-            prefInterval: Int? = null,
-        ) {
-            val preferences = Injekt.get<LibraryPreferences>()
-            val interval = prefInterval ?: preferences.autoUpdateInterval.get()
-            if (interval > 0) {
-                val restrictions = preferences.autoUpdateDeviceRestrictions.get()
-                val networkType = if (DEVICE_NETWORK_NOT_METERED in restrictions) {
-                    NetworkType.UNMETERED
-                } else {
-                    NetworkType.CONNECTED
-                }
-                val networkRequest = NetworkRequest.Builder().apply {
-                    removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-                    if (DEVICE_ONLY_ON_WIFI in restrictions) {
-                        addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                    }
-                    if (DEVICE_NETWORK_NOT_METERED in restrictions) {
-                        addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
-                    }
-                }
-                    .build()
-                val constraints = Constraints.Builder()
-                    // 'networkRequest' only applies to Android 9+, otherwise 'networkType' is used
-                    .setRequiredNetworkRequest(networkRequest, networkType)
-                    .setRequiresCharging(DEVICE_CHARGING in restrictions)
-                    .setRequiresBatteryNotLow(true)
-                    .build()
-
-                val request = PeriodicWorkRequestBuilder<LibraryUpdateJob>(
-                    interval.toLong(),
-                    TimeUnit.HOURS,
-                    10,
-                    TimeUnit.MINUTES,
-                )
-                    .addTag(TAG)
-                    .addTag(WORK_NAME_AUTO)
-                    .setConstraints(constraints)
-                    .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
-                    .build()
-
-                context.workManager.enqueueUniquePeriodicWork(
-                    WORK_NAME_AUTO,
-                    ExistingPeriodicWorkPolicy.UPDATE,
-                    request,
-                )
-            } else {
-                context.workManager.cancelUniqueWork(WORK_NAME_AUTO)
-            }
+        // Kept for old migrations, restores and serialized WorkManager records.
+        @Suppress("UNUSED_PARAMETER")
+        fun setupTask(context: Context, prefInterval: Int? = null) {
+            if (koharia.connection.DevReadOnlyValidation.enabled) return
+            context.workManager.cancelUniqueWork(WORK_NAME_AUTO)
+            context.workManager.cancelUniqueWork(WORK_NAME_MANUAL)
         }
 
-        fun startNow(
-            context: Context,
-            category: Category? = null,
-        ): Boolean {
-            val wm = context.workManager
-            if (wm.isRunning(TAG)) {
-                // Already running either as a scheduled or manual job
-                return false
-            }
-
-            val inputData = workDataOf(
-                KEY_CATEGORY to category?.id,
-            )
-            val request = OneTimeWorkRequestBuilder<LibraryUpdateJob>()
-                .addTag(TAG)
-                .addTag(WORK_NAME_MANUAL)
-                .setInputData(inputData)
-                .build()
-            wm.enqueueUniqueWork(WORK_NAME_MANUAL, ExistingWorkPolicy.KEEP, request)
-
-            return true
+        @Suppress("UNUSED_PARAMETER")
+        fun startNow(context: Context, category: Category? = null): Boolean {
+            setupTask(context)
+            return false
         }
 
         fun stop(context: Context) {
-            val wm = context.workManager
-            val workQuery = WorkQuery.Builder.fromTags(listOf(TAG))
-                .addStates(listOf(WorkInfo.State.RUNNING))
-                .build()
-            wm.getWorkInfos(workQuery).get()
-                // Should only return one work but just in case
-                .forEach {
-                    wm.cancelWorkById(it.id)
+            setupTask(context)
+            context.workManager.cancelAllWorkByTag(TAG)
+        }
 
-                    // Re-enqueue cancelled scheduled work
-                    if (it.tags.contains(WORK_NAME_AUTO)) {
-                        setupTask(context)
-                    }
+        suspend fun request(
+            source: Source,
+            origin: ChapterFetchOrigin,
+            expectedOwner: String? = null,
+            context: Context = Injekt.get<android.app.Application>(),
+        ): Boolean {
+            if (koharia.connection.DevReadOnlyValidation.enabled) return false
+            require(origin == ChapterFetchOrigin.EXPLICIT_REFRESH || origin == ChapterFetchOrigin.SERVER_UPDATE)
+            val manager = Injekt.get<SourceManager>()
+            if (manager.get(source.id) !== source || koharia.connection.ConnectionRestoreState.isRestoring) return false
+            val owner = (source as koharia.connection.ConnectionChapterSessionAdapter).captureChapterOwner()
+            if (expectedOwner != null && owner.key != expectedOwner) return false
+            return scheduling.withLock {
+                owner.checkCurrent()
+                if (manager.get(source.id) !== source) return@withLock false
+                val name = workName(source.id, owner.key)
+                val wm = context.workManager
+                val states = wm.getWorkInfosForUniqueWork(name).await()
+                if (states.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }) {
+                    return@withLock false
                 }
+                val request = OneTimeWorkRequestBuilder<LibraryUpdateJob>()
+                    .setInputData(
+                        workDataOf(KEY_SOURCE to source.id, KEY_OWNER to owner.key, KEY_ORIGIN to origin.name),
+                    )
+                    .addTag(TAG)
+                    .addTag(name)
+                    .setInitialDelay(1, TimeUnit.SECONDS)
+                    .build()
+                owner.checkCurrent()
+                wm.enqueueUniqueWork(name, ExistingWorkPolicy.APPEND_OR_REPLACE, request).result.await()
+                true
+            }
         }
     }
 }

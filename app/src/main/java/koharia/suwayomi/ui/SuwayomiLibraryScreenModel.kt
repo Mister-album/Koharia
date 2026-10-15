@@ -97,6 +97,9 @@ class SuwayomiLibraryScreenModel(val source: SuwayomiSource, initialQuery: Strin
             try {
                 val shelf = session.catalog.shelf(refresh).withVisibleCategories(visibleCategoryIds)
                 session.checkActive()
+                for (entries in shelf.mangas.chunked(200)) {
+                    repository.refreshShelfUnitCounts(entries.map { source.toManga(it, session) }, session::checkActive)
+                }
                 val selected = source.preferences.categoryId.takeIf { id -> shelf.categories.any { it.id == id } } ?: -1
                 source.preferences.categoryId = selected
                 mutableState.update {
@@ -109,7 +112,13 @@ class SuwayomiLibraryScreenModel(val source: SuwayomiSource, initialQuery: Strin
                         error = null,
                     )
                 }
-                if (refresh) ConnectionShelfUpdates.notify(source.id)
+                if (refresh) {
+                    ConnectionShelfUpdates.notify(source.id)
+                    eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(
+                        source,
+                        koharia.connection.ChapterFetchOrigin.EXPLICIT_REFRESH,
+                    )
+                }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 mutableState.update {
@@ -146,15 +155,7 @@ class SuwayomiLibraryScreenModel(val source: SuwayomiSource, initialQuery: Strin
             categoryEntries
                 .filter { suwayomiLibraryFiltersMatch(request.filters, it.libraryFacts) }
                 .map { source.toManga(it, session) }.map { remote ->
-                    byUrl[remote.url]?.copy(
-                        title = remote.title,
-                        author = remote.author,
-                        artist = remote.artist,
-                        description = remote.description,
-                        genre = remote.genre,
-                        thumbnailUrl = remote.thumbnailUrl,
-                    )
-                        ?: remote
+                    source.mergeShelfLocalState(remote, byUrl[remote.url])
                 }
         }
         val filtered = entries.filter {

@@ -46,10 +46,19 @@ class AndroidSharedConfigStorage(private val preferences: SharedPreferences) : S
 
 class SharedConfigMigration(
     private val storage: SharedConfigStorage,
-    private val defaults: Map<String, Any>,
+    defaults: () -> Map<String, Any>,
     private val profiles: () -> List<LibraryConnectionProfile>,
     private val json: Json,
 ) {
+    constructor(
+        storage: SharedConfigStorage,
+        defaults: Map<String, Any>,
+        profiles: () -> List<LibraryConnectionProfile>,
+        json: Json,
+    ) : this(storage, { defaults }, profiles, json)
+
+    // Completed installations need only the migration marker during startup.
+    private val defaults by lazy(defaults)
     private val _pending = MutableStateFlow(isPending())
     val pending = _pending.asStateFlow()
 

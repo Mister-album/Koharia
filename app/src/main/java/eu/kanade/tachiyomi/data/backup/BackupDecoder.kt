@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.models.KohariaBackupEnvelope
+import eu.kanade.tachiyomi.data.backup.restore.BackupConnectionInventory
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.protobuf.ProtoBuf
 import tachiyomi.core.common.i18n.stringResource
@@ -19,8 +20,11 @@ class BackupDecoder(
     private val parser: ProtoBuf = Injekt.get(),
 ) {
     fun inspect(uri: Uri): KohariaBackupEnvelope {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
+        val bytes = withSizeLimitMessage {
+            context.contentResolver.openInputStream(uri)?.use {
+                BackupPayloadLimits.read(it, BackupPayloadLimits.CONTAINER_BYTES)
+            } ?: throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
+        }
         return try {
             parser.decodeFromByteArray(KohariaBackupEnvelope.serializer(), bytes)
         } catch (_: SerializationException) {
@@ -65,15 +69,27 @@ class BackupDecoder(
         } else {
             envelope.compressedPayload
         }
-        val payload = try {
-            GZIPInputStream(ByteArrayInputStream(compressedPayload)).use { it.readBytes() }
-        } catch (_: Exception) {
-            throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
+        val payload = withSizeLimitMessage {
+            try {
+                GZIPInputStream(ByteArrayInputStream(compressedPayload)).use {
+                    BackupPayloadLimits.read(it, BackupPayloadLimits.PAYLOAD_BYTES)
+                }
+            } catch (error: BackupSizeLimitExceeded) {
+                throw error
+            } catch (_: IOException) {
+                throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
+            }
         }
         return try {
-            parser.decodeFromByteArray(Backup.serializer(), payload)
-        } catch (_: SerializationException) {
+            parser.decodeFromByteArray(Backup.serializer(), payload).also { BackupConnectionInventory.read(it) }
+        } catch (_: IllegalArgumentException) {
             throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
         }
+    }
+
+    private inline fun <T> withSizeLimitMessage(block: () -> T): T = try {
+        block()
+    } catch (error: BackupSizeLimitExceeded) {
+        throw IOException(context.stringResource(MR.strings.backup_size_limit_exceeded), error)
     }
 }

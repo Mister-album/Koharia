@@ -2,6 +2,7 @@ package koharia.suwayomi
 
 import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionPageProgressSnapshot
+import koharia.connection.ConnectionReadStatus
 import koharia.connection.ConnectionRestoreState
 import koharia.domain.suwayomi.SuwayomiOperation
 import koharia.domain.suwayomi.SuwayomiRepository
@@ -65,7 +66,7 @@ class SuwayomiReadingCoordinator(
     private var lastRevision = 0L
 
     suspend fun operation(chapterId: Int): SuwayomiOperation? =
-        repository.operations(identity.connectionId, identity.account).firstOrNull { it.key == chapterId.toString() }
+        repository.operation(identity.connectionId, identity.account, chapterId.toString())
     private fun SuwayomiOperation.state() = json.decodeFromString<SuwayomiReadState>(payload)
 
     /**
@@ -244,9 +245,10 @@ class SuwayomiReadingCoordinator(
         }
     }
 
-    suspend fun markRead(mangaId: Int, chapterId: Int, read: Boolean) {
-        if (!available()) return
+    suspend fun markRead(mangaId: Int, chapterId: Int, read: Boolean): ConnectionReadStatus {
+        if (!available()) return ConnectionReadStatus.UNAVAILABLE
         mutex.withLock {
+            if (!available()) return ConnectionReadStatus.UNAVAILABLE
             val previous = operation(chapterId)
             val old = previous?.state()
             val count = old?.count ?: 0
@@ -264,6 +266,7 @@ class SuwayomiReadingCoordinator(
             applyState(state)
         }
         retryPending()
+        return ConnectionReadStatus.PENDING
     }
 
     suspend fun pause(chapterId: Int) = mutex.withLock {
@@ -303,6 +306,7 @@ class SuwayomiReadingCoordinator(
 
     @Synchronized
     fun retryPending() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (!available()) return
         if (flushJob?.isActive == true) {
             flushRequested = true
@@ -316,8 +320,8 @@ class SuwayomiReadingCoordinator(
                 while (available()) {
                     try {
                         flush()
-                        val retry = repository.operations(identity.connectionId, identity.account)
-                            .any { it.pending && !it.state().conflict && !it.state().initial }
+                        val retry = repository.pendingOperations(identity.connectionId, identity.account)
+                            .any { !it.state().conflict && !it.state().initial }
                         if (!retry) return@launch
                     } catch (error: Exception) {
                         if (error is CancellationException) throw error
@@ -338,7 +342,7 @@ class SuwayomiReadingCoordinator(
     internal suspend fun flush(): Unit = remoteMutex.withLock {
         checkSession()
         if (!available()) return
-        val pending = repository.operations(identity.connectionId, identity.account).filter { it.pending }
+        val pending = repository.pendingOperations(identity.connectionId, identity.account)
         var failure: Exception? = null
         for (operation in pending) {
             try {

@@ -57,7 +57,6 @@ class KomgaServerSettingsScreen(
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val basePreferences = remember { Injekt.get<BasePreferences>() }
-        val serverRemovalManager = remember { Injekt.get<KomgaServerRemovalManager>() }
         val serverProfileManager = remember { Injekt.get<KomgaServerProfileManager>() }
         val serverPreferences = remember { Injekt.get<KomgaServerPreferences>() }
         val scope = rememberCoroutineScope()
@@ -81,7 +80,7 @@ class KomgaServerSettingsScreen(
         fun discardAndPop() {
             scope.launch {
                 if (isNew) {
-                    val result = serverRemovalManager.removeServer(sourceId)
+                    val result = Injekt.get<koharia.connection.ConnectionProfileManager>().remove(sourceId)
                     if (result.isFailure) {
                         context.toast(MR.strings.komga_server_delete_failed)
                     }
@@ -104,6 +103,8 @@ class KomgaServerSettingsScreen(
             isSaving = true
             scope.launch {
                 try {
+                    val reconnect = Injekt.get<koharia.connection.ConnectionProfileManager>()
+                        .requiresIdentityReplacement(sourceId)
                     val source = komgaSource ?: throw koharia.connection.ConnectionAddressVerification.Failure(
                         koharia.connection.ConnectionAddressVerification.Reason.UNAVAILABLE,
                     )
@@ -113,6 +114,7 @@ class KomgaServerSettingsScreen(
                     if (koharia.connection.ConnectionValidation.required(
                             isNew,
                             source.connectionSettingsChanged(store),
+                            reconnect,
                         )
                     ) {
                         source.verifyServerAddresses(store)
@@ -125,17 +127,28 @@ class KomgaServerSettingsScreen(
                         .getString(KomgaSource.PREF_SERVER_PROFILE_NAME, currentName)
                         ?.trim()
                         ?: currentName
-                    val result = serverProfileManager.renameServer(sourceId, requestedName)
-                    if (result.isFailure) {
-                        context.toast(MR.strings.komga_server_rename_failed)
-                        return@launch
+                    if (!isNew && (reconnect || source.connectionSettingsChanged(store))) {
+                        Injekt.get<koharia.connection.ConnectionProfileManager>()
+                            .replaceIdentity(sourceId, requestedName) { id ->
+                                store.commitSelectedTo(
+                                    sourcePreferences("source_$id"),
+                                    KomgaSource.SERVER_SETTING_KEYS -
+                                        setOf(KomgaSource.PREF_SERVER_PROFILE_NAME, "Default libraries"),
+                                )
+                            }
+                    } else {
+                        val result = serverProfileManager.renameServer(sourceId, requestedName)
+                        if (result.isFailure) {
+                            context.toast(MR.strings.komga_server_rename_failed)
+                            return@launch
+                        }
+                        store.putString(KomgaSource.PREF_SERVER_PROFILE_NAME, requestedName)
+                        Injekt.get<koharia.connection.ConnectionProfileManager>().commitConfiguration(
+                            sourceId,
+                        ) { draft ->
+                            store.commitSelectedTo(draft, KomgaSource.SERVER_SETTING_KEYS)
+                        }
                     }
-
-                    store.putString(
-                        KomgaSource.PREF_SERVER_PROFILE_NAME,
-                        requestedName,
-                    )
-                    store.applyChanges()
                     if (completeOnboardingOnSave) {
                         basePreferences.shownOnboardingFlow.set(true)
                         navigator.popUntilRoot()
@@ -144,6 +157,9 @@ class KomgaServerSettingsScreen(
                     }
                 } catch (error: koharia.connection.ConnectionAddressVerification.Failure) {
                     validationError = error.userMessage(context)
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    context.toast(MR.strings.komga_server_rename_failed)
                 } finally {
                     isSaving = false
                 }
@@ -180,24 +196,27 @@ class KomgaServerSettingsScreen(
                 }
             },
             bottomBar = {
-                Button(
-                    enabled = !isSaving,
-                    onClick = ::saveAndClose,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                ) {
-                    if (isSaving) {
-                        EInkCircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
+                androidx.compose.foundation.layout.Column {
+                    koharia.connection.ui.ConnectionReconnectionNotice(sourceId)
+                    Button(
+                        enabled = !isSaving,
+                        onClick = ::saveAndClose,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    ) {
+                        if (isSaving) {
+                            EInkCircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        }
+                        Text(
+                            text = koharia.connection.ui.connectionSaveLabel(sourceId),
+                            modifier = Modifier.padding(start = if (isSaving) 8.dp else 0.dp),
                         )
                     }
-                    Text(
-                        text = stringResource(MR.strings.action_save),
-                        modifier = Modifier.padding(start = if (isSaving) 8.dp else 0.dp),
-                    )
                 }
             },
         ).Content()

@@ -8,4 +8,5 @@ interface EpubRemoteProgressCacheRepository {
     suspend fun getByMangaId(mangaId: Long): List<EpubRemoteProgressCache>
     fun subscribeByMangaId(mangaId: Long): Flow<List<EpubRemoteProgressCache>>
     suspend fun upsert(cache: EpubRemoteProgressCache)
+    suspend fun upsertForSession(cache: EpubRemoteProgressCache, checkCurrent: suspend () -> Unit)
 }

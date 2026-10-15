@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -59,13 +61,13 @@ fun MangaDetailLayout(
     actions: @Composable () -> Unit = {},
     bottomBar: @Composable () -> Unit = {},
     floatingActionButton: @Composable (expanded: Boolean) -> Unit = {},
+    listState: LazyListState = rememberLazyListState(),
+    gridState: LazyGridState = rememberLazyGridState(),
 ) {
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
-    val firstVisible by remember(useGrid) {
+    val firstVisible by remember(useGrid, listState, gridState) {
         derivedStateOf { if (useGrid) gridState.firstVisibleItemIndex == 0 else listState.firstVisibleItemIndex == 0 }
     }
-    val firstScrolled by remember(useGrid) {
+    val firstScrolled by remember(useGrid, listState, gridState) {
         derivedStateOf {
             if (useGrid) gridState.firstVisibleItemScrollOffset > 0 else listState.firstVisibleItemScrollOffset > 0
         }

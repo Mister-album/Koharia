@@ -82,6 +82,8 @@ import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.connection.ConnectionBrowseScreen
 import koharia.connection.ConnectionPreferences
 import koharia.core.migration.Migrator
+import koharia.importing.isExternalFileUri
+import koharia.importing.validatedExternalBackupIntent
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collect
@@ -128,6 +130,7 @@ class MainActivity : BaseActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        intent = validatedExternalBackupIntent(this, intent)
         if (needsSharedConfigSelection()) {
             configStartupDeferred = true
             super.onCreate(null)
@@ -301,6 +304,10 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(validatedExternalBackupIntent(this, intent, newIntent = true))
+    }
+
     @Composable
     private fun HandleOnNewIntent(context: Context, navigator: Navigator) {
         LaunchedEffect(Unit) {
@@ -452,9 +459,12 @@ class MainActivity : BaseActivity() {
             }
             Intent.ACTION_VIEW -> {
                 // Handling opening of backup files
-                if (intent.data.toString().endsWith(".kohariabackup", ignoreCase = true)) {
+                val uri = intent.data
+                if (uri != null && uri.toString().endsWith(".kohariabackup", ignoreCase = true) &&
+                    isExternalFileUri(this, uri)
+                ) {
                     navigator.popUntilRoot()
-                    navigator.push(RestoreBackupScreen(intent.data.toString()))
+                    navigator.push(RestoreBackupScreen(uri.toString()))
                 }
                 null
             }

@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="connection_restore_identity_help">备份中的连接和阅读数据将独立导入，现有连接会保留。导入连接的远端写入初始为暂停状态。</string>
+    <string name="connection_writes_paused">远端写入已暂停，本地数据保留</string>
+    <string name="connection_reconnect_as_new">验证并新建连接</string>
+    <string name="connection_content_updates">刷新与服务器更新</string>
+    <string name="connection_content_updates_help">主动刷新连接或服务器报告内容变化后，检查已收藏系列的新章节，并保留新章节通知及已配置的自动下载。已停用旧周期检查；启动时仍可直接使用已有书架缓存。</string>
+    <string name="connection_activate_verified">验证并恢复此连接</string>
+    <string name="connection_activate_verified_help">仅在服务器与账号身份一致时沿用此连接、下载和历史。原有待发进度、书签及批注仍暂停，需逐项核验；恢复连接不会发送这些记录。无法验证身份时，可关闭此选项并新建独立连接。</string>
+    <string name="connection_reconnect_as_new_help">此连接的远端写入已暂停。保存时将验证当前设置并新建独立连接。原连接、下载、历史和待同步记录均会保留；待同步记录不会自动发送或复制到新连接。</string>
+    <string name="connection_identity_change_help">修改服务器、根目录或凭据将新建独立连接。原连接、下载和历史会保留，原连接的远端写入将暂停。</string>
     <string name="storage_add_mode">选择书库存储方式</string>
     <string name="storage_mode_local">本地目录</string>
     <string name="storage_primary_address">主地址</string>
@@ -1355,6 +1364,7 @@
     <string name="pref_flash_page_interval">闪烁时间间隔</string>
     <string name="invalid_backup_file_json">不支持 JSON 备份</string>
     <string name="invalid_backup_file_unknown">备份文件已损坏</string>
+    <string name="backup_size_limit_exceeded">备份超过支持的大小：文件上限为 32 MiB，解压后的数据上限为 64 MiB。</string>
     <string name="action_copy_link">复制链接</string>
     <string name="extensionRepo_settings">插件仓库</string>
     <string name="add_repo_confirmation">您想添加仓库 \"%s\" 吗？</string>
@@ -1539,6 +1549,7 @@
     <string name="pref_book_cache_info">书籍缓存与下载相互独立。清除缓存不会删除离线下载、阅读进度或书签。</string>
     <string name="epub_reader_remote_progress_title">服务器阅读进度</string>
     <string name="epub_reader_remote_progress_message">服务器保存了不同的阅读位置（%1$d%%），是否跳转？</string>
+    <string name="epub_reader_progress_save_failed">无法保存阅读位置，将在继续阅读时重试。</string>
     <string name="reader_remote_progress_message">本地：第 %1$d/%2$d 页（%3$d%%）\n服务器：第 %4$d/%5$d 页（%6$d%%）</string>
     <string name="epub_reader_keep_local_progress">保留本地位置并同步</string>
     <string name="epub_reader_jump_remote_progress">跳转至服务器进度</string>
@@ -2154,6 +2165,10 @@
     <string name="suwayomi_error_request">Suwayomi 请求失败，请重试。</string>
     <string name="connection_provider_settings_group">%1$s · %2$s</string>
     <string name="storage_pending_state">待同步阅读记录：%1$d · 待核对文件操作：%2$d</string>
+    <string name="storage_held_state">已暂停阅读记录：%1$d</string>
+    <string name="storage_held_explanation">普通重试不会确认这些记录的归属或解除暂停。</string>
+    <string name="storage_unavailable_state">无法读取的阅读记录：%1$d（原始记录已保留）</string>
+    <string name="storage_retry_requires_validation">连接已暂停、尚未核验或为只读状态，暂不能执行远端变更。</string>
     <string name="storage_retry_pending">重试同步并恢复文件操作</string>
     <string name="storage_read_only_root">此目录无法保存共享身份，仅使用主地址。远程修改和进度同步不可用，阅读进度仍保存在本机。</string>
     <string name="storage_browse_folders">选择服务器文件夹</string>
@@ -2253,4 +2268,36 @@
     <string name="pref_merge_organization_pages">合并为一个页面</string>
     <string name="pref_merge_organization_pages_summary">合并后，导航入口显示为“书单”，可在页面顶部切换收藏夹与阅读列表。需同时开启两项显示。</string>
     <string name="label_organizations">书单</string>
+    <string name="connection_read_status_local">阅读状态仅保存在此设备上。</string>
+    <string name="connection_read_status_pending">阅读状态已保存在本地，部分更改等待同步。</string>
+    <string name="connection_read_status_held">阅读状态已保存在本地，服务器进度暂时无法核验，下载已保留。连接恢复后请核对并重新执行标记。</string>
+    <string name="connection_read_status_conflict">部分阅读状态存在服务器冲突，解决冲突后才能同步；相关下载已保留。</string>
+    <string name="connection_read_status_denied">部分阅读状态更改需要服务器登录或相应权限；相关下载已保留。</string>
+    <string name="connection_read_status_unavailable">部分阅读状态更改未能加入待同步队列或确认成功。下载已保留，请在连接可用时再次执行标记。</string>
+    <string name="connection_read_status_local_failed">无法在此设备上保存阅读状态，请重试。</string>
+    <string name="reader_remote_uncertain_request">较早进度请求的结果尚不明确，仍可能在服务器执行。选择后会结束其自动重试，但不会撤销已发送的请求。保留本地会提交新的进度；采用服务器位置不会发送更新。</string>
+    <string name="connection_sync_review">核验已读／未读操作</string>
+    <string name="connection_sync_review_local_read">已保存的操作：标记为已读。</string>
+    <string name="connection_sync_review_local_unread">已保存的操作：标记为未读。</string>
+    <string name="connection_sync_review_remote_read">服务器状态：已读完。</string>
+    <string name="connection_sync_review_remote_started">服务器状态：阅读中。</string>
+    <string name="connection_sync_review_remote_unread">服务器状态：未读。</string>
+    <string name="connection_sync_review_help">重新提交会对本阅读单元执行已保存的已读／未读操作。此操作确认成功后，较早的页进度不再重试。标记未读会重置该单元的阅读位置。</string>
+    <string name="connection_sync_review_uncertain">较早请求的结果尚不明确，仍可能在服务器执行。重新提交会结束其自动重试，生成一项仍需服务器确认的新操作。</string>
+    <string name="connection_sync_review_reissue">重新提交已保存的操作</string>
+    <string name="connection_sync_review_failed">无法完成核验。请检查连接权限后重新核验；连接或进度可能已发生变化。</string>
+    <string name="epub_progress_review_changed">远端进度已变化。请核对最新位置后重新选择；若进度已被移除，请重开书籍后重试。</string>
+    <string name="connection_sync_review_no_mark">此账号没有待处理的已读／未读操作。页码或书籍位置请在阅读器中核验；导入记录仍单独保留。</string>
+    <string name="connection_sync_status_title">%1$s 进度同步</string>
+    <string name="connection_sync_status_count">%1$s：%2$d 个阅读单元的同步详情</string>
+    <string name="connection_sync_status_local_only">此状态仅保存在当前设备，不会同步到服务器。</string>
+    <string name="connection_sync_status_pending">已保存在本地，等待同步。</string>
+    <string name="connection_sync_status_held">已保存在本地。同步已暂停，需要核验连接和服务器进度；请核对进度后再重新执行阅读操作。</string>
+    <string name="connection_sync_status_conflict">服务器进度已变化，本地进度仍保留。请比较后选择要保留的进度。</string>
+    <string name="connection_sync_status_denied">服务器拒绝访问，本地进度仍保留。请检查访问权限后再重新执行操作。</string>
+    <string name="connection_sync_status_verifying">已发送的请求仍待确认。请求记录已保留，不会直接重复发送。</string>
+    <string name="connection_sync_status_unverified">恢复导入或其他身份的记录已单独保留，未使用此连接的当前账号发送。</string>
+    <string name="connection_sync_status_unavailable">无法加载同步状态，这不代表进度已经同步。</string>
+    <string name="kavita_downloaded_sort_incomplete">部分已下载书籍缺少此排序所需的缓存数据，将显示在末尾。可刷新书籍详情，或联网使用此排序浏览书架，以缓存缺失的信息。</string>
+    <string name="kavita_sort_unsupported">Kavita 不支持此已保存的排序选项，请选择其他排序。</string>
 </resources>

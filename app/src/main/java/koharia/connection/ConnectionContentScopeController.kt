@@ -1,6 +1,7 @@
 package koharia.connection
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -15,9 +16,12 @@ class ConnectionContentScopeController(
     }
 
     fun activeScopesChanges(): Flow<Set<LibraryContentScope>> {
-        return preferences.activeConnectionId.changes()
-            .flatMapLatest { connectionId ->
-                adapter(connectionId)?.contentScopesChanges() ?: flowOf(DEFAULT_SCOPES)
+        return combine(preferences.activeConnectionId.changes(), sourceManager.catalogueSources) { id, sources ->
+            sources.firstOrNull { it.id == id } as? ConnectionBrowseAdapter
+        }
+            .distinctUntilChanged { previous, current -> previous === current }
+            .flatMapLatest { source ->
+                source?.contentScopesChanges() ?: flowOf(DEFAULT_SCOPES)
             }
             .distinctUntilChanged()
     }

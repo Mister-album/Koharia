@@ -5,9 +5,11 @@ import androidx.annotation.CallSuper
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.domain.track.model.toDomainTrack
 import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import logcat.LogPriority
@@ -133,9 +135,13 @@ abstract class BaseTracker(
             track.toDomainTrack(idRequired = false)?.let {
                 insertTrack.await(it)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Failed to update remote track data id=$id" }
-            withUIContext { Injekt.get<Application>().toast(e.message) }
+            withUIContext {
+                with(Injekt.get<Application>()) { toast(e.formattedMessage) }
+            }
         }
     }
 }

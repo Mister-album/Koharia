@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import koharia.source.local.LocalLibraryConfig
 import koharia.source.local.LocalLibraryIndex
 import koharia.source.local.LocalLibraryLayout
+import koharia.source.local.migrate
 import koharia.source.local.rebindFolderLocations
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -55,7 +56,16 @@ internal object BackupDirectoryRemapper {
                 } else if (preference.key != LOCAL_CONFIG_KEY || preference.value !is StringPreferenceValue) {
                     preference
                 } else {
-                    val config = json.decodeFromString<LocalLibraryConfig>(preference.value.value)
+                    val config = json.decodeFromString<LocalLibraryConfig>(preference.value.value).let { stored ->
+                        if (stored.schemaVersion < 7) {
+                            stored.migrate(
+                                source.sourceKey.removePrefix("source_").toLong(),
+                                inferConfiguredSetup = true,
+                            )
+                        } else {
+                            stored
+                        }
+                    }
                     BackupPreference(
                         preference.key,
                         StringPreferenceValue(
@@ -63,6 +73,13 @@ internal object BackupDirectoryRemapper {
                                 config.copy(
                                     roots = config.roots.map { root ->
                                         root.copy(treeUri = bindRoot(root.treeUri, root.managed))
+                                    },
+                                    detachedRoots = if (remote) {
+                                        config.detachedRoots.map { root ->
+                                            root.copy(treeUri = bindRoot(root.treeUri, false))
+                                        }
+                                    } else {
+                                        config.detachedRoots
                                     },
                                     treeUri = bindRoot(
                                         config.treeUri,

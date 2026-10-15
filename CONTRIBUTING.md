@@ -43,7 +43,19 @@ Before you start, please note that the ability to use following technologies is 
 
 New providers must satisfy the completion checklist in `AGENTS.md`; default-hidden settings, omitted card state, and no-op callbacks do not count as implemented features. Shared capability work is compatible with the personal-media-library direction and does not authorize restoring public content-source or extension-store ecosystems.
 
-Device validation must follow `AGENTS.md`: use an explicitly selected device and an isolated fixture package, retaining installed packages and existing app data. Documentation-only changes need the relevant whitespace, link, and configuration syntax checks, not an app build.
+Device validation must follow [AGENTS.md](./AGENTS.md), including **Staged Dev Update And Read-Only Validation**: use the existing data-preserving dev update authorization, distinguish installation/startup from online validation, and resolve or report concrete prerequisites rather than requesting the same permission again. Remote progress/history writes are not included in that authorization. Keep instrumentation, destructive scenarios, and fault injection in isolated fixture packages. Explicitly select the device, retain installed packages and existing data, and distinguish installed-dev results from validation of changed builds. Documentation-only changes need the relevant whitespace, link, and configuration syntax checks, not an app build.
+
+Security repairs follow the **Security Repair And Validation Workflow** in `AGENTS.md`. Reuse established defect evidence, prioritize fixes and compatibility checks, inspect suites before running specialized reproducers, and report blocked or omitted verification honestly. Do not retry a platform-rejected operation through another wording, task, tool or model.
+
+For shrinking regressions, build the isolated non-debuggable variant with:
+
+```powershell
+.\gradlew.bat -PdeviceTestFixture=true -PminifiedDeviceTestFixture=true :app:assembleMinifiedFixture :app:assembleMinifiedFixtureAndroidTest
+```
+
+This variant inherits Release rules, enables code/resource shrinking, and uses the debug signing key and `app.koharia.dev.devicefixture` package. It includes the fixture Activity hosts and tracing entry points required by the test runner; these additions are fixture-only. Before installing with `adb -s <serial> install -r`, verify both APK package IDs and the instrumentation target; retain data and stop on signature/version incompatibility. The regular fixture runner guard still applies. Default Release builds and user packages are unaffected. Record runtime coverage and do not treat a successful build as runtime validation.
+
+Use `koharia.diagnostics.MinifiedRuntimeDeviceTest` for platform-entry-point smoke checks. Tests that call app internals directly belong in the regular Debug fixture: R8 can inline or remove those methods within the target APK, while a separately compiled test APK still references their original signatures. Do not broaden production keep rules to make such tests pass. Supplement minified smoke tests with actual reader/navigation checks and report their coverage separately.
 
 # Translations
 

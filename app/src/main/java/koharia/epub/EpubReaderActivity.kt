@@ -900,7 +900,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                             if (state.isReady && state.chapterId > 0) {
                                 ReaderFragmentContainer(
                                     chapterId = state.chapterId,
-                                    sourceId = sourceId,
+                                    sourceId = state.sourceId,
                                     sessionToken = state.sessionToken,
                                     modifier = Modifier.fillMaxSize(),
                                     fullscreen = fullscreen,
@@ -1101,7 +1101,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
             state.remoteProgressConflict?.let { conflict ->
                 AlertDialog(
-                    onDismissRequest = {},
+                    onDismissRequest = { finish() },
                     title = { Text(stringResource(MR.strings.epub_reader_remote_progress_title)) },
                     text = {
                         Text(
@@ -1120,14 +1120,18 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                         )
                     },
                     dismissButton = {
-                        TextButton(onClick = viewModel::keepLocalProgress) {
+                        TextButton(
+                            onClick = viewModel::keepLocalProgress,
+                            enabled = !state.isResolvingRemoteProgress,
+                        ) {
                             Text(stringResource(MR.strings.epub_reader_keep_local_progress))
                         }
                     },
                     confirmButton = {
                         TextButton(
+                            enabled = !state.isResolvingRemoteProgress,
                             onClick = {
-                                viewModel.acceptRemoteProgress()?.let { locator ->
+                                viewModel.acceptRemoteProgress { locator ->
                                     epubReaderFragment()?.goTo(locator)
                                 }
                             },
@@ -1136,7 +1140,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                         }
                     },
                     properties = DialogProperties(
-                        dismissOnBackPress = false,
+                        dismissOnBackPress = true,
                         dismissOnClickOutside = false,
                     ),
                 )
@@ -1433,6 +1437,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         ttsPageFollow.endDrag()
     }
 
+    override fun isCurrentReaderSession(chapterId: Long, sourceId: Long, sessionToken: Long): Boolean =
+        viewModel.isCurrentReaderSession(chapterId, sourceId, sessionToken)
+
     override fun onLocatorChanged(locator: Locator) {
         ttsResourceProgression = (locator.locations.progression as? Number)?.toDouble()
             ?.let { locator.href.toString() to it }
@@ -1478,9 +1485,17 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         viewModel.updateVisualPage(pageIndex, totalPages, locator)
         ttsPageFollow.moved(ttsPageLocation())
         displayRefreshHost.flash()
+        val callbackState = viewModel.state.value
+        val fragment = epubReaderFragment()
+        val links = viewModel.tableOfContents().map { it.link }
         lifecycleScope.launch {
-            epubReaderFragment()?.currentTocHref(viewModel.tableOfContents().map { it.link })
-                ?.let(viewModel::updateCurrentTocHref)
+            if (!isCurrentReaderSession(callbackState.chapterId, callbackState.sourceId, callbackState.sessionToken)) {
+                return@launch
+            }
+            val href = fragment?.currentTocHref(links) ?: return@launch
+            if (isCurrentReaderSession(callbackState.chapterId, callbackState.sourceId, callbackState.sessionToken)) {
+                viewModel.updateCurrentTocHref(href)
+            }
         }
     }
 
@@ -1490,9 +1505,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         isComplete: Boolean,
     ) {
         viewModel.updateBookPagination(generation, pageCounts, isComplete)
-        if (isComplete && generation == viewModel.state.value.paginationGeneration) {
-            viewModel.currentLocator()?.let { locator ->
-                epubReaderFragment()?.goTo(locator, userInitiated = false)
+        // Only an explicit layout change may restore a position. Manual navigation clears it,
+        // so a background count update cannot cancel a turn with a pending locator callback.
+        if (isComplete) {
+            viewModel.takeLayoutRestoreLocator(generation)?.let {
+                epubReaderFragment()?.goTo(it, userInitiated = false)
             }
         }
     }
@@ -1514,7 +1531,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             epubReaderFragment()?.stopPagination()
             paginationViewportJob = lifecycleScope.launch {
                 kotlinx.coroutines.delay(PAGINATION_VIEWPORT_DEBOUNCE_MS)
-                if (paginationViewport == viewport && viewModel.state.value.isReady) {
+                if (paginationViewport == viewport &&
+                    isCurrentReaderSession(state.chapterId, state.sourceId, state.sessionToken)
+                ) {
                     logcat(LogPriority.DEBUG) { "EPUB pagination viewport settled viewport=$viewport" }
                     applyCurrentReadiumPreferences()
                 }
@@ -1732,7 +1751,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                         "pages=${state.currentVisualPage}/${state.totalVisualPages}"
                 }
                 epubReaderFragment()?.cancelPageTransition()
-                viewModel.onLayoutPreferencesChanged()
+                val readingRevision = viewModel.readingNavigationRevision
+                epubReaderFragment()?.capturePdfSourceAnchor()
+                if (!isCurrentReaderSession(state.chapterId, state.sourceId, state.sessionToken)) return@onEach
+                viewModel.onLayoutPreferencesChanged(readingRevision)
                 paginationJob?.cancel()
                 viewModel.invalidatePaginationDisplay()
                 epubReaderFragment()?.stopPagination()
@@ -1795,7 +1817,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 if (!request.shouldScan &&
                     viewModel.state.value.paginationPhase != EpubPaginationPhase.UNAVAILABLE
                 ) {
-                    viewModel.currentLocator()?.let { activeFragment.goTo(it, userInitiated = false) }
+                    viewModel.takeLayoutRestoreLocator(request.generation)?.let {
+                        activeFragment.goTo(it, userInitiated = false)
+                    }
                 }
             }
         }
@@ -2147,8 +2171,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             readerPreferences.readerStatusPosition.get(),
         )
         key(chapterId, sessionToken) {
-            val arguments = remember(chapterId, sourceId) {
-                EpubReaderFragment.createArguments(chapterId, sourceId)
+            val arguments = remember(chapterId, sourceId, sessionToken) {
+                EpubReaderFragment.createArguments(chapterId, sourceId, sessionToken)
             }
             AndroidFragment<EpubReaderFragment>(
                 modifier = modifier,

@@ -22,7 +22,9 @@ Do not include credentials or private server/user data. Keep local evidence in .
 
 ## 验证 / Validation
 
-<!-- List checks actually run and providers/routes covered. Shared behavior tests and integration checks serve different purposes. For visual changes include useful screenshots and relevant theme/tablet checks. Follow isolated device-fixture rules. -->
+<!-- List checks actually run and providers/routes covered. Distinguish real-data checks on an authorized emulator dev installation from fixture, real-service, and changed-build tests; record version limitations. Follow AGENTS.md non-destructive and isolated-test boundaries. Shared behavior tests and integration checks serve different purposes. For visual changes include useful sanitized screenshots and relevant theme/tablet checks. -->
+
+<!-- Security-related work follows AGENTS.md Security Repair And Validation Workflow. Identify reused evidence and the scope of new checks; distinguish unverified specialized tests from passes. Do not conceal or work around platform review failures. -->
 
 ## 未完成或未验证 / Remaining gaps or unverified behavior
 

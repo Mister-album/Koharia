@@ -55,6 +55,33 @@ class SmangaCatalog(
     suspend fun cachedMedia(): List<SmangaMedia>? =
         cachedEntry("media", "data")?.let { json.decodeFromString<List<SmangaMedia>>(it.payload) }
 
+    /** Read persisted catalogue metadata once for a downloaded shelf; never bootstrap remote pages here. */
+    suspend fun downloadedMetadata(): Map<Long, SmangaManga> {
+        checkSession()
+        val cached = repository.cachedCatalogue(connectionId, accountKey)
+        currentCoroutineContext().ensureActive()
+        checkSession()
+        return buildMap {
+            cached.forEach { entry ->
+                currentCoroutineContext().ensureActive()
+                val items = runCatching {
+                    when {
+                        entry.group.startsWith("manga/") && entry.key == "data" ->
+                            listOf(json.decodeFromString<SmangaManga>(entry.payload))
+                        entry.group.startsWith("shelf/all/") && entry.key.startsWith("page/") ->
+                            json.decodeFromString<SmangaMergedShelfPage>(entry.payload).page.data
+                        entry.group.startsWith("shelf/") && entry.key.toIntOrNull() != null ->
+                            json.decodeFromString<SmangaMangaPage>(entry.payload).data
+                        entry.group.startsWith("search/title-tags-v1/") && entry.key.startsWith("page/") ->
+                            json.decodeFromString<SmangaSearchPage>(entry.payload).page.data
+                        else -> emptyList()
+                    }
+                }.getOrDefault(emptyList())
+                items.filter { it.id > 0 && it.mediaId > 0 }.forEach { put(it.id, it) }
+            }
+        }
+    }
+
     /** Publish added libraries only after their shelf is ready; revoked access must take effect even on failure. */
     suspend fun refreshShelf(selectedMedia: Long, query: String, order: String, downloadedOnly: Boolean = false) {
         lock("media").withLock {

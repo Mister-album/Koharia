@@ -1,12 +1,16 @@
 plugins {
     alias(kohariax.plugins.android.test)
+    alias(kohariax.plugins.spotless)
 }
+
+val useDeviceTestFixture = providers.gradleProperty("deviceTestFixture")
+    .map(String::toBoolean).getOrElse(false)
 
 android {
     namespace = "tachiyomi.macrobenchmark"
 
     defaultConfig {
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "tachiyomi.macrobenchmark.KohariaBenchmarkRunner"
         testInstrumentationRunnerArguments["androidx.benchmark.enabledRules"] = "BaselineProfile"
     }
 
@@ -26,6 +30,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.androidx.core)
     implementation(libs.androidx.test.junit)
     implementation(libs.androidx.test.espresso.core)
     implementation(libs.androidx.test.uiautomator)
@@ -35,5 +40,16 @@ dependencies {
 androidComponents {
     beforeVariants(selector().all()) {
         it.enable = it.buildType == "benchmark"
+    }
+}
+
+tasks.matching {
+    it.name.startsWith("assemble") || it.name.startsWith("install") || it.name.startsWith("connected")
+}.configureEach {
+    inputs.property("deviceTestFixture", useDeviceTestFixture)
+    doFirst {
+        check(inputs.properties["deviceTestFixture"] == true) {
+            "Benchmarks require -PdeviceTestFixture=true; manually used app variants are forbidden."
+        }
     }
 }

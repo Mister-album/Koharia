@@ -1,11 +1,13 @@
 package koharia.kavita.ui
 
 import android.content.Context
+import koharia.connection.hasPausedConnectionWrites
 import koharia.kavita.KavitaException
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 
 fun Context.kavitaError(error: Throwable): String {
+    if (error.hasPausedConnectionWrites()) return stringResource(MR.strings.connection_writes_paused)
     val failure = generateSequence(error) { it.cause }.take(8).filterIsInstance<KavitaException>().firstOrNull()
     return stringResource(
         when (failure?.reason) {

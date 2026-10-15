@@ -36,6 +36,7 @@ CREATE TABLE mangas(
 CREATE INDEX library_favorite_index ON mangas(favorite) WHERE favorite = 1;
 CREATE INDEX mangas_url_index ON mangas(url);
 CREATE INDEX idx_mangas_source ON mangas(source);
+CREATE INDEX mangas_source_url_index ON mangas(source, url);
 
 CREATE TRIGGER update_last_favorited_at_mangas
 AFTER UPDATE OF favorite ON mangas
@@ -76,6 +77,9 @@ FROM mangas
 WHERE url = :url
 AND source = :source
 LIMIT 1;
+
+getMangaByUrlsAndSourceId:
+SELECT * FROM mangas INDEXED BY mangas_source_url_index WHERE url IN :urls AND source = :sourceId ORDER BY _id;
 
 getMangaBySourceId:
 SELECT *
@@ -232,6 +236,10 @@ UPDATE mangas SET
     notes = coalesce(:notes, notes),
     memo = coalesce(:memo, memo)
 WHERE _id = :mangaId;
+
+updateShelfMemo:
+UPDATE mangas SET memo = :memo
+WHERE _id = :mangaId AND source = :sourceId AND url = :url;
 
 insertNetworkManga {
     -- Insert the manga if it doesn't exist already

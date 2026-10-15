@@ -2,6 +2,7 @@ package koharia.epub.session
 
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import java.util.concurrent.atomic.AtomicInteger
 
 class EpubReaderSessionRepository {
 
@@ -45,19 +46,33 @@ class EpubReaderSessionRepository {
         release(removedSessions, onReleased)
     }
 
+    fun removeIfCurrent(session: EpubReaderSession, onReleased: () -> Unit = {}): Boolean {
+        val removedSessions = synchronized(this) {
+            if (sessions[session.chapterId] !== session) return false
+            listOfNotNull(
+                paginationSessions.remove(session.chapterId),
+                sessions.remove(session.chapterId),
+            )
+        }
+        release(removedSessions, onReleased)
+        return true
+    }
+
     private fun release(
         sessions: List<EpubReaderSession>,
         onReleased: () -> Unit = {},
     ) {
+        val remaining = AtomicInteger(sessions.size + 1)
+        val released = { if (remaining.decrementAndGet() == 0) notifyReleased(onReleased) }
         sessions.forEach { session ->
-            runCatching(session::close)
+            runCatching { session.close(released) }
                 .onFailure { error ->
                     logcat(LogPriority.WARN, error) {
                         "Failed to close EPUB session chapterId=${session.chapterId}"
                     }
                 }
         }
-        notifyReleased(onReleased)
+        released()
     }
 
     private fun notifyReleased(onReleased: () -> Unit) {

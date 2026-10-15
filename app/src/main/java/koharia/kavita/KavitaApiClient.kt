@@ -2,6 +2,7 @@ package koharia.kavita
 
 import eu.kanade.tachiyomi.network.await
 import koharia.connection.ConnectionAddressRouter
+import koharia.connection.connectionReadOnly
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -114,7 +115,9 @@ class KavitaApiClient(
         account?.let { return@synchronized it }
         val endpoint = requireNotNull(base.resolve("api/Plugin/authenticate")).newBuilder()
             .addQueryParameter("apiKey", key).addQueryParameter("pluginName", "Koharia").build()
-        val loggedIn = routedRaw.newCall(Request.Builder().url(endpoint).post("{}".toRequestBody(JSON)).build())
+        val loggedIn = routedRaw.newCall(
+            Request.Builder().url(endpoint).post("{}".toRequestBody(JSON)).connectionReadOnly().build(),
+        )
             .execute().use { response ->
                 checkResponse(response)
                 decode<KavitaAccount>(response.body.string())
@@ -174,11 +177,16 @@ class KavitaApiClient(
         url(path, *query),
     ).build()
 
-    suspend fun execute(path: String, method: String = "GET", body: JsonElement? = null): JsonElement {
+    suspend fun execute(
+        path: String,
+        method: String = "GET",
+        body: JsonElement? = null,
+        readOnly: Boolean = false,
+    ): JsonElement {
         val request = Request.Builder().url(url(path)).method(
             method,
             if (method in setOf("GET", "HEAD")) null else (body?.toString() ?: "{}").toRequestBody(JSON),
-        ).build()
+        ).apply { if (readOnly) connectionReadOnly() }.build()
         return client.newCall(request).await().use {
             checkResponse(it)
             val text = withContext(Dispatchers.IO) { it.body.string() }
@@ -221,7 +229,7 @@ class KavitaApiClient(
     suspend fun seriesPage(page: Int, filter: KavitaFilter, feed: String = "Series/all-v2"): KavitaSeriesPage {
         require(page > 0)
         val request = Request.Builder().url(url(feed, "PageNumber" to page, "PageSize" to 50))
-            .post(json.encodeToString(filter).toRequestBody(JSON)).build()
+            .post(json.encodeToString(filter).toRequestBody(JSON)).connectionReadOnly().build()
         return client.newCall(request).await().use { response ->
             checkResponse(response)
             val items = json.decodeFromString<List<KavitaSeries>>(
@@ -239,7 +247,7 @@ class KavitaApiClient(
     suspend fun annotationPage(page: Int, filter: JsonElement): KavitaAnnotationPage {
         require(page > 0)
         val request = Request.Builder().url(url("Annotation/all-filtered", "PageNumber" to page, "PageSize" to 50))
-            .post(filter.toString().toRequestBody(JSON)).build()
+            .post(filter.toString().toRequestBody(JSON)).connectionReadOnly().build()
         return client.newCall(request).await().use { response ->
             checkResponse(response)
             val items = decode<List<KavitaAnnotation>>(withContext(Dispatchers.IO) { response.body.string() })
@@ -253,7 +261,7 @@ class KavitaApiClient(
         var page = 1
         do {
             val request = request("ReadingList/lists", "PageNumber" to page, "PageSize" to 50)
-                .newBuilder().post("{}".toRequestBody(JSON)).build()
+                .newBuilder().post("{}".toRequestBody(JSON)).connectionReadOnly().build()
             val hasNext = client.newCall(request).await().use {
                 checkResponse(it)
                 addAll(json.decodeFromString<List<KavitaList>>(withContext(Dispatchers.IO) { it.body.string() }))

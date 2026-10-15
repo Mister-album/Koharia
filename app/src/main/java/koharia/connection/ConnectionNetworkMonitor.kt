@@ -19,6 +19,11 @@ class ConnectionNetworkMonitor(context: Context) {
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
             connected.value = connectivity.activeNetwork != null
         }
+
+        override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+            // Foreground access can return without a network or capability change.
+            connected.value = connectivity.activeNetwork != null
+        }
         override fun onLost(network: Network) {
             connected.value = connectivity.activeNetwork?.let { it != network } == true
         }

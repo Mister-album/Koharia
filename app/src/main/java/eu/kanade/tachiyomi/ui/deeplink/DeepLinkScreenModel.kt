@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.ResolvableSource
 import eu.kanade.tachiyomi.source.online.UriType
+import koharia.connection.ChapterFetchOrigin
 import koharia.domain.manga.model.toDomainManga
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.util.lang.launchIO
@@ -62,8 +63,7 @@ class DeepLinkScreenModel(
         val localChapter = getChapterByUrlAndMangaId.await(sChapter.url, manga.id)
 
         return if (localChapter == null) {
-            val sourceChapters = source.getChapterList(manga.toSManga())
-            val newChapters = syncChaptersWithSource.await(sourceChapters, manga, source, false)
+            val newChapters = syncChaptersWithSource.fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
             newChapters.find { it.url == sChapter.url }
         } else {
             localChapter

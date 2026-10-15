@@ -8,15 +8,17 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.HttpSource
+import koharia.connection.ChapterFetchOrigin
+import koharia.connection.FetchedChapters
+import koharia.connection.fetchChapters
 import tachiyomi.data.chapter.ChapterSanitizer
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.ShouldUpdateDbChapter
-import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.ChapterSourceUpdate
+import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.model.NoChaptersException
-import tachiyomi.domain.chapter.model.toChapterUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -31,27 +33,43 @@ class SyncChaptersWithSource(
     private val chapterRepository: ChapterRepository,
     private val shouldUpdateDbChapter: ShouldUpdateDbChapter,
     private val updateManga: UpdateManga,
-    private val updateChapter: UpdateChapter,
     private val getChaptersByMangaId: GetChaptersByMangaId,
     private val getExcludedScanlators: GetExcludedScanlators,
     private val libraryPreferences: LibraryPreferences,
 ) {
 
+    suspend fun fetchAndSync(manga: Manga, source: Source, origin: ChapterFetchOrigin): List<Chapter> =
+        await(source.fetchChapters(manga.toSManga(), origin), manga)
+
     /**
      * Method to synchronize db chapters with source ones
      *
-     * @param rawSourceChapters the chapters from the source.
+     * @param fetched the chapters and the session captured before their request.
      * @param manga the manga the chapters belong to.
-     * @param source the source the manga belongs to.
      * @return Newly added chapters
      */
     suspend fun await(
-        rawSourceChapters: List<SChapter>,
+        fetched: FetchedChapters,
         manga: Manga,
-        source: Source,
         manualFetch: Boolean = false,
         fetchWindow: Pair<Long, Long> = Pair(0, 0),
     ): List<Chapter> {
+        require(fetched.source.id == manga.source)
+        repeat(3) {
+            fetched.checkCurrent()
+            applySnapshot(fetched, manga, manualFetch, fetchWindow)?.let { return it }
+        }
+        throw ConcurrentModificationException("Chapter list kept changing during source refresh")
+    }
+
+    private suspend fun applySnapshot(
+        fetched: FetchedChapters,
+        manga: Manga,
+        manualFetch: Boolean,
+        fetchWindow: Pair<Long, Long>,
+    ): List<Chapter>? {
+        val rawSourceChapters = fetched.chapters
+        val source = fetched.source
         if (rawSourceChapters.isEmpty()) {
             throw NoChaptersException()
         }
@@ -69,14 +87,12 @@ class SyncChaptersWithSource(
             }
 
         val dbChapters = getChaptersByMangaId.await(manga.id)
+        val dbByUrl = dbChapters.asReversed().associateBy { it.url }
+        val sourceUrls = sourceChapters.mapTo(hashSetOf()) { it.url }
 
         val newChapters = mutableListOf<Chapter>()
-        val updatedChapters = mutableListOf<Chapter>()
-        val removedChapters = dbChapters.filterNot { dbChapter ->
-            sourceChapters.any { sourceChapter ->
-                dbChapter.url == sourceChapter.url
-            }
-        }
+        val updatedChapters = mutableListOf<ChapterUpdate>()
+        val removedChapters = dbChapters.filterNot { it.url in sourceUrls }
 
         // Used to not set upload date of older chapters
         // to a higher value than newer chapters
@@ -96,7 +112,7 @@ class SyncChaptersWithSource(
             val chapterNumber = ChapterRecognition.parseChapterNumber(manga.title, chapter.name, chapter.chapterNumber)
             chapter = chapter.copy(chapterNumber = chapterNumber)
 
-            val dbChapter = dbChapters.find { it.url == chapter.url }
+            val dbChapter = dbByUrl[chapter.url]
 
             if (dbChapter == null) {
                 val toAddChapter = if (chapter.dateUpload == 0L) {
@@ -119,34 +135,49 @@ class SyncChaptersWithSource(
                         )
 
                     if (shouldRenameChapter) {
+                        fetched.checkCurrent()
                         downloadManager.renameChapter(source, manga, dbChapter, chapter)
+                        fetched.checkCurrent()
                     }
 
-                    var toChangeChapter = dbChapter.copy(
-                        name = chapter.name,
-                        chapterNumber = chapter.chapterNumber,
-                        scanlator = chapter.scanlator,
-                        sourceOrder = chapter.sourceOrder,
-                        memo = chapter.memo,
+                    // Reading state may have changed while fetching or renaming metadata.
+                    updatedChapters.add(
+                        ChapterUpdate(
+                            id = dbChapter.id,
+                            name = chapter.name,
+                            chapterNumber = chapter.chapterNumber,
+                            scanlator = chapter.scanlator,
+                            sourceOrder = chapter.sourceOrder,
+                            memo = chapter.memo,
+                            dateUpload = chapter.dateUpload.takeIf { it != 0L },
+                        ),
                     )
-
-                    if (chapter.dateUpload != 0L) {
-                        toChangeChapter = toChangeChapter.copy(dateUpload = chapter.dateUpload)
-                    }
-                    updatedChapters.add(toChangeChapter)
                 }
             }
         }
 
-        // Return if there's nothing to add, delete, or update to avoid unnecessary db transactions.
+        // Validate unchanged diffs too, so a concurrent writer cannot make a stale snapshot look successful.
         if (newChapters.isEmpty() && removedChapters.isEmpty() && updatedChapters.isEmpty()) {
+            chapterRepository.applySourceUpdate(
+                ChapterSourceUpdate(
+                    manga.id,
+                    manga.source,
+                    manga.url,
+                    dbChapters,
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                ),
+            ) { fetched.checkCurrent() } ?: return null
             if (manualFetch || manga.fetchInterval == 0 || manga.nextUpdate < fetchWindow.first) {
+                fetched.checkCurrent()
                 updateManga.awaitUpdateFetchInterval(
                     manga,
                     now,
                     fetchWindow,
                 )
             }
+            fetched.checkCurrent()
             return emptyList()
         }
 
@@ -202,26 +233,28 @@ class SyncChaptersWithSource(
             chapter
         }
 
-        if (removedChapters.isNotEmpty()) {
-            val toDeleteIds = removedChapters.map { it.id }
-            chapterRepository.removeChaptersWithIds(toDeleteIds)
-        }
-
-        if (updatedToAdd.isNotEmpty()) {
-            updatedToAdd = chapterRepository.addAll(updatedToAdd)
-        }
-
-        if (updatedChapters.isNotEmpty()) {
-            val chapterUpdates = updatedChapters.map { it.toChapterUpdate() }
-            updateChapter.awaitAll(chapterUpdates)
-        }
+        updatedToAdd = chapterRepository.applySourceUpdate(
+            ChapterSourceUpdate(
+                manga.id,
+                manga.source,
+                manga.url,
+                dbChapters,
+                updatedToAdd,
+                updatedChapters,
+                removedChapters.map { it.id },
+            ),
+        ) { fetched.checkCurrent() } ?: return null
+        fetched.checkCurrent()
         updateManga.awaitUpdateFetchInterval(manga, now, fetchWindow)
 
         // Set this manga as updated since chapters were changed
         // Note that last_update actually represents last time the chapter list changed at all
+        fetched.checkCurrent()
         updateManga.awaitUpdateLastUpdate(manga.id)
 
         val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
+
+        fetched.checkCurrent()
 
         return updatedToAdd.filterNot { it.url in changedOrDuplicateReadUrls || it.scanlator in excludedScanlators }
     }

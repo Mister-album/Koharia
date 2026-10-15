@@ -14,6 +14,7 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionProfileManager
@@ -26,6 +27,7 @@ import koharia.source.local.LocalLibraryRootConfig
 import koharia.source.local.defaultBookshelfId
 import koharia.source.local.withInitialBookshelves
 import koharia.testing.FixtureActivityLauncher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -34,6 +36,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import tachiyomi.core.common.preference.Preference
@@ -112,7 +115,7 @@ class LocalReaderDatabaseStartupDeviceTest {
             val source = Injekt.get<SourceManager>().get(profile.id) as LocalFolderSource
             withTimeout(15_000) { source.refreshLibrary().getOrThrow() }
             val manga = mangas.getMangaBySourceId(profile.id).single()
-            Injekt.get<SyncChaptersWithSource>().await(source.getChapterList(manga.toSManga()), manga, source)
+            Injekt.get<SyncChaptersWithSource>().fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
             val chapter = chapters.getChapterByMangaId(manga.id).single()
             chapters.update(ChapterUpdate(id = chapter.id, memo = buildJsonObject {}))
             assertNull(ConnectionChapterMetadata.pagesCount(checkNotNull(chapters.getChapterById(chapter.id)).memo))
@@ -135,6 +138,21 @@ class LocalReaderDatabaseStartupDeviceTest {
                     }
                     val saved = checkNotNull(chapters.getChapterById(chapter.id))
                     assertEquals(3, ConnectionChapterMetadata.pagesCount(saved.memo))
+                    var binding: eu.kanade.tachiyomi.ui.reader.model.ReaderProgressSession? = null
+                    scenario.onActivity { binding = it.viewModel.state.value.currentChapter?.progressSession }
+                    val opened = checkNotNull(binding)
+                    assertEquals(chapter.id, opened.owner.chapterId)
+                    opened.checkCurrent()
+                    if (it == 1) {
+                        val preferences = LocalLibraryPreferences(profile.id, Json)
+                        val original = preferences.getConfig()
+                        try {
+                            preferences.setConfig(original.copy(roots = emptyList()))
+                            assertTrue(runCatching { opened.checkCurrent() }.exceptionOrNull() is CancellationException)
+                        } finally {
+                            preferences.setConfig(original)
+                        }
+                    }
                 }
             }
         } finally {

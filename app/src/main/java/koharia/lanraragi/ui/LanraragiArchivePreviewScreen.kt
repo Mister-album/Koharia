@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -88,7 +89,11 @@ import tachiyomi.presentation.core.screens.EmptyScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourceId: Long) : Screen() {
+class LanraragiArchivePreviewScreen(
+    private val mangaId: Long,
+    private val sourceId: Long,
+    private val chapterId: Long? = null,
+) : Screen() {
     @Composable
     override fun Content() {
         val source = Injekt.get<SourceManager>().get(sourceId) as? ConnectionSource
@@ -96,7 +101,7 @@ class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourc
             EmptyScreen(stringRes = MR.strings.connection_unavailable)
             return
         }
-        val model = rememberScreenModel { LanraragiArchivePreviewModel(mangaId, source) }
+        val model = rememberScreenModel { LanraragiArchivePreviewModel(mangaId, source, chapterId) }
         val state by model.state.collectAsState()
         val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
         val loadPreviews = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
@@ -163,6 +168,12 @@ class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourc
                     ).copy(alpha = backgroundAlpha),
                     navigateUp = { navigator.pop() },
                     actions = {
+                        IconButton(
+                            onClick = { navigator.push(MangaScreen(mangaId)) },
+                            enabled = state.manga?.source == sourceId,
+                        ) {
+                            Icon(Icons.Default.Info, stringResource(MR.strings.entry_open_details))
+                        }
                         if (source is HttpSource) {
                             IconButton(onClick = model::download, enabled = state.chapter != null) {
                                 Icon(Icons.Default.Download, stringResource(MR.strings.action_download))

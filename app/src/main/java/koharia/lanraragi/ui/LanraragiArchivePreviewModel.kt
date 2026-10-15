@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
 import eu.kanade.tachiyomi.ui.reader.loader.LocalPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionLocalFileAdapter
 import koharia.connection.ConnectionPageAdapter
 import koharia.connection.ConnectionPublicationAdapter
@@ -34,6 +35,7 @@ import uy.kohesive.injekt.api.get
 internal class LanraragiArchivePreviewModel(
     private val mangaId: Long,
     val source: ConnectionSource,
+    private val chapterId: Long? = null,
 ) : StateScreenModel<LanraragiArchivePreviewModel.State>(State()) {
     private val downloads = Injekt.get<DownloadManager>()
     private val context = Injekt.get<android.app.Application>()
@@ -51,7 +53,8 @@ internal class LanraragiArchivePreviewModel(
         }
         screenModelScope.launch {
             chapters.getChapterByMangaIdAsFlow(mangaId).collect { values ->
-                values.singleOrNull()?.let { chapter -> mutableState.update { it.copy(chapter = chapter) } }
+                val chapter = if (chapterId == null) values.singleOrNull() else values.find { it.id == chapterId }
+                mutableState.update { it.copy(chapter = chapter) }
             }
         }
     }
@@ -62,6 +65,7 @@ internal class LanraragiArchivePreviewModel(
             mutableState.update { it.copy(loading = true, error = null) }
             try {
                 val manga = checkNotNull(Injekt.get<MangaRepository>().getMangaById(mangaId))
+                check(manga.source == source.id)
                 val chapter = prepareChapter(manga)
                 val localFile = (source as? ConnectionLocalFileAdapter)?.localChapterFile(chapter.url)
                 val localEpub = localFile?.extension.equals("epub", true)
@@ -102,8 +106,13 @@ internal class LanraragiArchivePreviewModel(
     }
 
     private suspend fun prepareChapter(manga: Manga): Chapter {
+        chapterId?.let { selected ->
+            return checkNotNull(chapters.getChapterById(selected)) {
+                "Unable to prepare entry for preview"
+            }.also { check(it.mangaId == manga.id) }
+        }
         chapters.getChapterByMangaId(manga.id).singleOrNull()?.let { return it }
-        syncChapters.await(source.getChapterList(manga.toSManga()), manga, source)
+        syncChapters.fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
         return chapters.getChapterByMangaId(manga.id).singleOrNull()
             ?: error("Unable to prepare entry for preview")
     }
@@ -139,7 +148,8 @@ internal class LanraragiArchivePreviewModel(
     }
 
     suspend fun currentChapter(): Chapter =
-        chapters.getChapterById(checkNotNull(state.value.chapter).id) ?: checkNotNull(state.value.chapter)
+        checkNotNull(chapters.getChapterById(checkNotNull(state.value.chapter).id))
+            .also { check(it.mangaId == mangaId) }
 
     fun download() {
         val manga = state.value.manga ?: return

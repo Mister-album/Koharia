@@ -1,0 +1,26 @@
+[
+  {
+    "id": 96070001,
+    "configuration": {
+      "mode": "WEBDAV",
+      "address": "http://127.0.0.1:9/library/",
+      "rootIdentity": "frozen-root-webdav",
+      "accountIdentity": "422fc2fd0dbc271513e9e1b7d8a2deb8fcd2ec22ab41ca8301798f7ef32b25bd",
+      "needsValidation": true,
+      "persistentIdentity": true
+    },
+    "username": "fixture-user"
+  },
+  {
+    "id": 96070002,
+    "configuration": {
+      "mode": "SMB",
+      "address": "smb://127.0.0.1/fixture/",
+      "rootIdentity": "frozen-root-smb",
+      "accountIdentity": "f1de9739adc3c4072f5eb470113f6a2174084573db9b578d1d978e63ade5eaf1",
+      "needsValidation": true,
+      "persistentIdentity": true
+    },
+    "username": "fixture-user"
+  }
+]

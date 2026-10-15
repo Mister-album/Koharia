@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Text
@@ -24,8 +25,10 @@ import cafe.adriel.voyager.core.model.screenModelScope
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.library.components.ManualDownloadIndicator
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
+import koharia.connection.rememberConnectionShelfEntries
 import koharia.source.suwayomi.SuwayomiSource
 import koharia.suwayomi.SuwayomiDownloadEvents
 import koharia.suwayomi.SuwayomiDownloadStatus
@@ -33,6 +36,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -53,6 +58,12 @@ class SuwayomiDownloadsScreen(private val sourceId: Long) : Screen() {
         val epoch by source.epoch.collectAsState()
         val model = rememberScreenModel(tag = "${source.instanceKey}:$epoch") { SuwayomiDownloadsScreenModel(source) }
         val state by model.state.collectAsState()
+        val session = remember(source, epoch) { source.session() }
+        val listState = rememberLazyListState()
+        val localEntries = rememberConnectionShelfEntries(
+            source,
+            state.status.queue.map { session.identity.mangaUrl(it.mangaId) },
+        ) { listState.layoutInfo.visibleItemsInfo.map { it.index } }
         val connected by model.events.connected.collectAsState()
         var clear by remember { mutableStateOf(false) }
         Scaffold(topBar = {
@@ -75,7 +86,7 @@ class SuwayomiDownloadsScreen(private val sourceId: Long) : Screen() {
                     }
                 }
                 if (state.loaded && state.status.queue.isEmpty()) EmptyScreen(MR.strings.suwayomi_queue_empty)
-                LazyColumn {
+                LazyColumn(state = listState) {
                     items(state.status.queue, key = { it.chapterId }) { item ->
                         ListItem(
                             headlineContent = { Text(item.chapter?.name.orEmpty()) },
@@ -91,9 +102,17 @@ class SuwayomiDownloadsScreen(private val sourceId: Long) : Screen() {
                             },
                             trailingContent = {
                                 Row {
+                                    ManualDownloadIndicator(
+                                        source.queueDownloadState(
+                                            item,
+                                            localEntries[session.identity.mangaUrl(item.mangaId)],
+                                        ),
+                                    )
                                     TextButton(onClick = {
-                                        navigator.push(MangaScreen(0, true, sourceId, model.mangaUrl(item.mangaId)))
-                                    }) { Text(stringResource(MR.strings.browse)) }
+                                        model.openManga(item.mangaId) { manga ->
+                                            navigator.push(MangaScreen(manga.id, true, sourceId, manga.url))
+                                        }
+                                    }, enabled = !state.loading) { Text(stringResource(MR.strings.browse)) }
                                     TextButton(onClick = {
                                         model.dequeue(item.chapterId)
                                     }, enabled = !state.loading && connected && state.fresh) {
@@ -125,7 +144,7 @@ class SuwayomiDownloadsScreen(private val sourceId: Long) : Screen() {
     }
 }
 
-internal class SuwayomiDownloadsScreenModel(source: SuwayomiSource) : StateScreenModel<SuwayomiDownloadsScreenModel.State>(
+internal class SuwayomiDownloadsScreenModel(private val source: SuwayomiSource) : StateScreenModel<SuwayomiDownloadsScreenModel.State>(
     State(),
 ) {
     private val session = source.session()
@@ -152,22 +171,35 @@ internal class SuwayomiDownloadsScreenModel(source: SuwayomiSource) : StateScree
             }
         }
     }
-    fun mangaUrl(id: Int) = session.identity.mangaUrl(id)
+    fun openManga(id: Int, onOpen: (Manga) -> Unit) = operation {
+        val manga = withIOContext {
+            val remote = session.catalog.manga(id)
+            session.checkActive()
+            source.materialize(source.toManga(remote, session))
+        }
+        session.checkActive()
+        onOpen(manga)
+    }
     fun refresh() = action { session.api.downloadStatus() }
     fun start() = action { session.api.startDownloader() }
     fun pause() = action { session.api.stopDownloader() }
     fun clear() = action { session.api.clearDownloader() }
     fun dequeue(id: Int) = action { session.api.dequeueDownload(id) }
-    private fun action(block: suspend () -> SuwayomiDownloadStatus) {
+    private fun action(block: suspend () -> SuwayomiDownloadStatus) = operation {
+        val status = block()
+        session.checkActive()
+        session.downloadSnapshot.value = status
+        mutableState.update { it.copy(status = status, loaded = true, fresh = true) }
+    }
+    private fun operation(block: suspend () -> Unit) {
         if (actionJob?.isActive == true) return
         actionJob = screenModelScope.launch {
             mutableState.update { it.copy(loading = true, error = null) }
             try {
                 session.checkActive()
-                val status = block()
+                block()
                 session.checkActive()
-                session.downloadSnapshot.value = status
-                mutableState.update { it.copy(status = status, loaded = true, fresh = true, loading = false) }
+                mutableState.update { it.copy(loading = false) }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 mutableState.update { it.copy(loading = false, error = error) }

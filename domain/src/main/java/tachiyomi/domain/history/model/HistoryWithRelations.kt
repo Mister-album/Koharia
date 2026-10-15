@@ -7,6 +7,7 @@ data class HistoryWithRelations(
     val id: Long,
     val chapterId: Long,
     val mangaId: Long,
+    val mangaUrl: String,
     val title: String,
     val chapterNumber: Double,
     val readAt: Date?,

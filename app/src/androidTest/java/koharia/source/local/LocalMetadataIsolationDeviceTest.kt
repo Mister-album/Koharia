@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryMetadata
 import koharia.connection.LibraryMetadataField
@@ -226,7 +227,7 @@ class LocalMetadataIsolationDeviceTest {
                 source.updateMetadata(series.url, edited).getOrThrow()
                 val sync: SyncChaptersWithSource = Injekt.get()
                 val chapters: ChapterRepository = Injekt.get()
-                sync.await(source.getChapterList(series.toSManga()), series, source, manualFetch = false)
+                sync.fetchAndSync(series, source, ChapterFetchOrigin.OPEN)
                 val chapter = chapters.getChapterByMangaId(series.id).single()
                 chapters.update(ChapterUpdate(id = chapter.id, read = true, lastPageRead = 1))
                 assertTrue(root.resolve("Collection").renameTo(root.resolve("Renamed")))

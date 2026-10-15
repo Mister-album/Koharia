@@ -231,7 +231,7 @@ class SmangaRepositoryTest {
 
     @Test
     fun upgradesPreviousSchemaAndPreservesOtherProviderState() = runBlocking {
-        database.lanraragiQueries.record(77, "existing-archive", 1, 10, 100, 0, 1, 0)
+        database.lanraragiQueries.record(77, "existing-archive", 1, 10, 100, 0, 1, 0, 0)
         driver.close()
         SQLiteDatabase.openDatabase(context.getDatabasePath(name).path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
             listOf("smanga_cache", "smanga_read_state", "smanga_history_event").forEach {

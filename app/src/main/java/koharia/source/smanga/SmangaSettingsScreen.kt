@@ -116,11 +116,12 @@ class SmangaSettingsScreen(
             scope.launch {
                 try {
                     val normalized = SmangaApi.normalizeBase(address).toString()
+                    val reconnect = manager.requiresIdentityReplacement(sourceId)
                     val validate = ConnectionValidation.required(
                         isNew,
                         address != initialAddress || internalAddress != initialInternalAddress ||
                             username != initialUsername || password != initialPassword,
-                        preferences.accountId <= 0,
+                        preferences.accountId <= 0 || reconnect,
                     )
                     val accountId = if (validate) {
                         ConnectionValidation.at(ConnectionValidation.Endpoint.PUBLIC) {
@@ -150,11 +151,25 @@ class SmangaSettingsScreen(
                         preferences.accountId
                     }
                     val profile = manager.profiles().first { it.id == sourceId }
-                    withContext(Dispatchers.IO) {
-                        preferences.save(normalized, username, password, accountId, internalAddress)
+                    val identityChanged = !isNew && (
+                        reconnect || normalized != initialAddress ||
+                            internalAddress != initialInternalAddress || username.trim() != initialUsername ||
+                            password != initialPassword || accountId != preferences.accountId
+                        )
+                    suspend fun write(id: Long) = withContext(Dispatchers.IO) {
+                        SmangaPreferences(id).save(normalized, username, password, accountId, internalAddress)
                     }
-                    manager.update(profile.copy(name = name.trim()))
-                    (Injekt.get<SourceManager>().get(sourceId) as? SmangaSource)?.reload()
+                    if (identityChanged) {
+                        manager.replaceIdentity(sourceId, name, ::write)
+                    } else {
+                        manager.commitConfiguration(sourceId) { draft ->
+                            SmangaPreferences(
+                                sourceId,
+                                draft,
+                            ).save(normalized, username, password, accountId, internalAddress)
+                        }
+                        manager.update(profile.copy(name = name.trim()))
+                    }
                     if (completeOnboarding) {
                         Injekt.get<BasePreferences>().shownOnboardingFlow.set(true)
                         navigator.popUntilRoot()
@@ -200,11 +215,15 @@ class SmangaSettingsScreen(
                     onClick = ::save,
                 ) {
                     if (saving) EInkCircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text(stringResource(MR.strings.action_save), Modifier.padding(start = if (saving) 8.dp else 0.dp))
+                    Text(
+                        koharia.connection.ui.connectionSaveLabel(sourceId),
+                        Modifier.padding(start = if (saving) 8.dp else 0.dp),
+                    )
                 }
             },
         ) { padding ->
             LazyColumn(Modifier.padding(padding)) {
+                item { koharia.connection.ui.ConnectionReconnectionNotice(sourceId) }
                 item {
                     PreferenceGroupHeader(stringResource(MR.strings.pref_connection_settings))
                     SmangaTextSetting(

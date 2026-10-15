@@ -3,6 +3,8 @@ package koharia.smanga
 import eu.kanade.tachiyomi.network.await
 import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionAddressVerification
+import koharia.connection.connectionReadOnly
+import koharia.core.archive.BoundedXml
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -39,8 +41,6 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okio.BufferedSink
-import org.jsoup.Jsoup
-import org.jsoup.parser.Parser
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -73,9 +73,11 @@ class SmangaApi(
     // Inherited interceptors/event listeners may record request bodies or authentication headers.
     private val isolatedClient = networkClient.newBuilder().apply {
         val validation = interceptors().filterIsInstance<koharia.connection.ConnectionValidation.ReadRetry>()
+        val writeGuards = networkInterceptors().filterIsInstance<koharia.connection.ConnectionWriteGuard>()
         interceptors().clear()
         networkInterceptors().clear()
         validation.forEach(::addInterceptor)
+        writeGuards.forEach(::addNetworkInterceptor)
     }
         .cache(null)
         .dns(Dns.SYSTEM)
@@ -171,7 +173,7 @@ class SmangaApi(
         opdsClient.newCall(Request.Builder().url(opdsUrl("")).build()).await().use { response ->
             if (response.code == 404) throw SmangaException(SmangaException.Reason.OPDS_DISABLED, 404)
             checkHttp(response.code)
-            val document = Jsoup.parse(readBody(response), "", Parser.xmlParser())
+            val document = BoundedXml.parse(readBody(response))
             val feed = document.children().firstOrNull()
             if (feed?.tagName() != "feed" || feed.attr("xmlns") != "http://www.w3.org/2005/Atom") {
                 throw SmangaException(SmangaException.Reason.OPDS_DISABLED)
@@ -438,7 +440,7 @@ class SmangaApi(
                     put("passWord", password)
                 }
                     .toString().toRequestBody(JSON_MEDIA_TYPE),
-            ).build()
+            ).connectionReadOnly().build()
         val value = execute(request).data()
         val token = value.text("token").takeIf(String::isNotBlank) ?: protocol()
         Session(token, parseAccount(value)).also {

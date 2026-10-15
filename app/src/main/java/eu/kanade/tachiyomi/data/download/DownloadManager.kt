@@ -45,28 +45,25 @@ class DownloadManager(
     private val getCategories: GetCategories = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
+    private val downloader: Downloader = Downloader(context, provider, cache),
+    private val pendingDeleter: DownloadPendingDeleter = DownloadPendingDeleter(context),
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /**
-     * Downloader whose only task is to download chapters.
-     */
-    private val downloader = Downloader(context, provider, cache)
-
     val isRunning: Boolean
         get() = downloader.isRunning
-
-    /**
-     * Queue to delay the deletion of a list of chapters until triggered.
-     */
-    private val pendingDeleter = DownloadPendingDeleter(context)
 
     val queueState
         get() = downloader.queueState
 
     val cacheChanges
         get() = cache.changes
+
+    val cacheUpdates
+        get() = cache.updates
+
+    fun isAffectedByCacheUpdate(manga: Manga, change: DownloadCacheChange): Boolean = cache.isAffected(manga, change)
 
     // For use by DownloadService only
     fun downloaderStart() = downloader.start()
@@ -90,7 +87,14 @@ class DownloadManager(
         }
     }
 
-    private fun startQueuedDownloadsOnly() {
+    /** Starts runnable queue entries without retrying failed or resuming individually paused downloads. */
+    fun startQueuedDownloadsOnly() {
+        if (queueState.value.none {
+                it.status == Download.State.QUEUE || it.status == Download.State.NOT_DOWNLOADED
+            }
+        ) {
+            return
+        }
         if (downloader.isRunning) {
             downloader.start()
             return
@@ -108,6 +112,8 @@ class DownloadManager(
      */
     fun pauseDownloads() {
         downloader.pause()
+        // Keep the user's pause when a later automatic batch starts runnable entries.
+        queueState.value.forEach { downloader.pause(it) }
         downloader.stop()
     }
 
@@ -122,7 +128,16 @@ class DownloadManager(
      * Tells the downloader to resume a specific download.
      */
     fun resumeDownload(download: Download) {
-        if (downloader.resume(download)) {
+        resumeDownloads(listOf(download.chapter.id))
+    }
+
+    fun resumeDownloads(chapterIds: Collection<Long>) {
+        val ids = chapterIds.toSet()
+        var resumed = false
+        queueState.value.filter { it.chapter.id in ids }.forEach {
+            if (downloader.resume(it)) resumed = true
+        }
+        if (resumed) {
             startQueuedDownloadsOnly()
         }
     }
@@ -196,6 +211,7 @@ class DownloadManager(
         autoStart: Boolean = true,
         mode: Download.Mode? = null,
     ) {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         downloader.queueChapters(manga, chapters, autoStart, mode)
     }
 
@@ -222,11 +238,12 @@ class DownloadManager(
      */
     fun addDownloadsToStartOfQueue(downloads: List<Download>) {
         if (downloads.isEmpty()) return
-        queueState.value.toMutableList().apply {
-            addAll(0, downloads)
-            reorderQueue(this)
-        }
-        if (!DownloadJob.isRunning(context)) startDownloads()
+        val current = queueState.value
+        val existing = current.associateBy { it.chapter.id }
+        val incoming = downloads.distinctBy { it.chapter.id }.map { existing[it.chapter.id] ?: it }
+        val incomingIds = incoming.mapTo(hashSetOf()) { it.chapter.id }
+        reorderQueue(incoming + current.filterNot { it.chapter.id in incomingIds })
+        startQueuedDownloadsOnly()
     }
 
     /**
@@ -413,6 +430,7 @@ class DownloadManager(
      * @param manga the manga of the chapters.
      */
     suspend fun enqueueChaptersToDelete(chapters: List<Chapter>, manga: Manga) {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         pendingDeleter.addChapters(getChaptersToDelete(chapters, manga), manga)
     }
 
@@ -420,6 +438,7 @@ class DownloadManager(
      * Triggers the execution of the deletion of pending chapters.
      */
     fun deletePendingChapters() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         val pendingChapters = pendingDeleter.getPendingChapters()
         for ((manga, chapters) in pendingChapters) {
             val source = sourceManager.get(manga.source) ?: continue
@@ -434,6 +453,7 @@ class DownloadManager(
      * @param newSource the new source.
      */
     fun renameSource(oldSource: Source, newSource: Source) {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (
             (oldSource as? ConnectionDownloadStorageAdapter)?.usesSharedDownloadStorage == true &&
             (newSource as? ConnectionDownloadStorageAdapter)?.usesSharedDownloadStorage == true

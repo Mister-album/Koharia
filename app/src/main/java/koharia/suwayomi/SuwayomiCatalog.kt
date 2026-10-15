@@ -44,8 +44,8 @@ class SuwayomiCatalog(
         api,
         json,
         checkSession,
-        read = { repository.cache(identity.connectionId, identity.account, "discovery", "pages")?.payload },
-        write = { save("discovery", "pages", it) },
+        identity,
+        repository,
     )
 
     suspend fun sources(refresh: Boolean = false) = sourceInventory.load(refresh)

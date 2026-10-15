@@ -147,7 +147,6 @@ class KomgaSharedDownloadRepository(
     ) {
         database.komga_shared_download_matchesQueries.updateLocalRelativePathPrefix(
             oldPrefix = oldPrefix,
-            oldPrefixLength = oldPrefix.length.toString(),
             newPrefix = newPrefix,
             lastVerifiedAt = lastVerifiedAt,
         )

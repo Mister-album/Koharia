@@ -10,6 +10,7 @@ import koharia.tts.progress.TtsProgressNotifier
 data class EpubReaderUiState(
     val mangaId: Long = -1L,
     val chapterId: Long = -1L,
+    val sourceId: Long = -1L,
     val mangaTitle: String? = null,
     val chapterTitle: String? = null,
     val bookFileName: String? = null,
@@ -48,6 +49,7 @@ data class EpubReaderUiState(
     val isSearchLoading: Boolean = false,
     val searchErrorMessage: String? = null,
     val remoteProgressConflict: EpubRemoteProgressConflict? = null,
+    val isResolvingRemoteProgress: Boolean = false,
     val ttsProgress: TtsProgressNotifier.Progress? = null,
     val ttsActive: Boolean = false,
     val ttsPlaybackState: TtsPlaybackState = TtsPlaybackState.STOPPED,

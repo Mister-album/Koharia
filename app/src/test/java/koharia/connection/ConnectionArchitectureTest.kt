@@ -174,12 +174,15 @@ class ConnectionArchitectureTest {
         val provider = mockk<ConnectionProvider> {
             every { id } returns "test-provider"
             every { displayName } returns "Test"
+            every { directoryNameFor(any()) } answers { firstArg() }
+            every { isConnectionNameAvailable(any()) } returns true
         }
         val configManager = mockk<ConnectionConfigManager>()
         val manager = ConnectionProfileManager(
             preferences = preferences,
             registry = ConnectionRegistry(listOf(provider)),
             configManager = configManager,
+            identityChanges = mockk { every { reservedProfiles() } returns emptyList() },
         )
 
         val profile = manager.add(providerId = provider.id, name = "  Home  ")
@@ -205,9 +208,9 @@ class ConnectionArchitectureTest {
             LibraryConnectionProfile(2L, "test-provider", "Books"),
             bookScopes,
         )
-        val sourceManager = mockk<SourceManager> {
-            every { get(1L) } returns comicSource
-            every { get(2L) } returns bookSource
+        val sourceManager = object : SourceManager by mockk<SourceManager>() {
+            override val catalogueSources = MutableStateFlow<List<CatalogueSource>>(listOf(comicSource, bookSource))
+            override fun get(sourceKey: Long) = catalogueSources.value.firstOrNull { it.id == sourceKey }
         }
         preferences.activeConnectionId.set(1L)
         val controller = ConnectionContentScopeController(preferences, sourceManager)
@@ -468,9 +471,13 @@ private class TestConnectionSource(
     private val scopes: MutableStateFlow<Set<LibraryContentScope>> = MutableStateFlow(
         setOf(LibraryContentScope.ALL),
     ),
-) : ConnectionSource, ConnectionBrowseAdapter {
+) : ConnectionSource, ConnectionBrowseAdapter, CatalogueSource {
     override val id: Long = connectionProfile.id
     override val name: String = connectionProfile.name
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+
+    override fun getFilterList() = eu.kanade.tachiyomi.source.model.FilterList()
 
     override fun availableContentScopes(): Set<LibraryContentScope> = scopes.value
 

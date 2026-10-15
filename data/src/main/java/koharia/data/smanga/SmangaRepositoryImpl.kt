@@ -2,14 +2,20 @@ package koharia.data.smanga
 
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
+import koharia.data.observeBatched
 import koharia.domain.smanga.SmangaCacheEntry
+import koharia.domain.smanga.SmangaCatalogueCacheEntry
 import koharia.domain.smanga.SmangaHistoryEvent
 import koharia.domain.smanga.SmangaReadState
 import koharia.domain.smanga.SmangaRepository
 import tachiyomi.data.Database
+import tachiyomi.data.subscribeToList
 
 class SmangaRepositoryImpl(private val database: Database) : SmangaRepository {
     private val queries get() = database.smangaQueries
+
+    override suspend fun cachedCatalogue(connectionId: Long, accountKey: String) =
+        queries.getCachedCatalogue(connectionId, accountKey, ::SmangaCatalogueCacheEntry).awaitAsList()
 
     override suspend fun cache(connectionId: Long, accountKey: String, groupKey: String, key: String) =
         queries.getCache(connectionId, accountKey, groupKey, key, ::SmangaCacheEntry).awaitAsOneOrNull()
@@ -56,6 +62,21 @@ class SmangaRepositoryImpl(private val database: Database) : SmangaRepository {
             queries.removeAccountHistory(connectionId, accountKey)
         }
     }
+
+    override fun observeReadStates(connectionId: Long, accountKey: String, chapterIds: Collection<Long>) =
+        observeBatched(chapterIds) {
+            queries.getReadStatesForChapters(connectionId, accountKey, it, ::mapState).subscribeToList()
+        }
+
+    override fun observeCacheEntries(
+        connectionId: Long,
+        accountKey: String,
+        groupKey: String,
+        keys: Collection<String>,
+    ) =
+        observeBatched(keys) {
+            queries.getCacheEntries(connectionId, accountKey, groupKey, it, ::SmangaCacheEntry).subscribeToList()
+        }
 
     override suspend fun readState(connectionId: Long, accountKey: String, chapterId: Long) =
         queries.getReadState(connectionId, accountKey, chapterId, ::mapState).awaitAsOneOrNull()

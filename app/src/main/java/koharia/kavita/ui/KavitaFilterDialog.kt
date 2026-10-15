@@ -96,13 +96,7 @@ internal fun KavitaFilterDialog(
     }
     // Imported OR expressions cannot be represented by independent include/exclude groups.
     val importedAny = draft.combination == 0 && draft.statements.size > 1
-    val sorts = listOf(
-        1 to MR.strings.kavita_sort_name, 2 to MR.strings.kavita_sort_created,
-        3 to MR.strings.kavita_sort_updated, 4 to MR.strings.kavita_sort_chapter_added,
-        6 to MR.strings.kavita_release_year, 7 to MR.strings.kavita_read_progress,
-        10 to MR.strings.kavita_rating, 5 to MR.strings.kavita_read_hours,
-        9 to MR.strings.kavita_random, 11 to MR.strings.kavita_unread_chapters,
-    )
+    val sorts = koharia.kavita.kavitaSortOptions()
     AdaptiveSheet(
         onDismissRequest = onDismissRequest,
         modifier = Modifier.fillMaxHeight(0.75f),
@@ -117,7 +111,8 @@ internal fun KavitaFilterDialog(
                         }) { Text(stringResource(MR.strings.action_reset)) }
                         Spacer(Modifier.weight(1f))
                         Button(
-                            enabled = draft.statements.all { validKavitaFilterValue(it.field, it.value) },
+                            enabled = draft.statements.all { validKavitaFilterValue(it.field, it.value) } &&
+                                sorts.any { it.first == draft.sortOptions.sortField },
                             onClick = {
                                 onApply(draft)
                                 onDismissRequest()
@@ -129,6 +124,9 @@ internal fun KavitaFilterDialog(
             }
             item {
                 HeadingItem(stringResource(MR.strings.action_sort))
+                if (sorts.none { it.first == draft.sortOptions.sortField }) {
+                    Text(stringResource(MR.strings.kavita_sort_unsupported), Modifier.padding(horizontal = 24.dp))
+                }
                 SelectItem(
                     label = stringResource(MR.strings.action_sort),
                     options = sorts.map { stringResource(it.second) }.toTypedArray(),

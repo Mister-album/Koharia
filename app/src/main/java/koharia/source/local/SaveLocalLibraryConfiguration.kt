@@ -9,9 +9,10 @@ internal suspend fun saveLocalLibraryConfiguration(
     preferences: LocalLibraryPreferences,
     config: LocalLibraryConfig,
     assignments: Map<String, String>,
+    persist: suspend () -> Unit = { preferences.saveLibraryDraft(config.copy(setupCompleted = true), assignments) },
     scan: suspend () -> Result<ConnectionLibraryRefreshResult>,
 ): Result<ConnectionLibraryRefreshResult>? = withContext(NonCancellable) {
     val newlyConfigured = !preferences.getConfig().setupCompleted
-    preferences.saveLibraryDraft(config.copy(setupCompleted = true), assignments)
+    persist()
     if (newlyConfigured) runCatching { scan().getOrThrow() } else null
 }

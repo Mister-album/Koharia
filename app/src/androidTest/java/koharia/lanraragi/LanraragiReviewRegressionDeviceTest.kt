@@ -179,12 +179,12 @@ class LanraragiReviewRegressionDeviceTest {
                     } while (node == null)
                     node
                 }
-                assertTrue(!cache.isImageInCache(firstUrl))
+                assertTrue(!cache.isImageInCache(source.id, firstUrl))
                 control("fail_images=false")
                 var target: AccessibilityNodeInfo? = retry
                 while (target != null && !target.isClickable) target = target.parent
                 assertTrue(target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
-                withTimeout(15_000) { while (!cache.isImageInCache(firstUrl)) delay(100) }
+                withTimeout(15_000) { while (!cache.isImageInCache(source.id, firstUrl)) delay(100) }
             }
         } finally {
             control("fail_images=false")

@@ -313,18 +313,26 @@ private fun MangaScreenImpl(
             )
         },
         contentHeader = {
-            ChapterHeader(
-                enabled = !isAnySelected,
-                chapterCount = chapters.size,
-                missingChapterCount = if (state.hideMissingChapters) {
-                    0
-                } else {
-                    remember(chapters) {
-                        chapters.map { it.chapter.chapterNumber }.missingChaptersCount()
-                    }
-                },
-                onClick = onFilterClicked,
-            )
+            androidx.compose.foundation.layout.Column {
+                koharia.connection.ui.ConnectionProgressSyncStatusSection(
+                    sourceId = state.manga.source,
+                    chapters = remember(state.chapters) {
+                        state.chapters.associate { it.chapter.url to it.chapter.name }
+                    },
+                )
+                ChapterHeader(
+                    enabled = !isAnySelected,
+                    chapterCount = chapters.size,
+                    missingChapterCount = if (state.hideMissingChapters) {
+                        0
+                    } else {
+                        remember(chapters) {
+                            chapters.map { it.chapter.chapterNumber }.missingChaptersCount()
+                        }
+                    },
+                    onClick = onFilterClicked,
+                )
+            }
         },
         listContent = {
             sharedChapterItems(

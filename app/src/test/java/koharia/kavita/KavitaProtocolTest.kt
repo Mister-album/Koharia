@@ -6,6 +6,9 @@ import koharia.domain.kavita.KavitaOperation
 import koharia.domain.kavita.KavitaRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import okio.ByteString.Companion.encodeUtf8
 import org.junit.jupiter.api.AfterEach
@@ -60,6 +63,38 @@ class KavitaProtocolTest {
         principal,
     ).also { clients += it }
     private fun catalog(account: String = "a") = KavitaCatalog(1, account, repository, api()) {}
+
+    @Test fun cachedUnitCountsObserveChangesWithoutNetworkAndKeepAccountIsolation() = runTest {
+        val observed = mutableListOf<Map<Long, Long>>()
+        val job = backgroundScope.launch {
+            catalog().observeCachedSeriesBookCounts(setOf(10, 11)).collect(observed::add)
+        }
+        runCurrent()
+        assertEquals(mapOf(10L to 0L, 11L to 0L), observed.last())
+        val payload = """[{"id":20,"chapters":[{"id":1},{"id":2},{"id":2}]}]"""
+        repository.putCache(1, "b", "volumes/10", KavitaCacheEntry("data", payload, 1))
+        repository.putCache(2, "a", "volumes/10", KavitaCacheEntry("data", payload, 1))
+        runCurrent()
+        assertEquals(1, observed.size)
+        repository.putCache(1, "a", "volumes/10", KavitaCacheEntry("data", payload, 1))
+        repository.putCache(1, "a", "volumes/11", KavitaCacheEntry("data", "invalid", 1))
+        runCurrent()
+        assertEquals(mapOf(10L to 2L, 11L to 0L), observed.last())
+        repository.invalidateGroup(1, "a", "volumes/10")
+        runCurrent()
+        assertEquals(mapOf(10L to 0L, 11L to 0L), observed.last())
+        repository.putCache(1, "a", "volumes/10", KavitaCacheEntry("data", "[]", 1))
+        runCurrent()
+        assertEquals(3, observed.size)
+        repository.putCache(1, "a", "volumes/11", KavitaCacheEntry("data", payload, 1))
+        runCurrent()
+        assertEquals(mapOf(10L to 0L, 11L to 2L), observed.last())
+        repository.removeConnection(1)
+        runCurrent()
+        assertEquals(mapOf(10L to 0L, 11L to 0L), observed.last())
+        assertTrue(requests.isEmpty())
+        job.cancel()
+    }
 
     @AfterEach fun close() {
         clients.forEach { it.close() }
@@ -160,10 +195,31 @@ class KavitaProtocolTest {
         val logger = okhttp3.logging.HttpLoggingInterceptor { messages += it }.apply {
             level = okhttp3.logging.HttpLoggingInterceptor.Level.HEADERS
         }
-        val network = okhttp3.OkHttpClient.Builder().addNetworkInterceptor(logger).build()
-        KavitaApiClient(network, "http://127.0.0.1:${server.address.port}/reader/", "fixture-secret", "logging").use {
-            it.getAccount()
+        val network = okhttp3.OkHttpClient.Builder().addInterceptor(logger).addNetworkInterceptor(logger).build()
+        for (serverVersion in listOf("0.8.0", "0.9.1.4")) {
+            version = serverVersion
+            KavitaApiClient(
+                network,
+                "http://127.0.0.1:${server.address.port}/reader/",
+                "fixture-secret",
+                "logging",
+            ).use {
+                it.getAccount()
+                val resource = okhttp3.Request.Builder()
+                    .url(checkNotNull(it.virtualBase.resolve("api/Reader/image?chapterId=1"))).build()
+                for (status in listOf(200, 403)) {
+                    responseCode = status
+                    it.client.newCall(resource).execute().use { response -> assertEquals(status, response.code) }
+                }
+            }
         }
+        assertEquals(
+            4,
+            requests.count {
+                it.path.endsWith("/api/Reader/image") &&
+                    it.query.contains("apiKey=fixture-secret")
+            },
+        )
         assertTrue(messages.isEmpty())
     }
 
@@ -179,6 +235,21 @@ class KavitaProtocolTest {
         val afterEmpty = requests.size
         assertTrue(catalog().page(1, emptyFilter).items.isEmpty())
         assertEquals(afterEmpty, requests.size)
+    }
+
+    @Test fun reversePagesAfterLongScrollUsePersistentCacheWithoutAuthenticationOrNetwork() = runTest {
+        val first = catalog()
+        val filter = KavitaFilter()
+        for (page in 1..32) {
+            pagination = """{"currentPage":$page,"totalPages":32,"totalCount":1600}"""
+            responseBody = """[{"id":$page,"name":"Page $page","libraryId":2}]"""
+            assertEquals(page.toLong(), first.page(page, filter).items.single().id)
+        }
+        val count = requests.size
+        responseCode = 503
+        val restored = catalog()
+        for (page in 32 downTo 1) assertEquals(page.toLong(), restored.page(page, filter).items.single().id)
+        assertEquals(count, requests.size)
     }
 
     @Test fun refreshFailureRetainsDataAndAccountsAreIsolated() = runTest {
@@ -346,7 +417,10 @@ class KavitaProtocolTest {
 }
 
 internal class MemoryKavitaRepository : KavitaRepository {
+    var fullHistoryReads = 0
+        private set
     private val caches = mutableMapOf<List<Any>, KavitaCacheEntry>()
+    private val cacheChanges = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private val states = mutableMapOf<List<Any>, KavitaOperation>()
     private val annotations = mutableMapOf<List<Any>, koharia.domain.kavita.KavitaAnnotationEntry>()
     override suspend fun cache(
@@ -357,8 +431,15 @@ internal class MemoryKavitaRepository : KavitaRepository {
     ) = caches[listOf(connectionId, account, group, key)]
     override suspend fun entries(connectionId: Long, account: String, group: String) =
         caches.filterKeys { it.take(3) == listOf(connectionId, account, group) }.values.toList()
+    override fun observeCachedGroups(connectionId: Long, account: String, groups: Collection<String>) =
+        cacheChanges.map { cachedGroups(connectionId, account, groups) }
+    override suspend fun cachedGroups(connectionId: Long, account: String, groups: Collection<String>) =
+        caches.filterKeys {
+            it.take(2) == listOf(connectionId, account) && it[2] in groups && it[3] == "data"
+        }.map { (key, value) -> koharia.domain.kavita.KavitaCachedGroup(key[2] as String, value.payload, value.stale) }
     override suspend fun putCache(connectionId: Long, account: String, group: String, entry: KavitaCacheEntry) {
         caches[listOf(connectionId, account, group, entry.key)] = entry
+        cacheChanges.value++
     }
     override suspend fun replaceCache(
         connectionId: Long,
@@ -368,6 +449,7 @@ internal class MemoryKavitaRepository : KavitaRepository {
     ) {
         caches.keys.removeAll { it.take(3) == listOf(connectionId, account, group) }
         entries.forEach { putCache(connectionId, account, group, it) }
+        cacheChanges.value++
     }
     override suspend fun invalidate(connectionId: Long, account: String) {
         caches.replaceAll { key, value ->
@@ -379,6 +461,7 @@ internal class MemoryKavitaRepository : KavitaRepository {
                 value
             }
         }
+        cacheChanges.value++
     }
     override suspend fun invalidateGroup(connectionId: Long, account: String, groupPrefix: String) {
         caches.replaceAll { key, value ->
@@ -390,11 +473,33 @@ internal class MemoryKavitaRepository : KavitaRepository {
                 value
             }
         }
+        cacheChanges.value++
     }
-    override suspend fun operations(connectionId: Long, account: String) =
-        states.filterKeys { it.take(2) == listOf(connectionId, account) }.values.toList()
+    override fun observeOperations(connectionId: Long, account: String, keys: Collection<String>) =
+        kotlinx.coroutines.flow.flow { emit(keys.mapNotNull { operation(connectionId, account, it) }) }
+    override suspend fun operations(connectionId: Long, account: String): List<KavitaOperation> {
+        fullHistoryReads++
+        return states.filterKeys { it.take(2) == listOf(connectionId, account) }.values.toList()
+    }
+    override suspend fun operation(connectionId: Long, account: String, key: String) =
+        states[listOf(connectionId, account, key)]
+    override suspend fun pendingOperations(connectionId: Long, account: String) =
+        states.filterKeys { it.take(2) == listOf(connectionId, account) }.values.filter { it.pending }
     override suspend fun putOperation(connectionId: Long, account: String, operation: KavitaOperation) {
         states[listOf(connectionId, account, operation.key)] = operation
+    }
+    override suspend fun compareAndSetOperation(
+        connectionId: Long,
+        account: String,
+        expected: KavitaOperation?,
+        updated: KavitaOperation,
+        checkCurrent: () -> Unit,
+    ): Boolean {
+        checkCurrent()
+        if (operation(connectionId, account, updated.key) != expected) return false
+        checkCurrent()
+        putOperation(connectionId, account, updated)
+        return true
     }
     override suspend fun acknowledge(connectionId: Long, account: String, key: String, revision: Long) {
         val id = listOf(connectionId, account, key)
@@ -404,6 +509,21 @@ internal class MemoryKavitaRepository : KavitaRepository {
         caches.keys.removeAll { it.first() == connectionId }
         states.keys.removeAll { it.first() == connectionId }
         annotations.keys.removeAll { it.first() == connectionId }
+        cacheChanges.value++
+    }
+    override suspend fun quarantinePending(
+        connectionId: Long,
+        account: String,
+        operation: (KavitaOperation) -> KavitaOperation,
+        annotation: (koharia.domain.kavita.KavitaAnnotationEntry) -> koharia.domain.kavita.KavitaAnnotationEntry,
+        checkCurrent: () -> Unit,
+    ) {
+        checkCurrent()
+        val pending = pendingOperations(connectionId, account).map(operation)
+        val pendingAnnotations = annotations(connectionId, account).filter { it.pending }.map(annotation)
+        checkCurrent()
+        pending.forEach { putOperation(connectionId, account, it) }
+        pendingAnnotations.forEach { putAnnotation(connectionId, account, it) }
     }
     override suspend fun annotations(connectionId: Long, account: String, chapterId: Long?) =
         annotations.filterKeys { it.take(2) == listOf(connectionId, account) }.values

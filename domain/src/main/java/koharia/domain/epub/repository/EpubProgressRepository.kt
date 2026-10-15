@@ -15,5 +15,12 @@ interface EpubProgressRepository {
 
     suspend fun upsertProgress(progress: EpubProgress)
 
+    /** Commit only against the exact local snapshot; a deleted or newer row must not be recreated by a late response. */
+    suspend fun compareAndSetProgress(
+        expected: EpubProgress?,
+        progress: EpubProgress,
+        checkCurrent: suspend () -> Unit,
+    ): Boolean
+
     suspend fun deleteProgress(chapterId: Long)
 }

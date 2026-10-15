@@ -63,7 +63,6 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.more.settings.screen.KomgaLibraryClassificationScreen
 import eu.kanade.presentation.util.AssistContentScreen
-import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
@@ -71,7 +70,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
-import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionBrowseSourceScreen
 import koharia.connection.ConnectionOrganizationActionsAdapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.EntryOpenMode
@@ -118,7 +117,7 @@ data class KomgaLibraryScreen(
     private val listingQuery: String?,
     private val showNavigationUp: Boolean = true,
     private val libraryScope: KomgaLibraryScope = KomgaLibraryScope.ALL,
-) : Screen(), AssistContentScreen, ConnectionBrowseScreen {
+) : ConnectionBrowseSourceScreen(), AssistContentScreen {
 
     private var assistUrl: String? = null
 
@@ -146,6 +145,11 @@ data class KomgaLibraryScreen(
             return
         }
 
+        if (observeConnectionSource() == null) {
+            tachiyomi.presentation.core.screens.EmptyScreen(stringRes = MR.strings.connection_unavailable)
+            return
+        }
+
         val sourceManager: SourceManager = Injekt.get()
         val sourcePreferences: SourcePreferences = Injekt.get()
         val sharedAppPreferences: SharedAppPreferences = Injekt.get()
@@ -163,26 +167,27 @@ data class KomgaLibraryScreen(
         val libraryClassificationManager: KomgaLibraryClassificationManager = Injekt.get()
         val trackerManager: TrackerManager = Injekt.get()
 
-        val screenModel = rememberScreenModel(tag = "$sourceId:$libraryScope:$listingQuery") {
-            KomgaLibraryScreenModel(
-                sourceId = sourceId,
-                listingQuery = listingQuery,
-                sourceManager = sourceManager,
-                sourcePreferences = sourcePreferences,
-                basePreferences = basePreferences,
-                libraryPreferences = libraryPreferences,
-                downloadManager = downloadManager,
-                getRemoteManga = getRemoteManga,
-                getManga = getManga,
-                updateManga = updateManga,
-                getChaptersByMangaId = getChaptersByMangaId,
-                epubCacheManager = epubCacheManager,
-                getIncognitoState = getIncognitoState,
-                libraryScope = libraryScope,
-                libraryClassificationManager = libraryClassificationManager,
-                trackerManager = trackerManager,
-            )
-        }
+        val screenModel =
+            rememberScreenModel(tag = "$connectionSourceGeneration:$sourceId:$libraryScope:$listingQuery") {
+                KomgaLibraryScreenModel(
+                    sourceId = sourceId,
+                    listingQuery = listingQuery,
+                    sourceManager = sourceManager,
+                    sourcePreferences = sourcePreferences,
+                    basePreferences = basePreferences,
+                    libraryPreferences = libraryPreferences,
+                    downloadManager = downloadManager,
+                    getRemoteManga = getRemoteManga,
+                    getManga = getManga,
+                    updateManga = updateManga,
+                    getChaptersByMangaId = getChaptersByMangaId,
+                    epubCacheManager = epubCacheManager,
+                    getIncognitoState = getIncognitoState,
+                    libraryScope = libraryScope,
+                    libraryClassificationManager = libraryClassificationManager,
+                    trackerManager = trackerManager,
+                )
+            }
         val state by screenModel.state.collectAsState()
         val organizationSelection = remember(sourceId) {
             mutableStateMapOf<String, tachiyomi.domain.manga.model.Manga>()
@@ -444,7 +449,11 @@ data class KomgaLibraryScreen(
                                             .onSuccess { (manga, chapter) ->
                                                 if (mode == EntryOpenMode.PAGE_PREVIEW) {
                                                     navigator.push(
-                                                        LanraragiArchivePreviewScreen(manga.id, manga.source),
+                                                        LanraragiArchivePreviewScreen(
+                                                            manga.id,
+                                                            manga.source,
+                                                            chapter.id,
+                                                        ),
                                                     )
                                                 } else {
                                                     context.startActivity(

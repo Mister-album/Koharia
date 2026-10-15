@@ -13,4 +13,9 @@ data class Backup(
     @ProtoNumber(105) var backupSourcePreferences: List<BackupSourcePreferences> = emptyList(),
     @ProtoNumber(106) var backupExtensionRepo: List<BackupExtensionRepos> = emptyList(),
     @ProtoNumber(107) var backupStorageDirectory: String = "",
+    @ProtoNumber(108) var backupConnections: List<BackupConnection> = emptyList(),
+    @ProtoNumber(109) var backupKomgaReadStatus: List<BackupKomgaReadStatus> = emptyList(),
+    @ProtoNumber(110) var backupKomgaPages: List<BackupKomgaPageEvent> = emptyList(),
+    @ProtoNumber(111) var backupKomgaPageAttempts: List<BackupKomgaPageEvent> = emptyList(),
+    @ProtoNumber(112) var backupKomgaReadStatusAttempts: List<BackupKomgaReadStatus> = emptyList(),
 )

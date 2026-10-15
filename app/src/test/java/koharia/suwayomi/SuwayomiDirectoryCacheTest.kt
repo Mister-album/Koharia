@@ -290,10 +290,10 @@ class SuwayomiDirectoryCacheTest {
     }
 
     @Test
-    fun `persisted listing cache evicts old pages instead of growing without limit`() = runTest {
+    fun `pages dropped from memory remain available after restart without network`() = runTest {
         val api = Service()
         val catalog = catalog(api)
-        repeat(30) {
+        repeat(300) {
             catalog.sourceListing(
                 12,
                 it + 1,
@@ -305,9 +305,69 @@ class SuwayomiDirectoryCacheTest {
         }
         val restored = catalog(api)
         restored.sourceListing(12, 30, "", SuwayomiSourceMangaType.POPULAR, emptyList(), restored.listingRevision())
-        assertEquals(30, api.pageRequests)
+        assertEquals(300, api.pageRequests)
+        api.fail = true
         restored.sourceListing(12, 1, "", SuwayomiSourceMangaType.POPULAR, emptyList(), restored.listingRevision())
-        assertEquals(31, api.pageRequests)
+        assertEquals(300, api.pageRequests)
+    }
+
+    @Test
+    fun `legacy listing aggregate migrates without fetching and remains account isolated`() = runTest {
+        val legacy = """[{"key":{"sourceId":12,"page":1,"query":"","type":"POPULAR","filters":"[]"},
+            "value":{"mangas":[],"hasNextPage":false}}]"""
+        repository.putCache(4, identity.account, "discovery", SuwayomiCacheEntry("pages", legacy, 1))
+        val api = Service().apply { fail = true }
+        repeat(2) {
+            val restored = catalog(api)
+            assertTrue(
+                restored.sourceListing(
+                    12,
+                    1,
+                    "",
+                    SuwayomiSourceMangaType.POPULAR,
+                    emptyList(),
+                    restored.listingRevision(),
+                ).mangas.isEmpty(),
+            )
+        }
+        assertNull(repository.cache(4, identity.account, "discovery", "pages"))
+        assertEquals(0, api.pageRequests)
+        val other = catalog(api, identity.copy(account = "other"))
+        assertTrue(
+            runCatching {
+                other.sourceListing(12, 1, "", SuwayomiSourceMangaType.POPULAR, emptyList(), other.listingRevision())
+            }.isFailure,
+        )
+        assertEquals(1, api.pageRequests)
+    }
+
+    @Test
+    fun `configuration invalidates only discovery of its own account and refresh retains other listings`() = runTest {
+        val api = Service()
+        val first = catalog(api)
+        val other = catalog(api, identity.copy(account = "other"))
+        suspend fun page(catalog: SuwayomiCatalog, id: Long) = catalog.sourceListing(
+            id,
+            1,
+            "",
+            SuwayomiSourceMangaType.POPULAR,
+            emptyList(),
+            catalog.listingRevision(),
+        )
+        page(first, 12)
+        page(first, 13)
+        page(other, 12)
+        first.sources()
+        first.refreshSourceListing(12, "", SuwayomiSourceMangaType.POPULAR, emptyList())
+        page(first, 13)
+        assertEquals(4, api.pageRequests)
+        first.invalidateListings()
+        page(catalog(api), 12)
+        page(catalog(api), 13)
+        page(catalog(api, identity.copy(account = "other")), 12)
+        catalog(api).sources()
+        assertEquals(6, api.pageRequests)
+        assertEquals(1, api.sourceRequests)
     }
 
     @Test

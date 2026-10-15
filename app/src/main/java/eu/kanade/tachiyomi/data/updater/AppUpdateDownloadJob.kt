@@ -58,6 +58,7 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
     }
 
     override suspend fun doWork(): Result {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return Result.retry()
         val spec = inputData.toDownloadSpec(context.stringResource(MR.strings.app_name)) ?: return Result.failure()
 
         setForegroundSafely()

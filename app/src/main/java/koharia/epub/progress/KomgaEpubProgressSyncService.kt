@@ -3,17 +3,16 @@ package koharia.epub.progress
 import android.os.Build
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.await
 import koharia.connection.SharedAppPreferences
 import koharia.epub.alignToEpubPositions
+import koharia.source.komga.KomgaProgressOwnerChanged
 import koharia.source.komga.KomgaSource
-import koharia.source.komga.komgaProgressSync
+import koharia.source.komga.awaitKomgaProgressSuccess
 import logcat.LogPriority
 import okhttp3.CacheControl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import org.readium.r2.shared.publication.Locator
@@ -28,6 +27,7 @@ import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.roundToLong
+import koharia.source.komga.KomgaProgressSession as Session
 
 class KomgaEpubProgressSyncService(
     private val basePreferences: BasePreferences,
@@ -37,24 +37,34 @@ class KomgaEpubProgressSyncService(
 
     private val recentPushes = ConcurrentHashMap<ProgressionKey, RecentPush>()
 
+    internal fun captureSession(sourceId: Long): Session =
+        captureSession(sourceManager.get(sourceId) as? KomgaSource ?: throw KomgaProgressOwnerChanged())
+
+    internal fun captureSession(source: KomgaSource): Session =
+        koharia.source.komga.captureKomgaProgressSession(source, sourceManager)
+
     suspend fun pullProgression(
         sourceId: Long,
         bookUrl: String,
+    ): PullResult = pullProgression(captureSession(sourceId), bookUrl)
+
+    internal suspend fun pullProgression(
+        session: Session,
+        bookUrl: String,
+        checkCurrent: suspend () -> Unit = session.guard::requireCurrent,
     ): PullResult = withIOContext {
-        val source = sourceManager.get(sourceId) as? KomgaSource ?: return@withIOContext PullResult()
+        checkCurrent()
         val normalizedBookUrl = normalizeBookUrl(bookUrl)
-        source.client.newCall(
-            GET("$normalizedBookUrl/progression", source.currentReadiumHeaders())
-                .newBuilder()
-                .cacheControl(CacheControl.FORCE_NETWORK)
-                .komgaProgressSync()
-                .build(),
+        session.source.client.newCall(
+            session.request(
+                GET("$normalizedBookUrl/progression").newBuilder().cacheControl(CacheControl.FORCE_NETWORK),
+            ),
         )
-            .await()
+            .awaitKomgaProgressSuccess()
             .use { response ->
-                response.requireSuccess("pull")
                 val serverDate = response.header("Date")?.let(::parseHttpDate)
                 val body = response.body.string().trim()
+                checkCurrent()
                 if (body.isBlank() || body == "\"\"") {
                     return@withIOContext PullResult(serverDate = serverDate)
                 }
@@ -66,10 +76,11 @@ class KomgaEpubProgressSyncService(
                     ?.let(::parseDate)
                 val modifiedAt = rawModifiedAt?.let {
                     correctRemoteModifiedAt(
-                        sourceId = sourceId,
+                        session = session,
                         normalizedBookUrl = normalizedBookUrl,
                         rawModifiedAt = it,
                         serverDate = serverDate,
+                        checkCurrent = checkCurrent,
                     )
                 }
                 val progression = if (locator != null && modifiedAt != null) {
@@ -78,6 +89,7 @@ class KomgaEpubProgressSyncService(
                     null
                 }
 
+                checkCurrent()
                 PullResult(
                     progression = progression,
                     serverDate = serverDate,
@@ -91,8 +103,17 @@ class KomgaEpubProgressSyncService(
         locator: Locator,
         positions: List<Locator>,
         modifiedAt: Date,
+    ) = pushProgression(captureSession(sourceId), bookUrl, locator, positions, modifiedAt)
+
+    internal suspend fun pushProgression(
+        session: Session,
+        bookUrl: String,
+        locator: Locator,
+        positions: List<Locator>,
+        modifiedAt: Date,
+        checkCurrent: suspend () -> Unit = session.guard::requireCurrent,
     ) = withIOContext {
-        val source = sourceManager.get(sourceId) as? KomgaSource ?: return@withIOContext
+        checkCurrent()
         val normalizedBookUrl = normalizeBookUrl(bookUrl)
         val alignedLocator = locator.alignToKomgaPositions(positions)
         if (alignedLocator !== locator) {
@@ -113,19 +134,18 @@ class KomgaEpubProgressSyncService(
             put("locator", alignedLocator.toKomgaJSON())
             put("modified", modifiedAt.toInstant().toString())
         }
-        val request = Request.Builder()
-            .url("$normalizedBookUrl/progression")
-            .headers(source.currentReadiumHeaders())
-            .put(payload.toString().toRequestBody("application/json".toMediaType()))
-            .komgaProgressSync()
-            .build()
+        val request = session.request(
+            Request.Builder()
+                .url("$normalizedBookUrl/progression")
+                .put(payload.toString().toRequestBody("application/json".toMediaType())),
+        )
 
-        source.client.newCall(request).await().use { response ->
-            response.requireSuccess("push")
+        session.source.client.newCall(request).awaitKomgaProgressSuccess().use {
+            checkCurrent()
             if (sharedAppPreferences.epubReaderPreferences()
                     .correctRemoteServerTimestamps.get()
             ) {
-                recentPushes[ProgressionKey(sourceId, normalizedBookUrl)] = RecentPush(
+                recentPushes[ProgressionKey(session.sourceId, session.account.key, normalizedBookUrl)] = RecentPush(
                     modifiedAtMillis = modifiedAt.time,
                     recordedAtMillis = System.currentTimeMillis(),
                 )
@@ -133,18 +153,21 @@ class KomgaEpubProgressSyncService(
         }
     }
 
-    private fun correctRemoteModifiedAt(
-        sourceId: Long,
+    private suspend fun correctRemoteModifiedAt(
+        session: Session,
         normalizedBookUrl: String,
         rawModifiedAt: Date,
         serverDate: Date?,
+        checkCurrent: suspend () -> Unit,
     ): Date {
+        checkCurrent()
+        val sourceId = session.sourceId
         val preferences = sharedAppPreferences.epubReaderPreferences()
         if (!preferences.correctRemoteServerTimestamps.get()) return rawModifiedAt
 
-        val offsetPreference = preferences.remoteServerTimestampOffsetMinutes(sourceId)
+        val offsetPreference = preferences.remoteServerTimestampOffsetMinutes(sourceId, session.account.key)
         val storedOffsetMinutes = offsetPreference.get()
-        val key = ProgressionKey(sourceId, normalizedBookUrl)
+        val key = ProgressionKey(sourceId, session.account.key, normalizedBookUrl)
         val now = System.currentTimeMillis()
         val observedRecentPush = recentPushes[key]
         val recentPush = observedRecentPush
@@ -170,6 +193,7 @@ class KomgaEpubProgressSyncService(
         }
 
         if (appliedOffsetMinutes != storedOffsetMinutes) {
+            checkCurrent()
             offsetPreference.set(appliedOffsetMinutes)
         }
         if (appliedOffsetMinutes == 0L) {
@@ -228,29 +252,6 @@ class KomgaEpubProgressSyncService(
         }
     }
 
-    private fun Response.requireSuccess(operation: String) {
-        if (isSuccessful) return
-
-        val details = runCatching { peekBody(MAX_ERROR_BODY_LENGTH.toLong()).string() }
-            .getOrNull()
-            ?.replace(Regex("\\s+"), " ")
-            ?.trim()
-            ?.takeIf(String::isNotBlank)
-        throw IllegalStateException(
-            buildString {
-                append("Komga progression ")
-                append(operation)
-                append(" failed (HTTP ")
-                append(code)
-                append(')')
-                if (details != null) {
-                    append(": ")
-                    append(details)
-                }
-            },
-        )
-    }
-
     data class PullResult(
         val progression: RemoteProgression? = null,
         val serverDate: Date? = null,
@@ -263,6 +264,7 @@ class KomgaEpubProgressSyncService(
 
     private data class ProgressionKey(
         val sourceId: Long,
+        val ownerKey: String,
         val bookUrl: String,
     )
 
@@ -272,7 +274,6 @@ class KomgaEpubProgressSyncService(
     )
 
     private companion object {
-        const val MAX_ERROR_BODY_LENGTH = 512
         const val MINUTE_MS = 60_000L
         const val HOUR_MS = 60 * MINUTE_MS
         const val MINUTES_PER_HOUR = 60L

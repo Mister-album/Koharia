@@ -5,6 +5,8 @@ import koharia.domain.suwayomi.SuwayomiOperation
 import koharia.domain.suwayomi.SuwayomiRepository
 
 internal class MemorySuwayomiRepository : SuwayomiRepository {
+    var fullHistoryReads = 0
+        private set
     private val cache = mutableMapOf<List<Any>, SuwayomiCacheEntry>()
     private val operations = mutableMapOf<List<Any>, SuwayomiOperation>()
     override suspend fun cache(connectionId: Long, account: String, group: String, key: String) =
@@ -12,8 +14,41 @@ internal class MemorySuwayomiRepository : SuwayomiRepository {
     override suspend fun putCache(connectionId: Long, account: String, group: String, entry: SuwayomiCacheEntry) {
         cache[listOf(connectionId, account, group, entry.key)] = entry
     }
-    override suspend fun operations(connectionId: Long, account: String) =
-        operations.filterKeys { it[0] == connectionId && it[1] == account }.values.toList()
+    override suspend fun replaceCacheGroup(
+        connectionId: Long,
+        account: String,
+        group: String,
+        entries: List<SuwayomiCacheEntry>,
+    ) {
+        cache.keys.removeAll { it.take(3) == listOf(connectionId, account, group) }
+        entries.forEach { putCache(connectionId, account, group, it) }
+    }
+    override suspend fun migrateDiscoveryCache(
+        connectionId: Long,
+        account: String,
+        groups: Map<String, List<SuwayomiCacheEntry>>,
+    ) {
+        groups.forEach { (group, entries) ->
+            entries.forEach { cache.putIfAbsent(listOf(connectionId, account, group, it.key), it) }
+        }
+        cache.keys.removeAll { it.take(3) == listOf(connectionId, account, "discovery") }
+    }
+    override suspend fun invalidateDiscoveryCache(connectionId: Long, account: String) {
+        cache.keys.removeAll {
+            it.take(2) == listOf(connectionId, account) &&
+                (it[2] == "discovery" || it[2].toString().startsWith("discovery/"))
+        }
+    }
+    override fun observeOperations(connectionId: Long, account: String, keys: Collection<String>) =
+        kotlinx.coroutines.flow.flow { emit(keys.mapNotNull { operation(connectionId, account, it) }) }
+    override suspend fun operations(connectionId: Long, account: String): List<SuwayomiOperation> {
+        fullHistoryReads++
+        return operations.filterKeys { it.take(2) == listOf(connectionId, account) }.values.toList()
+    }
+    override suspend fun operation(connectionId: Long, account: String, key: String) =
+        operations[listOf(connectionId, account, key)]
+    override suspend fun pendingOperations(connectionId: Long, account: String) =
+        operations.filterKeys { it.take(2) == listOf(connectionId, account) }.values.filter { it.pending }
     override suspend fun putOperation(connectionId: Long, account: String, operation: SuwayomiOperation) {
         operations[listOf(connectionId, account, operation.key)] = operation
     }

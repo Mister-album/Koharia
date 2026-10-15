@@ -58,9 +58,10 @@ class EpubCacheManager(
     private val ioMutex = Mutex()
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transferMutexes = ConcurrentHashMap<String, Mutex>()
-    private val transferClients = ConcurrentHashMap<Long, OkHttpClient>()
-    private val leasedFiles = ConcurrentHashMap.newKeySet<String>()
-    private val leasedPublicationDirs = ConcurrentHashMap.newKeySet<String>()
+    private val transferDispatchers = ConcurrentHashMap<Long, Dispatcher>()
+    private val leaseLock = Any()
+    private val leasedFiles = mutableMapOf<String, Int>()
+    private val leasedPublicationDirs = mutableMapOf<String, Int>()
     private val pendingDeleteFiles = ConcurrentHashMap.newKeySet<String>()
     private val pendingDeleteDirs = ConcurrentHashMap.newKeySet<String>()
     private val activePartialFiles = ConcurrentHashMap.newKeySet<String>()
@@ -90,18 +91,27 @@ class EpubCacheManager(
     }
 
     fun acquire(file: File) {
-        leasedFiles += file.absolutePath
-        touch(file)
+        synchronized(leaseLock) {
+            leasedFiles.merge(file.absolutePath, 1, Int::plus)
+            touch(file)
+        }
     }
 
     fun release(file: File) {
-        leasedFiles -= file.absolutePath
-        touch(file)
-        if (pendingDeleteFiles.remove(file.absolutePath)) {
+        val deletePending = synchronized(leaseLock) {
+            if (!releaseLease(leasedFiles, file.absolutePath)) return
+            touch(file)
+            file.absolutePath in pendingDeleteFiles
+        }
+        if (deletePending) {
             cleanupScope.launch {
                 ioMutex.withLock {
-                    if (file.delete() && file.extension.equals("epub", ignoreCase = true)) {
-                        notifyChanges()
+                    synchronized(leaseLock) {
+                        if (file.absolutePath !in leasedFiles && pendingDeleteFiles.remove(file.absolutePath)) {
+                            if (file.delete() && file.extension.equals("epub", ignoreCase = true)) {
+                                notifyChanges()
+                            }
+                        }
                     }
                 }
             }
@@ -111,20 +121,43 @@ class EpubCacheManager(
 
     fun acquirePublication(sourceId: Long, publicationKey: String) {
         val directory = resourcePublicationDir(sourceId, publicationKey)
-        leasedPublicationDirs += directory.absolutePath
-        touch(directory)
+        synchronized(leaseLock) {
+            leasedPublicationDirs.merge(directory.absolutePath, 1, Int::plus)
+            touch(directory)
+        }
     }
 
     fun releasePublication(sourceId: Long, publicationKey: String) {
         val directory = resourcePublicationDir(sourceId, publicationKey)
-        leasedPublicationDirs -= directory.absolutePath
-        touch(directory)
-        if (pendingDeleteDirs.remove(directory.absolutePath)) {
+        val deletePending = synchronized(leaseLock) {
+            if (!releaseLease(leasedPublicationDirs, directory.absolutePath)) return
+            touch(directory)
+            directory.absolutePath in pendingDeleteDirs
+        }
+        if (deletePending) {
             cleanupScope.launch {
-                ioMutex.withLock { directory.deleteRecursively() }
+                ioMutex.withLock {
+                    synchronized(leaseLock) {
+                        if (directory.absolutePath !in leasedPublicationDirs &&
+                            pendingDeleteDirs.remove(directory.absolutePath)
+                        ) {
+                            directory.deleteRecursively()
+                        }
+                    }
+                }
             }
         }
         scheduleTrim()
+    }
+
+    private fun releaseLease(leases: MutableMap<String, Int>, path: String): Boolean {
+        val count = leases[path] ?: return false
+        if (count > 1) {
+            leases[path] = count - 1
+            return false
+        }
+        leases.remove(path)
+        return true
     }
 
     suspend fun cacheCompleteBook(
@@ -137,9 +170,11 @@ class EpubCacheManager(
         val transferKey = "${source.id}|$publicationKey"
         val transferMutex = transferMutexes.getOrPut(transferKey) { Mutex() }
         transferMutex.withLock {
-            completeBookFile(source.id, publicationKey)?.let { file ->
-                if (acquireLease) acquire(file)
-                return@withLock file
+            synchronized(leaseLock) {
+                completeBookFile(source.id, publicationKey)?.let { file ->
+                    if (acquireLease) acquire(file)
+                    return@withLock file
+                }
             }
             val generationAtStart = clearGeneration.get()
             (source as? koharia.connection.ConnectionDownloadAuthorizationAdapter)?.authorizeDownload(bookUrl)
@@ -149,7 +184,8 @@ class EpubCacheManager(
             activePartialFiles += temporary.absolutePath
             try {
                 val existingBytes = temporary.length().takeIf { it > 0L } ?: 0L
-                val call = completeBookTransferClient(source.id, rawDownloadAdapter.rawDownloadClient).newCall(
+                val transferClient = completeBookTransferClient(source.id, rawDownloadAdapter.rawDownloadClient)
+                val call = transferClient.newCall(
                     rawDownloadAdapter.rawFileRequest(bookUrl, existingBytes.takeIf { it > 0L }),
                 )
                 try {
@@ -263,12 +299,11 @@ class EpubCacheManager(
     suspend fun clear(): Int = withContext(Dispatchers.IO) {
         ioMutex.withLock {
             clearGeneration.incrementAndGet()
-            leasedFiles.forEach(pendingDeleteFiles::add)
-            leasedPublicationDirs.forEach(pendingDeleteDirs::add)
-            val deleted = cacheFiles()
-                .filterNot(::isProtected)
-                .count { it.delete() }
-                .also { deleteEmptyDirectories() }
+            synchronized(leaseLock) {
+                leasedFiles.keys.forEach(pendingDeleteFiles::add)
+                leasedPublicationDirs.keys.forEach(pendingDeleteDirs::add)
+            }
+            val deleted = cacheFiles().count(::deleteUnleasedFile).also { deleteEmptyDirectories() }
             if (deleted > 0) notifyChanges()
             deleted
         }
@@ -279,13 +314,15 @@ class EpubCacheManager(
             clearGeneration.incrementAndGet()
             val sourceBookDir = File(booksDir, sourceId.toString())
             val sourceResourceDir = File(resourcesDir, sourceId.toString())
-            leasedFiles.filter { path -> File(path).startsWith(sourceBookDir) }
-                .forEach(pendingDeleteFiles::add)
-            leasedPublicationDirs.filter { path -> File(path).startsWith(sourceResourceDir) }
-                .forEach(pendingDeleteDirs::add)
+            synchronized(leaseLock) {
+                leasedFiles.keys.filter { path -> File(path).startsWith(sourceBookDir) }
+                    .forEach(pendingDeleteFiles::add)
+                leasedPublicationDirs.keys.filter { path -> File(path).startsWith(sourceResourceDir) }
+                    .forEach(pendingDeleteDirs::add)
+            }
             val deleted = (sourceBookDir.walkTopDown() + sourceResourceDir.walkTopDown())
-                .filter { it.isFile && !isProtected(it) }
-                .count { it.delete() }
+                .filter(File::isFile)
+                .count(::deleteUnleasedFile)
                 .also { deleteEmptyDirectories() }
             if (deleted > 0) notifyChanges()
             deleted
@@ -326,12 +363,14 @@ class EpubCacheManager(
         for (candidate in resources + books) {
             if (size <= limit) break
             val deletedSize = candidate.files.sumOf { file ->
-                val length = file.length()
-                if (file.delete()) {
-                    if (file.extension.equals("epub", ignoreCase = true)) completeBooksChanged = true
-                    length
-                } else {
-                    0L
+                synchronized(leaseLock) {
+                    val length = file.length()
+                    if (!isProtected(file) && file.delete()) {
+                        if (file.extension.equals("epub", ignoreCase = true)) completeBooksChanged = true
+                        length
+                    } else {
+                        0L
+                    }
                 }
             }
             size -= deletedSize
@@ -353,17 +392,18 @@ class EpubCacheManager(
         File(File(booksDir, sourceId.toString()), "${publicationKey.sha256()}.epub")
 
     private fun completeBookTransferClient(sourceId: Long, sourceClient: OkHttpClient): OkHttpClient =
-        transferClients.getOrPut(sourceId) {
-            sourceClient.newBuilder()
-                .callTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)
-                .dispatcher(
+        sourceClient.newBuilder()
+            .callTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .dispatcher(
+                // Preserve per-connection concurrency without retaining an obsolete client's session.
+                transferDispatchers.getOrPut(sourceId) {
                     Dispatcher().apply {
                         maxRequests = 1
                         maxRequestsPerHost = 1
-                    },
-                )
-                .build()
-        }
+                    }
+                },
+            )
+            .build()
 
     private fun resourcePublicationDir(sourceId: Long, publicationKey: String): File =
         File(File(resourcesDir, sourceId.toString()), publicationKey.sha256())
@@ -371,9 +411,13 @@ class EpubCacheManager(
     private fun cacheFiles(): List<File> =
         root.walkTopDown().filter(File::isFile).toList()
 
-    private fun isProtected(file: File): Boolean {
-        if (file.absolutePath in leasedFiles || file.absolutePath in activePartialFiles) return true
-        return leasedPublicationDirs.any { directory -> file.startsWith(File(directory)) }
+    private fun isProtected(file: File): Boolean = synchronized(leaseLock) {
+        file.absolutePath in leasedFiles || file.absolutePath in activePartialFiles ||
+            leasedPublicationDirs.keys.any { directory -> file.startsWith(File(directory)) }
+    }
+
+    private fun deleteUnleasedFile(file: File): Boolean = synchronized(leaseLock) {
+        !isProtected(file) && file.delete()
     }
 
     private fun deleteEmptyDirectories() {

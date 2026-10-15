@@ -7,4 +7,6 @@ class UpsertEpubRemoteProgressCache(
     private val repository: EpubRemoteProgressCacheRepository,
 ) {
     suspend fun await(cache: EpubRemoteProgressCache) = repository.upsert(cache)
+    suspend fun awaitForSession(cache: EpubRemoteProgressCache, checkCurrent: suspend () -> Unit) =
+        repository.upsertForSession(cache, checkCurrent)
 }

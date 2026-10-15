@@ -8,7 +8,6 @@ import androidx.compose.runtime.setValue
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
 import androidx.paging.Pager
-import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import androidx.paging.map
@@ -29,6 +28,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionEpubHistorySyncAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
 import koharia.connection.ConnectionPublicationAdapter
@@ -74,7 +74,6 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -85,7 +84,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -329,7 +327,7 @@ class KomgaLibraryScreenModel(
                 )
             }
         } else {
-            Pager(PagingConfig(pageSize = 25)) {
+            Pager(koharia.connection.connectionShelfPagingConfig(pageSize = 25, prefetchDistance = 25)) {
                 val filters = request.listing.filters
                 if (source is KomgaSource && request.listing.requiresSortedSearchSession()) {
                     KomgaSortedSearchPagingSource(
@@ -341,13 +339,7 @@ class KomgaLibraryScreenModel(
                 }
             }.flow.map { pagingData ->
                 pagingData.map { remoteManga ->
-                    getManga.subscribe(remoteManga.url, remoteManga.source)
-                        .map { localManga -> mergeRemoteWithLocal(remoteManga, localManga) }
-                        .stateIn(
-                            scope = ioCoroutineScope,
-                            started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
-                            initialValue = remoteManga,
-                        )
+                    MutableStateFlow(remoteManga) as StateFlow<Manga>
                 }
             }
         }
@@ -663,6 +655,10 @@ class KomgaLibraryScreenModel(
                         finishRefreshing = false,
                         emitRefreshSignal = false,
                     )
+                    eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(
+                        komgaSource,
+                        ChapterFetchOrigin.EXPLICIT_REFRESH,
+                    )
                     runCatching {
                         (komgaSource as? ConnectionHistorySyncAdapter)?.syncConnectionHistory()
                         (komgaSource as? ConnectionEpubHistorySyncAdapter)?.syncConnectionEpubProgress()
@@ -691,10 +687,10 @@ class KomgaLibraryScreenModel(
         }
         val chapters = Injekt.get<ChapterRepository>()
         chapters.getChapterByMangaId(local.id).singleOrNull()?.let { return local to it }
-        Injekt.get<SyncChaptersWithSource>().await(
-            komgaSource.getChapterList(local.toSManga()),
+        Injekt.get<SyncChaptersWithSource>().fetchAndSync(
             local,
             komgaSource,
+            ChapterFetchOrigin.OPEN,
         )
         return local to (
             chapters.getChapterByMangaId(local.id).singleOrNull()
@@ -1103,29 +1099,6 @@ private data class BrowseRequest(
     val cachedOnly: Boolean,
     val refreshSignal: Int,
 )
-
-private fun mergeRemoteWithLocal(remote: Manga, local: Manga?): Manga {
-    if (local == null) return remote
-
-    return remote.copy(
-        id = local.id,
-        favorite = local.favorite,
-        lastUpdate = local.lastUpdate,
-        nextUpdate = local.nextUpdate,
-        fetchInterval = local.fetchInterval,
-        dateAdded = local.dateAdded,
-        viewerFlags = local.viewerFlags,
-        chapterFlags = local.chapterFlags,
-        coverLastModified = local.coverLastModified,
-        updateStrategy = local.updateStrategy,
-        initialized = local.initialized,
-        lastModifiedAt = local.lastModifiedAt,
-        favoriteModifiedAt = local.favoriteModifiedAt,
-        version = local.version,
-        notes = local.notes,
-        memo = mergeKomgaOfflineMemo(local.memo, remote.memo) ?: local.memo,
-    )
-}
 
 private fun String?.progressKey(): String? {
     val key = this?.substringBefore('#')?.trimEnd('/') ?: return null

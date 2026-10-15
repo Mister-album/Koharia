@@ -39,6 +39,19 @@ class ConnectionOrganizationCapabilityTest {
             "Review organization applicability when registering a provider",
         )
         inventory.forEach { (provider, source) ->
+            // Finite LANraragi/local lists already observe their complete local rows for filtering.
+            val hasRemotePager = provider !in setOf("LanraragiConnectionProvider", "LocalFolderConnectionProvider")
+            assertEquals(
+                hasRemotePager,
+                ConnectionShelfLocalStateAdapter::class.java.isAssignableFrom(source),
+                "$provider needs an explicit local-state strategy when changing its pagination model",
+            )
+            if (ConnectionEpubProgressAdapter::class.java.isAssignableFrom(source)) {
+                assertTrue(ConnectionEpubProgressSessionAdapter::class.java.isAssignableFrom(source), provider)
+            }
+            if (ConnectionReflowProgressAdapter::class.java.isAssignableFrom(source)) {
+                assertTrue(ConnectionReflowProgressSessionAdapter::class.java.isAssignableFrom(source), provider)
+            }
             val supportsKomgaOrganization = provider == "KomgaConnectionProvider"
             assertEquals(
                 supportsKomgaOrganization,

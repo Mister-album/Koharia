@@ -1,6 +1,7 @@
 package koharia.kavita
 
 import koharia.connection.ConnectionRestoreState
+import koharia.connection.DevReadOnlyValidation
 import koharia.domain.kavita.KavitaOperation
 import koharia.domain.kavita.KavitaRepository
 import kotlinx.coroutines.CancellationException
@@ -26,17 +27,28 @@ class KavitaReadingCoordinator(
     private val mutex = Mutex()
     private val flushMutex = Mutex()
     private val baselines = mutableMapOf<Long, KavitaProgress>()
+    private val reviewed = mutableMapOf<Long, KavitaProgress>()
     private var job: Job? = null
     private val scheduled = java.util.concurrent.atomic.AtomicBoolean(false)
     private var restoring = false
     private val json get() = api.json
 
-    private suspend fun operation(id: Long) = repository.operations(connectionId, account).firstOrNull {
-        it.key ==
-            "progress/$id"
-    }
+    private suspend fun operation(id: Long) = repository.operation(connectionId, account, "progress/$id")
     suspend fun cached(id: Long): KavitaReadingState? = operation(id)?.let { json.decodeFromString(it.payload) }
     suspend fun hasPending(id: Long): Boolean = operation(id)?.pending == true
+
+    suspend fun isConfirmed(
+        ref: KavitaChapterRef,
+        modifiedAt: Long,
+        matchesPosition: (KavitaReadingState) -> Boolean,
+    ): Boolean = mutex.withLock {
+        checkSession()
+        val operation = operation(ref.chapterId) ?: return@withLock false
+        val state = json.decodeFromString<KavitaReadingState>(operation.payload)
+        checkSession()
+        !operation.pending && !state.conflict && state.ref == ref &&
+            kavitaTimestamp(state.progress.lastModifiedUtc) == modifiedAt && matchesPosition(state)
+    }
 
     suspend fun record(
         ref: KavitaChapterRef,
@@ -47,15 +59,16 @@ class KavitaReadingCoordinator(
         explicit: Boolean = false,
         anchor: String? = null,
         unread: Boolean = false,
-    ) {
-        if (ConnectionRestoreState.isRestoring || restoring || total <= 0 || page !in 0..total) return
-        mutex.withLock {
+    ): Boolean {
+        if (ConnectionRestoreState.isRestoring || restoring || total <= 0 || page !in 0..total) return false
+        val saved = mutex.withLock {
+            if (ConnectionRestoreState.isRestoring || restoring) return@withLock false
             checkSession()
             val old = operation(ref.chapterId)
             val previous = old?.let { json.decodeFromString<KavitaReadingState>(it.payload) }
-            if (initial && !explicit) return@withLock
+            if (initial && !explicit) return@withLock false
             if (!explicit && previous != null && kavitaTimestamp(previous.progress.lastModifiedUtc) > readAt) {
-                return@withLock
+                return@withLock false
             }
             val progress =
                 KavitaProgress(
@@ -93,8 +106,23 @@ class KavitaReadingCoordinator(
                 ),
             )
             apply(state)
+            true
         }
         retryPending()
+        return saved
+    }
+
+    suspend fun review(ref: KavitaChapterRef, total: Int): KavitaReadingState = flushMutex.withLock {
+        checkSession()
+        val remote = api.progress(ref.chapterId).copy(
+            libraryId = ref.libraryId,
+            seriesId = ref.seriesId,
+            volumeId = ref.volumeId,
+            chapterId = ref.chapterId,
+        )
+        checkSession()
+        mutex.withLock { reviewed[ref.chapterId] = remote }
+        KavitaReadingState(ref, remote, total)
     }
 
     suspend fun pull(ref: KavitaChapterRef, total: Int): KavitaReadingState = flushMutex.withLock {
@@ -104,6 +132,7 @@ class KavitaReadingCoordinator(
         mutex.withLock {
             checkSession()
             baselines[ref.chapterId] = remote
+            reviewed[ref.chapterId] = remote
             val operation = operation(ref.chapterId)
             val old = operation?.let { json.decodeFromString<KavitaReadingState>(it.payload) }
             val snapshot = KavitaReadingState(ref, remote, total)
@@ -133,38 +162,59 @@ class KavitaReadingCoordinator(
         }
     }
 
-    suspend fun accept(ref: KavitaChapterRef, page: Int, total: Int, readAt: Long) {
-        mutex.withLock {
+    suspend fun accept(
+        ref: KavitaChapterRef,
+        page: Int,
+        total: Int,
+        readAt: Long,
+        anchorOverride: String? = null,
+        checkAcceptance: () -> Unit = checkSession,
+    ) = flushMutex.withLock {
+        fun checkCurrent() {
             checkSession()
-            val old = operation(ref.chapterId)
-            val progress =
-                (
-                    baselines[ref.chapterId] ?: KavitaProgress(
-                        ref.libraryId,
-                        ref.seriesId,
-                        ref.volumeId,
-                        ref.chapterId,
-                    )
-                    ).copy(
-                    pageNum = page,
-                    lastModifiedUtc = Instant.ofEpochMilli(readAt.coerceAtLeast(0)).toString(),
-                )
+            checkAcceptance()
+            check(!ConnectionRestoreState.isRestoring && !restoring)
+        }
+        require(total > 0 && page in 0..total)
+        val (old, evidence) = mutex.withLock {
+            checkCurrent()
+            operation(ref.chapterId) to checkNotNull(reviewed[ref.chapterId]) { "Remote progress was not reviewed" }
+        }
+        val remote = api.progress(ref.chapterId).copy(
+            libraryId = ref.libraryId,
+            seriesId = ref.seriesId,
+            volumeId = ref.volumeId,
+            chapterId = ref.chapterId,
+        )
+        mutex.withLock {
+            checkCurrent()
+            check(remote == evidence && reviewed[ref.chapterId] == evidence) { "Remote progress changed" }
+            val progress = remote.copy(
+                pageNum = page,
+                bookScrollId = anchorOverride ?: remote.bookScrollId,
+                lastModifiedUtc = Instant.ofEpochMilli(readAt.coerceAtLeast(0)).toString(),
+            )
             val state = KavitaReadingState(ref, progress, total)
-            repository.putOperation(
+            val accepted = repository.compareAndSetOperation(
                 connectionId,
                 account,
+                old,
                 KavitaOperation(
                     "progress/${ref.chapterId}",
                     json.encodeToString(state),
                     (old?.revision ?: 0) + 1,
                     false,
                 ),
+                ::checkCurrent,
             )
+            check(accepted) { "Local progress changed" }
+            baselines[ref.chapterId] = remote
             apply(state)
         }
     }
 
     @Synchronized fun retryPending() {
+        if (DevReadOnlyValidation.enabled) return
         if (ConnectionRestoreState.isRestoring || restoring || !scope.isActive) return
         scheduled.set(true)
         if (job?.isActive == true) return
@@ -206,10 +256,10 @@ class KavitaReadingCoordinator(
     }
 
     suspend fun flush() = flushMutex.withLock {
+        if (DevReadOnlyValidation.enabled) return@withLock
         if (ConnectionRestoreState.isRestoring || restoring) return@withLock
-        for (operation in repository.operations(connectionId, account).filter {
-            it.pending &&
-                it.key.startsWith("progress/")
+        for (operation in repository.pendingOperations(connectionId, account).filter {
+            it.key.startsWith("progress/")
         }) {
             checkSession()
             val state = json.decodeFromString<KavitaReadingState>(operation.payload)
@@ -265,6 +315,7 @@ class KavitaReadingCoordinator(
                 mutex.withLock {
                     // The backup merge decides which progress records are replaced; keep pending local work.
                     baselines.clear()
+                    reviewed.clear()
                 }
             }
         } finally {

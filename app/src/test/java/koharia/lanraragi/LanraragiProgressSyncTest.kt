@@ -20,6 +20,21 @@ import java.io.IOException
 
 class LanraragiProgressSyncTest {
     @Test
+    fun `restored hold rejects even an accidental pending-query result without server requests`() = runTest {
+        val held = local.copy(requiresConfirmation = true)
+        coEvery { repository.pendingReadStates(7) } returns listOf(held)
+        synchronizeLanraragiProgress(
+            7,
+            repository,
+            { error("Held progress fetched remote state") },
+            { _, _ -> error("Held progress uploaded") },
+            { error("Held progress cleared new state") },
+            { error("Held progress applied remote state") },
+        )
+        coVerify(exactly = 0) { repository.record(any(), any()) }
+    }
+
+    @Test
     fun `opening a saved page does not overwrite a different remote position`() = runTest {
         sync(listOf(local.copy(initialPage = true)), remote.copy(lastRead = 10))
         assertTrue(writes.isEmpty())
@@ -46,7 +61,8 @@ class LanraragiProgressSyncTest {
     fun `reading persists during slow fetch and stale response cannot acknowledge it`() = runTest {
         val mutex = Mutex()
         var current = local.copy(revision = 1)
-        coEvery { repository.readStates(7) } answers { listOf(current) }
+        coEvery { repository.pendingReadStates(7) } answers { listOf(current).filter { it.pending && !it.localUnread } }
+        coEvery { repository.readState(7, any()) } answers { current.takeIf { it.archiveId == secondArg<String>() } }
         val requested = CompletableDeferred<Unit>()
         val response = CompletableDeferred<Unit>()
         val syncJob = launch {
@@ -70,7 +86,8 @@ class LanraragiProgressSyncTest {
     fun `unread chosen during upload is not overwritten by upload completion`() = runTest {
         val mutex = Mutex()
         var current = local.copy(revision = 1)
-        coEvery { repository.readStates(7) } answers { listOf(current) }
+        coEvery { repository.pendingReadStates(7) } answers { listOf(current).filter { it.pending && !it.localUnread } }
+        coEvery { repository.readState(7, any()) } answers { current.takeIf { it.archiveId == secondArg<String>() } }
         val uploaded = CompletableDeferred<Unit>()
         val finish = CompletableDeferred<Unit>()
         val syncJob = launch {
@@ -101,13 +118,17 @@ class LanraragiProgressSyncTest {
         push: suspend (String, Int) -> Unit = { _, page -> writes += page },
         clear: suspend (String) -> Unit = { cleared += it },
     ) {
-        coEvery { repository.readStates(7) } returns states
+        coEvery { repository.pendingReadStates(7) } returns states.filter { it.pending && !it.localUnread }
+        coEvery { repository.readState(7, any()) } answers
+            { states.firstOrNull { it.archiveId == secondArg<String>() } }
         synchronizeLanraragiProgress(7, repository, { snapshot }, push, clear, { applied += it })
+        coVerify(exactly = 0) { repository.readStates(any()) }
     }
 
     @Test
     fun `newer offline rereading can move backwards and uses one based page`() = runTest {
         sync(listOf(local))
+        coVerify(exactly = 1) { repository.pendingReadStates(7) }
         assertEquals(listOf(3), writes)
         assertEquals(2, applied.single().pageIndex)
         assertFalse(applied.single().pending)

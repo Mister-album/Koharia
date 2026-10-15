@@ -1,0 +1,4 @@
+ALTER TABLE lanraragi_read_state ADD COLUMN requires_confirmation INTEGER NOT NULL DEFAULT 0;
+DROP INDEX lanraragi_read_state_pending_index;
+CREATE INDEX lanraragi_read_state_pending_index
+ON lanraragi_read_state(connection_id, pending, local_unread, requires_confirmation);

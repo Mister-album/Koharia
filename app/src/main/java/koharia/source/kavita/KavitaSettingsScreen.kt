@@ -45,7 +45,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
-import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import uy.kohesive.injekt.Injekt
@@ -71,9 +70,9 @@ class KavitaSettingsScreen(
         var key by remember { mutableStateOf(preferences.key) }
         var chapterTemplate by remember { mutableStateOf(preferences.chapterTitleTemplate) }
         var saving by remember { mutableStateOf(false) }
+        var activateIdentity by remember { mutableStateOf(false) }
         var error by remember { mutableStateOf<String?>(null) }
         var confirmDiscard by remember { mutableStateOf(false) }
-        var sameServer by remember(address) { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
         val endpoint = remember(address) { runCatching { KavitaEndpoint.parse(address) }.getOrNull() }
         fun discard() {
@@ -105,6 +104,15 @@ class KavitaSettingsScreen(
                 Modifier.padding(padding).verticalScroll(rememberScrollState()),
             ) {
                 PreferenceGroupHeader(stringResource(MR.strings.pref_connection_settings))
+                if (!activateIdentity) koharia.connection.ui.ConnectionReconnectionNotice(sourceId)
+                if (!isNew && preferences.identity?.let { it.installId.isNotBlank() && it.userId > 0 } == true) {
+                    koharia.connection.ui.ConnectionReactivationPreference(
+                        sourceId,
+                        activateIdentity,
+                        !saving,
+                        { activateIdentity = it },
+                    )
+                }
                 KavitaTextSetting(
                     title = stringResource(MR.strings.lanraragi_connection_name),
                     value = name,
@@ -140,12 +148,6 @@ class KavitaSettingsScreen(
                         onPreferenceClick = { navigator.push(koharia.kavita.ui.KavitaDashboardScreen(sourceId)) },
                     )
                 }
-                if (!isNew && endpoint != null && endpoint.base.toString() != preferences.address) {
-                    CheckboxItem(stringResource(MR.strings.kavita_same_server_address), sameServer) {
-                        sameServer = !sameServer
-                    }
-                    Text(stringResource(MR.strings.kavita_identity_help))
-                }
                 TextButton(
                     enabled = endpoint != null,
                     onClick = { endpoint?.base?.toString()?.let { context.openInBrowser(it) } },
@@ -159,17 +161,22 @@ class KavitaSettingsScreen(
                         saving = true
                         scope.launch {
                             try {
+                                val reconnect = manager.requiresIdentityReplacement(sourceId)
                                 val parsed = requireNotNull(endpoint)
                                 val credential = parsed.importedKey ?: key.trim()
                                 val normalizedInternal = internalAddress.takeIf { it.isNotBlank() }?.let {
                                     requireNotNull(koharia.connection.ConnectionAddressRouter.normalize(it)).toString()
                                 }.orEmpty()
+                                val settingsChanged = parsed.base.toString() != preferences.address ||
+                                    credential != preferences.key || normalizedInternal != preferences.internalAddress
+                                var replaced = false
+                                var verifiedAccount: koharia.kavita.KavitaAccount? = null
+                                var activationSource: KavitaSource? = null
+                                var quarantine: (suspend () -> Unit)? = null
                                 if (ConnectionValidation.required(
                                         isNew,
-                                        parsed.base.toString() != preferences.address ||
-                                            credential != preferences.key ||
-                                            normalizedInternal != preferences.internalAddress,
-                                        preferences.identity == null,
+                                        settingsChanged,
+                                        preferences.identity == null || reconnect,
                                     )
                                 ) {
                                     val account = ConnectionValidation.at(ConnectionValidation.Endpoint.PUBLIC) {
@@ -206,13 +213,47 @@ class KavitaSettingsScreen(
                                             )
                                         }
                                     }
-                                    preferences.save(parsed.base.toString(), credential, account, sameServer)
-                                    preferences.internalAddress = normalizedInternal
+                                    // Credentials alone cannot prove continuity of a server and its account.
+                                    val sameOwner = preferences.identity?.sameServerVerified(account.identity) == true
+                                    if (activateIdentity) {
+                                        if (!reconnect || !sameOwner) {
+                                            throw koharia.connection.ConnectionAddressVerification.Failure(
+                                                koharia.connection.ConnectionAddressVerification.Reason.MISMATCH,
+                                            )
+                                        }
+                                        activationSource =
+                                            checkNotNull(Injekt.get<SourceManager>().get(sourceId) as? KavitaSource)
+                                        quarantine = activationSource.prepareVerifiedActivation(account)
+                                        verifiedAccount = account
+                                    } else if (!isNew && (reconnect || !sameOwner)) {
+                                        manager.replaceIdentity(sourceId, name) { id ->
+                                            val target = KavitaPreferences(id)
+                                            target.save(parsed.base.toString(), credential, account)
+                                            target.internalAddress = normalizedInternal
+                                            target.chapterTitleTemplate = chapterTemplate
+                                        }
+                                        replaced = true
+                                    } else {
+                                        verifiedAccount = account
+                                    }
                                 }
-                                val profile = manager.profiles().first { it.id == sourceId }
-                                preferences.chapterTitleTemplate = chapterTemplate
-                                (Injekt.get<SourceManager>().get(sourceId) as? KavitaSource)?.reload()
-                                manager.update(profile.copy(name = name.trim()))
+                                if (!replaced) {
+                                    val profile = manager.profiles().first { it.id == sourceId }
+                                    val write: suspend (android.content.SharedPreferences) -> Unit = { draft ->
+                                        quarantine?.invoke()
+                                        val target = KavitaPreferences(sourceId, draft)
+                                        verifiedAccount?.let { target.save(parsed.base.toString(), credential, it) }
+                                        target.internalAddress = normalizedInternal
+                                        target.chapterTitleTemplate = chapterTemplate
+                                    }
+                                    val activation = activationSource
+                                    if (activation != null) {
+                                        manager.activateVerifiedIdentity(activation, write)
+                                    } else {
+                                        manager.commitConfiguration(sourceId, write)
+                                    }
+                                    manager.update(profile.copy(name = name.trim()))
+                                }
                                 if (completeOnboarding) {
                                     Injekt.get<BasePreferences>().shownOnboardingFlow.set(true)
                                     navigator.popUntilRoot()
@@ -231,7 +272,7 @@ class KavitaSettingsScreen(
                             }
                         }
                     },
-                ) { Text(stringResource(MR.strings.action_save)) }
+                ) { Text(koharia.connection.ui.connectionSaveLabel(sourceId, activate = activateIdentity)) }
             }
         }
         error?.let { message ->

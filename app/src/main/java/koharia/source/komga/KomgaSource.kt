@@ -29,22 +29,22 @@ import koharia.connection.ConnectionEpubHistorySyncAdapter
 import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionHealthAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
-import koharia.connection.ConnectionLocalPageProgressAdapter
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
 import koharia.connection.ConnectionPageAdapter
 import koharia.connection.ConnectionPageList
-import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPagePublication
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.connection.ConnectionRawDownloadAdapter
+import koharia.connection.ConnectionReadStatus
 import koharia.connection.ConnectionReadStatusAdapter
 import koharia.connection.ConnectionSource
 import koharia.connection.ConnectionViewerSettingsAdapter
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryContentScope
 import koharia.connection.SharedAppPreferences
+import koharia.connection.withConnectionWriteGuard
 import koharia.komga.api.KomgaApiClient
 import koharia.komga.api.KomgaSearchCapabilities
 import koharia.komga.api.dto.BookDto
@@ -71,6 +71,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
@@ -93,12 +94,14 @@ class KomgaSource(
     ConfigurableSource,
     UnmeteredSource,
     ConnectionSource,
+    koharia.connection.ConnectionChapterSessionAdapter,
     koharia.connection.ConnectionBackupRestoreAdapter,
     ConnectionBrowseAdapter,
     koharia.connection.ConnectionEntryOpeningAdapter,
     ConnectionPageAdapter,
     ConnectionAccountAdapter,
     ConnectionMangaBehaviorAdapter,
+    koharia.connection.ConnectionShelfLocalStateAdapter,
     ConnectionHealthAdapter,
     ConnectionRawDownloadAdapter,
     koharia.connection.ConnectionReaderRoutingAdapter,
@@ -106,13 +109,15 @@ class KomgaSource(
     ConnectionPublicationAdapter,
     ConnectionViewerSettingsAdapter,
     ConnectionMangaProgressAdapter,
-    ConnectionReadStatusAdapter,
+    koharia.connection.ConnectionReadStatusCommitAdapter,
+    koharia.connection.ConnectionProgressSyncStatusAdapter,
+    koharia.connection.ConnectionReadStatusReviewAdapter,
     ConnectionHistorySyncAdapter,
     ConnectionEpubHistorySyncAdapter,
-    ConnectionPageProgressAdapter,
-    ConnectionLocalPageProgressAdapter,
+    koharia.connection.ConnectionPageProgressSessionAdapter,
+    koharia.connection.ConnectionReflowProgressSessionAdapter,
     ConnectionChapterTitleAdapter,
-    ConnectionEpubProgressAdapter,
+    koharia.connection.ConnectionEpubProgressSessionAdapter,
     koharia.connection.ConnectionOrganizationAdapter,
     koharia.connection.ConnectionOrganizationActionsAdapter,
     koharia.connection.ConnectionDownloadAliasAdapter,
@@ -257,6 +262,9 @@ class KomgaSource(
     // PDF pages are rasterized by Komga on demand. Two requests avoid saturating the server's
     // PDF renderer while still keeping a visible double-page spread responsive.
     override val pageLoadConcurrency: Int = 2
+    override fun mergeShelfLocalState(remote: Manga, local: Manga?): Manga =
+        mergeKomgaShelfManga(remote, local)
+
     override val mangaBehavior = MANGA_BEHAVIOR
     override val allowsUnvalidatedNetwork: Boolean = true
     override val rawDownloadClient: OkHttpClient
@@ -371,6 +379,32 @@ class KomgaSource(
 
     fun currentHeaders(): Headers = headersBuilder().build()
 
+    internal fun progressAccount(): KomgaProgressAccount {
+        // SharedPreferences returns a snapshot, avoiding mixed credentials during an atomic settings commit.
+        val values = preferences.all
+        fun value(key: String) = values[key] as? String ?: ""
+        val key = values[PREF_API_KEY] as? String ?: value(PREF_API_KEY_WRONG_CASE)
+        return KomgaProgressAccount(
+            id,
+            value(PREF_ADDRESS).trim().trimEnd('/'),
+            value(ConnectionAddressRouter.INTERNAL_ADDRESS_KEY).trim().trimEnd('/'),
+            values[PREF_AUTH_MODE] as? String ?: if (key.isNotBlank()) AUTH_MODE_API_KEY else AUTH_MODE_CREDENTIALS,
+            value(PREF_USERNAME),
+            value(PREF_PASSWORD),
+            key,
+            "KohariaKomga/${AppInfo.getVersionName()}",
+        )
+    }
+
+    override fun captureChapterOwner(): koharia.connection.ConnectionChapterOwner {
+        val captured = progressAccount()
+        return koharia.connection.ConnectionChapterOwner(captured.key) {
+            if (captured.key != progressAccount().key) {
+                throw kotlinx.coroutines.CancellationException("Chapter account changed")
+            }
+        }
+    }
+
     internal fun organizationBookChapter(book: BookDto) = repository.bookChapter(book, chapterNameTemplate)
 
     fun connectionSettingsChanged(store: androidx.preference.PreferenceDataStore): Boolean {
@@ -444,13 +478,13 @@ class KomgaSource(
         )
     }
 
-    fun routedClient(client: OkHttpClient): OkHttpClient = client.newBuilder()
+    fun routedClient(client: OkHttpClient): OkHttpClient = client.withConnectionWriteGuard(id).newBuilder()
         .addInterceptor(addressRouter)
         .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard)
         .dns(Dns.SYSTEM)
         .build()
 
-    override val client = super.client.newBuilder()
+    override val client = super.client.withConnectionWriteGuard(id).newBuilder()
         .addInterceptor(
             KomgaOfflineInterceptor(application, ::shelfCacheNamespace, {
                 maxOf(browseRefreshRequestedAt.get(), koharia.connection.ConnectionShelfUpdates.version(id))
@@ -459,6 +493,11 @@ class KomgaSource(
         .addInterceptor(KomgaCacheControlInterceptor(application, ::shelfCacheNamespace))
         .addInterceptor { chain ->
             val original = chain.request()
+            val capturedProgressAccount = original.tag(KomgaProgressAccount::class.java)
+            if (capturedProgressAccount != null) {
+                capturedProgressAccount.requireCurrent(progressAccount().key)
+                return@addInterceptor chain.proceed(original)
+            }
             val capturedAccount = original.tag(KomgaCacheNamespace::class.java)?.value
             if (capturedAccount != null && capturedAccount != shelfCacheNamespace()) {
                 throw java.io.IOException(application.stringResource(MR.strings.komga_organization_account_changed))
@@ -474,6 +513,7 @@ class KomgaSource(
         }
         .addInterceptor(addressRouter)
         .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard)
+        .addNetworkInterceptor(KomgaProgressAccountInterceptor { progressAccount().key })
         .dns(Dns.SYSTEM)
         .build()
 
@@ -652,18 +692,29 @@ class KomgaSource(
         Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>().syncFromServer(manga)
     }
 
-    override suspend fun prepareReadingStateRestore(chapterUrls: List<String>) {
-        chapterUrls.forEach {
-            eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, it)
-        }
-    }
+    // Retain legacy queued payloads until their compatibility worker has quarantined them.
+    override suspend fun prepareReadingStateRestore(chapterUrls: List<String>) = Unit
 
-    override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) {
-        if (!apiClient.isBook(chapterUrl)) return
-        eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, chapterUrl)
-        apiClient.setBookReadStatus(chapterUrl, read)
-        Injekt.get<TrackerManager>().komga.api.invalidateProgressCache(id)
-    }
+    override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean): ConnectionReadStatus =
+        Injekt.get<koharia.komga.progress.KomgaExplicitProgress>().commit(this, chapterUrl, read, null)
+
+    override fun observeProgressSyncStatus(chapterUrls: List<String>) =
+        koharia.komga.progress.observeKomgaProgressSyncStatus(
+            this,
+            chapterUrls,
+            Injekt.get(),
+            Injekt.get(),
+            Injekt.get(),
+        )
+
+    override suspend fun reviewReadStatus(chapterUrl: String) =
+        Injekt.get<koharia.komga.progress.KomgaExplicitProgress>().review(this, chapterUrl)
+
+    override suspend fun commitChapterReadStatus(
+        chapter: tachiyomi.domain.chapter.model.Chapter,
+        read: Boolean,
+    ): ConnectionReadStatus =
+        Injekt.get<koharia.komga.progress.KomgaExplicitProgress>().commit(this, chapter.url, read, chapter)
 
     override fun detailsChapterNumber(chapterMemo: kotlinx.serialization.json.JsonObject): String? =
         KomgaChapterMemo.number(chapterMemo)
@@ -676,91 +727,61 @@ class KomgaSource(
     }
 
     override suspend fun syncConnectionHistory() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>()
             .syncHistoryFromServer(sourceId = id, includeCompleted = true)
     }
 
     override suspend fun syncConnectionEpubProgress() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>()
             .syncEpubProgressFromServer(sourceId = id)
     }
 
-    override suspend fun pullPageProgress(
-        chapterUrl: String,
-        chapterMemo: kotlinx.serialization.json.JsonObject,
-    ): koharia.connection.ConnectionPageProgressSnapshot? {
-        val remote = Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>()
-            .pullBookProgress(id, chapterUrl)
-            ?: return null
-        val previousPublicationVersion = KomgaChapterMemo.publicationVersion(chapterMemo)
-        val updatedMemo = KomgaChapterMemo.mergePublicationMetadata(
-            existing = chapterMemo,
-            bookUrl = remote.url,
-            fileHash = remote.fileHash,
-            fileLastModified = remote.fileLastModified,
-            sizeBytes = remote.sizeBytes,
-            fileName = remote.fileName,
-            isEpub = remote.isEpub,
-            epubDivinaCompatible = remote.isDivinaCompatibleEpub.takeIf { remote.isEpub },
-            pagesCount = remote.totalPages,
-        )
-        return koharia.connection.ConnectionPageProgressSnapshot(
-            resourceId = remote.url,
-            pageIndex = remote.pageIndex,
-            totalPages = remote.totalPages,
-            completed = remote.completed,
-            readDate = remote.readDate,
-            isEpub = remote.isEpub,
-            canOpenAsPages = remote.isEpub && KomgaChapterMemo.canOpenEpubAsPages(updatedMemo),
-            updatedChapterMemo = updatedMemo,
-            previousPublicationVersion = previousPublicationVersion,
-            publicationVersion = KomgaChapterMemo.publicationVersion(updatedMemo),
-        )
-    }
+    override suspend fun capturePageProgressSession(chapter: tachiyomi.domain.chapter.model.Chapter) =
+        pageProgressSession(chapter.url)
 
-    override suspend fun pushPageProgress(
-        chapterUrl: String,
-        pageIndex: Int,
-        totalPages: Int,
-    ) {
-        Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>().pushPageProgress(
-            sourceId = id,
-            chapterUrl = chapterUrl,
-            pageIndex = pageIndex,
-            totalPages = totalPages,
+    override suspend fun captureReflowProgressSession(chapter: tachiyomi.domain.chapter.model.Chapter) =
+        koharia.komga.progress.captureKomgaReflowProgressSession(
+            this,
+            chapter,
+            Injekt.get(),
+            Injekt.get(),
+            Injekt.get(),
+            Injekt.get(),
         )
-    }
 
-    override suspend fun acceptRemotePageProgress(
-        chapterUrl: String,
-        pageIndex: Int,
-        totalPages: Int,
-        readAt: Long,
-    ) {
-        eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, chapterUrl)
-    }
+    override suspend fun reviewPageProgress(chapterUrl: String, chapterMemo: kotlinx.serialization.json.JsonObject) =
+        pullPageProgress(chapterUrl, chapterMemo)
 
+    override suspend fun isPageProgressConfirmed(chapterUrl: String, page: Int, total: Int, modifiedAt: Long) =
+        captureReflowProgressSession(tachiyomi.domain.chapter.model.Chapter.create().copy(url = chapterUrl))
+            .adapter.isPageProgressConfirmed(chapterUrl, page, total, modifiedAt)
+
+    private suspend fun pageProgressSession(chapterUrl: String) =
+        koharia.komga.progress.captureKomgaPageProgressSession(
+            this,
+            chapterUrl,
+            Injekt.get(),
+            Injekt.get(),
+            Injekt.get(),
+            Injekt.get(),
+        )
+    override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: kotlinx.serialization.json.JsonObject) =
+        pageProgressSession(chapterUrl).adapter.pullPageProgress(chapterUrl, chapterMemo)
+    override suspend fun pushPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int) =
+        pageProgressSession(chapterUrl).adapter.pushPageProgress(chapterUrl, pageIndex, totalPages)
     override suspend fun recordLocalPageProgress(
         chapterUrl: String,
         pageIndex: Int,
         totalPages: Int,
         readAt: Long,
         initialPage: Boolean,
-    ) {
-        if (initialPage || koharia.connection.ConnectionRestoreState.isRestoring ||
-            !chapterUrl.contains("/api/v1/books/") ||
-            pageIndex !in 0 until totalPages
-        ) {
-            return
-        }
-        eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.enqueueLocal(
-            sourceId = id,
-            url = chapterUrl,
-            page = pageIndex,
-            total = totalPages,
-            readAt = readAt,
-        )
-    }
+    ) = pageProgressSession(
+        chapterUrl,
+    ).adapter.recordLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt, initialPage)
+    override suspend fun acceptRemotePageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) =
+        pageProgressSession(chapterUrl).adapter.acceptRemotePageProgress(chapterUrl, pageIndex, totalPages, readAt)
 
     override fun findSharedChapterFile(chapterUrl: String, mangaTitle: String): com.hippo.unifile.UniFile? {
         return Injekt.get<eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager>()
@@ -897,15 +918,18 @@ class KomgaSource(
     override suspend fun getCachedEpubProgress(
         chapterId: Long,
     ): koharia.domain.epub.model.EpubRemoteProgressCache? {
-        return Injekt.get<koharia.epub.progress.KomgaEpubRemoteProgressCoordinator>().get(chapterId)
+        return Injekt.get<koharia.epub.progress.KomgaEpubRemoteProgressCoordinator>().get(chapterId, this)
     }
+
+    override suspend fun captureEpubProgressSession(chapter: tachiyomi.domain.chapter.model.Chapter) =
+        koharia.epub.progress.captureKomgaEpubProgressSession(this, chapter, Injekt.get(), Injekt.get(), Injekt.get())
 
     override suspend fun refreshEpubProgress(
         mangaId: Long,
         chapter: tachiyomi.domain.chapter.model.Chapter,
     ): koharia.domain.epub.model.EpubRemoteProgressCache? {
         return Injekt.get<koharia.epub.progress.KomgaEpubRemoteProgressCoordinator>()
-            .refreshChapter(mangaId, chapter, id)
+            .refreshChapter(mangaId, chapter, this)
     }
 
     override suspend fun syncMangaEpubProgress(
@@ -915,7 +939,7 @@ class KomgaSource(
     ): List<koharia.domain.epub.model.EpubRemoteProgressCache> {
         return Injekt.get<koharia.epub.progress.KomgaEpubRemoteProgressCoordinator>().syncManga(
             mangaId = mangaId,
-            sourceId = id,
+            source = this,
             chapters = chapters,
             force = force,
         )
@@ -924,8 +948,9 @@ class KomgaSource(
     override suspend fun pullEpubProgress(
         resourceId: String,
     ): koharia.connection.RemoteEpubProgression? {
-        val progression = Injekt.get<koharia.epub.progress.KomgaEpubProgressSyncService>()
-            .pullProgression(id, resourceId)
+        val service = Injekt.get<koharia.epub.progress.KomgaEpubProgressSyncService>()
+        val progression = service
+            .pullProgression(service.captureSession(this), resourceId)
             .progression
             ?: return null
         return koharia.connection.RemoteEpubProgression(
@@ -934,14 +959,17 @@ class KomgaSource(
         )
     }
 
+    override suspend fun reviewEpubProgress(resourceId: String) = pullEpubProgress(resourceId)
+
     override suspend fun pushEpubProgress(
         resourceId: String,
         locator: org.readium.r2.shared.publication.Locator,
         positions: List<org.readium.r2.shared.publication.Locator>,
         modifiedAt: java.util.Date,
     ) {
-        Injekt.get<koharia.epub.progress.KomgaEpubProgressSyncService>().pushProgression(
-            sourceId = id,
+        val service = Injekt.get<koharia.epub.progress.KomgaEpubProgressSyncService>()
+        service.pushProgression(
+            session = service.captureSession(this),
             bookUrl = resourceId,
             locator = locator,
             positions = positions,
@@ -1096,7 +1124,13 @@ class KomgaSource(
                     collections.forEach { add(CollectionFilterEntry(it.name, it.id)) }
                 },
             ),
-            LibraryFilter(libraries, shelfLibraryIds),
+            LibraryFilter(
+                libraries.ifEmpty {
+                    Injekt.get<KomgaLibraryClassificationManager>().getLibraries(id)
+                        .map { koharia.komga.api.dto.LibraryDto(it.id, it.name) }
+                },
+                shelfLibraryIds,
+            ),
             ReadingStateGroup(),
             UriMultiSelectFilter(
                 "Status",
@@ -1530,6 +1564,7 @@ class KomgaSource(
         filters: FilterList,
     ): koharia.komga.domain.repository.KomgaSortedSearchSession {
         val namespace = shelfCacheNamespace()
+        val revision = maxOf(browseRefreshRequestedAt.get(), koharia.connection.ConnectionShelfUpdates.version(id))
         return repository.sortedSearchSession(
             query,
             snapshotFilters(filters),
@@ -1537,6 +1572,11 @@ class KomgaSource(
             consumeBrowseCachePolicy(),
         ) {
             if (shelfCacheNamespace() != namespace) throw kotlinx.coroutines.CancellationException("Connection changed")
+            if (maxOf(browseRefreshRequestedAt.get(), koharia.connection.ConnectionShelfUpdates.version(id)) !=
+                revision
+            ) {
+                throw kotlinx.coroutines.CancellationException("Shelf changed")
+            }
         }
     }
 
@@ -1718,7 +1758,7 @@ class KomgaSource(
         const val TYPE_BOOKS = "Books"
         const val TYPE_ALL = "All"
 
-        private val SERVER_SETTING_KEYS = setOf(
+        internal val SERVER_SETTING_KEYS = setOf(
             ConnectionAddressRouter.INTERNAL_ADDRESS_KEY,
             PREF_SERVER_PROFILE_NAME,
             PREF_ADDRESS,

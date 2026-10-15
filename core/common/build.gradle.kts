@@ -32,7 +32,7 @@ dependencies {
     api(libs.okhttp.dnsOverHttps)
     api(libs.okio)
 
-    implementation(libs.image.decoder)
+    implementation(projects.core.imageDecoder)
 
     implementation(libs.unifile)
     implementation(libs.archive)
@@ -47,9 +47,6 @@ dependencies {
 
     // Sort
     implementation(libs.natural.comparator)
-
-    // JavaScript engine
-    implementation(libs.quickJs)
 
     testImplementation(libs.bundles.test)
     testRuntimeOnly(libs.junit.platform.launcher)

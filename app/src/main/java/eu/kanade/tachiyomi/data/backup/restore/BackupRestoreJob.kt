@@ -34,6 +34,7 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
     private val notifier = BackupNotifier(context)
 
     override suspend fun doWork(): Result {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return Result.retry()
         val uri = inputData.getString(LOCATION_URI_KEY)?.toUri()
         val options = inputData.getBooleanArray(OPTIONS_KEY)?.let { RestoreOptions.fromBooleanArray(it) }
 

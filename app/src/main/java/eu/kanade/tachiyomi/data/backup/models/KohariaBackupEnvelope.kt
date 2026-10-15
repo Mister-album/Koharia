@@ -20,6 +20,6 @@ data class KohariaBackupEnvelope(
     companion object {
         const val MAGIC = "KOHARIA_BACKUP"
         const val FORMAT_VERSION = 2
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 5
     }
 }

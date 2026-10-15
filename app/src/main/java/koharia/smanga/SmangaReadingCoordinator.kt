@@ -2,6 +2,7 @@ package koharia.smanga
 
 import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionPageProgressSnapshot
+import koharia.connection.ConnectionReadStatus
 import koharia.connection.ConnectionRestoreState
 import koharia.domain.smanga.SmangaCacheEntry
 import koharia.domain.smanga.SmangaHistoryEvent
@@ -24,6 +25,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import java.io.IOException
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -37,6 +41,7 @@ class SmangaReadingCoordinator(
     private val repository: SmangaRepository,
     private val scope: CoroutineScope,
     private val checkSession: () -> Unit,
+    private val checkRemoteWrite: () -> Unit,
     private val applyState: suspend (SmangaReadState) -> Unit,
 ) {
     private val stateMutex = Mutex()
@@ -127,7 +132,11 @@ class SmangaReadingCoordinator(
         retryPending()
     }
 
-    suspend fun pull(chapter: SmangaChapter, chapterMemo: JsonObject): ConnectionPageProgressSnapshot? {
+    suspend fun pull(
+        chapter: SmangaChapter,
+        chapterMemo: JsonObject,
+        pdf: Boolean = false,
+    ): ConnectionPageProgressSnapshot? {
         val operationEpoch = epoch.get()
         val (before, baselineRevision) = stateMutex.withLock {
             if (!isCurrent(operationEpoch)) return null
@@ -146,6 +155,7 @@ class SmangaReadingCoordinator(
                     current ?: lastPulledStates[chapter.id]
                 } ?: return null
                 if (!isCurrent(operationEpoch)) return null
+                if (pdf) throw IOException("PDF progress changed during refresh")
                 return snapshot(
                     selected,
                     chapterMemo,
@@ -156,8 +166,10 @@ class SmangaReadingCoordinator(
             val remoteState = remote.readState()
             lastPulledStates[chapter.id] = remoteState
             advanceRemoteBaseline(chapter.id)
-            val countChanged = physicalCount > 0 && remoteState.totalPages > 0 &&
-                physicalCount != remoteState.totalPages
+            val countChanged = (
+                physicalCount > 0 && remoteState.totalPages > 0 &&
+                    physicalCount != remoteState.totalPages
+                ) || (pdf && pdfMappingChanged(chapterMemo, remote))
             val localConfirmation = current?.let(::confirmationFor)
             if (localConfirmation != null && localConfirmation.remote == null) {
                 localConfirmations.replace(
@@ -192,9 +204,139 @@ class SmangaReadingCoordinator(
                 else -> remoteState.also { offeredStates[chapter.id] = it }
             }
             if (!isCurrent(operationEpoch)) return null
-            snapshot(selected, chapterMemo, confirmation, countChanged)
+            snapshot(selected, chapterMemo, confirmation, countChanged).let {
+                if (pdf) pdfSnapshot(it, chapterMemo, remote, countChanged) else it
+            }
         }
     }
+
+    internal class PdfProgressReview internal constructor(
+        internal val owner: SmangaReadingCoordinator,
+        internal val chapter: SmangaChapter,
+        internal val local: SmangaReadState?,
+        internal val remote: SmangaReadState,
+        internal val operationEpoch: Long,
+        val snapshot: ConnectionPageProgressSnapshot,
+    )
+
+    internal suspend fun reviewPdf(chapter: SmangaChapter, memo: JsonObject): PdfProgressReview {
+        val operationEpoch = epoch.get()
+        val (before, baseline) = stateMutex.withLock {
+            check(isCurrent(operationEpoch)) { "Reading session changed" }
+            state(chapter.id) to remoteBaselineRevisions[chapter.id]
+        }
+        val remote = api.chapters(chapter.mangaId).firstOrNull { it.id == chapter.id }
+            ?: throw IOException("PDF chapter is unavailable")
+        return stateMutex.withLock {
+            check(isCurrent(operationEpoch)) { "Reading session changed" }
+            check(state(chapter.id) == before && remoteBaselineRevisions[chapter.id] == baseline) {
+                "Progress changed during review"
+            }
+            val value = remote.readState()
+            val paused = uploadPaused(chapter.id) || before?.pending == true
+            val countChanged = pdfMappingChanged(memo, remote) ||
+                (
+                    ConnectionChapterMetadata.pagesCount(memo)?.let {
+                        it > 0 && value.totalPages > 0 &&
+                            it != value.totalPages
+                    } ==
+                        true
+                    )
+            PdfProgressReview(
+                this,
+                remote,
+                before,
+                value,
+                operationEpoch,
+                pdfSnapshot(snapshot(value, memo, paused, countChanged), memo, remote, countChanged),
+            )
+        }
+    }
+
+    internal suspend fun resolvePdfReview(
+        review: PdfProgressReview,
+        page: Int,
+        total: Int,
+        readAt: Long,
+        useRemote: Boolean,
+        checkAcceptance: () -> Unit,
+    ) {
+        require(review.owner === this && total > 0 && page in 0 until total)
+        check(!review.snapshot.requiresPageMappingConfirmation) { "PDF mapping changed" }
+        checkAcceptance()
+        val chapter = review.chapter
+        val remote = api.chapters(chapter.mangaId).firstOrNull { it.id == chapter.id }
+            ?: throw IOException("PDF chapter is unavailable")
+        stateMutex.withLock {
+            checkAcceptance()
+            check(isCurrent(review.operationEpoch)) { "Reading session changed" }
+            check(state(chapter.id) == review.local) { "Local progress changed since review" }
+            check(
+                remote.readState() == review.remote && remote.pageCount == chapter.pageCount &&
+                    remote.updatedAt == chapter.updatedAt && remote.format == chapter.format,
+            ) { "Remote progress or PDF changed since review" }
+            if (useRemote) {
+                require(
+                    page == review.remote.pageIndex.coerceAtLeast(0) &&
+                        (
+                            total == review.remote.totalPages ||
+                                (review.remote.explicitUnread && review.remote.totalPages == 0)
+                            ) &&
+                        readAt == review.remote.readAt,
+                )
+            }
+            val selected = if (useRemote) {
+                review.remote.copy(totalPages = total, revision = nextRevision(review.local), pending = false)
+            } else {
+                SmangaReadState(
+                    chapter.id,
+                    chapter.mangaId,
+                    page,
+                    total,
+                    page == total - 1,
+                    readAt.coerceAtLeast(0),
+                    nextRevision(review.local),
+                    pending = true,
+                )
+            }
+            save(selected, review.operationEpoch)
+            checkAcceptance()
+            check(isCurrent(review.operationEpoch)) { "Reading session changed" }
+            authorizeSelection(selected, review.remote)
+            if (!useRemote) recordHistory(chapter, readAt)
+        }
+        if (!useRemote) retryPending()
+    }
+
+    internal suspend fun isPageConfirmed(chapterId: Long, page: Int, total: Int, readAt: Long): Boolean {
+        val operationEpoch = epoch.get()
+        return stateMutex.withLock {
+            if (!isCurrent(operationEpoch)) return@withLock false
+            val value = state(chapterId) ?: return@withLock false
+            val paused = uploadPaused(chapterId)
+            isCurrent(operationEpoch) && !value.pending && !paused &&
+                value.pageIndex.coerceAtLeast(0) == page && value.totalPages == total && value.readAt == readAt
+        }
+    }
+
+    private fun pdfMappingChanged(memo: JsonObject, remote: SmangaChapter): Boolean {
+        val previous = memo["smangaUpdatedAt"]?.jsonPrimitive?.longOrNull
+        val total = ConnectionChapterMetadata.pagesCount(memo)
+        return !remote.format.equals("pdf", ignoreCase = true) ||
+            (previous != null && previous > 0 && remote.updatedAt > 0 && previous != remote.updatedAt) ||
+            (total != null && total > 0 && remote.pageCount > 0 && total != remote.pageCount)
+    }
+
+    private fun pdfSnapshot(
+        snapshot: ConnectionPageProgressSnapshot,
+        memo: JsonObject,
+        remote: SmangaChapter,
+        mappingChanged: Boolean,
+    ) = snapshot.copy(
+        previousPublicationVersion = memo["smangaUpdatedAt"]?.jsonPrimitive?.contentOrNull,
+        publicationVersion = remote.updatedAt.toString(),
+        requiresPageMappingConfirmation = mappingChanged,
+    )
 
     suspend fun accept(chapter: SmangaChapter, pageIndex: Int, totalPages: Int, readAt: Long) {
         if (pageIndex < 0 || totalPages < 0 || (totalPages > 0 && pageIndex >= totalPages)) return
@@ -217,10 +359,10 @@ class SmangaReadingCoordinator(
         }
     }
 
-    suspend fun setRead(chapter: SmangaChapter, read: Boolean) {
+    suspend fun setRead(chapter: SmangaChapter, read: Boolean): ConnectionReadStatus {
         val operationEpoch = epoch.get()
         stateMutex.withLock {
-            if (!isCurrent(operationEpoch)) return
+            if (!isCurrent(operationEpoch)) return ConnectionReadStatus.UNAVAILABLE
             val previous = state(chapter.id)
             val count = chapter.pageCount.takeIf { it > 0 } ?: previous?.totalPages ?: 0
             val next = SmangaReadState(
@@ -229,10 +371,11 @@ class SmangaReadingCoordinator(
                 pending = true, explicitUnread = !read,
             )
             save(next, operationEpoch)
-            if (!isCurrent(operationEpoch)) return
+            if (!isCurrent(operationEpoch)) return ConnectionReadStatus.UNAVAILABLE
             authorizeSelection(next, offeredStates.remove(chapter.id) ?: lastPulledStates[chapter.id])
         }
         retryPending()
+        return ConnectionReadStatus.PENDING
     }
 
     suspend fun syncManga(mangaId: Long) {
@@ -291,6 +434,7 @@ class SmangaReadingCoordinator(
 
     @Synchronized
     fun retryPending() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (!scope.isActive || ConnectionRestoreState.isRestoring) return
         try {
             checkSession()
@@ -340,6 +484,7 @@ class SmangaReadingCoordinator(
 
     /** The successful chapter read also avoids consuming pending history attempts while already offline. */
     private suspend fun flush(): Boolean {
+        checkRemoteWrite()
         val operationEpoch = epoch.get()
         val (pending, history) = stateMutex.withLock {
             if (!isCurrent(operationEpoch)) return false
@@ -347,12 +492,14 @@ class SmangaReadingCoordinator(
                 repository.pendingHistoryEvents(connectionId, accountKey)
         }
         var failed = false
-        val mangaIds = (pending.map { it.mangaId } + history.map { it.mangaId }).distinct()
+        val pendingByManga = pending.groupBy { it.mangaId }
+        val historyByManga = history.groupBy { it.mangaId }
+        val mangaIds = pendingByManga.keys + historyByManga.keys
         for (mangaId in mangaIds) {
             if (!isCurrent(operationEpoch)) return false
             try {
                 val remote = api.chapters(mangaId).associateBy { it.id }
-                for (local in pending.filter { it.mangaId == mangaId }) {
+                for (local in pendingByManga[mangaId].orEmpty()) {
                     val chapter = remote[local.chapterId] ?: continue
                     val target = chapter.readState()
                     if (!allowUpload(local, target, operationEpoch)) continue
@@ -387,8 +534,8 @@ class SmangaReadingCoordinator(
                         acknowledge(local, operationEpoch)
                     }
                 }
-                for (event in history.filter { it.mangaId == mangaId && it.chapterId in remote }) {
-                    sendHistory(event, operationEpoch)
+                for (event in historyByManga[mangaId].orEmpty()) {
+                    if (event.chapterId in remote) sendHistory(event, operationEpoch)
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -403,6 +550,7 @@ class SmangaReadingCoordinator(
             if (!isCurrent(operationEpoch)) return
             val current = repository.historyEvent(connectionId, accountKey, event.id)
             if (current?.status != HISTORY_PENDING) return
+            checkRemoteWrite()
             repository.updateHistoryStatus(connectionId, accountKey, event.id, HISTORY_ATTEMPTED)
             true
         }
@@ -648,14 +796,14 @@ class SmangaReadingCoordinator(
         )
     }
 
-    private companion object {
-        const val MAX_ATTEMPTS = 3
-        const val HISTORY_PENDING = 0
-        const val HISTORY_ATTEMPTED = 1
-        const val HISTORY_SENT = 2
-        const val CONFIRMATION_GROUP = "reading-confirmation"
+    companion object {
+        private const val MAX_ATTEMPTS = 3
+        private const val HISTORY_PENDING = 0
+        private const val HISTORY_ATTEMPTED = 1
+        private const val HISTORY_SENT = 2
+        internal const val CONFIRMATION_GROUP = "reading-confirmation"
     }
 }
 
 @Serializable
-private data class SmangaUploadConfirmation(val required: Boolean)
+internal data class SmangaUploadConfirmation(val required: Boolean)

@@ -208,6 +208,26 @@ class SuwayomiApiTest {
     }
 
     @Test
+    fun `inherited verbose logging stays silent across authentication modes and permission errors`() = runTest {
+        val messages = CopyOnWriteArrayList<String>()
+        val logger = okhttp3.logging.HttpLoggingInterceptor { messages += it }.apply {
+            level = okhttp3.logging.HttpLoggingInterceptor.Level.HEADERS
+        }
+        val network = OkHttpClient.Builder().addInterceptor(logger).addNetworkInterceptor(logger).build()
+        for (mode in SuwayomiAuthMode.entries) {
+            val fixture = Fixture(mode)
+            val client = SuwayomiApi(network, json, server(fixture), mode, "fixture-user", "fixture-password")
+                .also { clients += it }
+            assertEquals(1, client.categories().size)
+            fixture.graphqlStatus = 403
+            val error = runCatching { client.categories() }.exceptionOrNull()
+            assertTrue(error is SuwayomiException)
+            assertTrue(fixture.requests.isNotEmpty())
+        }
+        assertTrue(messages.isEmpty())
+    }
+
+    @Test
     fun `concurrent graphql unauthorized errors refresh JWT only once`() = runTest {
         val fixture = Fixture(SuwayomiAuthMode.UI_LOGIN)
         val api = api(server(fixture), fixture.mode)

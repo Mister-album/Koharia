@@ -1,0 +1,143 @@
+CREATE TABLE komga_page_event (
+    connection_id INTEGER NOT NULL,
+    owner_key TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    page INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    baseline TEXT,
+    phase TEXT NOT NULL,
+    superseded_by_revision INTEGER,
+    PRIMARY KEY (connection_id, owner_key, book_id)
+);
+
+CREATE INDEX komga_page_event_pending ON komga_page_event(connection_id, owner_key)
+WHERE phase = 'PENDING';
+
+CREATE INDEX komga_page_event_book ON komga_page_event(connection_id, book_id);
+
+CREATE TABLE komga_page_attempt (
+    connection_id INTEGER NOT NULL,
+    owner_key TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    page INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    event_baseline TEXT,
+    baseline TEXT NOT NULL,
+    PRIMARY KEY (connection_id, owner_key, book_id)
+);
+
+CREATE INDEX komga_page_attempt_book ON komga_page_attempt(connection_id, book_id);
+
+getEvent:
+SELECT * FROM komga_page_event
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId;
+
+getSyncStatusForBooks:
+SELECT owner_key, book_id, 'intent' AS kind, phase FROM komga_read_status
+WHERE connection_id = :connectionId AND book_id IN :bookIds
+UNION ALL
+SELECT owner_key, book_id, 'page' AS kind, phase FROM komga_page_event
+WHERE connection_id = :connectionId AND book_id IN :bookIds AND superseded_by_revision IS NULL
+UNION ALL
+SELECT owner_key, book_id, 'request' AS kind, 'PENDING' AS phase FROM komga_read_status_attempt
+WHERE connection_id = :connectionId AND book_id IN :bookIds
+UNION ALL
+SELECT owner_key, book_id, 'request' AS kind, 'PENDING' AS phase FROM komga_page_attempt
+WHERE connection_id = :connectionId AND book_id IN :bookIds;
+
+getRecoveryKeys:
+WITH candidates AS (
+    SELECT connection_id, owner_key, book_id FROM komga_page_event
+    WHERE phase = 'PENDING' AND superseded_by_revision IS NULL
+    UNION
+    SELECT connection_id, owner_key, book_id FROM komga_read_status WHERE phase = 'PENDING'
+    UNION
+    SELECT connection_id, owner_key, book_id FROM komga_page_attempt
+    UNION
+    SELECT connection_id, owner_key, book_id FROM komga_read_status_attempt
+)
+SELECT c.connection_id, c.owner_key, c.book_id FROM candidates c
+LEFT JOIN komga_read_status i
+ON i.connection_id = c.connection_id AND i.owner_key = c.owner_key AND i.book_id = c.book_id
+LEFT JOIN komga_page_event p
+ON p.connection_id = c.connection_id AND p.owner_key = c.owner_key AND p.book_id = c.book_id
+WHERE (i.phase IS NULL OR i.phase IN ('PENDING', 'SYNCED'))
+AND (i.phase = 'PENDING' OR p.phase IS NULL OR p.phase IN ('PENDING', 'SYNCED') OR EXISTS (
+    SELECT 1 FROM komga_read_status_attempt a
+    WHERE a.connection_id = c.connection_id AND a.owner_key = c.owner_key AND a.book_id = c.book_id
+));
+
+getUnsettledKeys:
+SELECT connection_id, owner_key, book_id FROM komga_page_event
+WHERE phase != 'SYNCED' AND superseded_by_revision IS NULL
+UNION
+SELECT connection_id, owner_key, book_id FROM komga_page_attempt;
+
+restoreHeldEvent:
+INSERT OR IGNORE INTO komga_page_event
+VALUES (:connectionId, :ownerKey, :bookId, :generation, :revision, :page, :total, :readAt, NULL, 'HELD', NULL);
+
+restoreHeldAttempt:
+INSERT OR IGNORE INTO komga_page_attempt
+VALUES (:connectionId, :ownerKey, :bookId, :generation, :revision, :page, :total, :readAt, NULL, 'restored:unknown');
+
+getPending:
+SELECT * FROM komga_page_event
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND phase = 'PENDING' AND superseded_by_revision IS NULL;
+
+getEventsForBooks:
+SELECT * FROM komga_page_event
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id IN :bookIds;
+
+getUnsettledBook:
+SELECT book_id FROM komga_page_event
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND phase != 'SYNCED' AND superseded_by_revision IS NULL
+UNION ALL
+SELECT book_id FROM komga_page_attempt
+WHERE connection_id = :connectionId AND owner_key = :ownerKey
+LIMIT 1;
+
+getAttemptsForBooks:
+SELECT * FROM komga_page_attempt
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id IN :bookIds;
+
+getAttempt:
+SELECT * FROM komga_page_attempt
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId;
+
+putEvent:
+INSERT OR REPLACE INTO komga_page_event
+VALUES (:connectionId, :ownerKey, :bookId, :generation, :revision, :page, :total, :readAt, :baseline, :phase, :supersededByRevision);
+
+supersedeBeforeRevision:
+UPDATE komga_page_event SET superseded_by_revision = :confirmedRevision
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId
+AND revision < :confirmedRevision AND superseded_by_revision IS NULL
+AND NOT EXISTS (
+    SELECT 1 FROM komga_page_attempt
+    WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId
+);
+
+putAttempt:
+INSERT INTO komga_page_attempt
+VALUES (:connectionId, :ownerKey, :bookId, :generation, :revision, :page, :total, :readAt, :eventBaseline, :baseline);
+
+removeAttempt:
+DELETE FROM komga_page_attempt
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId AND generation = :generation;
+
+holdConnection:
+UPDATE komga_page_event SET phase = 'HELD'
+WHERE connection_id = :connectionId AND phase != 'SYNCED' AND superseded_by_revision IS NULL;
+
+removeConnectionEvents:
+DELETE FROM komga_page_event WHERE connection_id = :connectionId;
+
+removeConnectionAttempts:
+DELETE FROM komga_page_attempt WHERE connection_id = :connectionId;

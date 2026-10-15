@@ -1,6 +1,7 @@
 package koharia.connection
 
 import android.app.Application
+import androidx.core.os.trace
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.track.service.TrackPreferences
@@ -54,7 +55,7 @@ class ConnectionConfigManager(
         fun buildPreferenceDefaults(
             app: Application,
             verboseLoggingDefault: Boolean,
-        ): Map<String, Any> {
+        ): Map<String, Any> = trace("Koharia.preferenceDefaults") {
             val recorder = RecordingPreferenceStore()
             val folderProvider = tachiyomi.core.common.storage.AndroidStorageFolderProvider(app)
 
@@ -73,7 +74,7 @@ class ConnectionConfigManager(
             StoragePreferences(folderProvider, recorder)
             UiPreferences(recorder)
 
-            return recorder.defaults.filterKeys {
+            recorder.defaults.filterKeys {
                 !Preference.isAppState(it) || it == Preference.appStateKey("storage_dir")
             }
         }

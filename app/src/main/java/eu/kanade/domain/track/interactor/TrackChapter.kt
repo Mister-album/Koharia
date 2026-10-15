@@ -6,6 +6,7 @@ import eu.kanade.domain.track.model.toDomainTrack
 import eu.kanade.domain.track.service.DelayedTrackingUpdateJob
 import eu.kanade.domain.track.store.DelayedTrackingStore
 import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.data.track.usesAutomaticChapterCounts
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import logcat.LogPriority
@@ -28,7 +29,9 @@ class TrackChapter(
 
             tracks.mapNotNull { track ->
                 val service = trackerManager.get(track.trackerId)
-                if (service == null || !service.isLoggedIn || chapterNumber <= track.lastChapterRead) {
+                if (service == null || !service.usesAutomaticChapterCounts() ||
+                    !service.isLoggedIn || chapterNumber <= track.lastChapterRead
+                ) {
                     return@mapNotNull null
                 }
 

@@ -1,7 +1,6 @@
 package koharia.suwayomi.ui
 
 import androidx.paging.Pager
-import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
@@ -67,8 +66,8 @@ class SuwayomiSourceScreenModel(
     init {
         bindSession(session)
     }
-    private val repository: MangaRepository = Injekt.get()
     private val sourcePreferences: SourcePreferences = Injekt.get()
+    private val repository: MangaRepository = Injekt.get()
     private val errorChannel = Channel<Throwable>(Channel.BUFFERED)
     val errors = errorChannel.receiveAsFlow()
     private var infoJob: Job? = null
@@ -253,7 +252,7 @@ class SuwayomiSourceScreenModel(
     fun pager(generation: Int): Flow<PagingData<StateFlow<Manga>>> = pagerForGeneration.getOrPut(generation) {
         val listing = listing()
         Pager(
-            config = PagingConfig(pageSize = 50, initialLoadSize = 50, enablePlaceholders = false),
+            config = koharia.connection.connectionShelfPagingConfig(prefetchDistance = 50),
             pagingSourceFactory = { SourceListingPagingSource(listing) },
         ).flow.cachedIn(screenModelScope)
     }
@@ -283,10 +282,6 @@ class SuwayomiSourceScreenModel(
                 revision = revision ?: session.catalog.listingRevision().also { revision = it },
             )
             session.checkActive()
-            val local = withContext(Dispatchers.IO) {
-                repository.getMangaBySourceId(source.id).filter { it.url.startsWith(session.prefix) }
-            }
-            val byUrl = local.associateBy { it.url }
             // The client-side narrowing runs on the remote entries, where library membership and the
             // server's own ordering are still available.
             val mangas = applySuwayomiBrowseFilters(
@@ -294,17 +289,8 @@ class SuwayomiSourceScreenModel(
                 filters = listing.browseFilters,
                 sort = listing.sort,
             )
-                .map { entry ->
-                    val remote = source.toManga(entry, session)
-                    byUrl[remote.url]?.copy(
-                        title = remote.title,
-                        author = remote.author,
-                        artist = remote.artist,
-                        description = remote.description,
-                        genre = remote.genre,
-                        thumbnailUrl = remote.thumbnailUrl,
-                    ) ?: remote
-                }
+                .map { source.toManga(it, session) }
+                .also { repository.refreshShelfUnitCounts(it, session::checkActive) }
                 .map { MutableStateFlow(it) as StateFlow<Manga> }
             LoadResult.Page(
                 data = mangas,

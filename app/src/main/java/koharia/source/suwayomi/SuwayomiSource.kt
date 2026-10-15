@@ -22,20 +22,22 @@ import koharia.connection.ConnectionDownloadStorageAdapter
 import koharia.connection.ConnectionHealthAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
 import koharia.connection.ConnectionLibraryMembershipAdapter
-import koharia.connection.ConnectionLocalPageProgressAdapter
 import koharia.connection.ConnectionManagedLifecycle
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
 import koharia.connection.ConnectionPageAdapter
 import koharia.connection.ConnectionPageList
-import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionReadStatusAdapter
 import koharia.connection.ConnectionReaderRoutingAdapter
 import koharia.connection.ConnectionRestoreState
 import koharia.connection.ConnectionSource
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryContentScope
+import koharia.connection.ProgressStatusTargets
+import koharia.connection.observeProgressStatusSessions
+import koharia.connection.withConnectionWriteGuard
+import koharia.connection.withProgressStatusOwner
 import koharia.domain.suwayomi.SuwayomiRepository
 import koharia.suwayomi.SuwayomiApi
 import koharia.suwayomi.SuwayomiCatalog
@@ -45,6 +47,7 @@ import koharia.suwayomi.SuwayomiIdentity
 import koharia.suwayomi.SuwayomiManga
 import koharia.suwayomi.SuwayomiReadState
 import koharia.suwayomi.SuwayomiReadingCoordinator
+import koharia.suwayomi.progressSyncStatus
 import koharia.suwayomi.ui.SuwayomiLibraryScreen
 import koharia.suwayomi.ui.suwayomiError
 import koharia.suwayomi.withVisibleCategories
@@ -93,6 +96,7 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
     HttpSource(),
     UnmeteredSource,
     ConnectionSource,
+    koharia.connection.ConnectionChapterSessionAdapter,
     ConnectionManagedLifecycle,
     ConnectionBrowseAdapter,
     ConnectionCatalogAdapter,
@@ -100,13 +104,14 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
     ConnectionAccountAdapter,
     ConnectionHealthAdapter,
     ConnectionMangaBehaviorAdapter,
+    koharia.connection.ConnectionShelfLocalStateAdapter,
     ConnectionChapterThumbnailAdapter,
     ConnectionDownloadStorageAdapter,
     ConnectionReaderRoutingAdapter,
-    ConnectionPageProgressAdapter,
-    ConnectionLocalPageProgressAdapter,
+    koharia.connection.ConnectionPageProgressSessionAdapter,
     ConnectionMangaProgressAdapter,
     ConnectionReadStatusAdapter,
+    koharia.connection.ConnectionProgressSyncStatusAdapter,
     ConnectionHistorySyncAdapter,
     ConnectionLibraryMembershipAdapter,
     ConnectionBackupRestoreAdapter,
@@ -115,6 +120,25 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
     AutoCloseable {
     override val id = connectionProfile.id
     override val name = connectionProfile.name
+
+    override fun captureChapterOwner(): koharia.connection.ConnectionChapterOwner {
+        val captured = session()
+        return koharia.connection.ConnectionChapterOwner(captured.chapterOwnerKey) {
+            captured.checkActive()
+            if (chapterConfigurationKey() != captured.chapterOwnerKey) {
+                throw CancellationException("Chapter account changed")
+            }
+        }
+    }
+
+    private fun chapterConfigurationKey() = koharia.connection.chapterOwnerKey(
+        preferences.account,
+        preferences.address,
+        preferences.internalAddress,
+        preferences.mode.name,
+        preferences.username,
+        preferences.password,
+    )
     override val lang = "other"
     override val supportsLatest = false
     val preferences = SuwayomiPreferences(id)
@@ -135,11 +159,12 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
     override val historyScopeChanges get() = epoch.map { Unit }
 
     inner class Session internal constructor(val identity: SuwayomiIdentity) : AutoCloseable {
+        val chapterOwnerKey = chapterConfigurationKey()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private val address = preferences.address
         private val internalAddress = preferences.internalAddress
         val api = SuwayomiApi(
-            network.nonCloudflareClient,
+            network.nonCloudflareClient.withConnectionWriteGuard(id),
             json,
             address,
             preferences.mode,
@@ -201,6 +226,7 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
     }
 
     @Synchronized override fun onRegistered() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (registered || closed) return
         registered = true
         if (hasValidConnection()) observeReading(session())
@@ -227,6 +253,17 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
 
     /** Server-managed downloads stay separate from Koharia's local DownloadManager queue. */
     suspend fun serverDownloadStatus(): SuwayomiDownloadStatus = session().api.downloadStatus()
+
+    fun queueDownloadState(
+        item: koharia.suwayomi.SuwayomiDownloadItem,
+        local: koharia.connection.ConnectionShelfEntryState?,
+    ): koharia.connection.MangaDownloadState {
+        val identity = session().identity
+        val downloaded = local?.downloadedChapterUrls.orEmpty().any {
+            runCatching { identity.chapter(it) }.getOrNull() == (item.mangaId to item.chapterId)
+        }
+        return koharia.connection.MangaDownloadState(if (downloaded) 1 else 0, 1)
+    }
 
     suspend fun enqueueServerDownloads(chapterUrls: List<String>): SuwayomiDownloadStatus {
         val session = session()
@@ -278,6 +315,16 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
 
     suspend fun dequeueServerDownload(chapterUrl: String): SuwayomiDownloadStatus =
         session().api.dequeueDownload(session().identity.chapter(chapterUrl).second)
+    override fun mergeShelfLocalState(remote: Manga, local: Manga?): Manga =
+        koharia.connection.mergeShelfMangaMetadata(remote, local)
+            .copy(
+                artist = remote.artist,
+                memo = JsonObject(
+                    (local?.memo ?: remote.memo).filterKeys { it != "booksCount" } +
+                        remote.memo.filterKeys { it == "booksCount" },
+                ),
+            )
+
     override val mangaBehavior = ConnectionMangaBehavior(
         supportsChapterCoverGrid = true,
         providerManagedLibrary = true,
@@ -482,6 +529,9 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
         }
         thumbnail_url = entry.thumbnailUrl?.let { session.api.resourceUrlOrNull(it) }
             ?.let { session.identity.imageUrl(it) }
+        memo = buildJsonObject {
+            entry.chapters.totalCount?.takeIf { it >= 0 }?.let { put("booksCount", it) }
+        }
         initialized = true
     }
     fun toManga(entry: SuwayomiManga, session: Session = session()): Manga {
@@ -490,6 +540,7 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
             id = -entry.id.toLong(), source = id, url = remote.url, title = remote.title,
             author = remote.author, artist = remote.artist, description = remote.description, genre = entry.genre,
             status = remote.status.toLong(), thumbnailUrl = remote.thumbnail_url, initialized = false,
+            memo = remote.memo,
         )
     }
     suspend fun materialize(manga: Manga): Manga = materializeMutex.withLock {
@@ -599,53 +650,112 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
         }
         response
     }
-    override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject) = session().let { session ->
-        val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
-        val manifest = session.catalog.pages(chapterId, true)
-        val version = manifest.version
-        val oldVersion = chapterMemo["suwayomiPagesVersion"]?.jsonPrimitive?.contentOrNull
-        val progress = session.reading.pull(mangaId, chapterId, chapterMemo)
-        val mapping = manifest.syncConflict != null || (oldVersion != null && oldVersion != version)
-        if (mapping) session.reading.pause(chapterId)
-        progress.copy(
-            previousPublicationVersion = oldVersion,
-            publicationVersion = version,
-            updatedChapterMemo = buildJsonObject {
-                progress.updatedChapterMemo.forEach { (key, value) -> put(key, value) }
-                put("suwayomiPagesVersion", version)
-            },
-            requiresConfirmation = progress.requiresConfirmation || mapping,
-            requiresPageMappingConfirmation = progress.requiresPageMappingConfirmation || mapping,
+    override fun observeProgressSyncStatus(
+        chapterUrls: List<String>,
+    ) = observeProgressStatusSessions(epoch, chapterUrls) {
+        val captured = session()
+        captured.checkActive()
+        val targets = ProgressStatusTargets(chapterUrls) { captured.identity.chapter(it).second.toString() }
+        repository.observeOperations(id, captured.identity.account, targets.keys.values.filterNotNull()).map { rows ->
+            targets.project(rows.associate { it.key to it.progressSyncStatus(json) })
+        }.withProgressStatusOwner(
+            id,
+            Injekt.get<koharia.connection.ConnectionIdentityChanges>().pausedIds,
+            captured::checkActive,
         )
     }
+
+    override suspend fun capturePageProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.connection.ConnectionReaderPageProgressAdapter> {
+        val captured = session()
+        captured.checkActive()
+        captured.identity.chapter(chapter.url)
+        val check: suspend () -> Unit = { captured.checkActive() }
+        return koharia.connection.ConnectionProgressSession(
+            koharia.connection.CapturedPageProgress(chapter.url, PageProgress(captured), check),
+            check,
+        )
+    }
+    override suspend fun beginReadingSession(
+        chapterUrl: String,
+    ) = PageProgress(session()).beginReadingSession(chapterUrl)
+    override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject) =
+        PageProgress(session()).pullPageProgress(chapterUrl, chapterMemo)
+    override suspend fun pushPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int) =
+        PageProgress(session()).pushPageProgress(chapterUrl, pageIndex, totalPages)
     override suspend fun recordLocalPageProgress(
         chapterUrl: String,
         pageIndex: Int,
         totalPages: Int,
         readAt: Long,
         initialPage: Boolean,
-    ) = session().let { session ->
-        val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
-        session.reading.record(mangaId, chapterId, pageIndex, totalPages, readAt, initialPage)
-    }
-    override suspend fun pushPageProgress(
-        chapterUrl: String,
-        pageIndex: Int,
-        totalPages: Int,
-    ) = session().let { session ->
-        val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
-        session.reading.readerReady(mangaId, chapterId, pageIndex, totalPages)
-    }
+    ) = PageProgress(session()).recordLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt, initialPage)
     override suspend fun confirmLocalPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) =
-        session().let { session ->
-            val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
-            session.reading.confirm(mangaId, chapterId, pageIndex, totalPages, readAt)
-        }
+        PageProgress(session()).confirmLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt)
     override suspend fun acceptRemotePageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) =
-        session().let { session ->
+        PageProgress(session()).acceptRemotePageProgress(chapterUrl, pageIndex, totalPages, readAt)
+
+    private inner class PageProgress(private val captured: Session) :
+        koharia.connection.ConnectionReaderPageProgressAdapter {
+        private fun session() = captured.also { it.checkActive() }
+        override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject) = session().let { session ->
             val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
-            session.reading.accept(mangaId, chapterId, pageIndex, totalPages, readAt)
+            val manifest = session.catalog.pages(chapterId, true)
+            val version = manifest.version
+            val oldVersion = chapterMemo["suwayomiPagesVersion"]?.jsonPrimitive?.contentOrNull
+            val progress = session.reading.pull(mangaId, chapterId, chapterMemo)
+            val mapping = manifest.syncConflict != null || (oldVersion != null && oldVersion != version)
+            if (mapping) session.reading.pause(chapterId)
+            progress.copy(
+                previousPublicationVersion = oldVersion,
+                publicationVersion = version,
+                updatedChapterMemo = buildJsonObject {
+                    progress.updatedChapterMemo.forEach { (key, value) -> put(key, value) }
+                    put("suwayomiPagesVersion", version)
+                },
+                requiresConfirmation = progress.requiresConfirmation || mapping,
+                requiresPageMappingConfirmation = progress.requiresPageMappingConfirmation || mapping,
+            )
         }
+        override suspend fun recordLocalPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+            initialPage: Boolean,
+        ) = session().let { session ->
+            val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
+            session.reading.record(mangaId, chapterId, pageIndex, totalPages, readAt, initialPage)
+        }
+        override suspend fun pushPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+        ) = session().let { session ->
+            val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
+            session.reading.readerReady(mangaId, chapterId, pageIndex, totalPages)
+        }
+        override suspend fun confirmLocalPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+        ) =
+            session().let { session ->
+                val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
+                session.reading.confirm(mangaId, chapterId, pageIndex, totalPages, readAt)
+            }
+        override suspend fun acceptRemotePageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+        ) =
+            session().let { session ->
+                val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
+                session.reading.accept(mangaId, chapterId, pageIndex, totalPages, readAt)
+            }
+    }
     override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) = session().let { session ->
         val (mangaId, chapterId) = session.identity.chapter(chapterUrl)
         session.reading.markRead(mangaId, chapterId, read)
@@ -687,6 +797,7 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
         }
     }
     override suspend fun syncConnectionHistory() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (ConnectionRestoreState.isRestoring) return
         val session = session()
         for (manga in mangas.getMangaBySourceId(id).filter { it.url.startsWith(session.prefix) }) {

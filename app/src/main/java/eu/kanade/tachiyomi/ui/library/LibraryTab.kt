@@ -8,11 +8,13 @@ import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import cafe.adriel.voyager.core.model.ScreenModelStore
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -20,6 +22,7 @@ import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.source.Source
 import koharia.connection.ConnectionBrowseAdapter
 import koharia.connection.ConnectionBrowseScreen
 import koharia.connection.ConnectionPreferences
@@ -36,6 +39,7 @@ import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.jvm.Transient
+import androidx.compose.runtime.collectAsState as collectFlowAsState
 
 sealed class ConnectionLibraryTab(
     private val libraryScope: LibraryContentScope,
@@ -48,15 +52,23 @@ sealed class ConnectionLibraryTab(
     @Volatile
     private var runtimeBrowseScreen: ConnectionBrowseScreen? = null
 
+    @Transient private var runtimeBrowseSource: Source? = null
+
     private fun browseScreen(
         activeConnectionId: Long = Injekt.get<ConnectionPreferences>().activeConnectionId.get(),
     ): ConnectionBrowseScreen? {
-        if (activeConnectionId == NO_ACTIVE_CONNECTION) return null
-        runtimeBrowseScreen?.takeIf { it.sourceId == activeConnectionId }?.let { return it }
         return synchronized(this) {
+            val source = Injekt.get<SourceManager>().get(activeConnectionId)
+            if (runtimeBrowseSource !== source) {
+                (runtimeBrowseScreen as? cafe.adriel.voyager.core.screen.Screen)?.let(ScreenModelStore::onDispose)
+                runtimeBrowseSource = source
+                runtimeBrowseScreen = (source as? ConnectionBrowseAdapter)?.createBrowseScreen(
+                    scope = libraryScope,
+                    listingQuery = null,
+                    showNavigationUp = false,
+                )
+            }
             runtimeBrowseScreen
-                ?.takeIf { it.sourceId == activeConnectionId }
-                ?: newScreen(activeConnectionId)?.also { runtimeBrowseScreen = it }
         }
     }
 
@@ -91,6 +103,12 @@ sealed class ConnectionLibraryTab(
         val navigator = LocalNavigator.currentOrThrow
         val connectionPreferences = remember { Injekt.get<ConnectionPreferences>() }
         val activeServerId by connectionPreferences.activeConnectionId.collectAsState()
+        val sourceManager = remember { Injekt.get<SourceManager>() }
+        val sources by remember(sourceManager) { sourceManager.catalogueSources }
+            .collectFlowAsState(sourceManager.getCatalogueSources())
+        val activeSource = sources.firstOrNull { it.id == activeServerId }
+        // Preserve navigation state only while the same owning Source is registered.
+        val activeScreen = remember(activeServerId, activeSource) { browseScreen(activeServerId) }
         if (activeServerId == NO_ACTIVE_CONNECTION) {
             Scaffold { contentPadding ->
                 LibraryConnectionSetupPrompt(
@@ -100,9 +118,6 @@ sealed class ConnectionLibraryTab(
             }
             return
         }
-        // Keep the same screen instance while opening details or a reader. Its ScreenModel owns
-        // the selected shelf, filters, search, and paging cache.
-        val activeScreen = remember(activeServerId) { browseScreen(activeServerId) }
         if (activeScreen == null) {
             tachiyomi.presentation.core.screens.EmptyScreen(
                 stringRes = MR.strings.connection_unavailable,
@@ -122,7 +137,7 @@ sealed class ConnectionLibraryTab(
             }
         }
 
-        activeScreen.Content()
+        key(activeSource) { activeScreen.Content() }
     }
 
     suspend fun search(query: String) = browseScreen()?.search(query)
@@ -131,6 +146,8 @@ sealed class ConnectionLibraryTab(
 
     private fun clearRuntimeState() {
         val cachedSourceId = synchronized(this) {
+            (runtimeBrowseScreen as? cafe.adriel.voyager.core.screen.Screen)?.let(ScreenModelStore::onDispose)
+            runtimeBrowseSource = null
             runtimeBrowseScreen?.sourceId.also { runtimeBrowseScreen = null }
         }
         val activeSourceId = Injekt.get<ConnectionPreferences>().activeConnectionId.get()
@@ -141,15 +158,6 @@ sealed class ConnectionLibraryTab(
             (Injekt.get<SourceManager>().get(sourceId) as? ConnectionBrowseAdapter)
                 ?.clearBrowseSession(libraryScope)
         }
-    }
-
-    private fun newScreen(sourceId: Long): ConnectionBrowseScreen? {
-        val source = Injekt.get<SourceManager>().get(sourceId) ?: return null
-        return (source as? ConnectionBrowseAdapter)?.createBrowseScreen(
-            scope = libraryScope,
-            listingQuery = null,
-            showNavigationUp = false,
-        )
     }
 
     companion object {

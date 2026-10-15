@@ -37,6 +37,9 @@ internal fun ConnectionAddressSetting(
         enabled = enabled,
         onPreferenceClick = { showDialog = true },
     )
+    eu.kanade.presentation.more.settings.widget.InfoWidget(
+        stringResource(MR.strings.connection_identity_change_help),
+    )
     if (showDialog) {
         var publicDraft by rememberSaveable { mutableStateOf(publicAddress) }
         var internalDraft by rememberSaveable { mutableStateOf(internalAddress) }

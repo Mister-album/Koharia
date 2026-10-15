@@ -2,12 +2,18 @@ package tachiyomi.domain.chapter.interactor
 
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.chapter.model.ChapterProgressOwner
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
 
 class UpdateChapter(
     private val chapterRepository: ChapterRepository,
 ) {
+
+    suspend fun awaitForReader(
+        updates: List<Pair<ChapterProgressOwner, ChapterUpdate>>,
+        checkCurrent: suspend () -> Unit,
+    ) = chapterRepository.updateForReader(updates, checkCurrent)
 
     suspend fun await(chapterUpdate: ChapterUpdate) {
         try {

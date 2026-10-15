@@ -1,0 +1,132 @@
+package koharia.diagnostics
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
+import eu.kanade.tachiyomi.BuildConfig
+import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.connection.ConnectionConfigMode
+import koharia.connection.ConnectionPreferences
+import koharia.connection.LibraryConnectionProfile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.data.Database
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.io.File
+
+@RunWith(AndroidJUnit4::class)
+class LegacyUpgradeSeedTest {
+    @Test
+    fun seedRelease060OnlyOnFreshIsolatedInstall(): Unit = runBlocking(Dispatchers.IO) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals("app.koharia.dev.einkfixture", context.packageName)
+        assertEquals(12, BuildConfig.VERSION_CODE)
+        assertEquals(21L, Database.Schema.version)
+        val store = Injekt.get<PreferenceStore>()
+        withTimeout(15_000) {
+            while (store.getInt(Preference.appStateKey("last_version_code")).get() != 12) delay(50)
+        }
+        val driver = Injekt.get<SqlDriver>()
+        assertEquals(listOf("0"), driver.strings("SELECT count(*) FROM mangas"))
+        assertTrue(!store.getBoolean("upgrade_fixture_060_seeded").get())
+        val connections = Injekt.get<ConnectionPreferences>()
+        assertTrue(connections.getProfiles().isEmpty())
+        val profiles = listOf("komga", "local-folder", "lanraragi", "smanga").mapIndexed { index, provider ->
+            LibraryConnectionProfile(95060001L + index, provider, "Upgrade 060 $provider")
+        }
+        profiles.forEach { profile ->
+            check(sourcePreferences("source_${profile.id}").all.isEmpty())
+            check(
+                sourcePreferences(
+                    "source_${profile.id}",
+                ).edit().putString("upgrade_owner_marker", profile.providerId).commit(),
+            )
+        }
+        connections.setProfiles(profiles)
+        connections.activeConnectionId.set(profiles.first().id)
+        connections.configMode.set(ConnectionConfigMode.Shared)
+        store.getInt("connection_shared::pref_double_tap_anim_speed").set(610)
+        store.getBoolean("connection_shared::pref_show_page_number_key").set(false)
+        val database = Injekt.get<Database>()
+        database.transaction {
+            driver.execute(
+                null,
+                "INSERT INTO categories(_id,name,sort,flags) VALUES(95,'Upgrade 060 category',1,0)",
+                0,
+            ).await()
+            profiles.forEachIndexed { index, profile ->
+                val manga = 950L + index
+                val chapter = 960L + index
+                driver.execute(
+                    null,
+                    "INSERT INTO mangas(_id,source,url,title,status,favorite,initialized,viewer,chapter_flags,cover_last_modified,date_added,notes) VALUES($manga,${profile.id},'/upgrade-060/$index','Upgrade 060 $index',1,1,1,0,0,0,1700000000000,'Retain note')",
+                    0,
+                ).await()
+                driver.execute(
+                    null,
+                    "INSERT INTO chapters(_id,manga_id,url,name,read,bookmark,last_page_read,chapter_number,date_fetch,date_upload,source_order) VALUES($chapter,$manga,'/upgrade-060/$index/chapter','Chapter',1,1,8,1,1000,900,0)",
+                    0,
+                ).await()
+                driver.execute(null, "INSERT INTO mangas_categories(manga_id,category_id) VALUES($manga,95)", 0).await()
+                driver.execute(
+                    null,
+                    "INSERT INTO history(chapter_id,last_read,time_read) VALUES($chapter,1700000000000,400)",
+                    0,
+                ).await()
+                if (index < 2) {
+                    driver.execute(
+                        null,
+                        "INSERT INTO epub_progress(chapter_id,manga_id,book_url,locator_json,progression,position_index,updated_at) VALUES($chapter,$manga,'/upgrade-060/$index/chapter','{\"href\":\"chapter.xhtml\"}',0.4,8,1700000000000)",
+                        0,
+                    ).await()
+                    driver.execute(
+                        null,
+                        "INSERT INTO epub_bookmark(chapter_id,manga_id,locator_json,note,created_at) VALUES($chapter,$manga,'{\"href\":\"chapter.xhtml\"}','Retain bookmark',1700000000000)",
+                        0,
+                    ).await()
+                    driver.execute(
+                        null,
+                        "INSERT INTO tts_progress(chapter_id,manga_id,sentence_index,updated_at) VALUES($chapter,$manga,5,1700000000000)",
+                        0,
+                    ).await()
+                }
+            }
+            driver.execute(
+                null,
+                "INSERT INTO lanraragi_read_state(connection_id,archive_id,page_index,total_pages,read_at,local_unread,pending,revision,initial_page) VALUES(95060003,'frozen-archive',3,10,1700000000000,0,1,7,0)",
+                0,
+            ).await()
+            driver.execute(
+                null,
+                "INSERT INTO smanga_read_state(connection_id,account_key,chapter_id,manga_id,page_index,total_pages,completed,read_at,revision,pending) VALUES(95060004,'fixture-account',4,3,3,10,0,1700000000000,7,1)",
+                0,
+            ).await()
+            driver.execute(
+                null,
+                "INSERT INTO smanga_history_event(connection_id,account_key,event_id,manga_id,chapter_id,media_id,read_at,status) VALUES(95060004,'fixture-account','fixture-event',3,4,5,1700000000000,0)",
+                0,
+            ).await()
+        }
+        File(context.filesDir, "upgrade-060-retained.txt").writeText("retained-060-to-current")
+        store.getBoolean("upgrade_fixture_060_seeded").set(true)
+        check(androidx.preference.PreferenceManager.getDefaultSharedPreferences(context).edit().commit())
+        assertEquals(listOf("21"), driver.strings("PRAGMA user_version"))
+        assertEquals(listOf("4"), driver.strings("SELECT count(*) FROM mangas"))
+        assertEquals(listOf("1:7"), driver.strings("SELECT pending || ':' || revision FROM lanraragi_read_state"))
+        println("UPGRADE_SEED: schema=21 versionCode=12 owners=4 chapters=4 histories=4 pending=3")
+    }
+
+    private suspend fun SqlDriver.strings(sql: String): List<String> = executeQuery(null, sql, { cursor ->
+        QueryResult.Value(buildList { while (cursor.next().value) add(cursor.getString(0).orEmpty()) })
+    }, 0).await()
+}

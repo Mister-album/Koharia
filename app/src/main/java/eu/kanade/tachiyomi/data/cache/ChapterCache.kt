@@ -16,6 +16,7 @@ import okio.sink
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
+import java.io.Closeable
 import java.io.File
 import java.io.IOException
 
@@ -42,6 +43,26 @@ class ChapterCache(
 
     /** Cache class used for cache management. */
     private val diskCache = openDiskCache(context)
+    private val imageLeaseLock = Any()
+    private val imageLeases = mutableMapOf<String, Int>()
+
+    /** Protects a reader's image from explicit clearing until that reader is recycled. */
+    fun retainImage(sourceId: Long, imageUrl: String): Closeable {
+        val key = imageKey(sourceId, imageUrl)
+        synchronized(imageLeaseLock) {
+            imageLeases[key] = (imageLeases[key] ?: 0) + 1
+        }
+        var closed = false
+        return Closeable {
+            synchronized(imageLeaseLock) {
+                if (!closed) {
+                    closed = true
+                    val remaining = imageLeases.getValue(key) - 1
+                    if (remaining == 0) imageLeases.remove(key) else imageLeases[key] = remaining
+                }
+            }
+        }
+    }
 
     private fun openDiskCache(context: Context): DiskLruCache {
         val directoryProviders = listOf<() -> File>(
@@ -190,16 +211,16 @@ class ChapterCache(
      * @param imageUrl url of image.
      * @return true if in cache otherwise false.
      */
-    fun isImageInCache(imageUrl: String): Boolean {
+    fun isImageInCache(sourceId: Long, imageUrl: String): Boolean {
         return try {
-            diskCache.get(DiskUtil.hashKeyForDisk(imageUrl)).use { it != null }
+            diskCache.get(imageKey(sourceId, imageUrl)).use { it != null }
         } catch (_: IOException) {
             false
         }
     }
 
-    fun inspectImageCache(imageUrl: String): ImageCacheDiagnostics {
-        val key = DiskUtil.hashKeyForDisk(imageUrl)
+    fun inspectImageCache(sourceId: Long, imageUrl: String): ImageCacheDiagnostics {
+        val key = imageKey(sourceId, imageUrl)
         val entryPresent = try {
             diskCache.get(key).use { it != null }
         } catch (_: IOException) {
@@ -221,9 +242,9 @@ class ChapterCache(
      * @param imageUrl url of image.
      * @return path of image.
      */
-    fun getImageFile(imageUrl: String): File {
+    fun getImageFile(sourceId: Long, imageUrl: String): File {
         // Get file from md5 key.
-        val imageName = DiskUtil.hashKeyForDisk(imageUrl) + ".0"
+        val imageName = imageKey(sourceId, imageUrl) + ".0"
         return File(diskCache.directory, imageName)
     }
 
@@ -235,13 +256,13 @@ class ChapterCache(
      * @throws IOException image error.
      */
     @Throws(IOException::class)
-    fun putImageToCache(imageUrl: String, response: Response) {
+    fun putImageToCache(sourceId: Long, imageUrl: String, response: Response) {
         // Initialize editor (edits the values for an entry).
         var editor: DiskLruCache.Editor? = null
 
         try {
             // Get editor from md5 key.
-            val key = DiskUtil.hashKeyForDisk(imageUrl)
+            val key = imageKey(sourceId, imageUrl)
             editor = diskCache.edit(key) ?: return
 
             // Get OutputStream and write image with Okio.
@@ -281,12 +302,17 @@ class ChapterCache(
             // Remove the extension from the file to get the key of the cache
             val key = file.substringBeforeLast(".")
             // Remove file from cache
-            diskCache.remove(key)
+            synchronized(imageLeaseLock) {
+                if (key in imageLeases) false else diskCache.remove(key)
+            }
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) { "Failed to remove file from cache" }
             false
         }
     }
+
+    private fun imageKey(sourceId: Long, imageUrl: String): String =
+        DiskUtil.hashKeyForDisk("image;$sourceId;$imageUrl")
 
     private fun getKey(chapter: Chapter): String {
         val publicationVersion = ConnectionChapterMetadata.publicationVersion(chapter.memo)

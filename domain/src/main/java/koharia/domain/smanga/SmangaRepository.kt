@@ -1,11 +1,15 @@
 package koharia.domain.smanga
 
+import kotlinx.coroutines.flow.Flow
+
 data class SmangaCacheEntry(
     val key: String,
     val payload: String,
     val updatedAt: Long,
     val generation: Long = updatedAt,
 )
+
+data class SmangaCatalogueCacheEntry(val group: String, val key: String, val payload: String, val updatedAt: Long)
 
 data class SmangaReadState(
     val chapterId: Long,
@@ -30,6 +34,18 @@ data class SmangaHistoryEvent(
 )
 
 interface SmangaRepository {
+    fun observeReadStates(
+        connectionId: Long,
+        accountKey: String,
+        chapterIds: Collection<Long>,
+    ): Flow<List<SmangaReadState>>
+    fun observeCacheEntries(
+        connectionId: Long,
+        accountKey: String,
+        groupKey: String,
+        keys: Collection<String>,
+    ): Flow<List<SmangaCacheEntry>>
+    suspend fun cachedCatalogue(connectionId: Long, accountKey: String): List<SmangaCatalogueCacheEntry>
     suspend fun cache(connectionId: Long, accountKey: String, groupKey: String, key: String): SmangaCacheEntry?
     suspend fun cacheGroup(connectionId: Long, accountKey: String, groupKey: String): List<SmangaCacheEntry>
     suspend fun putCache(connectionId: Long, accountKey: String, groupKey: String, entry: SmangaCacheEntry)

@@ -24,6 +24,7 @@ class HttpPageLoaderPriorityTest {
     @Test
     fun `cache miss does not block cached spread page while network is deferred`() = runBlocking {
         val source = mockk<HttpSource>(moreInterfaces = arrayOf(ConnectionPageAdapter::class))
+        every { source.id } returns 701L
         every { (source as ConnectionPageAdapter).pageLoadConcurrency } returns 1
         every { (source as ConnectionPageAdapter).pagePrefetchOnActivate } returns true
         every { (source as ConnectionPageAdapter).pagePrefetchSize } returns 2
@@ -31,8 +32,8 @@ class HttpPageLoaderPriorityTest {
         val chapter = ReaderChapter(Chapter.create().copy(id = 13, mangaId = 4))
         val pages = List(4) { ReaderPage(it, imageUrl = "http://localhost/$it").also { it.chapter = chapter } }
         chapter.state = ReaderChapter.State.Loaded(pages)
-        every { cache.isImageInCache("http://localhost/1") } returns true
-        every { cache.inspectImageCache("http://localhost/1") } returns mockk(relaxed = true) {
+        every { cache.isImageInCache(701L, "http://localhost/1") } returns true
+        every { cache.inspectImageCache(701L, "http://localhost/1") } returns mockk(relaxed = true) {
             every { entryPresent } returns true
         }
         val requested = CompletableDeferred<Unit>()
@@ -62,6 +63,7 @@ class HttpPageLoaderPriorityTest {
     @Test
     fun `cached preview suppresses prefetch until network is released`() = runBlocking {
         val source = mockk<HttpSource>(moreInterfaces = arrayOf(ConnectionPageAdapter::class))
+        every { source.id } returns 701L
         every { (source as ConnectionPageAdapter).pageLoadConcurrency } returns 1
         every { (source as ConnectionPageAdapter).pagePrefetchOnActivate } returns true
         every { (source as ConnectionPageAdapter).pagePrefetchSize } returns 1
@@ -69,8 +71,8 @@ class HttpPageLoaderPriorityTest {
         val chapter = ReaderChapter(Chapter.create().copy(id = 14, mangaId = 4))
         val pages = List(3) { ReaderPage(it, imageUrl = "http://localhost/$it").also { it.chapter = chapter } }
         chapter.state = ReaderChapter.State.Loaded(pages)
-        every { cache.isImageInCache("http://localhost/0") } returns true
-        every { cache.inspectImageCache("http://localhost/0") } returns mockk(relaxed = true) {
+        every { cache.isImageInCache(701L, "http://localhost/0") } returns true
+        every { cache.inspectImageCache(701L, "http://localhost/0") } returns mockk(relaxed = true) {
             every { entryPresent } returns true
         }
         val requested = CompletableDeferred<Unit>()
@@ -97,6 +99,7 @@ class HttpPageLoaderPriorityTest {
     @Test
     fun `uncached preview with unknown image URL is skipped after selecting another page`() = runBlocking {
         val source = mockk<HttpSource>(moreInterfaces = arrayOf(ConnectionPageAdapter::class))
+        every { source.id } returns 701L
         every { (source as ConnectionPageAdapter).pageLoadConcurrency } returns 1
         every { (source as ConnectionPageAdapter).pagePrefetchOnActivate } returns false
         every { (source as ConnectionPageAdapter).pagePrefetchSize } returns 1
@@ -129,6 +132,7 @@ class HttpPageLoaderPriorityTest {
     @Test
     fun `provider can retain prefetch on activation`() = runBlocking {
         val source = mockk<HttpSource>(moreInterfaces = arrayOf(ConnectionPageAdapter::class))
+        every { source.id } returns 701L
         every { (source as ConnectionPageAdapter).pageLoadConcurrency } returns 2
         every { (source as ConnectionPageAdapter).pagePrefetchOnActivate } returns true
         every { (source as ConnectionPageAdapter).pagePrefetchSize } returns null
@@ -156,6 +160,7 @@ class HttpPageLoaderPriorityTest {
     @Test
     fun `adjacent prefetch waits for visible page and yields to a new spread`() = runBlocking {
         val source = mockk<HttpSource>(moreInterfaces = arrayOf(ConnectionPageAdapter::class))
+        every { source.id } returns 701L
         every { (source as ConnectionPageAdapter).pageLoadConcurrency } returns 2
         every { (source as ConnectionPageAdapter).pagePrefetchOnActivate } returns false
         every { (source as ConnectionPageAdapter).pagePrefetchSize } returns 2

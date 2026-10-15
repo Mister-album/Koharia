@@ -130,6 +130,7 @@ fun ConnectionPagedShelf(
     onRefresh: () -> Unit,
     readingUnitCount: ((Manga) -> Long?)? = null,
     readProgress: ((Manga) -> MangaReadProgress?)? = null,
+    downloadedSortAvailable: Boolean = false,
 ) {
     val navigator = LocalNavigator.currentOrThrow
     val snackbar = remember { SnackbarHostState() }
@@ -202,7 +203,7 @@ fun ConnectionPagedShelf(
                 )
                 if (state.query.isNotBlank()) {
                     ConnectionSearchResults(
-                        options = if (state.downloadedOnly) emptyList() else sortOptions,
+                        options = if (state.downloadedOnly && !downloadedSortAvailable) emptyList() else sortOptions,
                         selected = state.order.substringBefore(' '),
                         ascending = !state.order.endsWith("desc"),
                         onSelect = onSelectSort,

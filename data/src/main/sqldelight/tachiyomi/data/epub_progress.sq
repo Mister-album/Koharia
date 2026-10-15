@@ -31,6 +31,9 @@ last_synced_at
 FROM epub_progress
 WHERE chapter_id = :chapterId;
 
+getChapterMangaId:
+SELECT manga_id FROM chapters WHERE _id = :chapterId;
+
 getByChapterIds:
 SELECT
 chapter_id,

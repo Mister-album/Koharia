@@ -8,5 +8,5 @@ android {
 
 dependencies {
     implementation(libs.androidx.annotation)
-    api(libs.image.decoder)
+    api(projects.core.imageDecoder)
 }

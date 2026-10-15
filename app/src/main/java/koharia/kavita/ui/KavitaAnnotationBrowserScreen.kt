@@ -24,6 +24,7 @@ import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
+import koharia.connection.ChapterFetchOrigin
 import koharia.epub.EpubReaderActivity
 import koharia.epub.EpubReaderLauncher
 import koharia.kavita.KavitaAnnotation
@@ -120,7 +121,7 @@ class KavitaAnnotationBrowserScreen(private val sourceId: Long) : Screen() {
         suspend fun open(annotation: KavitaAnnotation) {
             val chapter = withContext(Dispatchers.IO) {
                 val manga = source.materialize(source.toManga(session.catalog.series(annotation.seriesId)))
-                Injekt.get<SyncChaptersWithSource>().await(source.getChapterList(manga.toSManga()), manga, source)
+                Injekt.get<SyncChaptersWithSource>().fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
                 Injekt.get<ChapterRepository>().getChapterByMangaId(manga.id).first {
                     session.identity.chapter(it.url).chapterId == annotation.chapterId
                 }

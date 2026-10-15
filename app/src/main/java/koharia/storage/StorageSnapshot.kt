@@ -38,11 +38,7 @@ class StorageSnapshot(private val backend: LibraryStorageBackend, private val st
         if (normalized.isEmpty()) return store.get<StorageDirectorySnapshot>("directories", "")?.directory
         val own = store.get<StorageDirectorySnapshot>("directories", normalized)
         val parent = store.get<StorageDirectorySnapshot>("directories", StoragePath.parent(normalized))
-        return if (own != null && (parent == null || own.generation > parent.generation)) {
-            own.directory
-        } else {
-            parent?.children?.firstOrNull { it.path == normalized }
-        }
+        return selectCachedStorageEntry(normalized, own, parent)
     }
 
     suspend fun scan(
@@ -79,4 +75,14 @@ class StorageSnapshot(private val backend: LibraryStorageBackend, private val st
             store.list("scans").firstOrNull { it.key == root }?.let { store.remove("scans", root, it.revision) }
         }
     }
+}
+
+internal fun selectCachedStorageEntry(
+    path: String,
+    own: StorageDirectorySnapshot?,
+    parent: StorageDirectorySnapshot?,
+): StorageEntry? = if (path.isEmpty() || (own != null && (parent == null || own.generation > parent.generation))) {
+    own?.directory
+} else {
+    parent?.children?.firstOrNull { it.path == path }
 }

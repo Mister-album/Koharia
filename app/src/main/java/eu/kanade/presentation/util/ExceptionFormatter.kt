@@ -3,6 +3,9 @@ package eu.kanade.presentation.util
 import android.content.Context
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.util.system.isOnline
+import koharia.connection.ConnectionReadStatusException
+import koharia.connection.hasPausedConnectionWrites
+import koharia.connection.ui.messageResource
 import koharia.core.archive.ArchiveReadException
 import koharia.core.archive.ArchiveSpaceException
 import koharia.lanraragi.LanraragiException
@@ -19,7 +22,9 @@ import java.net.UnknownHostException
 context(context: Context)
 val Throwable.formattedMessage: String
     get() {
+        if (hasPausedConnectionWrites()) return context.stringResource(MR.strings.connection_writes_paused)
         when (this) {
+            is ConnectionReadStatusException -> status.messageResource()?.let { return context.stringResource(it) }
             is ArchiveSpaceException -> return context.stringResource(MR.strings.archive_space_error)
             is ArchiveReadException -> return context.stringResource(MR.strings.archive_read_error)
             is LanraragiException -> return context.lanraragiError(this)

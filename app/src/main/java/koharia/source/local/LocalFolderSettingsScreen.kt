@@ -61,6 +61,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.connection.ConnectionLibraryRefreshAdapter
 import koharia.connection.ConnectionProfileManager
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -234,6 +235,25 @@ class LocalFolderSettingsScreen(
                 discard()
             }
         }
+        suspend fun refreshReplacement(id: Long) {
+            val expectedProfile = profileManager.profiles().firstOrNull { it.id == id }
+            val sources = kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                Injekt.get<SourceManager>().catalogueSources.first { sources ->
+                    sources.any { source ->
+                        source.id == id && expectedProfile != null &&
+                            (source as? koharia.connection.ConnectionSource)?.connectionProfile == expectedProfile
+                    }
+                }
+            }
+            val source = sources?.firstOrNull { it.id == id } as? LocalFolderSource
+            if (source ==
+                null
+            ) {
+                context.toast(MR.strings.local_library_initial_scan_failed)
+            } else {
+                source.startLibraryRefresh()
+            }
+        }
         fun save() {
             if (isSaving || !defaultModesChosen || connectionName.isBlank() ||
                 !validShelves || (remoteMode && !effectiveNetwork.valid)
@@ -244,9 +264,9 @@ class LocalFolderSettingsScreen(
             scope.launch {
                 try {
                     val profile = requireNotNull(profileManager.profiles().firstOrNull { it.id == sourceId })
-                    val scanAdapter = Injekt.get<SourceManager>().get(sourceId) as? ConnectionLibraryRefreshAdapter
-                        ?: LocalFolderSource(context, sourceId, connectionName.trim(), profile)
+                    val reconnect = profileManager.requiresIdentityReplacement(sourceId)
                     if (remoteMode) {
+                        var savedId = sourceId
                         val validate = koharia.connection.ConnectionValidation.required(
                             isNew,
                             effectiveNetwork != NetworkStorageDraft(
@@ -254,7 +274,7 @@ class LocalFolderSettingsScreen(
                                 networkPreferences.username,
                                 networkPreferences.password,
                             ) || config != initial || assignments != preferences.getBookshelfAssignments(),
-                            initialNetwork.needsValidation,
+                            initialNetwork.needsValidation || reconnect,
                         )
                         if (validate) {
                             val saved = tachiyomi.core.common.util.lang.withIOContext {
@@ -266,12 +286,20 @@ class LocalFolderSettingsScreen(
                                     config,
                                     assignments,
                                     isNew,
+                                    connectionName = connectionName.trim(),
+                                    onSaved = { savedId = it },
                                 )
                             }
                             config = saved
                         }
-                        profileManager.update(profile.copy(name = connectionName.trim()))
-                        if (validate) (scanAdapter as? LocalFolderSource)?.startLibraryRefresh()
+                        if (savedId == sourceId) {
+                            profileManager.update(profile.copy(name = connectionName.trim()))
+                            if (validate) {
+                                refreshReplacement(savedId)
+                            }
+                        } else {
+                            refreshReplacement(savedId)
+                        }
                         if (completeOnboardingOnSave) {
                             basePreferences.shownOnboardingFlow.set(true)
                             navigator.popUntilRoot()
@@ -292,15 +320,55 @@ class LocalFolderSettingsScreen(
                         }
                         initialDirectoriesCreated = true
                     }
-                    profileManager.update(profile.copy(name = connectionName.trim()))
                     val enabledConfig = if (config.setupCompleted) config else config.enabledLibraryConfiguration()
+                    if (reconnect) {
+                        tachiyomi.core.common.util.lang.withIOContext {
+                            require(enabledConfig.roots.isNotEmpty())
+                            enabledConfig.roots.forEach { root ->
+                                val directory = preferences.resolveRoot(context, root)
+                                check(directory?.isDirectory == true && directory.canRead())
+                            }
+                        }
+                    }
+                    if (!isNew && (reconnect || enabledConfig.replacesIdentityOf(initial))) {
+                        val replacement = profileManager.replaceIdentity(sourceId, connectionName.trim()) { id ->
+                            LocalLibraryPreferences(id, json).saveLibraryDraft(
+                                enabledConfig.copy(
+                                    libraryId = UUID.randomUUID().toString(),
+                                    detachedRoots = emptyList(),
+                                    setupCompleted = true,
+                                ),
+                                emptyMap(),
+                            )
+                        }
+                        refreshReplacement(replacement.id)
+                        navigator.pop()
+                        return@launch
+                    }
+                    profileManager.update(profile.copy(name = connectionName.trim()))
                     isInitialScanning = !preferences.getConfig().setupCompleted
                     val scanResult = tachiyomi.core.common.util.lang.withIOContext {
                         saveLocalLibraryConfiguration(
                             preferences,
                             enabledConfig.copy(libraryId = config.libraryId.ifBlank { UUID.randomUUID().toString() }),
                             assignments.filterValues { shelfId -> enabledConfig.bookshelf(shelfId) != null },
-                            scan = { scanAdapter.refreshLibrary() },
+                            persist = {
+                                profileManager.commitConfiguration(sourceId) { draft ->
+                                    LocalLibraryPreferences(sourceId, json, draft).saveLibraryDraft(
+                                        enabledConfig.copy(
+                                            libraryId = config.libraryId.ifBlank { UUID.randomUUID().toString() },
+                                            setupCompleted = true,
+                                        ),
+                                        assignments.filterValues { enabledConfig.bookshelf(it) != null },
+                                    )
+                                }
+                            },
+                            scan = {
+                                checkNotNull(
+                                    Injekt.get<SourceManager>().get(sourceId) as? ConnectionLibraryRefreshAdapter,
+                                )
+                                    .refreshLibrary()
+                            },
                         )
                     }
                     if (scanResult?.isFailure == true) context.toast(MR.strings.local_library_initial_scan_failed)
@@ -415,7 +483,7 @@ class LocalFolderSettingsScreen(
                         onClick = ::save,
                         enabled = !isSaving && connectionName.isNotBlank() && validShelves,
                         modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp),
-                    ) { Text(stringResource(MR.strings.action_save)) }
+                    ) { Text(koharia.connection.ui.connectionSaveLabel(sourceId)) }
                 }
             },
         ) { padding ->
@@ -429,6 +497,10 @@ class LocalFolderSettingsScreen(
                 ) {
                     item { EInkLinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
                 }
+                if (!isNew && !remoteMode) {
+                    item { SetupNotice(stringResource(MR.strings.connection_identity_change_help)) }
+                }
+                item { koharia.connection.ui.ConnectionReconnectionNotice(sourceId) }
                 if (isInitialScanning) {
                     item {
                         SetupNotice(stringResource(MR.strings.local_library_initial_scanning))

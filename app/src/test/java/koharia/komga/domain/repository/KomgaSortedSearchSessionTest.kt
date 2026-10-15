@@ -21,6 +21,33 @@ import java.time.Instant
 
 class KomgaSortedSearchSessionTest {
     @Test
+    fun `dropped merged pages replay their cursors using persistent raw pages`() = runBlocking {
+        val stored = mutableMapOf<Pair<SearchType, Int>, MangasPage>()
+        var requests = 0
+        var online = true
+        val session = KomgaSortedSearchSession(2, true) { type, page ->
+            stored[type to page] ?: run {
+                check(online) { "Unexpected refetch" }
+                requests++
+                MangasPage(
+                    (1..25).map {
+                        val id = (page - 1) * 25 + it
+                        manga(type, id, id * 2L + if (type == SearchType.BOOKS) 0 else 1)
+                    },
+                    page < 20,
+                ).also { stored[type to page] = it }
+            }
+        }
+        val forward = (1..40).associateWith { session.load(it).mangas.map { manga -> manga.url } }
+        assertEquals(1000, forward.values.flatten().toSet().size)
+        val before = requests
+        online = false
+        for (page in 40 downTo 1) assertEquals(forward[page], session.load(page).mangas.map { it.url })
+        for (page in listOf(20, 5, 30, 2, 40)) assertEquals(forward[page], session.load(page).mangas.map { it.url })
+        assertEquals(before, requests)
+    }
+
+    @Test
     fun `books and series heads load concurrently`() = runBlocking {
         val books = CompletableDeferred<Unit>()
         val series = CompletableDeferred<Unit>()

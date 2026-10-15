@@ -11,6 +11,9 @@ import tachiyomi.domain.track.model.Track
  */
 interface EnhancedTracker {
 
+    /** The source synchronizes exact books/reading units; cumulative chapter counts must not rewrite them. */
+    val usesSourceReadingProgress: Boolean get() = false
+
     /**
      * This tracker will only work with the sources that are accepted by this filter function.
      */
@@ -40,3 +43,6 @@ interface EnhancedTracker {
      */
     fun migrateTrack(track: Track, manga: Manga, newSource: Source): Track?
 }
+
+internal fun Tracker.usesAutomaticChapterCounts(): Boolean =
+    this !is EnhancedTracker || !usesSourceReadingProgress

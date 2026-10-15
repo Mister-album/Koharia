@@ -12,6 +12,7 @@ import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.ui.reader.loader.LocalPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.LibraryConnectionProfile
 import koharia.core.archive.ArchiveReader
 import koharia.core.archive.archiveReader
@@ -197,7 +198,7 @@ class LargeLocalArchiveDeviceTest {
             source.refreshLibrary().getOrThrow()
             record("scanMs=${SystemClock.elapsedRealtime() - start}")
             val manga = mangas.getMangaBySourceId(sourceId).single()
-            sync.await(source.getChapterList(manga.toSManga()), manga, source, manualFetch = false)
+            sync.fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
             val chapter = chapters.getChapterByMangaId(manga.id).single()
             val loader = LocalPageLoader(ReaderChapter(chapter), source, source)
             try {

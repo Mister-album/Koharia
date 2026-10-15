@@ -5,12 +5,14 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import koharia.domain.manga.model.toDomainManga
+import kotlinx.coroutines.CancellationException
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.repository.SourcePagingSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.ConcurrentHashMap
 
 class UnavailableSourcePagingSource(private val sourceId: Long) : SourcePagingSource() {
     override fun getRefreshKey(state: PagingState<Long, Manga>): Long? = null
@@ -47,7 +49,8 @@ abstract class BaseSourcePagingSource(
     private val networkToLocalManga: NetworkToLocalManga = Injekt.get(),
 ) : SourcePagingSource() {
 
-    private val seenManga = hashSetOf<String>()
+    // Keep identity metadata, not page payloads. Replaying the owning page must restore its entries.
+    private val firstPageByUrl = ConcurrentHashMap<String, Long>()
 
     abstract suspend fun requestNextPage(currentPage: Int): MangasPage
 
@@ -63,14 +66,17 @@ abstract class BaseSourcePagingSource(
 
             val manga = mangasPage.mangas
                 .map { it.toDomainManga(source.id) }
-                .filter { seenManga.add(it.url) }
+                .distinctBy { it.url }
+                .filter { firstPageByUrl.putIfAbsent(it.url, page).let { first -> first == null || first == page } }
                 .let { networkToLocalManga(it) }
 
             LoadResult.Page(
                 data = manga,
-                prevKey = null,
+                prevKey = (page - 1).takeIf { page > 1 },
                 nextKey = if (mangasPage.hasNextPage) page + 1 else null,
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             LoadResult.Error(e)
         }
@@ -79,7 +85,7 @@ abstract class BaseSourcePagingSource(
     override fun getRefreshKey(state: PagingState<Long, Manga>): Long? {
         return state.anchorPosition?.let { anchorPosition ->
             val anchorPage = state.closestPageToPosition(anchorPosition)
-            anchorPage?.prevKey ?: anchorPage?.nextKey
+            anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)
         }
     }
 }

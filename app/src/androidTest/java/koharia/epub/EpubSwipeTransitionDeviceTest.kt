@@ -3,6 +3,7 @@ package koharia.epub
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -37,8 +38,7 @@ class EpubSwipeTransitionDeviceTest {
             preferences.pageTransitionEffect.set(effect.value)
             for (forward in listOf(true, false)) {
                 val before = location(fragment)
-                scenario.onActivity { swipe(fragment.requireView(), forward, false) }
-                assertAnimation(scenario, fragment, effect)
+                assertAnimation(scenario, fragment, effect) { swipe(fragment.requireView(), forward, false) }
                 await(scenario, "Exactly one $effect page turn") {
                     val after = location(fragment)
                     after.first == before.first && after.second == before.second + (if (forward) 1 else -1) &&
@@ -57,8 +57,7 @@ class EpubSwipeTransitionDeviceTest {
         for (effect in listOf(PageTransitionEffect.CURL, PageTransitionEffect.NONE)) {
             preferences.pageTransitionEffect.set(effect.value)
             val before = location(fragment)
-            scenario.onActivity { swipe(fragment.requireView(), true, true) }
-            assertAnimation(scenario, fragment, effect)
+            assertAnimation(scenario, fragment, effect) { swipe(fragment.requireView(), true, true) }
             await(scenario, "RTL forward $effect") {
                 location(fragment).second == before.second + 1 &&
                     (field(fragment, "pageTransitionOverlay") as View).visibility == View.GONE
@@ -85,14 +84,12 @@ class EpubSwipeTransitionDeviceTest {
         }
         val before = location(fragment)
         preferences.pageTransitionEffect.set(PageTransitionEffect.CURL.value)
-        scenario.onActivity { swipe(fragment.requireView(), true, false) }
-        assertAnimation(scenario, fragment, PageTransitionEffect.CURL)
+        assertAnimation(scenario, fragment, PageTransitionEffect.CURL) { swipe(fragment.requireView(), true, false) }
         await(scenario, "Next resource") {
             location(fragment).first != before.first && location(fragment).second == 0 &&
                 (field(fragment, "pageTransitionOverlay") as View).visibility == View.GONE
         }
-        scenario.onActivity { swipe(fragment.requireView(), false, false) }
-        assertAnimation(scenario, fragment, PageTransitionEffect.CURL)
+        assertAnimation(scenario, fragment, PageTransitionEffect.CURL) { swipe(fragment.requireView(), false, false) }
         await(scenario, "Previous resource") {
             location(fragment) == before && (field(fragment, "pageTransitionOverlay") as View).visibility == View.GONE
         }
@@ -102,30 +99,58 @@ class EpubSwipeTransitionDeviceTest {
         scenario: ActivityScenario<EpubTransitionFixtureActivity>,
         fragment: EpubReaderFragment,
         effect: PageTransitionEffect,
+        gesture: () -> Unit,
     ) {
         if (effect == PageTransitionEffect.NONE) {
             scenario.onActivity {
+                gesture()
                 assertEquals(View.GONE, (field(fragment, "pageTransitionOverlay") as View).visibility)
             }
             return
         }
-        await(scenario, "Visible $effect animation") {
+        var matched = false
+        var failure: Throwable? = null
+        var frames = 0
+        var lastState = "No frame drawn"
+        val observer = ViewTreeObserver.OnDrawListener {
+            if (matched || failure != null) return@OnDrawListener
             val overlay = field(fragment, "pageTransitionOverlay") as EpubPageTransitionOverlayView
             val controller = field(fragment, "pageTransitionController")!!
-            val active = field(controller, "active") ?: return@await false
-            if (overlay.visibility != View.VISIBLE || overlay.progress !in 0.05f..0.95f) return@await false
-            assertEquals(effect, field(active, "effect"))
-            assertEquals(PageTurnCause.GESTURE, (field(active, "origin") as PageTurnOrigin).cause)
-            val content = field(controller, "content") as View
-            when (effect) {
-                PageTransitionEffect.SLIDE -> abs(content.translationX) > 1f && abs(overlay.translationX) > 1f
-                PageTransitionEffect.COVER -> abs(content.translationX) > 1f && overlay.translationX == 0f
-                PageTransitionEffect.CURL -> field(overlay, "effect") == PageTransitionEffect.CURL
-                PageTransitionEffect.VERTICAL -> abs(content.translationY) > 1f && abs(overlay.translationY) > 1f
-                PageTransitionEffect.FADE -> overlay.alpha < 1f
-                PageTransitionEffect.DEPTH -> overlay.scaleX < 1f
-                PageTransitionEffect.NONE -> false
+            val active = field(controller, "active")
+            frames++
+            lastState = "frames=$frames page=${location(fragment).second} active=${active != null} " +
+                "visibility=${overlay.visibility} progress=${overlay.progress}"
+            if (active == null || overlay.visibility != View.VISIBLE || overlay.progress !in 0.05f..0.95f) {
+                return@OnDrawListener
             }
+            runCatching {
+                assertEquals(effect, field(active, "effect"))
+                assertEquals(PageTurnCause.GESTURE, (field(active, "origin") as PageTurnOrigin).cause)
+                val content = field(controller, "content") as View
+                matched = when (effect) {
+                    PageTransitionEffect.SLIDE -> abs(content.translationX) > 1f && abs(overlay.translationX) > 1f
+                    PageTransitionEffect.COVER -> abs(content.translationX) > 1f && overlay.translationX == 0f
+                    PageTransitionEffect.CURL -> field(overlay, "effect") == PageTransitionEffect.CURL
+                    PageTransitionEffect.VERTICAL -> abs(content.translationY) > 1f && abs(overlay.translationY) > 1f
+                    PageTransitionEffect.FADE -> overlay.alpha < 1f
+                    PageTransitionEffect.DEPTH -> overlay.scaleX < 1f
+                    PageTransitionEffect.NONE -> false
+                }
+            }.onFailure { failure = it }
+        }
+        try {
+            scenario.onActivity {
+                fragment.requireView().viewTreeObserver.addOnDrawListener(observer)
+                gesture()
+            }
+            await(scenario, "Visible $effect animation") {
+                failure?.let { throw it }
+                matched
+            }
+        } catch (error: Exception) {
+            throw AssertionError("$effect animation not observed: $lastState", error)
+        } finally {
+            scenario.onActivity { fragment.view?.viewTreeObserver?.removeOnDrawListener(observer) }
         }
     }
 
@@ -222,7 +247,7 @@ class EpubSwipeTransitionDeviceTest {
             ActivityScenario.launch(EpubTransitionFixtureActivity::class.java).use { scenario ->
                 lateinit var fragment: EpubReaderFragment
                 scenario.onActivity { activity ->
-                    fragment = EpubReaderFragment.newInstance(chapterId, -1)
+                    fragment = EpubReaderFragment.newInstance(chapterId, -1, 0)
                     activity.supportFragmentManager.beginTransaction().replace(
                         android.R.id.content,
                         fragment,

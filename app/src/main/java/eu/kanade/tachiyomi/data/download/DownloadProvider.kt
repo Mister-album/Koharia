@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
+import androidx.core.os.trace
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.util.lang.Hash.md5
@@ -22,6 +23,7 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * This class is used to provide the directories where the downloads should be saved.
@@ -36,7 +38,10 @@ class DownloadProvider(
     private val connectionPreferences: ConnectionPreferences = Injekt.get(),
     private val connectionRegistry: ConnectionRegistry = Injekt.get(),
 ) {
-    private val sourceDirsCache = mutableMapOf<String, CacheEntry<List<UniFile>>>()
+    private val sourceDirsCache = ConcurrentHashMap<String, CacheEntry<List<UniFile>>>()
+
+    // Accessed under sourceDirsCache's migration lock. One SAF listing serves all source aliases.
+    private var downloadsListing: Pair<String, CacheEntry<Map<String, UniFile>>>? = null
 
     private val disallowNonAsciiFilenames: Boolean
         get() = libraryPreferences.disallowNonAsciiFilenames.get()
@@ -198,15 +203,17 @@ class DownloadProvider(
      */
     fun getSourceDirName(source: Source): String {
         return storageAdapter(source)?.downloadDirectoryName()
-            ?: DiskUtil.buildValidFilename(
-                source.toString(),
-                disallowNonAscii = disallowNonAsciiFilenames,
-            )
+            ?: fallbackSourceDirName(source)
     }
 
     fun getSourceDirNames(source: Source): List<String> {
-        return storageAdapter(source)?.downloadDirectoryNames() ?: listOf(getSourceDirName(source))
+        return storageAdapter(source)?.downloadDirectoryNames() ?: listOf(fallbackSourceDirName(source))
     }
+
+    private fun fallbackSourceDirName(source: Source) = DiskUtil.buildValidFilename(
+        source.toString(),
+        disallowNonAscii = disallowNonAsciiFilenames,
+    )
 
     fun usesSharedDownloadStorage(source: Source): Boolean {
         return storageAdapter(source)?.usesSharedDownloadStorage == true
@@ -358,50 +365,78 @@ class DownloadProvider(
     }
 
     internal fun findSourceDirs(source: Source): List<UniFile> {
-        val downloadsDir = downloadsDir ?: return emptyList()
-        val cacheKey = buildSourceDirsCacheKey(downloadsDir, source)
+        val downloadsDir = downloadsDirForRead() ?: return emptyList()
+        return findSourceDirs(downloadsDir, source, storageAdapter(source))
+    }
+
+    private fun downloadsDirForRead() = trace("Koharia.downloadRoot") { storageManager.getDownloadsDirectoryForRead() }
+
+    private fun findSourceDirs(
+        downloadsDir: UniFile,
+        source: Source,
+        adapter: ConnectionDownloadStorageAdapter?,
+    ): List<UniFile> {
+        val names = adapter?.downloadDirectoryNames() ?: listOf(fallbackSourceDirName(source))
+        val cacheKey = buildSourceDirsCacheKey(downloadsDir, names)
+        sourceDirsCache[cacheKey]?.takeUnless { it.isExpired() }?.let { return it.value }
+        // Keep discovery/migration serialized: different connections can share legacy aliases.
         return synchronized(sourceDirsCache) {
             sourceDirsCache[cacheKey]
                 ?.takeUnless { it.isExpired() }
                 ?.value
-                ?: findExistingSourceDirs(downloadsDir, source)
+                ?: trace("Koharia.downloadDirectoryDiscovery") { findExistingSourceDirs(downloadsDir, names, adapter) }
                     .also { dirs ->
-                        sourceDirsCache[cacheKey] = CacheEntry(dirs)
+                        // A per-source result must not extend the lifetime of its shared snapshot.
+                        val listedAt = downloadsListing
+                            ?.takeIf { it.first == downloadsDir.uri.toString() }
+                            ?.second?.cachedAt
+                        sourceDirsCache[cacheKey] = CacheEntry(dirs, listedAt ?: System.currentTimeMillis())
                     }
         }
     }
 
     internal fun findOwnedSourceDirs(source: Source): List<UniFile> {
-        val ownedNames = storageAdapter(source)?.ownedDownloadDirectoryNames()
-            ?: setOf(getSourceDirName(source))
-        return findSourceDirs(source).filter { it.name in ownedNames }
+        val downloadsDir = downloadsDirForRead() ?: return emptyList()
+        val adapter = storageAdapter(source)
+        val ownedNames = adapter?.ownedDownloadDirectoryNames() ?: setOf(fallbackSourceDirName(source))
+        return findSourceDirs(downloadsDir, source, adapter).filter { it.name in ownedNames }
     }
 
-    private fun findExistingSourceDirs(downloadsDir: UniFile, source: Source): List<UniFile> {
-        val names = getSourceDirNames(source)
+    private fun findExistingSourceDirs(
+        downloadsDir: UniFile,
+        names: List<String>,
+        adapter: ConnectionDownloadStorageAdapter?,
+    ): List<UniFile> {
         val primaryName = names.first()
-        val primaryDir = downloadsDir.findFile(primaryName)
+        // Native file lookups are cheap and preserve discovery of externally added aliases.
+        val directories = if (downloadsDir.uri.scheme == "file") {
+            names.associateWith(downloadsDir::findFile)
+        } else {
+            val listing = listDownloadDirectories(downloadsDir)
+            names.associateWith(listing::get)
+        }
         if (
-            primaryDir == null &&
-            storageAdapter(source)?.usesSharedDownloadStorage == false
+            directories[primaryName] == null &&
+            adapter?.usesSharedDownloadStorage == false
         ) {
+            val ownedNames = adapter.ownedDownloadDirectoryNames()
             val legacyDir = names.drop(1)
-                .mapNotNull(downloadsDir::findFile)
+                .filter { it in ownedNames }
+                .mapNotNull(directories::get)
                 .distinctBy { it.uri.toString() }
                 .singleOrNull()
             val legacyName = legacyDir?.name
             if (legacyDir != null && legacyDir.renameTo(primaryName)) {
-                downloadsDir.findFile(primaryName)?.let { migratedDir ->
-                    logcat(LogPriority.INFO) {
-                        "Migrated legacy Komga server directory from $legacyName to $primaryName"
-                    }
-                    return listOf(migratedDir)
+                invalidateSourceDirCache()
+                logcat(LogPriority.INFO) {
+                    "Migrated legacy Komga server directory from $legacyName to $primaryName"
                 }
+                return names.mapNotNull(downloadsDir::findFile).distinctBy { it.uri.toString() }
             }
         }
 
-        return names
-            .mapNotNull(downloadsDir::findFile)
+        return directories.values
+            .filterNotNull()
             .distinctBy { it.uri.toString() }
     }
 
@@ -416,6 +451,7 @@ class DownloadProvider(
 
         if (legacyDir != null) {
             if (legacyDir.name != sourceDirName && legacyDir.renameTo(sourceDirName)) {
+                invalidateSourceDirCache()
                 downloadsDir.findFile(sourceDirName)?.let { migratedDir ->
                     logcat(LogPriority.INFO) {
                         "Migrated legacy Komga download directory from ${legacyDir.name} to $sourceDirName"
@@ -538,13 +574,29 @@ class DownloadProvider(
         return connectionRegistry.createSource(detachedProfile) as? ConnectionDownloadStorageAdapter
     }
 
-    private fun buildSourceDirsCacheKey(downloadsDir: UniFile, source: Source): String {
-        return "${downloadsDir.uri}|${getSourceDirNames(source).joinToString(separator = "|")}"
+    private fun buildSourceDirsCacheKey(downloadsDir: UniFile, names: List<String>): String {
+        return "${downloadsDir.uri}|${names.joinToString(separator = "|")}"
+    }
+
+    private fun listDownloadDirectories(downloadsDir: UniFile): Map<String, UniFile> {
+        val root = downloadsDir.uri.toString()
+        downloadsListing?.takeIf { it.first == root && !it.second.isExpired() }?.let { return it.second.value }
+        val entries = trace("Koharia.downloadRootListing") {
+            buildMap {
+                downloadsDir.listFiles().orEmpty().forEach { file ->
+                    file.name?.let { name -> putIfAbsent(name, file) }
+                }
+            }
+        }
+        downloadsListing = root to CacheEntry(entries)
+        return entries
     }
 
     fun invalidateSourceDirCache() {
         synchronized(sourceDirsCache) {
             sourceDirsCache.clear()
+            downloadsListing = null
+            storageManager.invalidateDownloadsDirectoryCache()
         }
     }
 

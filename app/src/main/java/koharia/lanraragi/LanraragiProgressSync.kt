@@ -17,10 +17,11 @@ internal suspend fun synchronizeLanraragiProgress(
     stateMutex: Mutex = Mutex(),
     isCurrent: () -> Boolean = { true },
 ) {
-    val pending = stateMutex.withLock { repository.readStates(connectionId).filter { it.pending && !it.localUnread } }
+    val pending = stateMutex.withLock { repository.pendingReadStates(connectionId) }
     for (local in pending) {
+        if (local.requiresConfirmation) continue
         suspend fun unchanged(): Boolean = stateMutex.withLock {
-            isCurrent() && repository.readStates(connectionId).firstOrNull { it.archiveId == local.archiveId } == local
+            isCurrent() && repository.readState(connectionId, local.archiveId) == local
         }
         if (!unchanged()) continue
         val remote = fetch(local.archiveId)
@@ -46,7 +47,7 @@ internal suspend fun synchronizeLanraragiProgress(
         }
         stateMutex.withLock {
             if (isCurrent() &&
-                repository.readStates(connectionId).firstOrNull { it.archiveId == local.archiveId } == local
+                repository.readState(connectionId, local.archiveId) == local
             ) {
                 repository.record(connectionId, resolved)
                 apply(resolved)

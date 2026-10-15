@@ -18,6 +18,7 @@ package tachiyomi.macrobenchmark
 
 import androidx.benchmark.macro.BaselineProfileMode
 import androidx.benchmark.macro.CompilationMode
+import androidx.benchmark.macro.FrameTimingMetric
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
@@ -75,8 +76,12 @@ abstract class AbstractStartupBenchmark(private val startupMode: StartupMode) {
     fun startupFullCompilation() = startup(CompilationMode.Full())
 
     private fun startup(compilationMode: CompilationMode) = benchmarkRule.measureRepeated(
-        packageName = "eu.kanade.tachiyomi.benchmark",
-        metrics = listOf(StartupTimingMetric()),
+        packageName = BenchmarkTarget.PACKAGE,
+        metrics = buildList {
+            add(StartupTimingMetric())
+            // A resumed surface need not emit FrameTimeline slices; keep startup timing independent.
+            if (startupMode == StartupMode.COLD) add(FrameTimingMetric())
+        },
         compilationMode = compilationMode,
         iterations = 10,
         startupMode = startupMode,

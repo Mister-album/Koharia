@@ -16,9 +16,11 @@ import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionProfileManager
 import koharia.connection.SharedAppPreferences
+import koharia.connection.fetchChapters
 import koharia.domain.suwayomi.SuwayomiRepository
 import koharia.source.suwayomi.SuwayomiConnectionProvider
 import koharia.source.suwayomi.SuwayomiPreferences
@@ -111,8 +113,9 @@ class SuwayomiReaderIntegrationTest {
             val shelf = session.catalog.shelf()
             val entry = shelf.mangas.single { it.title == "Koharia integration fixture" }
             val manga = active.materialize(active.toManga(entry))
-            val remoteUnits = active.getChapterList(manga.toSManga())
-            Injekt.get<SyncChaptersWithSource>().await(remoteUnits, manga, active)
+            val fetched = active.fetchChapters(manga.toSManga(), ChapterFetchOrigin.OPEN)
+            val remoteUnits = fetched.chapters
+            Injekt.get<SyncChaptersWithSource>().await(fetched, manga)
             val chapter = chapters.getChapterByMangaId(manga.id).single()
             val remoteId = session.identity.chapter(chapter.url).second
             session.api.updateChapter(remoteId, 0, false)

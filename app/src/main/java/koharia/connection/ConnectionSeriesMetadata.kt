@@ -18,7 +18,7 @@ data class ConnectionSeriesMetadata(
             publisher = memo.text("publisher"),
             language = memo.text("language"),
             ageRating = memo.number("ageRating")?.takeIf { it >= 0 },
-            booksCount = memo.number("booksCount")?.takeIf { it > 0 },
+            booksCount = memo.number("booksCount")?.takeIf { it >= 0 },
             totalBookCount = memo.number("totalBookCount")?.takeIf { it > 0 },
         )
 

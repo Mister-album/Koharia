@@ -132,9 +132,11 @@ class SuwayomiSettingsScreen(
             scope.launch {
                 try {
                     val normalized = SuwayomiApi.normalizeBase(address).toString()
+                    val reconnect = manager.requiresIdentityReplacement(sourceId)
                     if (ConnectionValidation.required(
                             isNew,
                             connectionChanged,
+                            reconnect,
                         )
                     ) {
                         ConnectionValidation.at(ConnectionValidation.Endpoint.PUBLIC) {
@@ -155,21 +157,6 @@ class SuwayomiSettingsScreen(
                                     withTimeoutOrNull(60_000) {
                                         api.validate()
                                         api.verifyInternal()
-                                        if (connectionChanged) {
-                                            val catalog = koharia.suwayomi.SuwayomiCatalog(
-                                                SuwayomiIdentity(
-                                                    sourceId,
-                                                    SuwayomiIdentity.account(normalized, mode, username),
-                                                ),
-                                                Injekt.get(),
-                                                api,
-                                                Injekt.get<Json>(),
-                                                {},
-                                            )
-                                            catalog.invalidateSourceConfiguration()
-                                            catalog.categoryInventory.invalidate()
-                                            catalog.invalidateShelf()
-                                        }
                                         true
                                     }
                                         ?: throw ConnectionAddressVerification.Failure(
@@ -182,12 +169,25 @@ class SuwayomiSettingsScreen(
                         }
                     }
                     val profile = manager.profiles().first { it.id == sourceId }
-                    withContext(Dispatchers.IO) {
-                        preferences.save(normalized, internalAddress, mode, username, password)
-                        preferences.visibleCategoryIds = visibleCategories
+                    suspend fun write(id: Long) = withContext(Dispatchers.IO) {
+                        val target = SuwayomiPreferences(id)
+                        target.save(normalized, internalAddress, mode, username, password)
+                        target.visibleCategoryIds = if (!isNew && (reconnect || connectionChanged)) {
+                            null
+                        } else {
+                            visibleCategories
+                        }
                     }
-                    manager.update(profile.copy(name = name.trim()))
-                    (Injekt.get<SourceManager>().get(sourceId) as? SuwayomiSource)?.reload()
+                    if (!isNew && (reconnect || connectionChanged)) {
+                        manager.replaceIdentity(sourceId, name, ::write)
+                    } else {
+                        manager.commitConfiguration(sourceId) { draft ->
+                            val target = SuwayomiPreferences(sourceId, draft)
+                            target.save(normalized, internalAddress, mode, username, password)
+                            target.visibleCategoryIds = visibleCategories
+                        }
+                        manager.update(profile.copy(name = name.trim()))
+                    }
                     if (completeOnboarding) {
                         Injekt.get<BasePreferences>().shownOnboardingFlow.set(true)
                         navigator.popUntilRoot()
@@ -233,11 +233,15 @@ class SuwayomiSettingsScreen(
                     onClick = ::save,
                 ) {
                     if (saving) EInkCircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text(stringResource(MR.strings.action_save), Modifier.padding(start = if (saving) 8.dp else 0.dp))
+                    Text(
+                        koharia.connection.ui.connectionSaveLabel(sourceId),
+                        Modifier.padding(start = if (saving) 8.dp else 0.dp),
+                    )
                 }
             },
         ) { padding ->
             LazyColumn(Modifier.padding(padding)) {
+                item { koharia.connection.ui.ConnectionReconnectionNotice(sourceId) }
                 item {
                     PreferenceGroupHeader(stringResource(MR.strings.pref_connection_settings))
                     SuwayomiTextSetting(

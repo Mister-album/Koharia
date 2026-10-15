@@ -28,18 +28,20 @@ ON chapters.manga_id = max_last_read.manga_id;
 
 history:
 SELECT
-id,
-mangaId,
-chapterId,
-title,
-thumbnailUrl,
-source,
-favorite,
-cover_last_modified,
-chapterNumber,
-readAt,
-readDuration
+historyView.id,
+historyView.mangaId,
+historyView.chapterId,
+historyView.title,
+historyView.thumbnailUrl,
+historyView.source,
+historyView.favorite,
+historyView.cover_last_modified,
+historyView.chapterNumber,
+historyView.readAt,
+historyView.readDuration,
+historyManga.url AS mangaUrl
 FROM historyView
+JOIN mangas AS historyManga ON historyManga._id = historyView.mangaId
 WHERE historyView.readAt > 0
 AND maxReadAtChapterId = historyView.chapterId
 AND lower(historyView.title) LIKE ('%' || :query || '%')
@@ -48,18 +50,20 @@ ORDER BY readAt DESC;
 
 getLatestHistory:
 SELECT
-id,
-mangaId,
-chapterId,
-title,
-thumbnailUrl,
-source,
-favorite,
-cover_last_modified,
-chapterNumber,
-readAt,
-readDuration
+historyView.id,
+historyView.mangaId,
+historyView.chapterId,
+historyView.title,
+historyView.thumbnailUrl,
+historyView.source,
+historyView.favorite,
+historyView.cover_last_modified,
+historyView.chapterNumber,
+historyView.readAt,
+historyView.readDuration,
+historyManga.url AS mangaUrl
 FROM historyView
+JOIN mangas AS historyManga ON historyManga._id = historyView.mangaId
 WHERE historyView.readAt > 0
 ORDER BY readAt DESC
 LIMIT 1;

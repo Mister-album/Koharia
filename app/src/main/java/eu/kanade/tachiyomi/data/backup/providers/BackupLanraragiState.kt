@@ -12,4 +12,5 @@ data class BackupLanraragiState(
     @ProtoNumber(5) val localUnread: Boolean = false,
     @ProtoNumber(6) val pending: Boolean = true,
     @ProtoNumber(7) val initialPage: Boolean = false,
+    @ProtoNumber(8) val requiresConfirmation: Boolean = false,
 )

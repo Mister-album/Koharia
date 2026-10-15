@@ -366,7 +366,7 @@ class MangaCoverFetcher(
                 url = data.thumbnailUrl,
                 isLibraryManga = data.favorite,
                 options = options,
-                coverFileLazy = lazy { coverCache.getCoverFile(data.thumbnailUrl) },
+                coverFileLazy = lazy { coverCache.getCoverFile(data.source, data.thumbnailUrl) },
                 openCustomCover = { customCovers.open(data) },
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
                 sourceLazy = lazy { sourceManager.get(data.source) as? HttpSource },
@@ -392,7 +392,7 @@ class MangaCoverFetcher(
                 url = data.url,
                 isLibraryManga = data.isMangaFavorite,
                 options = options,
-                coverFileLazy = lazy { coverCache.getCoverFile(data.url) },
+                coverFileLazy = lazy { coverCache.getCoverFile(data.sourceId, data.url) },
                 openCustomCover = {
                     if (data.useCustomCover) customCovers.open(data.mangaId, data.sourceId) else null
                 },

@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionAccount
 import koharia.connection.ConnectionAccountAdapter
 import koharia.connection.ConnectionBackupRestoreAdapter
@@ -22,25 +23,28 @@ import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.ConnectionDownloadStorageAdapter
 import koharia.connection.ConnectionHealthAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
-import koharia.connection.ConnectionLocalPageProgressAdapter
 import koharia.connection.ConnectionManagedLifecycle
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
 import koharia.connection.ConnectionPageAdapter
 import koharia.connection.ConnectionPageList
-import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPageProgressSnapshot
 import koharia.connection.ConnectionPdfFileAdapter
 import koharia.connection.ConnectionPublicationMetadata
 import koharia.connection.ConnectionRawDownloadAdapter
 import koharia.connection.ConnectionRawDownloadResumePolicy
+import koharia.connection.ConnectionReadStatus
 import koharia.connection.ConnectionReadStatusAdapter
 import koharia.connection.ConnectionReaderRoutingAdapter
 import koharia.connection.ConnectionSource
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryContentScope
+import koharia.connection.ProgressStatusTargets
 import koharia.connection.RemoteEpubProgression
+import koharia.connection.observeProgressStatusSessions
+import koharia.connection.withConnectionWriteGuard
+import koharia.connection.withProgressStatusOwner
 import koharia.domain.epub.model.EpubRemoteProgressCache
 import koharia.domain.kavita.KavitaRepository
 import koharia.epub.model.EpubOpenRequest
@@ -58,6 +62,8 @@ import koharia.kavita.KavitaReadingState
 import koharia.kavita.KavitaSeries
 import koharia.kavita.KavitaSort
 import koharia.kavita.kavitaTimestamp
+import koharia.kavita.progressSyncStatus
+import koharia.kavita.quarantineForActivation
 import koharia.kavita.ui.KavitaLibraryScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -66,6 +72,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -75,6 +82,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -101,6 +109,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     ConfigurableSource,
     UnmeteredSource,
     ConnectionSource,
+    koharia.connection.ConnectionChapterSessionAdapter,
     ConnectionManagedLifecycle,
     ConnectionBrowseAdapter,
     ConnectionCatalogAdapter,
@@ -108,21 +117,23 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     ConnectionAccountAdapter,
     ConnectionHealthAdapter,
     ConnectionMangaBehaviorAdapter,
+    koharia.connection.ConnectionShelfLocalStateAdapter,
     koharia.connection.ConnectionChapterTitleAdapter,
     ConnectionDownloadStorageAdapter,
     ConnectionReaderRoutingAdapter,
-    ConnectionPageProgressAdapter,
-    ConnectionLocalPageProgressAdapter,
+    koharia.connection.ConnectionPageProgressSessionAdapter,
     ConnectionMangaProgressAdapter,
     ConnectionReadStatusAdapter,
+    koharia.connection.ConnectionProgressSyncStatusAdapter,
+    koharia.connection.ConnectionShelfUnitCountAdapter,
     ConnectionHistorySyncAdapter,
     ConnectionBackupRestoreAdapter,
     ConnectionRawDownloadAdapter,
     ConnectionPdfFileAdapter,
     koharia.connection.ConnectionPublicationAdapter,
-    koharia.connection.ConnectionEpubProgressAdapter,
+    koharia.connection.ConnectionEpubProgressSessionAdapter,
     koharia.connection.ConnectionLocalEpubProgressAdapter,
-    koharia.connection.ConnectionReflowProgressAdapter,
+    koharia.connection.ConnectionReflowProgressSessionAdapter,
     koharia.connection.ConnectionReadingQueueAdapter,
     koharia.connection.ConnectionSeriesActionsAdapter,
     koharia.connection.ConnectionRemoteAnnotationsAdapter,
@@ -131,6 +142,24 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     AutoCloseable {
     override val id = connectionProfile.id
     override val name = connectionProfile.name
+
+    override fun captureChapterOwner(): koharia.connection.ConnectionChapterOwner {
+        val captured = session()
+        return koharia.connection.ConnectionChapterOwner(captured.chapterOwnerKey) {
+            captured.checkActive()
+            if (chapterConfigurationKey() != captured.chapterOwnerKey) {
+                throw CancellationException("Chapter account changed")
+            }
+        }
+    }
+
+    private fun chapterConfigurationKey() = koharia.connection.chapterOwnerKey(
+        preferences.accountKey,
+        preferences.address,
+        preferences.internalAddress,
+        preferences.key,
+        preferences.principal,
+    )
     override val lang = "other"
     override val supportsLatest = true
     val preferences = KavitaPreferences(id)
@@ -148,12 +177,13 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     private var registered = false
 
     inner class Session internal constructor(val accountKey: String) : AutoCloseable {
+        val chapterOwnerKey = chapterConfigurationKey()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val identity = KavitaIdentity(id, accountKey)
         val prefix get() = identity.prefix
         val api =
             KavitaApiClient(
-                network.client,
+                network.client.withConnectionWriteGuard(id),
                 preferences.address,
                 preferences.key,
                 "$id-$accountKey",
@@ -191,6 +221,11 @@ class KavitaSource(private val context: Context, override val connectionProfile:
             catalog,
             scope,
             ::checkActive,
+            {
+                if (Injekt.get<koharia.connection.ConnectionIdentityChanges>().isPaused(id)) {
+                    throw koharia.connection.ConnectionWritesPaused()
+                }
+            },
         ) {
             preferences.capabilities.annotations && preferences.capabilities.writable &&
                 !Injekt.get<koharia.connection.SharedAppPreferences>().basePreferences().incognitoMode.get()
@@ -240,6 +275,28 @@ class KavitaSource(private val context: Context, override val connectionProfile:
         epoch.value++
         if (registered && hasValidConnection()) observe(session())
     }
+
+    internal fun prepareVerifiedActivation(
+        account: koharia.kavita.KavitaAccount,
+        identityChanges: koharia.connection.ConnectionIdentityChanges = Injekt.get(),
+    ): suspend () -> Unit {
+        val expectedIdentity = checkNotNull(preferences.identity)
+        val expectedAccount = preferences.accountKey
+        check(expectedAccount.isNotBlank() && expectedIdentity.sameServerVerified(account.identity))
+        val previous = session()
+        return {
+            // Configuration publication has removed and closed this Source before calling us.
+            check(closed && active == null)
+            previous.reading.prepareRestore()
+            previous.bookmarks.awaitClosedWriters()
+            previous.annotations.awaitClosedWriters()
+            repository.quarantineForActivation(id, expectedAccount) {
+                check(!koharia.connection.ConnectionRestoreState.isRestoring)
+                check(identityChanges.isIdentityPaused(id))
+                check(preferences.identity == expectedIdentity && preferences.accountKey == expectedAccount)
+            }
+        }
+    }
     override fun close() {
         closed = true
         active?.close()
@@ -247,6 +304,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     }
 
     @Synchronized override fun onRegistered() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (registered || closed) return
         registered = true
         if (hasValidConnection()) observe(session())
@@ -266,7 +324,9 @@ class KavitaSource(private val context: Context, override val connectionProfile:
                 if (available) {
                     koharia.kavita.KavitaEvents(session.api, session.scope) { events ->
                         session.checkActive()
+                        val chapterOwner = captureChapterOwner()
                         var shelfChanged = false
+                        var chaptersChanged = false
                         for (event in events) {
                             val seriesId = event.body["seriesId"]?.jsonPrimitive?.longOrNull
                             when (event.name) {
@@ -297,6 +357,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
                                 "ChapterRemoved", "VolumeRemoved", "CoverUpdate",
                                 -> {
                                     if (event.name != "CoverUpdate") {
+                                        chaptersChanged = true
                                         val chapterId = event.body["chapterId"]?.jsonPrimitive?.longOrNull
                                         val changed =
                                             chapterId?.let { listOf(it) } ?: session.catalog.cachedChapterIds(seriesId)
@@ -340,6 +401,14 @@ class KavitaSource(private val context: Context, override val connectionProfile:
                             }
                         }
                         if (shelfChanged) koharia.connection.ConnectionShelfUpdates.notify(id)
+                        if (chaptersChanged) {
+                            chapterOwner.checkCurrent()
+                            eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(
+                                this@KavitaSource,
+                                koharia.connection.ChapterFetchOrigin.SERVER_UPDATE,
+                                expectedOwner = chapterOwner.key,
+                            )
+                        }
                     }.run()
                 }
             }
@@ -427,6 +496,9 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     override val preserveDownloadPageBoundaries = true
     override val allowsUnvalidatedNetwork = true
     override val usesSharedDownloadStorage = false
+    override fun mergeShelfLocalState(remote: Manga, local: Manga?): Manga =
+        koharia.connection.mergeShelfMangaMetadata(remote, local)
+
     override val mangaBehavior get() = ConnectionMangaBehavior(
         allowsChapterDownloads = preferences.capabilities.downloads,
         providerManagedLibrary = true,
@@ -466,7 +538,10 @@ class KavitaSource(private val context: Context, override val connectionProfile:
         url = session.identity.series(entry.id)
         title = entry.localizedName.ifBlank { entry.name }
         thumbnail_url = session.api.cover(entry.id, entry.coverImage)
-        memo = buildJsonObject { put("kavitaLibraryId", entry.libraryId) }
+        memo = buildJsonObject {
+            put("kavitaLibraryId", entry.libraryId)
+            put("kavitaSeries", session.api.json.encodeToJsonElement(entry))
+        }
         initialized = false
     }
     fun toManga(entry: KavitaSeries, session: Session = session()) = Manga.create().copy(
@@ -481,6 +556,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
             put("kavitaLibraryId", entry.libraryId)
             put("kavitaPages", entry.pages)
             put("kavitaPagesRead", entry.pagesRead)
+            put("kavitaSeries", session.api.json.encodeToJsonElement(entry))
         },
     )
     suspend fun materialize(manga: Manga): Manga = materializeMutex.withLock {
@@ -690,6 +766,19 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     override suspend fun resolveReadingQueueChapter(context: String, chapterUrl: String) =
         koharia.kavita.KavitaReadingQueue(this, repository).resolve(context, chapterUrl)
 
+    fun readingListDownloadState(
+        item: koharia.kavita.KavitaListItem,
+        local: koharia.connection.ConnectionShelfEntryState?,
+    ): koharia.connection.MangaDownloadState {
+        val identity = session().identity
+        val downloaded = local?.downloadedChapterUrls.orEmpty().any { url ->
+            runCatching { identity.chapter(url) }.getOrNull()?.let {
+                it.seriesId == item.seriesId && it.chapterId == item.chapterId
+            } == true
+        }
+        return koharia.connection.MangaDownloadState(if (downloaded) 1 else 0, 1)
+    }
+
     suspend fun createReadingQueue(title: String, items: List<koharia.kavita.KavitaListItem>) =
         koharia.kavita.KavitaReadingQueue(this, repository).create(title, items)
 
@@ -718,83 +807,190 @@ class KavitaSource(private val context: Context, override val connectionProfile:
             },
         )
     }
-    override suspend fun getCachedEpubProgress(chapterId: Long): EpubRemoteProgressCache? {
-        val chapter = chapters.getChapterById(chapterId) ?: return null
-        val session = session()
-        val ref = session.identity.chapter(chapter.url)
-        if (ref.format != 3) return null
-        val state = session.reading.cached(ref.chapterId) ?: return null
-        return epubCache(chapter, state)
+    override suspend fun captureEpubProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.connection.ConnectionEpubProgressAdapter> {
+        val captured = session()
+        captured.checkActive()
+        captured.identity.chapter(chapter.url)
+        return koharia.connection.ConnectionProgressSession(EpubProgress(captured), captured::checkActive)
     }
-    override suspend fun refreshEpubProgress(mangaId: Long, chapter: Chapter): EpubRemoteProgressCache? {
-        val session = session()
-        val ref = session.identity.chapter(chapter.url)
-        if (ref.format != 3) return null
-        return epubCache(chapter, session.reading.pull(ref, session.catalog.book(ref.chapterId).pages))
-    }
-    private fun epubCache(
-        chapter: Chapter,
-        state: KavitaReadingState,
-    ): EpubRemoteProgressCache {
-        val date = Date(kavitaTimestamp(state.progress.lastModifiedUtc))
-        val locator = koharia.kavita.kavitaLocator(session().api, state)
-        return EpubRemoteProgressCache(
-            chapter.id, chapter.mangaId, chapter.url, locator.toJSON().toString(),
-            state.progress.pageNum.toDouble() / state.totalPages.coerceAtLeast(1), null, date, Date(), date,
-        )
-    }
-    override suspend fun pullEpubProgress(resourceId: String): RemoteEpubProgression {
-        val session = session()
-        val ref = session.identity.chapter(resourceId)
-        val state = session.reading.pull(ref, session.catalog.book(ref.chapterId).pages)
-        return RemoteEpubProgression(
-            koharia.kavita.kavitaLocator(session.api, state),
-            Date(kavitaTimestamp(state.progress.lastModifiedUtc)),
-        )
-    }
+    override suspend fun getCachedEpubProgress(
+        chapterId: Long,
+    ) = EpubProgress(session()).getCachedEpubProgress(chapterId)
+    override suspend fun refreshEpubProgress(mangaId: Long, chapter: Chapter) =
+        EpubProgress(session()).refreshEpubProgress(mangaId, chapter)
+    override suspend fun pullEpubProgress(resourceId: String) = EpubProgress(session()).pullEpubProgress(resourceId)
+    override suspend fun reviewEpubProgress(resourceId: String) = EpubProgress(session()).reviewEpubProgress(resourceId)
     override suspend fun pushEpubProgress(
         resourceId: String,
         locator: Locator,
         positions: List<Locator>,
         modifiedAt: Date,
-    ) {
-        session().reading.retryPending()
+    ) =
+        EpubProgress(session()).pushEpubProgress(resourceId, locator, positions, modifiedAt)
+    override suspend fun recordLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) =
+        EpubProgress(session()).recordLocalEpubProgress(resourceId, locator, modifiedAt)
+    override suspend fun acceptRemoteEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) =
+        EpubProgress(session()).acceptRemoteEpubProgress(resourceId, locator, modifiedAt)
+    override suspend fun confirmLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) =
+        EpubProgress(session()).confirmLocalEpubProgress(resourceId, locator, modifiedAt)
+    override suspend fun isEpubProgressConfirmed(resourceId: String, locator: Locator, modifiedAt: Date) =
+        EpubProgress(session()).isEpubProgressConfirmed(resourceId, locator, modifiedAt)
+
+    private inner class EpubProgress(private val session: Session) :
+        koharia.connection.ConnectionEpubProgressAdapter, koharia.connection.ConnectionLocalEpubProgressAdapter {
+        override suspend fun getCachedEpubProgress(chapterId: Long): EpubRemoteProgressCache? {
+            session.checkActive()
+            val chapter = chapters.getChapterById(chapterId) ?: return null
+            val ref = session.identity.chapter(chapter.url)
+            if (ref.format != 3) return null
+            val state = session.reading.cached(ref.chapterId) ?: return null
+            return epubCache(chapter, state)
+        }
+        override suspend fun refreshEpubProgress(mangaId: Long, chapter: Chapter): EpubRemoteProgressCache? {
+            session.checkActive()
+            val ref = session.identity.chapter(chapter.url)
+            if (ref.format != 3) return null
+            return epubCache(chapter, session.reading.pull(ref, session.catalog.book(ref.chapterId).pages))
+        }
+        private fun epubCache(
+            chapter: Chapter,
+            state: KavitaReadingState,
+        ): EpubRemoteProgressCache {
+            session.checkActive()
+            val date = Date(kavitaTimestamp(state.progress.lastModifiedUtc))
+            val locator = koharia.kavita.kavitaLocator(session.api, state)
+            return EpubRemoteProgressCache(
+                chapter.id, chapter.mangaId, chapter.url, locator.toJSON().toString(),
+                state.progress.pageNum.toDouble() / state.totalPages.coerceAtLeast(1), null, date, Date(), date,
+            )
+        }
+        override suspend fun pullEpubProgress(resourceId: String): RemoteEpubProgression {
+            session.checkActive()
+            val ref = session.identity.chapter(resourceId)
+            val state = session.reading.pull(ref, session.catalog.book(ref.chapterId).pages)
+            return RemoteEpubProgression(
+                koharia.kavita.kavitaLocator(session.api, state),
+                Date(kavitaTimestamp(state.progress.lastModifiedUtc)),
+            )
+        }
+        override suspend fun reviewEpubProgress(resourceId: String): RemoteEpubProgression {
+            session.checkActive()
+            val ref = session.identity.chapter(resourceId)
+            val state = session.reading.review(ref, session.catalog.book(ref.chapterId).pages)
+            return RemoteEpubProgression(
+                koharia.kavita.kavitaLocator(session.api, state),
+                Date(kavitaTimestamp(state.progress.lastModifiedUtc)),
+            )
+        }
+        override suspend fun pushEpubProgress(
+            resourceId: String,
+            locator: Locator,
+            positions: List<Locator>,
+            modifiedAt: Date,
+        ) {
+            session.checkActive()
+            session.reading.retryPending()
+        }
+        override suspend fun recordLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) {
+            recordEpubProgress(resourceId, locator, modifiedAt, explicit = false)
+        }
+        override suspend fun confirmLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) {
+            recordEpubProgress(resourceId, locator, modifiedAt, explicit = true)
+        }
+        override suspend fun isEpubProgressConfirmed(resourceId: String, locator: Locator, modifiedAt: Date): Boolean {
+            session.checkActive()
+            val ref = session.identity.chapter(resourceId)
+            val page = koharia.kavita.KavitaEpubPublicationService.pageIndex(locator.href.toString()) ?: return false
+            val anchor =
+                locator.toJSON().optJSONObject("locations")?.optString("kavitaXPath")?.takeIf(String::isNotBlank)
+                    ?: locator.locations.fragments.firstOrNull()
+            return session.reading.isConfirmed(ref, modifiedAt.time) { state ->
+                val completed = page == state.totalPages - 1 && (locator.locations.progression ?: 0.0) >= 0.99
+                state.progress.pageNum == (if (completed) state.totalPages else page) &&
+                    state.progress.bookScrollId.orEmpty() == anchor.orEmpty()
+            }
+        }
+        override suspend fun acceptRemoteEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) {
+            session.checkActive()
+            val ref = session.identity.chapter(resourceId)
+            val total = session.reading.cached(ref.chapterId)?.totalPages ?: session.catalog.book(ref.chapterId).pages
+            val page = koharia.kavita.KavitaEpubPublicationService.pageIndex(locator.href.toString()) ?: return
+            val anchor = locator.toJSON().optJSONObject("locations")?.optString("kavitaXPath").orEmpty()
+            session.reading.accept(
+                ref,
+                if ((locator.locations.totalProgression ?: 0.0) >= 1.0) total else page,
+                total,
+                modifiedAt.time,
+                anchorOverride = anchor,
+                checkAcceptance = {
+                    session.checkActive()
+                    check(!Injekt.get<koharia.connection.ConnectionIdentityChanges>().isPaused(id))
+                },
+            )
+        }
+        private suspend fun recordEpubProgress(
+            resourceId: String,
+            locator: Locator,
+            modifiedAt: Date,
+            explicit: Boolean,
+        ) {
+            session.checkActive()
+            val ref = session.identity.chapter(resourceId)
+            val page = koharia.kavita.KavitaEpubPublicationService.pageIndex(locator.href.toString()) ?: return
+            val total = session.reading.cached(ref.chapterId)?.totalPages ?: session.catalog.book(ref.chapterId).pages
+            val location = locator.toJSON().optJSONObject("locations")
+            val anchor = location?.optString("kavitaXPath")?.takeIf(String::isNotBlank)
+                ?: locator.locations.fragments.firstOrNull()
+            val completed = page == total - 1 && (locator.locations.progression ?: 0.0) >= 0.99
+            session.reading.record(
+                ref,
+                if (completed) total else page,
+                total,
+                modifiedAt.time,
+                anchor = anchor,
+                explicit = explicit,
+            )
+        }
     }
-    override suspend fun recordLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) {
-        recordEpubProgress(resourceId, locator, modifiedAt, explicit = false)
+    override fun observeShelfUnitCounts(entryUrls: Set<String>) = epoch.flatMapLatest {
+        val captured = session()
+        val ids = entryUrls.associateWith { runCatching { captured.identity.seriesId(it) }.getOrNull() }
+        captured.catalog.observeCachedSeriesBookCounts(ids.values.filterNotNull().toSet()).map { counts ->
+            captured.checkActive()
+            ids.mapValues { (_, seriesId) -> counts[seriesId] ?: 0L }
+        }
     }
-    override suspend fun confirmLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) {
-        recordEpubProgress(resourceId, locator, modifiedAt, explicit = true)
-    }
-    override suspend fun acceptRemoteEpubProgress(resourceId: String, locator: Locator, modifiedAt: Date) {
-        val session = session()
-        val ref = session.identity.chapter(resourceId)
-        val total = session.reading.cached(ref.chapterId)?.totalPages ?: session.catalog.book(ref.chapterId).pages
-        val page = koharia.kavita.KavitaEpubPublicationService.pageIndex(locator.href.toString()) ?: return
-        session.reading.accept(ref, page, total, modifiedAt.time)
-    }
-    private suspend fun recordEpubProgress(
-        resourceId: String,
-        locator: Locator,
-        modifiedAt: Date,
-        explicit: Boolean,
-    ) {
-        val session = session()
-        val ref = session.identity.chapter(resourceId)
-        val page = koharia.kavita.KavitaEpubPublicationService.pageIndex(locator.href.toString()) ?: return
-        val total = session.reading.cached(ref.chapterId)?.totalPages ?: session.catalog.book(ref.chapterId).pages
-        val location = locator.toJSON().optJSONObject("locations")
-        val anchor = location?.optString("kavitaXPath")?.takeIf(String::isNotBlank)
-            ?: locator.locations.fragments.firstOrNull()
-        val completed = page == total - 1 && (locator.locations.progression ?: 0.0) >= 0.99
-        session.reading.record(
-            ref,
-            if (completed) total else page,
-            total,
-            modifiedAt.time,
-            anchor = anchor,
-            explicit = explicit,
+
+    override fun observeProgressSyncStatus(
+        chapterUrls: List<String>,
+    ) = observeProgressStatusSessions(epoch, chapterUrls) {
+        val captured = session()
+        captured.checkActive()
+        val targets = ProgressStatusTargets(chapterUrls) { "progress/${captured.identity.chapter(it).chapterId}" }
+        repository.observeOperations(id, captured.accountKey, targets.keys.values.filterNotNull()).map { rows ->
+            targets.project(rows.associate { it.key to it.progressSyncStatus(captured.api.json) })
+        }.withProgressStatusOwner(
+            id,
+            Injekt.get<koharia.connection.ConnectionIdentityChanges>().pausedIds,
+            captured::checkActive,
         )
+    }
+
+    override suspend fun capturePageProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.connection.ConnectionReaderPageProgressAdapter> {
+        val captured = captureReflowProgressSession(chapter)
+        return koharia.connection.ConnectionProgressSession(
+            koharia.connection.CapturedPageProgress(chapter.url, captured.adapter, captured.checkCurrent),
+            captured.checkCurrent,
+        )
+    }
+    override suspend fun captureReflowProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.connection.ConnectionReflowProgressAdapter> {
+        val captured = session()
+        captured.checkActive()
+        captured.identity.chapter(chapter.url)
+        return koharia.connection.ConnectionProgressSession(PageProgress(captured), captured::checkActive)
     }
     override suspend fun recordLocalPageProgress(
         chapterUrl: String,
@@ -802,65 +998,149 @@ class KavitaSource(private val context: Context, override val connectionProfile:
         totalPages: Int,
         readAt: Long,
         initialPage: Boolean,
-    ) {
-        session().let {
-            it.reading.record(
-                it.identity.chapter(chapterUrl),
-                serverPage(pageIndex, totalPages),
-                totalPages,
-                readAt,
-                initialPage,
-            )
-        }
-    }
-    override suspend fun pushPageProgress(
+    ) = PageProgress(session()).recordLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt, initialPage)
+    override suspend fun pushPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int) =
+        PageProgress(session()).pushPageProgress(chapterUrl, pageIndex, totalPages)
+    override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject) =
+        PageProgress(session()).pullPageProgress(chapterUrl, chapterMemo)
+    override suspend fun reviewPageProgress(chapterUrl: String, chapterMemo: JsonObject) =
+        PageProgress(session()).reviewPageProgress(chapterUrl, chapterMemo)
+    override suspend fun isPageProgressConfirmed(chapterUrl: String, page: Int, total: Int, modifiedAt: Long) =
+        PageProgress(session()).isPageProgressConfirmed(chapterUrl, page, total, modifiedAt)
+    override suspend fun acceptRemotePageProgress(
         chapterUrl: String,
         pageIndex: Int,
         totalPages: Int,
-    ) = session().reading.retryPending()
-    override suspend fun pullPageProgress(chapterUrl: String, chapterMemo: JsonObject): ConnectionPageProgressSnapshot {
-        val session = session()
-        val ref = session.identity.chapter(chapterUrl)
-        val chapter = session.catalog.chapter(ref.chapterId)
-        val snapshot = session.reading.pull(ref, chapter.pages)
-        val oldTotal = ConnectionChapterMetadata.pagesCount(chapterMemo)
-        val previousVersion = chapterMemo["kavitaVersion"]?.jsonPrimitive?.contentOrNull
-        val version = koharia.kavita.kavitaContentVersion(chapter)
-        val memo = JsonObject(
-            ConnectionChapterMetadata.withPagesCount(chapterMemo, chapter.pages) +
-                ("kavitaVersion" to kotlinx.serialization.json.JsonPrimitive(version)),
-        )
-        return ConnectionPageProgressSnapshot(
-            chapterUrl, snapshot.progress.pageNum.coerceAtMost((chapter.pages - 1).coerceAtLeast(0)),
-            chapter.pages, snapshot.progress.pageNum >= chapter.pages && chapter.pages > 0,
-            snapshot.progress.lastModifiedUtc, ref.format == 3, ref.format != 3,
-            memo, previousVersion, version,
-            requiresPageMappingConfirmation = (oldTotal != null && oldTotal != chapter.pages) ||
-                (previousVersion != null && previousVersion != version),
-            blocksAutomaticSelection = snapshot.conflict,
-        )
-    }
-    override suspend fun acceptRemotePageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {
-        session().let {
-            it.reading.accept(it.identity.chapter(chapterUrl), serverPage(pageIndex, totalPages), totalPages, readAt)
+        readAt: Long,
+    ) =
+        PageProgress(session()).acceptRemotePageProgress(chapterUrl, pageIndex, totalPages, readAt)
+    override suspend fun confirmLocalPageProgress(
+        chapterUrl: String,
+        pageIndex: Int,
+        totalPages: Int,
+        readAt: Long,
+    ) =
+        PageProgress(session()).confirmLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt)
+
+    private inner class PageProgress(
+        private val session: Session,
+    ) : koharia.connection.ConnectionReflowProgressAdapter {
+        override suspend fun isPageProgressConfirmed(
+            chapterUrl: String,
+            page: Int,
+            total: Int,
+            modifiedAt: Long,
+        ): Boolean {
+            session.checkActive()
+            return session.reading.isConfirmed(session.identity.chapter(chapterUrl), modifiedAt) {
+                it.totalPages == total && it.progress.pageNum == serverPage(page, total) &&
+                    it.progress.bookScrollId.isNullOrEmpty()
+            }
         }
-    }
-    override suspend fun confirmLocalPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {
-        session().let {
-            it.reading.record(
-                it.identity.chapter(chapterUrl),
-                serverPage(pageIndex, totalPages),
-                totalPages,
-                readAt,
-                explicit = true,
+        override suspend fun recordLocalPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+            initialPage: Boolean,
+        ) {
+            session.let {
+                it.reading.record(
+                    it.identity.chapter(chapterUrl),
+                    serverPage(pageIndex, totalPages),
+                    totalPages,
+                    readAt,
+                    initialPage,
+                )
+            }
+        }
+        override suspend fun pushPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+        ) {
+            session.checkActive()
+            session.reading.retryPending()
+        }
+        override suspend fun pullPageProgress(
+            chapterUrl: String,
+            chapterMemo: JsonObject,
+        ): ConnectionPageProgressSnapshot = pageProgress(chapterUrl, chapterMemo, review = false)
+
+        override suspend fun reviewPageProgress(chapterUrl: String, chapterMemo: JsonObject) =
+            pageProgress(chapterUrl, chapterMemo, review = true)
+
+        private suspend fun pageProgress(
+            chapterUrl: String,
+            chapterMemo: JsonObject,
+            review: Boolean,
+        ): ConnectionPageProgressSnapshot {
+            session.checkActive()
+            val ref = session.identity.chapter(chapterUrl)
+            val chapter = session.catalog.chapter(ref.chapterId)
+            val snapshot = if (review) {
+                session.reading.review(ref, chapter.pages)
+            } else {
+                session.reading.pull(ref, chapter.pages)
+            }
+            val oldTotal = ConnectionChapterMetadata.pagesCount(chapterMemo)
+            val previousVersion = chapterMemo["kavitaVersion"]?.jsonPrimitive?.contentOrNull
+            val version = koharia.kavita.kavitaContentVersion(chapter)
+            val memo = JsonObject(
+                ConnectionChapterMetadata.withPagesCount(chapterMemo, chapter.pages) +
+                    ("kavitaVersion" to kotlinx.serialization.json.JsonPrimitive(version)),
+            )
+            return ConnectionPageProgressSnapshot(
+                chapterUrl, snapshot.progress.pageNum.coerceAtMost((chapter.pages - 1).coerceAtLeast(0)),
+                chapter.pages, snapshot.progress.pageNum >= chapter.pages && chapter.pages > 0,
+                snapshot.progress.lastModifiedUtc, ref.format == 3, ref.format != 3,
+                memo, previousVersion, version,
+                requiresPageMappingConfirmation = (oldTotal != null && oldTotal != chapter.pages) ||
+                    (previousVersion != null && previousVersion != version),
+                blocksAutomaticSelection = snapshot.conflict,
             )
         }
+        override suspend fun acceptRemotePageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+        ) {
+            session.let {
+                it.reading.accept(
+                    it.identity.chapter(chapterUrl),
+                    serverPage(pageIndex, totalPages),
+                    totalPages,
+                    readAt,
+                    checkAcceptance = {
+                        session.checkActive()
+                        check(!Injekt.get<koharia.connection.ConnectionIdentityChanges>().isPaused(id))
+                    },
+                )
+            }
+        }
+        override suspend fun confirmLocalPageProgress(
+            chapterUrl: String,
+            pageIndex: Int,
+            totalPages: Int,
+            readAt: Long,
+        ) {
+            session.let {
+                it.reading.record(
+                    it.identity.chapter(chapterUrl),
+                    serverPage(pageIndex, totalPages),
+                    totalPages,
+                    readAt,
+                    explicit = true,
+                )
+            }
+        }
     }
-    override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) {
+    override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean): ConnectionReadStatus {
         val session = session()
         val ref = session.identity.chapter(chapterUrl)
         val total = session.catalog.chapter(ref.chapterId).pages
-        session.reading.record(
+        val saved = session.reading.record(
             ref,
             if (read) total else 0,
             total,
@@ -868,6 +1148,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
             explicit = true,
             unread = !read,
         )
+        return if (saved) ConnectionReadStatus.PENDING else ConnectionReadStatus.UNAVAILABLE
     }
     override suspend fun syncMangaProgress(manga: Manga) {
         val session = session()
@@ -933,10 +1214,10 @@ class KavitaSource(private val context: Context, override val connectionProfile:
                 var local = chapters.getChapterByMangaId(manga.id)
                 val known = local.map { session.identity.chapter(it.url).chapterId }.toSet()
                 if (entries.any { it.chapterId !in known }) {
-                    Injekt.get<eu.kanade.domain.chapter.interactor.SyncChaptersWithSource>().await(
-                        getChapterList(manga.toSManga()),
+                    Injekt.get<eu.kanade.domain.chapter.interactor.SyncChaptersWithSource>().fetchAndSync(
                         manga,
                         this,
+                        ChapterFetchOrigin.PROGRESS,
                     )
                     local = chapters.getChapterByMangaId(manga.id)
                 }

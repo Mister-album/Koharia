@@ -26,6 +26,7 @@ data class StorageCapabilities(
     val ranges: Boolean,
     val conditionalWrites: Boolean,
     val atomicMove: Boolean,
+    val atomicMoveIdentityContract: String? = null,
 )
 
 class StorageFailure(val reason: Reason, cause: Throwable? = null) :

@@ -10,4 +10,10 @@ class UpsertEpubProgress(
     suspend fun await(progress: EpubProgress) {
         repository.upsertProgress(progress)
     }
+
+    suspend fun awaitIfUnchanged(
+        expected: EpubProgress?,
+        progress: EpubProgress,
+        checkCurrent: suspend () -> Unit,
+    ): Boolean = repository.compareAndSetProgress(expected, progress, checkCurrent)
 }

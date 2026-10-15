@@ -3,10 +3,13 @@ package eu.kanade.tachiyomi.data.track.komga
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import koharia.komga.progress.KomgaProgressOrdering
+import koharia.source.komga.KomgaProgressAccount
+import koharia.source.komga.KomgaProgressOwnerChanged
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
+import koharia.source.komga.awaitKomgaProgressSuccess
 import koharia.source.komga.komgaProgressSync
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,6 +25,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -35,96 +39,138 @@ class KomgaApi(
 ) {
 
     private val sourceManager: SourceManager by lazy { Injekt.get<SourceManager>() }
+    private val mangaRepository: MangaRepository by lazy { Injekt.get<MangaRepository>() }
     private val serverPreferences: KomgaServerPreferences by lazy { Injekt.get<KomgaServerPreferences>() }
     private val json: Json by injectLazy()
+    private val ordering: koharia.komga.progress.KomgaProgressOrdering by lazy { Injekt.get() }
+    private val pageEvents: koharia.domain.komga.KomgaPageEventRepository by lazy { Injekt.get() }
     private val progressCacheMutex = Mutex()
     private val completedProgressCache = mutableMapOf<Long, ProgressCacheEntry>()
     private val inProgressCache = mutableMapOf<Long, ProgressCacheEntry>()
 
-    suspend fun getTrackSearch(url: String): TrackSearch =
-        withIOContext {
-            val source = resolveSourceForUrl(url) ?: error("No Komga source found for $url")
-            val headers = source.currentHeaders()
-            try {
-                val track = with(json) {
-                    if (url.contains(READLIST_API)) {
-                        source.client.newCall(GET(url, headers))
-                            .awaitSuccess()
-                            .parseAs<ReadListDto>()
-                            .toTrack()
-                    } else {
-                        source.client.newCall(GET(url, headers))
-                            .awaitSuccess()
-                            .parseAs<SeriesDto>()
-                            .toTrack()
-                    }
-                }
+    suspend fun getTrackSearch(url: String, sourceId: Long): TrackSearch {
+        val source = requireOwnedSource(url, sourceId)
+        return getTrackSearch(url, koharia.source.komga.captureKomgaProgressSession(source, sourceManager))
+    }
 
-                val progress = source.client
-                    .newCall(
-                        GET("${url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi", headers)
-                            .newBuilder()
-                            .komgaProgressSync()
-                            .build(),
-                    )
-                    .awaitSuccess().let {
-                        with(json) {
-                            if (url.contains("/api/v1/series/")) {
-                                it.parseAs<ReadProgressV2Dto>()
-                            } else {
-                                it.parseAs<ReadProgressDto>().toV2()
-                            }
+    private suspend fun getTrackSearch(
+        url: String,
+        session: koharia.source.komga.KomgaProgressSession,
+    ): TrackSearch = withIOContext {
+        session.guard.requireCurrent()
+        val source = session.source
+        try {
+            val track = with(json) {
+                if (url.contains(READLIST_API)) {
+                    source.client.newCall(session.request(GET(url).newBuilder()))
+                        .awaitKomgaProgressSuccess()
+                        .parseAs<ReadListDto>()
+                        .toTrack()
+                } else {
+                    source.client.newCall(session.request(GET(url).newBuilder()))
+                        .awaitKomgaProgressSuccess()
+                        .parseAs<SeriesDto>()
+                        .toTrack()
+                }
+            }
+
+            val progress = source.client
+                .newCall(
+                    session.request(
+                        GET("${url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi")
+                            .newBuilder(),
+                    ),
+                )
+                .awaitKomgaProgressSuccess().let {
+                    with(json) {
+                        if (url.contains("/api/v1/series/")) {
+                            it.parseAs<ReadProgressV2Dto>()
+                        } else {
+                            it.parseAs<ReadProgressDto>().toV2()
                         }
                     }
-
-                track.apply {
-                    cover_url = "$url/thumbnail"
-                    tracking_url = url
-                    total_chapters = progress.maxNumberSort.toLong()
-                    status = when (progress.booksCount) {
-                        progress.booksUnreadCount -> Komga.UNREAD
-                        progress.booksReadCount -> Komga.COMPLETED
-                        else -> Komga.READING
-                    }
-                    last_chapter_read = progress.lastReadContinuousNumberSort
                 }
-            } catch (e: Exception) {
-                logcat(LogPriority.WARN, e) { "Could not get item: $url" }
-                throw e
+
+            session.guard.requireCurrent()
+            track.apply {
+                cover_url = "$url/thumbnail"
+                tracking_url = url
+                total_chapters = progress.maxNumberSort.toLong()
+                status = when (progress.booksCount) {
+                    progress.booksUnreadCount -> Komga.UNREAD
+                    progress.booksReadCount -> Komga.COMPLETED
+                    else -> Komga.READING
+                }
+                last_chapter_read = progress.lastReadContinuousNumberSort
             }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Could not get item: $url" }
+            throw e
         }
+    }
 
     suspend fun updateProgress(track: Track): Track {
-        val source = resolveSourceForUrl(track.tracking_url) ?: error("No Komga source found for ${track.tracking_url}")
+        val sourceId = trackSourceId(track)
+        val source = requireOwnedSource(track.tracking_url, sourceId)
+        val session = koharia.source.komga.captureKomgaProgressSession(source, sourceManager)
         val payload = if (track.tracking_url.contains("/api/v1/series/")) {
             json.encodeToString(ReadProgressUpdateV2Dto(track.last_chapter_read))
         } else {
             json.encodeToString(ReadProgressUpdateDto(track.last_chapter_read.toInt()))
         }
-        source.client.newCall(
-            Request.Builder()
-                .url("${track.tracking_url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi")
-                .headers(source.currentHeaders())
-                .put(payload.toRequestBody("application/json".toMediaType()))
-                .komgaProgressSync()
-                .build(),
-        )
-            .awaitSuccess()
-        return getTrackSearch(track.tracking_url)
+        val checkCurrent = {
+            if (koharia.connection.ConnectionRestoreState.isRestoring) throw java.io.IOException("Restore in progress")
+            session.guard.requireCurrent()
+        }
+        try {
+            ordering.legacyAggregate(sourceId, session.account.key, checkCurrent) {
+                if (pageEvents.hasUnsettled(sourceId, session.account.key)) {
+                    throw koharia.komga.progress.KomgaProgressOnHold()
+                }
+                checkCurrent()
+                source.client.newBuilder().retryOnConnectionFailure(false).build().newCall(
+                    session.request(
+                        Request.Builder()
+                            .url(
+                                "${track.tracking_url.replace(
+                                    "/api/v1/series/",
+                                    "/api/v2/series/",
+                                )}/read-progress/tachiyomi",
+                            )
+                            .put(payload.toRequestBody("application/json".toMediaType())),
+                    ),
+                ).awaitKomgaProgressSuccess().use { }
+                checkCurrent()
+                invalidateProgressCache(sourceId)
+            }
+        } catch (_: koharia.komga.progress.KomgaProgressOnHold) {
+            throw koharia.connection.ConnectionReadStatusException(koharia.connection.ConnectionReadStatus.CONFLICT)
+        }
+        return getTrackSearch(track.tracking_url, session)
     }
 
-    suspend fun getSeriesBookProgress(url: String): List<SeriesBookProgress> =
+    suspend fun getSeriesBookProgress(url: String, sourceId: Long): List<SeriesBookProgress> {
+        val source = requireOwnedSource(url, sourceId)
+        return getSeriesBookProgress(url, koharia.source.komga.captureKomgaProgressSession(source, sourceManager))
+    }
+
+    internal suspend fun getSeriesBookProgress(
+        url: String,
+        session: koharia.source.komga.KomgaProgressSession,
+    ): List<SeriesBookProgress> =
         withIOContext {
-            val source = resolveSourceForUrl(url) ?: return@withIOContext emptyList()
+            session.guard.requireCurrent()
+            val source = session.source
             with(json) {
                 val baseUrl = url.substringBefore("/api/v1/series/")
                 source.client.newCall(
-                    GET("$url/books?unpaged=true&media_status=READY&deleted=false", source.currentHeaders())
-                        .newBuilder()
-                        .cacheControl(CacheControl.FORCE_NETWORK)
-                        .build(),
+                    session.request(
+                        GET("$url/books?unpaged=true&media_status=READY&deleted=false")
+                            .newBuilder()
+                            .cacheControl(CacheControl.FORCE_NETWORK),
+                    ),
                 )
-                    .awaitSuccess()
+                    .awaitKomgaProgressSuccess()
                     .parseAs<PageWrapperDto<BookDto>>()
                     .content
                     .map { book ->
@@ -135,45 +181,82 @@ class KomgaApi(
                             isEpub = book.media?.mediaProfile == "EPUB",
                             isDivinaCompatibleEpub = book.media?.isDivinaCompatibleEpub == true,
                         )
-                    }
+                    }.also { session.guard.requireCurrent() }
             }
         }
 
-    suspend fun getBookProgress(bookUrl: String, sourceId: Long? = null): BookProgressSnapshot? =
-        withIOContext {
-            val source = if (sourceId == null) {
-                resolveSourceForUrl(bookUrl)
-            } else {
-                resolveSource(sourceId)?.takeIf { bookUrl.belongsTo(it) }
-            } ?: return@withIOContext null
-            with(json) {
-                val request = GET(bookUrl, source.currentHeaders())
-                    .newBuilder()
-                    .cacheControl(CacheControl.FORCE_NETWORK)
-                    .komgaProgressSync()
-                    .build()
-                val book = source.client.newCall(request)
-                    .awaitSuccess()
-                    .parseAs<BookDto>()
-                BookProgressSnapshot(
-                    url = bookUrl,
-                    seriesUrl = book.seriesId.takeIf(String::isNotBlank)?.let {
-                        "${bookUrl.substringBefore("/api/")}/api/v1/series/$it"
-                    },
+    /** Fresh response for callers holding a pre-request database snapshot. */
+    internal suspend fun getInProgressBookProgress(
+        session: koharia.source.komga.KomgaProgressSession,
+        includeCompleted: Boolean,
+    ): List<SeriesBookProgress> = withIOContext {
+        session.guard.requireCurrent()
+        val baseUrl = session.source.baseUrl.trimEnd('/')
+        val readStatus = if (includeCompleted) "" else "&read_status=IN_PROGRESS"
+        with(json) {
+            session.source.client.newCall(
+                session.request(
+                    GET("$baseUrl/api/v1/books?unpaged=true$readStatus&deleted=false")
+                        .newBuilder().cacheControl(CacheControl.FORCE_NETWORK),
+                ),
+            ).awaitKomgaProgressSuccess().parseAs<PageWrapperDto<BookDto>>().content.map { book ->
+                SeriesBookProgress(
+                    seriesUrl = "$baseUrl/api/v1/series/${book.seriesId}",
+                    url = "$baseUrl/api/v1/books/${book.id}",
                     readProgress = book.readProgress,
-                    pageIndex = book.readProgress?.page?.let { (it - 1).coerceAtLeast(0) },
-                    totalPages = book.media?.pagesCount ?: 0,
-                    completed = book.readProgress?.completed ?: false,
-                    readDate = book.readProgress?.readDate,
                     isEpub = book.media?.mediaProfile == "EPUB",
                     isDivinaCompatibleEpub = book.media?.isDivinaCompatibleEpub == true,
-                    fileHash = book.fileHash,
-                    fileLastModified = book.fileLastModified,
-                    sizeBytes = book.sizeBytes,
-                    fileName = book.name,
                 )
-            }
+            }.also { session.guard.requireCurrent() }
         }
+    }
+
+    suspend fun getBookProgress(bookUrl: String, sourceId: Long, ownerKey: String? = null): BookProgressSnapshot? {
+        val source = resolveSource(sourceId) ?: if (ownerKey != null) throw KomgaProgressOwnerChanged() else return null
+        val session = koharia.source.komga.captureKomgaProgressSession(source, sourceManager)
+        if (ownerKey != null && session.account.key != ownerKey) throw KomgaProgressOwnerChanged()
+        if (!bookUrl.belongsTo(source)) {
+            if (ownerKey != null) throw KomgaProgressOwnerChanged()
+            return null
+        }
+        return getBookProgress(bookUrl, session) { session.guard.requireCurrent() }
+    }
+
+    internal suspend fun getBookProgress(
+        bookUrl: String,
+        session: koharia.source.komga.KomgaProgressSession,
+        checkCurrent: suspend () -> Unit,
+    ): BookProgressSnapshot = withIOContext {
+        checkCurrent()
+        session.guard.requireCurrent()
+        val source = session.source
+        with(json) {
+            val request = session.request(GET(bookUrl).newBuilder().cacheControl(CacheControl.FORCE_NETWORK))
+            val book = source.client.newCall(request)
+                .awaitKomgaProgressSuccess()
+                .parseAs<BookDto>()
+            check(book.id == KomgaProgressOrdering.bookId(bookUrl)) { "Komga response book identity changed" }
+            session.guard.requireCurrent()
+            checkCurrent()
+            BookProgressSnapshot(
+                url = bookUrl,
+                seriesUrl = book.seriesId.takeIf(String::isNotBlank)?.let {
+                    "${bookUrl.substringBefore("/api/")}/api/v1/series/$it"
+                },
+                readProgress = book.readProgress,
+                pageIndex = book.readProgress?.page?.let { (it - 1).coerceAtLeast(0) },
+                totalPages = book.media?.pagesCount ?: 0,
+                completed = book.readProgress?.completed ?: false,
+                readDate = book.readProgress?.readDate,
+                isEpub = book.media?.mediaProfile == "EPUB",
+                isDivinaCompatibleEpub = book.media?.isDivinaCompatibleEpub == true,
+                fileHash = book.fileHash,
+                fileLastModified = book.fileLastModified,
+                sizeBytes = book.sizeBytes,
+                fileName = book.name,
+            )
+        }
+    }
 
     suspend fun getInProgressBookProgress(
         sourceId: Long? = null,
@@ -183,16 +266,19 @@ class KomgaApi(
         withIOContext {
             val source = resolveSource(sourceId) ?: return@withIOContext emptyList()
             progressCacheMutex.withLock {
+                val account = source.progressAccount()
                 val cache = if (includeCompleted) completedProgressCache else inProgressCache
                 val now = System.currentTimeMillis()
                 val cached = cache[source.id]
-                if (!forceRefresh && cached != null && now - cached.fetchedAt <= PROGRESS_CACHE_TTL_MILLIS) {
+                if (!forceRefresh && cached?.ownerKey == account.key &&
+                    now - cached.fetchedAt <= PROGRESS_CACHE_TTL_MILLIS
+                ) {
                     return@withLock cached.books
                 }
 
                 if (!includeCompleted && !forceRefresh) {
                     val completed = completedProgressCache[source.id]
-                    if (completed != null && now - completed.fetchedAt <= PROGRESS_CACHE_TTL_MILLIS) {
+                    if (completed?.ownerKey == account.key && now - completed.fetchedAt <= PROGRESS_CACHE_TTL_MILLIS) {
                         return@withLock completed.books.filter { it.readProgress != null && !it.readProgress.completed }
                     }
                 }
@@ -208,13 +294,14 @@ class KomgaApi(
                             .newCall(
                                 GET(
                                     "$baseUrl/api/v1/books?unpaged=true$readStatus&deleted=false",
-                                    source.currentHeaders(),
+                                    account.headers,
                                 ).newBuilder()
+                                    .tag(KomgaProgressAccount::class.java, account)
                                     .cacheControl(CacheControl.FORCE_NETWORK)
                                     .komgaProgressSync()
                                     .build(),
                             )
-                            .awaitSuccess()
+                            .awaitKomgaProgressSuccess()
                             .parseAs<PageWrapperDto<BookDto>>()
                             .content
                             .map { book ->
@@ -227,7 +314,8 @@ class KomgaApi(
                                 )
                             }
                     }
-                    val entry = ProgressCacheEntry(System.currentTimeMillis(), books)
+                    account.requireCurrent(resolveSource(source.id)?.progressAccount()?.key.orEmpty())
+                    val entry = ProgressCacheEntry(System.currentTimeMillis(), books, account.key)
                     cache[source.id] = entry
                     if (includeCompleted) {
                         inProgressCache[source.id] = entry.copy(
@@ -261,7 +349,7 @@ class KomgaApi(
 
                     source.client
                         .newCall(GET(url, source.currentHeaders()))
-                        .awaitSuccess()
+                        .awaitKomgaProgressSuccess()
                         .parseAs<PageWrapperDto<SeriesDto>>()
                         .content
                         .map { it.toTrack().apply { tracking_url = "$baseUrl/api/v1/series/${it.id}" } }
@@ -269,14 +357,54 @@ class KomgaApi(
             }
         }
 
+    internal suspend fun setBookReadStatus(
+        session: koharia.source.komga.KomgaProgressSession,
+        bookUrl: String,
+        read: Boolean,
+        checkCurrent: suspend () -> Unit,
+    ) {
+        checkCurrent()
+        val builder = Request.Builder().url("$bookUrl/read-progress")
+        if (read) {
+            builder.patch(
+                json.encodeToString(BookReadProgressUpdateDto(completed = true))
+                    .toRequestBody("application/json".toMediaType()),
+            )
+        } else {
+            builder.delete()
+        }
+        session.source.client.newBuilder().retryOnConnectionFailure(false).build()
+            .newCall(session.request(builder)).awaitKomgaProgressSuccess().use { }
+        checkCurrent()
+        session.guard.requireCurrent()
+        invalidateProgressCache(session.sourceId)
+    }
+
     suspend fun updateBookProgress(
         sourceId: Long,
         bookUrl: String,
         page: Int,
         completed: Boolean,
+        ownerKey: String? = null,
     ) {
-        val source = resolveSource(sourceId)?.takeIf { bookUrl.belongsTo(it) }
-            ?: error("Komga connection no longer matches the progress request")
+        val source = resolveSource(sourceId) ?: throw KomgaProgressOwnerChanged()
+        val account = source.progressAccount()
+        if (ownerKey != null && account.key != ownerKey) throw KomgaProgressOwnerChanged()
+        if (!bookUrl.belongsTo(source)) throw KomgaProgressOwnerChanged()
+        val session = koharia.source.komga.captureKomgaProgressSession(source, sourceManager)
+        updateBookProgress(session, bookUrl, page, completed) { session.guard.requireCurrent() }
+    }
+
+    internal suspend fun updateBookProgress(
+        session: koharia.source.komga.KomgaProgressSession,
+        bookUrl: String,
+        page: Int,
+        completed: Boolean,
+        checkCurrent: suspend () -> Unit,
+    ) {
+        checkCurrent()
+        session.guard.requireCurrent()
+        val source = session.source
         val payload = json.encodeToString(
             if (completed) {
                 BookReadProgressUpdateDto(completed = true, page = page)
@@ -285,14 +413,15 @@ class KomgaApi(
             },
         )
 
-        source.client.newCall(
-            Request.Builder()
-                .url("$bookUrl/read-progress")
-                .headers(source.currentHeaders())
-                .patch(payload.toRequestBody("application/json".toMediaType()))
-                .komgaProgressSync()
-                .build(),
-        ).awaitSuccess()
+        source.client.newBuilder().retryOnConnectionFailure(false).build().newCall(
+            session.request(
+                Request.Builder()
+                    .url("$bookUrl/read-progress")
+                    .patch(payload.toRequestBody("application/json".toMediaType())),
+            ),
+        ).awaitKomgaProgressSuccess().use { }
+        session.guard.requireCurrent()
+        checkCurrent()
         invalidateProgressCache(source.id)
     }
 
@@ -308,14 +437,19 @@ class KomgaApi(
         return sourceManager.get(targetSourceId) as? KomgaSource
     }
 
-    private fun resolveSourceForUrl(url: String): KomgaSource? {
-        val targetBaseUrl = url.substringBefore("/api/").trimEnd('/')
-        return sourceManager.getOnlineSources()
-            .filterIsInstance<KomgaSource>()
-            .firstOrNull { it.baseUrl.trimEnd('/') == targetBaseUrl }
-            ?: resolveSource(null)
-                ?.takeIf { url.startsWith(it.baseUrl.trimEnd('/')) }
+    suspend fun trackSourceId(track: Track): Long {
+        val manga = mangaRepository.getMangaByIdOrNull(track.manga_id)
+            ?: error("Komga track has no owning series")
+        check(manga.url.trimEnd('/') == track.tracking_url.trimEnd('/')) {
+            "Komga track does not match its owning series"
+        }
+        requireOwnedSource(track.tracking_url, manga.source)
+        return manga.source
     }
+
+    private fun requireOwnedSource(url: String, sourceId: Long): KomgaSource =
+        resolveSource(sourceId)?.takeIf { url.belongsTo(it) }
+            ?: error("Komga connection no longer matches the requested resource")
 
     private fun String.belongsTo(source: KomgaSource): Boolean {
         return substringBefore("/api/").trimEnd('/') == source.baseUrl.trimEnd('/')
@@ -358,6 +492,7 @@ class KomgaApi(
     private data class ProgressCacheEntry(
         val fetchedAt: Long,
         val books: List<SeriesBookProgress>,
+        val ownerKey: String,
     )
 
     private companion object {

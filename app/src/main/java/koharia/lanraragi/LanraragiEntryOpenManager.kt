@@ -5,6 +5,7 @@ import android.content.Intent
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import koharia.connection.ChapterFetchOrigin
 import koharia.source.lanraragi.LanraragiSource
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.repository.ChapterRepository
@@ -22,7 +23,7 @@ class LanraragiEntryOpenManager(
                 LanraragiEntryDestination.READER,
         )
         chapters.getChapterByUrlAndMangaId(manga.url, manga.id)?.let { return it }
-        syncChapters.await(source.getChapterList(manga.toSManga()), manga, source)
+        syncChapters.fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
         return chapters.getChapterByUrlAndMangaId(manga.url, manga.id)
             ?: throw LanraragiException(LanraragiException.Reason.UNAVAILABLE)
     }

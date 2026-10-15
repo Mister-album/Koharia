@@ -8,6 +8,10 @@ import tachiyomi.core.common.util.system.logcat
 
 data class ReaderChapter(val chapter: Chapter) {
 
+    internal val progressSessionMutex = kotlinx.coroutines.sync.Mutex()
+
+    @Volatile internal var progressSession: ReaderProgressSession? = null
+
     val stateFlow = MutableStateFlow<State>(State.Wait)
     var state: State
         get() = stateFlow.value

@@ -4,6 +4,11 @@ import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
@@ -63,6 +68,17 @@ class MangaRepositoryImpl(
         return database.mangasQueries
             .getMangaBySourceId(sourceId, MangaMapper::mapManga)
             .subscribeToList()
+    }
+
+    override fun getMangaByUrlsAndSourceIdAsFlow(urls: Collection<String>, sourceId: Long): Flow<List<Manga>> {
+        val batches = urls.distinct().chunked(900).map {
+            database.mangasQueries.getMangaByUrlsAndSourceId(it, sourceId, MangaMapper::mapManga).subscribeToList()
+        }
+        return when (batches.size) {
+            0 -> flowOf(emptyList())
+            1 -> batches.single()
+            else -> combine(batches) { it.flatMap { rows -> rows } }
+        }
     }
 
     override suspend fun getMangaBySourceId(sourceId: Long): List<Manga> {
@@ -136,6 +152,20 @@ class MangaRepositoryImpl(
         }
     }
 
+    override suspend fun updateFromSource(
+        manga: Manga,
+        update: MangaUpdate,
+        checkCurrent: suspend () -> Unit,
+    ): Boolean = database.transactionWithResult {
+        checkCurrent()
+        require(update.id == manga.id && update.source == null && update.url == null)
+        val current = getMangaByIdOrNull(manga.id) ?: return@transactionWithResult false
+        check(current.source == manga.source && current.url == manga.url) { "Manga source ownership changed" }
+        partialUpdate(update)
+        checkCurrent()
+        true
+    }
+
     override suspend fun updateAll(mangaUpdates: List<MangaUpdate>): Boolean {
         return try {
             partialUpdate(*mangaUpdates.toTypedArray())
@@ -147,9 +177,14 @@ class MangaRepositoryImpl(
     }
 
     override suspend fun insertNetworkManga(manga: List<Manga>): List<Manga> {
+        return insertNetworkManga(manga) {}
+    }
+
+    override suspend fun insertNetworkManga(manga: List<Manga>, checkCurrent: suspend () -> Unit): List<Manga> {
         return database.transactionWithResult {
+            checkCurrent()
             manga.map {
-                database.mangasQueries.insertNetworkManga(
+                val stored = database.mangasQueries.insertNetworkManga(
                     source = it.source,
                     url = it.url,
                     artist = it.artist,
@@ -177,8 +212,37 @@ class MangaRepositoryImpl(
                     mapper = MangaMapper::mapManga,
                 )
                     .awaitAsOne()
-            }
+                refreshShelfUnitCount(stored, it.knownShelfUnitCount())
+            }.also { checkCurrent() }
         }
+    }
+
+    override suspend fun refreshShelfUnitCounts(manga: List<Manga>, checkCurrent: suspend () -> Unit) {
+        database.transaction {
+            checkCurrent()
+            for ((sourceId, entries) in manga.groupBy { it.source }) {
+                val counts = entries.mapNotNull { entry ->
+                    entry.knownShelfUnitCount()?.let { entry.url to it }
+                }.toMap()
+                for (urls in counts.keys.chunked(200)) {
+                    val stored = database.mangasQueries.getMangaByUrlsAndSourceId(urls, sourceId, MangaMapper::mapManga)
+                        .awaitAsList()
+                    checkCurrent()
+                    stored.forEach { refreshShelfUnitCount(it, counts[it.url]) }
+                }
+            }
+            checkCurrent()
+        }
+    }
+
+    private fun Manga.knownShelfUnitCount() = (memo["booksCount"] as? JsonPrimitive)?.intOrNull?.takeIf { it >= 0 }
+
+    private suspend fun refreshShelfUnitCount(stored: Manga, count: Int?): Manga {
+        if (count == null || stored.knownShelfUnitCount() == count) return stored
+        // Catalogue totals stay live for favorites without replacing their user metadata.
+        val updated = stored.copy(memo = JsonObject(stored.memo + ("booksCount" to JsonPrimitive(count))))
+        database.mangasQueries.updateShelfMemo(updated.memo, stored.id, stored.source, stored.url)
+        return updated
     }
 
     override suspend fun deleteMangaBySourceId(sourceId: Long) {

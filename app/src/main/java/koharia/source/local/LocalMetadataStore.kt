@@ -3,12 +3,11 @@ package koharia.source.local
 import android.content.Context
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.model.SManga
+import koharia.core.archive.BoundedXml
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import nl.adaptivity.xmlutil.core.AndroidXmlReader
 import nl.adaptivity.xmlutil.serialization.XML
-import org.jsoup.Jsoup
-import org.jsoup.parser.Parser
 import tachiyomi.core.metadata.comicinfo.ComicInfo
 import tachiyomi.core.metadata.comicinfo.ComicInfoPublishingStatus
 import tachiyomi.core.metadata.comicinfo.copyFromComicInfo
@@ -253,7 +252,7 @@ class LocalMetadataStore(
 
     private fun parseStandard(content: String, type: LocalLibraryContentType): LocalMetadataOverride? = runCatching {
         if (type == LocalLibraryContentType.BOOKS) {
-            val metadata = parseLocalOpfMetadata(Jsoup.parse(content, "", Parser.xmlParser()))
+            val metadata = parseLocalOpfMetadata(BoundedXml.parse(content))
             LocalMetadataOverride(
                 title = metadata.title,
                 author = metadata.authors.joinToString(", ").takeIf {

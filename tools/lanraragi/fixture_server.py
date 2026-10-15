@@ -47,6 +47,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", media)
         self.send_header("Content-Length", str(len(content)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(content)
 
@@ -87,6 +88,8 @@ class Handler(BaseHTTPRequestHandler):
             if state(version)["offline"]:
                 return self.send({"success": 0}, 503)
             route = parts[3:]
+            if route == ["plugins", "metadata"] and self.command == "GET":
+                return self.send([])
             if route == ["info"]:
                 return self.send({"version": "0.9.70" if version.startswith("v70") else "0.9.80", "archives_per_page": 2,
                                   "server_tracks_progress": True, "authenticated_progress": True, "nofun_mode": True})

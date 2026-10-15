@@ -35,10 +35,12 @@ class UpdateManga(
         localManga: Manga,
         remoteManga: SManga,
         manualFetch: Boolean,
+        checkCurrent: suspend () -> Unit,
         coverCache: CoverCache = Injekt.get(),
         libraryPreferences: LibraryPreferences = Injekt.get(),
         downloadManager: DownloadManager = Injekt.get(),
     ): Boolean {
+        checkCurrent()
         val remoteTitle = try {
             remoteManga.title
         } catch (_: UninitializedPropertyAccessException) {
@@ -59,7 +61,6 @@ class UpdateManga(
                 remoteManga.thumbnail_url.isNullOrEmpty() -> null
                 !manualFetch && localManga.thumbnailUrl == remoteManga.thumbnail_url -> null
                 else -> {
-                    coverCache.deleteFromCache(localManga)
                     Instant.now().toEpochMilli()
                 }
             }
@@ -69,7 +70,8 @@ class UpdateManga(
         // Sync reading direction from Komga server metadata when user hasn't overridden
         val viewerFlags = resolveViewerFlagsFromMemo(localManga, remoteManga)
 
-        val success = mangaRepository.update(
+        val success = mangaRepository.updateFromSource(
+            localManga,
             MangaUpdate(
                 id = localManga.id,
                 title = title,
@@ -85,8 +87,14 @@ class UpdateManga(
                 viewerFlags = viewerFlags,
                 memo = mergeKomgaOfflineMemo(localManga.memo, remoteManga.memo),
             ),
+            checkCurrent,
         )
+        checkCurrent()
+        if (success && coverLastModified != null) {
+            coverCache.deleteFromCache(localManga)
+        }
         if (success && title != null) {
+            checkCurrent()
             downloadManager.renameManga(localManga, title)
         }
         return success

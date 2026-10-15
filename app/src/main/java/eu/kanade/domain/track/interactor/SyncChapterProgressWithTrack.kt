@@ -23,7 +23,7 @@ class SyncChapterProgressWithTrack(
         remoteTrack: Track,
         tracker: Tracker,
     ) {
-        if (tracker !is EnhancedTracker) {
+        if (tracker !is EnhancedTracker || tracker.usesSourceReadingProgress) {
             return
         }
 

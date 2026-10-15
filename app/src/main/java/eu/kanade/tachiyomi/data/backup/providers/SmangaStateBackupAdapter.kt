@@ -4,6 +4,10 @@ import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import koharia.domain.smanga.SmangaHistoryEvent
 import koharia.domain.smanga.SmangaReadState
+import koharia.smanga.SmangaReadingCoordinator
+import koharia.smanga.SmangaUploadConfirmation
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import tachiyomi.data.Database
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -81,49 +85,56 @@ class SmangaStateBackupAdapter(private val database: Database = Injekt.get()) {
                 if (storedChapterIds[item.chapterUrl] != localChapterId) return@forEach
                 val chapter = parseChapterUrl(item.chapterUrl)?.takeIf { it.manga == manga }
                     ?: return@forEach
-                if (item.confirmationPayload != null &&
-                    queries.getCache(
-                        manga.connectionId,
-                        manga.accountKey,
-                        CONFIRMATION_GROUP,
-                        chapter.remoteChapterId.toString(),
-                    ).awaitAsOneOrNull() == null
+                val current = queries.getReadState(
+                    manga.connectionId,
+                    manga.accountKey,
+                    chapter.remoteChapterId,
+                    ::mapReadState,
+                ).awaitAsOneOrNull()
+                val backupState = item.readState?.takeIf { it.isValid() }
+                val restoreState = backupState != null && (current == null || backupState.readAt > current.readAt)
+                val holdPending = restoreState && backupState.pending
+                val confirmationPayload = if (holdPending) {
+                    Json.encodeToString(SmangaUploadConfirmation(required = true))
+                } else {
+                    item.confirmationPayload.takeIf { restoreState || current == null }
+                }
+                if (confirmationPayload != null && (
+                        holdPending ||
+                            queries.getCache(
+                                manga.connectionId,
+                                manga.accountKey,
+                                CONFIRMATION_GROUP,
+                                chapter.remoteChapterId.toString(),
+                            ).awaitAsOneOrNull() == null
+                        )
                 ) {
                     queries.putCache(
                         manga.connectionId,
                         manga.accountKey,
                         CONFIRMATION_GROUP,
                         chapter.remoteChapterId.toString(),
-                        item.confirmationPayload,
+                        confirmationPayload,
                         System.currentTimeMillis(),
                         0L,
                     )
                 }
-                val backupState = item.readState
-                if (backupState != null && backupState.isValid()) {
-                    val current = queries.getReadState(
+                if (backupState != null && restoreState) {
+                    queries.putReadState(
                         manga.connectionId,
                         manga.accountKey,
                         chapter.remoteChapterId,
-                        ::mapReadState,
-                    ).awaitAsOneOrNull()
-                    if (current == null || backupState.readAt > current.readAt) {
-                        queries.putReadState(
-                            manga.connectionId,
-                            manga.accountKey,
-                            chapter.remoteChapterId,
-                            manga.remoteMangaId,
-                            backupState.pageIndex.toLong(),
-                            backupState.totalPages.toLong(),
-                            if (backupState.completed) 1L else 0L,
-                            backupState.readAt,
-                            maxOf(current?.revision ?: 0L, backupState.revision)
-                                .coerceAtMost(Long.MAX_VALUE - 1) + 1,
-                            if (backupState.pending) 1L else 0L,
-                            if (backupState.explicitUnread) 1L else 0L,
-                            if (backupState.initialPage) 1L else 0L,
-                        )
-                    }
+                        manga.remoteMangaId,
+                        backupState.pageIndex.toLong(),
+                        backupState.totalPages.toLong(),
+                        if (backupState.completed) 1L else 0L,
+                        backupState.readAt,
+                        maxOf(current?.revision ?: 0L, backupState.revision)
+                            .coerceAtMost(Long.MAX_VALUE - 1) + 1,
+                        if (backupState.pending) 1L else 0L,
+                        if (backupState.explicitUnread) 1L else 0L,
+                        if (backupState.initialPage) 1L else 0L,
+                    )
                 }
                 item.pendingHistoryEvents.forEach eventLoop@{ event ->
                     if (event.eventId.isBlank() || event.mediaId != chapter.mediaId || event.readAt < 0L) {
@@ -179,7 +190,7 @@ class SmangaStateBackupAdapter(private val database: Database = Injekt.get()) {
     private data class ChapterIdentity(val manga: MangaIdentity, val mediaId: Long, val remoteChapterId: Long)
 
     private companion object {
-        const val CONFIRMATION_GROUP = "reading-confirmation"
+        const val CONFIRMATION_GROUP = SmangaReadingCoordinator.CONFIRMATION_GROUP
         const val HISTORY_ATTEMPTED = 1L
         val MANGA_URL = Regex("^/smanga/([0-9]+)/([^/]+)/manga/([0-9]+)$")
         val CHAPTER_URL = Regex(

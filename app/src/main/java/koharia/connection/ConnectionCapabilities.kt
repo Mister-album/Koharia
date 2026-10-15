@@ -184,6 +184,11 @@ interface ConnectionLibraryRefreshAdapter {
     suspend fun refreshLibrary(): Result<ConnectionLibraryRefreshResult>
 }
 
+/** Providers with a persistent catalogue can override stale SQL chapter totals without network reads. */
+interface ConnectionShelfUnitCountAdapter {
+    fun observeShelfUnitCounts(entryUrls: Set<String>): Flow<Map<String, Long>>
+}
+
 interface ConnectionLibraryMembershipAdapter {
     suspend fun filterLibraryEntries(mangas: List<Manga>): List<Manga>
 }
@@ -515,7 +520,12 @@ interface ConnectionMangaProgressAdapter {
 
 /** Writes an explicit chapter read/unread action back to the owning connection. */
 interface ConnectionReadStatusAdapter {
-    suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean)
+    suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean): ConnectionReadStatus
+}
+
+/** Owns the local chapter commit and durable intent together; the shared interactor must not pre-write its chapters. */
+interface ConnectionReadStatusCommitAdapter : ConnectionReadStatusAdapter {
+    suspend fun commitChapterReadStatus(chapter: Chapter, read: Boolean): ConnectionReadStatus
 }
 
 /** Optional provider-specific chapter title selected for the details screen. */
@@ -557,7 +567,7 @@ interface ConnectionPageProgressAdapter {
 /** Persists confirmed local reading independently of network progress negotiation. */
 interface ConnectionLocalPageProgressAdapter {
     /** Called once per displayed chapter in a reader session; preloading is not a visit. */
-    fun beginReadingSession(chapterUrl: String) = Unit
+    suspend fun beginReadingSession(chapterUrl: String) = Unit
 
     suspend fun confirmLocalPageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {
         recordLocalPageProgress(chapterUrl, pageIndex, totalPages, readAt)
@@ -590,6 +600,10 @@ data class ConnectionPageProgressSnapshot(
     val requiresPageMappingConfirmation: Boolean = false,
     /** Divergent pending state needs a decision even when the physical page indices are equal. */
     val blocksAutomaticSelection: Boolean = false,
+    /** Identifies a comparison against local state even when the remote position did not change. */
+    val comparisonVersion: String? = null,
+    /** A user decision retires automatic recovery of a request whose server outcome is still unknown. */
+    val uncertainRequest: Boolean = false,
 )
 
 interface ConnectionEpubProgressAdapter {
@@ -610,6 +624,9 @@ interface ConnectionEpubProgressAdapter {
 
     suspend fun pullEpubProgress(resourceId: String): RemoteEpubProgression?
 
+    /** Fresh remote evidence for a deliberate choice; must not adopt it or substitute local pending state. */
+    suspend fun reviewEpubProgress(resourceId: String): RemoteEpubProgression?
+
     suspend fun pushEpubProgress(
         resourceId: String,
         locator: Locator,
@@ -628,10 +645,16 @@ interface ConnectionLocalEpubProgressAdapter {
     suspend fun recordLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: java.util.Date)
     suspend fun acceptRemoteEpubProgress(resourceId: String, locator: Locator, modifiedAt: java.util.Date)
     suspend fun confirmLocalEpubProgress(resourceId: String, locator: Locator, modifiedAt: java.util.Date)
+
+    /** True only when this exact position and timestamp have durable remote acknowledgement. */
+    suspend fun isEpubProgressConfirmed(resourceId: String, locator: Locator, modifiedAt: java.util.Date): Boolean
 }
 
 /** Opt in when original PDF pages can use the provider's ordinary progress negotiation. */
-interface ConnectionReflowProgressAdapter : ConnectionPageProgressAdapter, ConnectionLocalPageProgressAdapter
+interface ConnectionReflowProgressAdapter : ConnectionReaderPageProgressAdapter {
+    suspend fun reviewPageProgress(chapterUrl: String, chapterMemo: JsonObject): ConnectionPageProgressSnapshot?
+    suspend fun isPageProgressConfirmed(chapterUrl: String, page: Int, total: Int, modifiedAt: Long): Boolean
+}
 
 /** A persisted ordered context; chapter ownership and progress remain with their original series. */
 interface ConnectionReadingQueueAdapter {

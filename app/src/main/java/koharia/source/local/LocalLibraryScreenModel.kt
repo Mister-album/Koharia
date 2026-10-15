@@ -10,6 +10,7 @@ import androidx.paging.cachedIn
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.asState
+import eu.kanade.domain.chapter.interactor.SetReadStatus
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.library.components.MangaReadProgress
@@ -352,6 +353,10 @@ internal class LocalLibraryScreenModel(
         mutableState.update { it.copy(isRefreshing = true, refreshError = null) }
         try {
             refreshAdapter.refreshLibrary().getOrThrow()
+            eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(
+                source,
+                koharia.connection.ChapterFetchOrigin.EXPLICIT_REFRESH,
+            )
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -541,7 +546,40 @@ internal class LocalLibraryScreenModel(
 
     fun markRead(mangas: List<Manga>, read: Boolean) {
         val localSource = source as? LocalFolderSource ?: return
-        updateItems(mangas) { itemActions.markRead(localSource, it, read) }
+        if (mangas.isEmpty() || state.value.isBusy) return
+        mutableState.update { it.copy(dialog = null, isUpdatingItems = true) }
+        screenModelScope.launchIO {
+            val results = mutableListOf<SetReadStatus.Result>()
+            val failed = mutableListOf<Manga>()
+            try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    mangas.distinctBy(Manga::id).forEach { manga ->
+                        val itemResults = try {
+                            itemActions.markRead(localSource, manga, read)
+                        } catch (error: Exception) {
+                            listOf(SetReadStatus.Result.InternalError(error))
+                        }
+                        results += itemResults
+                        if (itemResults.any {
+                                it is SetReadStatus.Result.InternalError ||
+                                    (
+                                        it is SetReadStatus.Result.Completed &&
+                                            it.chapters.values.any { status -> !status.allowsDownloadDeletion }
+                                        )
+                            }
+                        ) {
+                            failed += manga
+                        }
+                    }
+                    mutableState.update { it.copy(selectedMangas = failed) }
+                    eventChannel.send(Event.ReadStatusUpdated(results))
+                }
+            } finally {
+                refreshSignal.value += 1
+                refreshReadProgress()
+                mutableState.update { it.copy(isUpdatingItems = false) }
+            }
+        }
     }
 
     private fun updateItems(mangas: List<Manga>, action: suspend (Manga) -> Unit) {
@@ -596,6 +634,7 @@ internal class LocalLibraryScreenModel(
     }
 
     sealed interface Event {
+        data class ReadStatusUpdated(val results: List<SetReadStatus.Result>) : Event
         data class OpenChapter(val chapter: Chapter) : Event
         data class OpenFailed(val error: Throwable) : Event
         data object CoverUpdated : Event

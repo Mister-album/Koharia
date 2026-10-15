@@ -3,6 +3,7 @@ package koharia.source.local
 import eu.kanade.domain.chapter.interactor.SetReadStatus
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionLibraryShelf
 import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.domain.epub.repository.EpubProgressRepository
@@ -15,23 +16,22 @@ internal class LocalLibraryItemActions(
     private val setReadStatus: SetReadStatus,
     private val epubProgressRepository: EpubProgressRepository,
 ) {
-    suspend fun markRead(source: LocalFolderSource, manga: Manga, read: Boolean) {
+    suspend fun markRead(source: LocalFolderSource, manga: Manga, read: Boolean): List<SetReadStatus.Result> {
         val targets = if (source.isFolderContainer(manga.url)) {
             source.readableDescendantMangas(manga.url)
         } else {
             listOf(manga)
         }
-        if (targets.isEmpty()) return
-        targets.distinctBy(Manga::id).forEach { target ->
-            val sourceChapters = source.getChapterList(target.toSManga())
-            syncChaptersWithSource.await(sourceChapters, target, source, manualFetch = false)
+        return targets.distinctBy(Manga::id).map { target ->
+            syncChaptersWithSource.fetchAndSync(target, source, ChapterFetchOrigin.PROGRESS)
             val chapters = chapterRepository.getChapterByMangaId(target.id)
-            if (chapters.isEmpty()) return@forEach
-            when (val result = setReadStatus.await(read, *chapters.toTypedArray())) {
-                is SetReadStatus.Result.InternalError -> throw result.error
-                else -> Unit
+            val result = setReadStatus.await(read, *chapters.toTypedArray())
+            if (!read &&
+                result is SetReadStatus.Result.Completed
+            ) {
+                chapters.forEach { epubProgressRepository.deleteProgress(it.id) }
             }
-            if (!read) chapters.forEach { epubProgressRepository.deleteProgress(it.id) }
+            result
         }
     }
 }

@@ -2,6 +2,9 @@ package koharia.storage
 
 import koharia.domain.storage.LibraryStorageRepository
 import koharia.domain.storage.StorageRecord
+import koharia.domain.storage.StorageRecordUpdate
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -22,21 +25,50 @@ class StorageBackup(private val repository: LibraryStorageRepository, private va
         require(snapshot.schema == 1 && snapshot.root == expectedRoot && snapshot.account.isNotBlank())
         require(snapshot.entries.all { it.namespace in NAMESPACES })
         for (entry in snapshot.entries) {
-            val existing = repository.get(connection, snapshot.account, snapshot.root, entry.namespace, entry.key)
             if (entry.namespace == "progress") {
-                val incoming = json.decodeFromString<StoragePendingProgress>(entry.payload)
-                require(incoming.record.resource == entry.key && incoming.record.schema == 1)
-                if (existing != null) {
-                    val current = json.decodeFromString<StoragePendingProgress>(existing)
-                    if (current.record.version != incoming.record.version) continue
-                    val winner = latestStorageProgress(
-                        listOf(current.record, incoming.record),
-                        incoming.record.resource,
-                        incoming.record.version,
+                val incoming =
+                    decodeStoragePendingProgress(StorageRecord(entry.key, entry.payload, entry.revision), json)
+                val restored = StorageRecord(
+                    entry.key,
+                    json.encodeToString(
+                        incoming.copy(
+                            requiresConfirmation =
+                            incoming.requiresConfirmation || incoming.pending,
+                        ),
+                    ),
+                    entry.revision,
+                )
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val existing = repository.getSnapshot(
+                        connection,
+                        snapshot.account,
+                        snapshot.root,
+                        entry.namespace,
+                        entry.key,
                     )
-                    if (winner != incoming.record) continue
-                    if (current == incoming || (current.record == incoming.record && current.pending)) continue
+                    if (existing != null) {
+                        val current = decodeStoragePendingProgress(existing, json)
+                        if (current.record.version != incoming.record.version) break
+                        val winner =
+                            latestStorageProgress(
+                                listOf(current.record, incoming.record),
+                                incoming.record.resource,
+                                incoming.record.version,
+                            )
+                        if (winner != incoming.record || current.record == incoming.record) break
+                    }
+                    if (repository.compareAndSet(
+                            connection,
+                            snapshot.account,
+                            snapshot.root,
+                            listOf(StorageRecordUpdate(entry.namespace, existing, restored)),
+                        )
+                    ) {
+                        break
+                    }
                 }
+                continue
             }
             repository.put(
                 connection,

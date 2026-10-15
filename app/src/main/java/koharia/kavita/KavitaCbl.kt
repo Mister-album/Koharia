@@ -1,6 +1,7 @@
 package koharia.kavita
 
 import eu.kanade.tachiyomi.network.await
+import koharia.connection.connectionReadOnly
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -103,7 +104,7 @@ class KavitaCbl(private val catalog: KavitaCatalog, private val checkSession: ()
     suspend fun export(id: Long): ByteArray {
         checkSession()
         val request = api.request("ReadingList/export-as-cbl", "readingListId" to id, "asV2" to false)
-            .newBuilder().post("{}".toRequestBody(KavitaApiClient.JSON)).build()
+            .newBuilder().post("{}".toRequestBody(KavitaApiClient.JSON)).connectionReadOnly().build()
         return api.client.newCall(request).await().use {
             KavitaApiClient.checkResponse(it)
             withContext(Dispatchers.IO) {

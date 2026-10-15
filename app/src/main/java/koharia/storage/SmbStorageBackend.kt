@@ -7,7 +7,6 @@ import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.mssmb2.SMBApiException
-import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
@@ -37,24 +36,20 @@ class SmbStorageBackend(
     private var connection: Connection? = null
     private var session: Session? = null
     private var disk: DiskShare? = null
-    override val capabilities = StorageCapabilities(true, true, false, true)
+    override val capabilities = StorageCapabilities(
+        true,
+        true,
+        false,
+        true,
+        atomicMoveIdentityContract = StorageMoveVerifier.SMB_CONTRACT,
+    )
 
     private fun share(): DiskShare {
         disk?.takeIf { it.isConnected && connection?.isConnected == true }?.let { return it }
         resetTransport()
         val connected = client.connect(endpoint.host, endpoint.port.takeIf { it > 0 } ?: 445)
         connection = connected
-        val authenticated = connected.authenticate(
-            if (username.isEmpty()) {
-                AuthenticationContext.anonymous()
-            } else {
-                AuthenticationContext(
-                    username,
-                    password.toCharArray(),
-                    domain,
-                )
-            },
-        )
+        val authenticated = connected.authenticateStorage(username, password, domain)
         session = authenticated
         return (authenticated.connectShare(segments.first()) as DiskShare).also { disk = it }
     }
@@ -68,6 +63,7 @@ class SmbStorageBackend(
                 val reason = when (error.status.name) {
                     "STATUS_LOGON_FAILURE", "STATUS_WRONG_PASSWORD" -> StorageFailure.Reason.AUTH
                     "STATUS_ACCESS_DENIED" -> StorageFailure.Reason.PERMISSION
+                    "STATUS_DISK_FULL", "STATUS_QUOTA_EXCEEDED" -> StorageFailure.Reason.SPACE
                     "STATUS_OBJECT_NAME_NOT_FOUND", "STATUS_OBJECT_PATH_NOT_FOUND", "STATUS_NO_SUCH_FILE" ->
                         StorageFailure.Reason.NOT_FOUND
                     "STATUS_OBJECT_NAME_COLLISION", "STATUS_SHARING_VIOLATION" -> StorageFailure.Reason.CONFLICT
@@ -202,9 +198,8 @@ class SmbStorageBackend(
             SMB2CreateDisposition.FILE_OPEN,
             emptySet(),
         ).use { file ->
-            if (entry(entry.path, file.fileInformation).version !=
-                entry.version
-            ) {
+            val current = entry(entry.path, file.fileInformation)
+            if (current.version != entry.version || (entry.identity != null && current.identity != entry.identity)) {
                 throw StorageFailure(StorageFailure.Reason.CONFLICT)
             }
             file.rename(path(destination), false)
@@ -220,9 +215,8 @@ class SmbStorageBackend(
             SMB2CreateDisposition.FILE_OPEN,
             emptySet(),
         ).use { file ->
-            if (entry(entry.path, file.fileInformation).version !=
-                entry.version
-            ) {
+            val current = entry(entry.path, file.fileInformation)
+            if (current.version != entry.version || (entry.identity != null && current.identity != entry.identity)) {
                 throw StorageFailure(StorageFailure.Reason.CONFLICT)
             }
             file.deleteOnClose()

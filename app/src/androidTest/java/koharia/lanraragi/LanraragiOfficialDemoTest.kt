@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionProfileManager
+import koharia.connection.fetchChapters
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.source.lanraragi.LanraragiConnectionProvider
 import koharia.source.lanraragi.LanraragiPreferences
@@ -102,8 +103,9 @@ class LanraragiOfficialDemoTest {
             val tank = source.materialize(tanks.first())
             assertTrue(source.getChapterList(tank.toSManga()).isNotEmpty())
             val manga = source.materialize(selected)
-            val sourceChapter = source.getChapterList(manga.toSManga()).single()
-            Injekt.get<SyncChaptersWithSource>().await(listOf(sourceChapter), manga, source)
+            val fetched = source.fetchChapters(manga.toSManga(), koharia.connection.ChapterFetchOrigin.OPEN)
+            val sourceChapter = fetched.chapters.single()
+            Injekt.get<SyncChaptersWithSource>().await(fetched, manga)
             val chapter = chapters.getChapterByMangaId(manga.id).single()
             val pages = source.getPageList(sourceChapter)
             assertEquals(selected.pageCount, pages.size)

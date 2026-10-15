@@ -62,7 +62,7 @@ class KomgaServerRemovalManager(
             val latestProfiles = serverPreferences.getProfiles()
             val remainingProfiles = latestProfiles.filterNot { it.id == serverId }
             downloadCache.suppressNextProfileRefresh(remainingProfiles.mapTo(mutableSetOf()) { it.id })
-            serverPreferences.setProfiles(remainingProfiles)
+            serverPreferences.removeProfile(serverId)
             logcat(LogPriority.DEBUG) {
                 "KomgaServerRemoval: profile removed serverId=$serverId " +
                     "remainingProfiles=${remainingProfiles.size}"

@@ -53,6 +53,7 @@ import koharia.connection.LibraryMetadataSuggestion
 import koharia.connection.MetadataFilenameTemplate
 import koharia.connection.MetadataSuggestionSource
 import koharia.connection.SharedAppPreferences
+import koharia.core.archive.BoundedXml
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
 import koharia.document.DocumentEngines
@@ -71,6 +72,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -81,8 +83,6 @@ import kotlinx.serialization.json.JsonObject
 import logcat.LogPriority
 import nl.adaptivity.xmlutil.core.AndroidXmlReader
 import nl.adaptivity.xmlutil.serialization.XML
-import org.jsoup.Jsoup
-import org.jsoup.parser.Parser
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.storage.nameWithoutExtension
@@ -133,6 +133,7 @@ class LocalFolderSource(
     ConfigurableSource,
     UnmeteredSource,
     ConnectionSource,
+    koharia.connection.ConnectionChapterSessionAdapter,
     ConnectionBrowseAdapter,
     koharia.connection.ConnectionEntryOpeningAdapter,
     ConnectionLibraryRefreshAdapter,
@@ -150,23 +151,46 @@ class LocalFolderSource(
     ConnectionMetadataAdapter,
     koharia.connection.ConnectionFileTransferAdapter,
     koharia.connection.ConnectionDownloadStorageAdapter,
-    koharia.connection.ConnectionPageProgressAdapter,
-    koharia.connection.ConnectionLocalPageProgressAdapter,
-    koharia.connection.ConnectionEpubProgressAdapter,
+    koharia.connection.ConnectionShelfUnitCountAdapter,
+    koharia.connection.ConnectionPageProgressSessionAdapter,
+    koharia.connection.ConnectionReflowProgressSessionAdapter,
+    koharia.connection.ConnectionEpubProgressSessionAdapter,
     koharia.connection.ConnectionLocalEpubProgressAdapter,
     koharia.connection.ConnectionReadStatusAdapter,
+    koharia.connection.ConnectionProgressSyncStatusAdapter,
     koharia.connection.ConnectionManagedLifecycle,
     AutoCloseable {
 
     private val json = Injekt.get<kotlinx.serialization.json.Json>()
     private val xml: XML by injectLazy()
     private val preferences by lazy { LocalLibraryPreferences(id, json) }
-    private val storageProgress by lazy { koharia.storage.StorageReaderProgressAdapter(::prepareChapterFile) }
+
+    override fun captureChapterOwner(): koharia.connection.ConnectionChapterOwner {
+        val config = preferences.getConfig()
+        val network = koharia.storage.NetworkStoragePreferences(id)
+        val configuration = network.configuration
+        val credentials = koharia.connection.chapterOwnerKey(network.username, network.password)
+        val key = koharia.connection.chapterOwnerKey(
+            json.encodeToString(config),
+            json.encodeToString(configuration),
+            credentials,
+        )
+        return koharia.connection.ConnectionChapterOwner(key) {
+            if (!storageScope.coroutineContext[kotlinx.coroutines.Job]!!.isActive ||
+                preferences.getConfig() != config || network.configuration != configuration ||
+                koharia.connection.chapterOwnerKey(network.username, network.password) != credentials
+            ) {
+                throw CancellationException("Chapter storage owner changed")
+            }
+        }
+    }
+    private val storageProgress by lazy { koharia.storage.StorageReaderProgressAdapter { prepareChapterFile(it) } }
     private val storageScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
     )
     private var storageObserver: kotlinx.coroutines.Job? = null
     override fun onRegistered() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (storageObserver != null) return
         storageObserver = storageScope.launch {
             Injekt.get<koharia.connection.ConnectionNetworkMonitor>().available.collect { available ->
@@ -179,6 +203,7 @@ class LocalFolderSource(
     }
     override fun close() {
         storageScope.cancel()
+        koharia.storage.NetworkStorageRuntime.invalidate(id)
     }
     override suspend fun pullPageProgress(
         chapterUrl: String,
@@ -202,11 +227,75 @@ class LocalFolderSource(
         read: Boolean,
     ) = storageProgress.setChapterReadStatus(chapterUrl, read)
     override suspend fun getCachedEpubProgress(chapterId: Long) = storageProgress.getCachedEpubProgress(chapterId)
+    override suspend fun captureEpubProgressSession(chapter: Chapter) = captureStorageProgressSession(chapter)
+    override fun observeProgressSyncStatus(
+        chapterUrls: List<String>,
+    ) = koharia.connection.observeProgressStatusSessions(
+        preferences.progressResourceChanges(),
+        chapterUrls,
+    ) {
+        val config = preferences.getConfig()
+        observeLocalFolderProgressSyncStatus(context, id, chapterUrls, config, preferences.getIndex()) {
+            if (!storageScope.coroutineContext[kotlinx.coroutines.Job]!!.isActive ||
+                preferences.getConfig() != config
+            ) {
+                throw CancellationException("Local library status owner changed")
+            }
+        }
+    }
+
+    override suspend fun capturePageProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.connection.ConnectionReaderPageProgressAdapter> {
+        val captured = captureStorageProgressSession(chapter)
+        return koharia.connection.ConnectionProgressSession(
+            koharia.connection.CapturedPageProgress(chapter.url, captured.adapter, captured.checkCurrent),
+            captured.checkCurrent,
+        )
+    }
+    override suspend fun captureReflowProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.connection.ConnectionReflowProgressAdapter>? {
+        val captured = captureStorageProgressSession(chapter)
+        val adapter = captured.adapter.reflowProgressAdapter(chapter.url) ?: return null
+        return koharia.connection.ConnectionProgressSession(adapter, captured.checkCurrent)
+    }
+    override suspend fun reviewPageProgress(chapterUrl: String, chapterMemo: JsonObject) =
+        captureReflowProgressSession(Chapter.create().copy(url = chapterUrl))
+            ?.adapter?.reviewPageProgress(chapterUrl, chapterMemo)
+
+    override suspend fun isPageProgressConfirmed(chapterUrl: String, page: Int, total: Int, modifiedAt: Long) =
+        captureReflowProgressSession(Chapter.create().copy(url = chapterUrl))
+            ?.adapter?.isPageProgressConfirmed(chapterUrl, page, total, modifiedAt) ?: false
+
+    private suspend fun captureStorageProgressSession(chapter: Chapter):
+        koharia.connection.ConnectionProgressSession<koharia.storage.StorageReaderProgressAdapter> {
+        val rootId = LocalLibraryLocator.location(chapter.url, id)?.rootId
+        val roots = preferences.getConfig().roots.filter { rootId == null || it.id == rootId }
+        val runtimes = roots.mapNotNull {
+            koharia.storage.NetworkStorageRuntime.fromUri(context, Uri.parse(it.treeUri))?.runtime
+        }.distinct()
+        return koharia.storage.StorageReaderProgressAdapter {
+            localChapterFile(it)
+        }.captureEpubProgressSession(chapter) {
+            if (!storageScope.coroutineContext[kotlinx.coroutines.Job]!!.isActive ||
+                preferences.getConfig().roots.filter { rootId == null || it.id == rootId } != roots
+            ) {
+                throw CancellationException("Local library reading owner changed")
+            }
+            runtimes.forEach { it.session.checkActive() }
+        }
+    }
     override suspend fun refreshEpubProgress(
         mangaId: Long,
         chapter: Chapter,
     ) = storageProgress.refreshEpubProgress(mangaId, chapter)
     override suspend fun pullEpubProgress(resourceId: String) = storageProgress.pullEpubProgress(resourceId)
+    override suspend fun reviewEpubProgress(resourceId: String) = storageProgress.reviewEpubProgress(resourceId)
+    override suspend fun isEpubProgressConfirmed(
+        resourceId: String,
+        locator: org.readium.r2.shared.publication.Locator,
+        modifiedAt: java.util.Date,
+    ) =
+        storageProgress.isEpubProgressConfirmed(resourceId, locator, modifiedAt)
     override suspend fun pushEpubProgress(
         resourceId: String,
         locator: org.readium.r2.shared.publication.Locator,
@@ -2141,6 +2230,12 @@ class LocalFolderSource(
         throw error
     }
 
+    override fun observeShelfUnitCounts(entryUrls: Set<String>): Flow<Map<String, Long>> =
+        preferences.progressResourceChanges().map {
+            val indexes = readProgressIndexes(entryUrls)
+            entryUrls.associateWith { indexes[it.trimEnd('/')]?.indexedChapterCount?.toLong() ?: 0L }
+        }.distinctUntilChanged()
+
     internal fun readProgressIndex(mangaUrl: String): LocalReadProgressIndex? {
         return readProgressIndexes(listOf(mangaUrl))[mangaUrl.trimEnd('/')]
     }
@@ -2152,7 +2247,7 @@ class LocalFolderSource(
         val rootsById = preferences.getConfig().roots.associateBy { it.id }
         val indexedItems = index.libraryItemsByKey
         val chapterCounts = index.chaptersBySeriesKey
-        val folderDescendants = index.folderReadProgressDescendants()
+        val folderDescendants by lazy { index.folderReadProgressDescendants() }
 
         return mangaUrls.mapNotNull { mangaUrl ->
             val location = LocalLibraryLocator.location(mangaUrl, id) ?: return@mapNotNull null
@@ -2427,7 +2522,7 @@ class LocalFolderSource(
 
     private fun readOpfFile(file: UniFile): LocalEmbeddedMetadata? = runCatching {
         file.openInputStream().use { input ->
-            parseLocalOpfMetadata(Jsoup.parse(input, StandardCharsets.UTF_8.name(), "", Parser.xmlParser()))
+            parseLocalOpfMetadata(BoundedXml.parse(input, StandardCharsets.UTF_8.name()))
         }
     }.getOrNull()
 

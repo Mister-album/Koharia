@@ -2,6 +2,7 @@ package koharia.data.lanraragi
 
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
+import koharia.data.observeBatched
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.domain.lanraragi.LanraragiReadState
 import koharia.domain.lanraragi.LanraragiRepository
@@ -21,6 +22,9 @@ class LanraragiRepositoryImpl(private val database: Database, private val json: 
 
     override suspend fun entries(connectionId: Long) = queries.getEntries(connectionId).awaitAsList()
         .map { json.decodeFromString<LanraragiEntry>(it) }
+
+    override suspend fun entry(connectionId: Long, resourceId: String) =
+        queries.getEntry(connectionId, resourceId).awaitAsOneOrNull()?.let { json.decodeFromString<LanraragiEntry>(it) }
 
     override suspend fun lastSync(connectionId: Long) = queries.getSync(connectionId).awaitAsOneOrNull() ?: 0
 
@@ -54,11 +58,27 @@ class LanraragiRepositoryImpl(private val database: Database, private val json: 
         }
     }
 
+    override fun observeReadStates(connectionId: Long, archiveIds: Collection<String>) =
+        observeBatched(archiveIds) { queries.getReadStatesForArchives(connectionId, it, ::mapState).subscribeToList() }
+
     override fun observeReadStates(connectionId: Long) = queries.getReadStates(
         connectionId,
         ::mapState,
     ).subscribeToList()
     override suspend fun readStates(connectionId: Long) = queries.getReadStates(connectionId, ::mapState).awaitAsList()
+
+    override suspend fun readState(connectionId: Long, archiveId: String) =
+        queries.getReadState(connectionId, archiveId, ::mapState).awaitAsOneOrNull()
+
+    override suspend fun readStates(connectionId: Long, archiveIds: Collection<String>) =
+        database.transactionWithResult {
+            archiveIds.distinct().chunked(900).flatMap {
+                queries.getReadStatesForArchives(connectionId, it, ::mapState).awaitAsList()
+            }
+        }
+
+    override suspend fun pendingReadStates(connectionId: Long) =
+        queries.getPendingReadStates(connectionId, ::mapState).awaitAsList()
 
     override suspend fun record(connectionId: Long, state: LanraragiReadState) {
         queries.record(
@@ -70,6 +90,7 @@ class LanraragiRepositoryImpl(private val database: Database, private val json: 
             if (state.localUnread) 1 else 0,
             if (state.pending) 1 else 0,
             if (state.initialPage) 1 else 0,
+            if (state.requiresConfirmation) 1 else 0,
         )
     }
 
@@ -101,6 +122,7 @@ class LanraragiRepositoryImpl(private val database: Database, private val json: 
         pending: Long,
         revision: Long,
         initialPage: Long,
+        requiresConfirmation: Long,
     ) = LanraragiReadState(
         archiveId,
         pageIndex.toInt(),
@@ -110,5 +132,6 @@ class LanraragiRepositoryImpl(private val database: Database, private val json: 
         pending != 0L,
         revision,
         initialPage != 0L,
+        requiresConfirmation != 0L,
     )
 }

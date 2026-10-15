@@ -67,6 +67,8 @@ import kotlin.math.abs
 class EpubReaderFragment : Fragment() {
 
     interface Host {
+        fun isCurrentReaderSession(chapterId: Long, sourceId: Long, sessionToken: Long): Boolean
+
         fun onTap(positionX: Float, positionY: Float): Boolean
         fun swipePageTurnsEnabled(): Boolean = true
 
@@ -105,6 +107,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
+    private var retainedSession: koharia.epub.session.EpubReaderSession? = null
     private val fontManager: EpubFontManager = Injekt.get()
     private val eInkPreferences: EInkPreferences = Injekt.get()
     private val sharedAppPreferences: SharedAppPreferences = Injekt.get()
@@ -113,6 +116,8 @@ class EpubReaderFragment : Fragment() {
         get() = requireArguments().getLong(ARG_CHAPTER_ID)
     private val sourceId: Long
         get() = requireArguments().getLong(ARG_SOURCE_ID, -1L)
+    private val sessionToken: Long
+        get() = requireArguments().getLong(ARG_SESSION_TOKEN, Long.MIN_VALUE)
     private val epubLayoutPreferences by lazy {
         (activity as? EpubReaderActivity)?.sessionEpubLayoutPreferences() ?: if (sourceId > 0L) {
             sharedAppPreferences.epubLayoutPreferences()
@@ -121,6 +126,7 @@ class EpubReaderFragment : Fragment() {
         }
     }
     private var host: Host? = null
+        get() = field?.takeIf { it.isCurrentReaderSession(chapterId, sourceId, sessionToken) }
     private var containerId: Int = View.NO_ID
     private var scannerContainerId: Int = View.NO_ID
     private var observedNavigator: EpubNavigatorFragment? = null
@@ -215,7 +221,7 @@ class EpubReaderFragment : Fragment() {
                     if (navigator.currentLocator.value.href == locator.href) host?.onLocatorChanged(captured)
                 }
             }
-            if (sessionRepository.get(chapterId)?.pdfReflow != null) {
+            if (retainedSession?.pdfReflow != null) {
                 pdfAnchorCaptureJob?.cancel()
                 pdfAnchorCaptureJob = viewLifecycleOwner.lifecycleScope.launch {
                     delay(100)
@@ -238,7 +244,8 @@ class EpubReaderFragment : Fragment() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val session = sessionRepository.get(chapterId)
+        val session = sessionRepository.get(chapterId)?.takeIf { it.retain() }
+        retainedSession = session
         paragraphIndentOverrideEnabled = epubLayoutPreferences.publisherStyles.get().not()
         readerFontScale = epubLayoutPreferences.fontSize.get()
         textAlignmentOverride = epubLayoutPreferences.textAlignment.get()
@@ -336,7 +343,7 @@ class EpubReaderFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        val session = sessionRepository.get(chapterId)
+        val session = retainedSession
         if (session == null) {
             host?.onSessionMissing(chapterId)
             return
@@ -413,6 +420,15 @@ class EpubReaderFragment : Fragment() {
         super.onDetach()
     }
 
+    override fun onDestroy() {
+        try {
+            super.onDestroy()
+        } finally {
+            retainedSession?.release()
+            retainedSession = null
+        }
+    }
+
     override fun onDestroyView() {
         pdfAnchorCaptureJob?.cancel()
         pdfAnchorCaptureJob = null
@@ -443,7 +459,7 @@ class EpubReaderFragment : Fragment() {
     @OptIn(InternalReadiumApi::class)
     fun goTo(link: Link, userInitiated: Boolean = true): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
-        val publication = sessionRepository.get(chapterId)?.publication ?: return false
+        val publication = retainedSession?.publication ?: return false
         pageTransitionController?.cancel()
         clearContinuousScrollState()
         // 修复:Readium 3.3.0 的 Url(string) 只接受可打印 ASCII,而 Koharia-main 同源 EPUB 的
@@ -484,7 +500,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     suspend fun capturePdfSourceAnchor() {
-        if (sessionRepository.get(chapterId)?.pdfReflow == null) return
+        if (retainedSession?.pdfReflow == null) return
         val navigator = readyNavigatorFragment() ?: return
         val before = navigator.currentLocator.value
         val preferred = org.json.JSONObject.quote(host?.preferredPdfSourceAnchor().orEmpty())
@@ -574,7 +590,7 @@ class EpubReaderFragment : Fragment() {
     fun goTo(locator: Locator, userInitiated: Boolean = true): Boolean {
         val navigator = readyNavigatorFragment() ?: return false
         pageTransitionController?.cancel()
-        val publication = sessionRepository.get(chapterId)?.publication ?: return false
+        val publication = retainedSession?.publication ?: return false
         clearContinuousScrollState()
         if (userInitiated) host?.onManualReadingNavigation()
         if (locator.href.toString().contains("koharia-epub/")) {
@@ -628,7 +644,7 @@ class EpubReaderFragment : Fragment() {
 
     private fun canTurnPage(navigator: EpubNavigatorFragment, forward: Boolean): Boolean {
         val href = navigator.currentLocator.value.href.toString()
-        val publication = sessionRepository.get(chapterId)?.publication ?: return false
+        val publication = retainedSession?.publication ?: return false
         if (publication.metadata.layout == org.readium.r2.shared.publication.Layout.FIXED) return true
         if (currentTransitionHref?.sameEpubResource(href) != true || currentTransitionPageCount <= 0) return false
         val order = publication.readingOrder
@@ -1000,7 +1016,7 @@ class EpubReaderFragment : Fragment() {
                         koharia.kavita.renderKavitaHighlights(navigator, remoteHighlights)
                     }
                     if (!kavitaRestoreAttempted && locator.href.toString().contains("koharia-epub/")) {
-                        val initial = sessionRepository.get(chapterId)?.initialLocator
+                        val initial = retainedSession?.initialLocator
                         if (initial != null && initial.href.toString().sameEpubResource(locator.href.toString())) {
                             kavitaRestoreAttempted = true
                             pendingKavitaLocator = initial
@@ -1012,7 +1028,8 @@ class EpubReaderFragment : Fragment() {
                         continuousScrollLocator = null
                         continuousScrollInstalledHref = null
                         if (locator.href.toString().contains("koharia-epub/")) {
-                            host?.onLocatorChanged(koharia.kavita.captureKavitaLocator(navigator, locator))
+                            val captured = koharia.kavita.captureKavitaLocator(navigator, locator)
+                            host?.onLocatorChanged(captured)
                         } else {
                             host?.onLocatorChanged(locator)
                         }
@@ -1292,7 +1309,7 @@ class EpubReaderFragment : Fragment() {
         if (fontPreparation.requiresAsyncLoad) FONT_PREPARATION_DRAW_TIMEOUT_MS else IMAGE_COLOR_POLICY_DRAW_TIMEOUT_MS
 
     private fun fontOverridesDisabled(): Boolean =
-        sessionRepository.get(chapterId)?.publication?.metadata?.layout ==
+        retainedSession?.publication?.metadata?.layout ==
             org.readium.r2.shared.publication.Layout.FIXED
 
     private fun shouldFitStandaloneImage(): Boolean =
@@ -1317,7 +1334,7 @@ class EpubReaderFragment : Fragment() {
             }
         }
         if (!shortVisibleResource) return false
-        val order = sessionRepository.get(chapterId)?.publication?.readingOrder ?: return false
+        val order = retainedSession?.publication?.readingOrder ?: return false
         val index = order.indexOfFirst { it.href.toString().sameEpubResource(locator.href.toString()) }
         if (index < 0) return false
         val target = order.getOrNull(index + if (forward) 1 else -1) ?: return false
@@ -1353,7 +1370,7 @@ class EpubReaderFragment : Fragment() {
                 if (!viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) continue
                 val currentLocator = navigator.currentLocator.value
                 if (!currentLocator.href.toString().sameEpubResource(locator.href.toString())) return@launch
-                val session = sessionRepository.get(chapterId) ?: return@launch
+                val session = retainedSession ?: return@launch
                 val currentIndex = session.publication.readingOrder.indexOfFirst {
                     it.href.toString().sameEpubResource(locator.href.toString())
                 }
@@ -1450,7 +1467,7 @@ class EpubReaderFragment : Fragment() {
             return null
         }
         val current = continuousScrollLocator ?: return null
-        val publication = sessionRepository.get(chapterId)?.publication ?: return null
+        val publication = retainedSession?.publication ?: return null
         val currentIndex = publication.readingOrder.indexOfFirst {
             it.href.toString().sameEpubResource(current.href.toString())
         }
@@ -1460,7 +1477,7 @@ class EpubReaderFragment : Fragment() {
         val locator = createContinuousScrollLocator(
             link = target,
             progression = if (forward) 0.0 else 1.0,
-            positions = sessionRepository.get(chapterId)?.positionsController?.currentPositions().orEmpty(),
+            positions = retainedSession?.positionsController?.currentPositions().orEmpty(),
         ) ?: return false
         return goTo(locator)
     }
@@ -1482,7 +1499,7 @@ class EpubReaderFragment : Fragment() {
                 ) {
                     return@post
                 }
-                val session = sessionRepository.get(chapterId) ?: return@post
+                val session = retainedSession ?: return@post
                 val link = session.publication.readingOrder.getOrNull(resourceIndex) ?: return@post
                 val locator = createContinuousScrollLocator(
                     link = link,
@@ -1504,7 +1521,7 @@ class EpubReaderFragment : Fragment() {
         ) {
             return
         }
-        val session = sessionRepository.get(chapterId) ?: return
+        val session = retainedSession ?: return
         val link = session.publication.readingOrder.getOrNull(resourceIndex) ?: return
         val locator = createContinuousScrollLocator(
             link = link,
@@ -1532,7 +1549,7 @@ class EpubReaderFragment : Fragment() {
         ) {
             view?.post {
                 if (!isAdded || view == null || (currentSource.isBlank() && rawSource.isBlank())) return@post
-                val publication = sessionRepository.get(chapterId)?.publication ?: return@post
+                val publication = retainedSession?.publication ?: return@post
                 val resolvedIndex = resourceIndex.takeIf { it in publication.readingOrder.indices }
                     ?: publication.readingOrder.indexOfFirst { link ->
                         link.href.toString().sameEpubResource(ownerResource.href.toString())
@@ -1585,7 +1602,7 @@ class EpubReaderFragment : Fragment() {
         progression: Double,
         positions: List<Locator>,
     ): Locator? {
-        val publication = sessionRepository.get(chapterId)?.publication ?: return null
+        val publication = retainedSession?.publication ?: return null
         val resourcePositions = positions.filter {
             it.href.toString().sameEpubResource(link.href.toString())
         }
@@ -1883,6 +1900,7 @@ class EpubReaderFragment : Fragment() {
     companion object {
         private const val ARG_CHAPTER_ID = "chapter_id"
         private const val ARG_SOURCE_ID = "source_id"
+        private const val ARG_SESSION_TOKEN = "reader_session_token"
         private const val NAVIGATOR_TAG = "epub_navigator"
         private const val PAGINATION_SCANNER_TAG = "epub_pagination_scanner"
         private const val PARAGRAPH_INDENT_DEBUG_DELAY_MS = 600L
@@ -1933,15 +1951,16 @@ class EpubReaderFragment : Fragment() {
             })()
             """.trimIndent()
 
-        fun createArguments(chapterId: Long, sourceId: Long): Bundle {
+        fun createArguments(chapterId: Long, sourceId: Long, sessionToken: Long): Bundle {
             return Bundle().apply {
                 putLong(ARG_CHAPTER_ID, chapterId)
                 putLong(ARG_SOURCE_ID, sourceId)
+                putLong(ARG_SESSION_TOKEN, sessionToken)
             }
         }
 
-        fun newInstance(chapterId: Long, sourceId: Long): EpubReaderFragment {
-            return EpubReaderFragment().apply { arguments = createArguments(chapterId, sourceId) }
+        fun newInstance(chapterId: Long, sourceId: Long, sessionToken: Long): EpubReaderFragment {
+            return EpubReaderFragment().apply { arguments = createArguments(chapterId, sourceId, sessionToken) }
         }
     }
 

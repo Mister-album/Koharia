@@ -156,7 +156,7 @@ class LanraragiArchiveOpeningDeviceTest {
                 )
                 awaitLabel(context.stringResource(MR.strings.lanraragi_page_number, 1), scroll = true)
                 withTimeout(20_000) {
-                    while (!pages.all { cache.isImageInCache(it.imageUrl!!) }) delay(100)
+                    while (!pages.all { cache.isImageInCache(source.id, it.imageUrl!!) }) delay(100)
                 }
                 capture("preview")
                 assertFalse(source.repository.readStates(source.id).any { it.pending })

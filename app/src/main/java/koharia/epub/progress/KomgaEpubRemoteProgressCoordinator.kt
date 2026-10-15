@@ -2,9 +2,15 @@ package koharia.epub.progress
 
 import koharia.connection.SharedAppPreferences
 import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
-import koharia.domain.epub.interactor.UpsertEpubRemoteProgressCache
 import koharia.domain.epub.model.EpubRemoteProgressCache
+import koharia.domain.komga.KomgaRemoteProgressChange
+import koharia.domain.komga.KomgaRemoteProgressRepository
 import koharia.komga.download.KomgaChapterMemo
+import koharia.komga.progress.KomgaProgressOrdering
+import koharia.komga.progress.KomgaProgressSuperseded
+import koharia.source.komga.KomgaProgressOwnerChanged
+import koharia.source.komga.KomgaSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -17,20 +23,38 @@ import java.util.Date
 class KomgaEpubRemoteProgressCoordinator(
     private val syncService: KomgaEpubProgressSyncService,
     private val getCache: GetEpubRemoteProgressCache,
-    private val upsertCache: UpsertEpubRemoteProgressCache,
+    private val remoteProgress: KomgaRemoteProgressRepository,
     private val sharedAppPreferences: SharedAppPreferences,
 ) {
     suspend fun syncManga(
         mangaId: Long,
-        sourceId: Long,
+        source: KomgaSource,
         chapters: List<Chapter>,
         force: Boolean = false,
         includeUnknownChapters: Boolean = false,
+    ): List<EpubRemoteProgressCache> {
+        if (sharedAppPreferences.basePreferences().incognitoMode.get()) return emptyList()
+        return syncManga(mangaId, syncService.captureSession(source), chapters, force, includeUnknownChapters)
+    }
+
+    internal suspend fun syncManga(
+        mangaId: Long,
+        session: koharia.source.komga.KomgaProgressSession,
+        chapters: List<Chapter>,
+        force: Boolean = false,
+        includeUnknownChapters: Boolean = false,
+        checkCurrent: suspend () -> Unit = { requireActive(session) },
     ): List<EpubRemoteProgressCache> = coroutineScope {
         if (sharedAppPreferences.basePreferences().incognitoMode.get()) {
             return@coroutineScope emptyList()
         }
-        val existing = getCache.awaitByMangaId(mangaId).associateBy { it.chapterId }
+        checkCurrent()
+        val existing = if (chapters.size == 1) {
+            listOfNotNull(getCache.await(chapters.single().id))
+        } else {
+            getCache.awaitByMangaId(mangaId)
+        }.associateBy { it.chapterId }
+        checkCurrent()
         val now = System.currentTimeMillis()
         val semaphore = Semaphore(MAX_CONCURRENT_REQUESTS)
         chapters.filter { chapter ->
@@ -40,42 +64,92 @@ class KomgaEpubRemoteProgressCoordinator(
         }.map { chapter ->
             async {
                 semaphore.withPermit {
-                    val cached = existing[chapter.id]
+                    checkCurrent()
+                    val bookUrl = KomgaChapterMemo.readFingerprint(chapter.memo)?.bookUrl
+                        ?: chapter.url.substringBefore('#').removeSuffix("/")
+                    val key = KomgaProgressOrdering.key(session.sourceId, session.account.key, bookUrl)
+                    val snapshot = remoteProgress.captureChapter(key, chapter.id, checkCurrent)
+                    val state = snapshot.chapters[chapter.id] ?: return@withPermit null
+                    if (state.chapter.mangaId != mangaId || state.chapter.url != chapter.url ||
+                        KomgaProgressOrdering.key(session.sourceId, session.account.key, state.chapter.url) != key
+                    ) {
+                        return@withPermit null
+                    }
+                    val cached = state.remoteEpub
+                    val validateResponse: suspend () -> Unit = {
+                        if (!remoteProgress.isCurrent(snapshot, chapter.id, key.bookId, checkCurrent)) {
+                            throw KomgaProgressSuperseded()
+                        }
+                    }
+                    if (!remoteProgress.isCurrent(
+                            snapshot,
+                            chapter.id,
+                            key.bookId,
+                            checkCurrent,
+                        )
+                    ) {
+                        return@withPermit null
+                    }
                     if (!force && cached != null && now - cached.checkedAt.time < CACHE_TTL_MS) {
                         return@withPermit cached
                     }
-                    val bookUrl = KomgaChapterMemo.readFingerprint(chapter.memo)?.bookUrl
-                        ?: chapter.url.substringBefore('#').removeSuffix("/")
-                    runCatching { syncService.pullProgression(sourceId, bookUrl) }
+                    runCatching { syncService.pullProgression(session, bookUrl, validateResponse) }
                         .map { result ->
                             val remote = result.progression
-                            EpubRemoteProgressCache(
+                            val cache = EpubRemoteProgressCache(
                                 chapterId = chapter.id,
                                 mangaId = mangaId,
-                                bookUrl = bookUrl,
+                                bookUrl = state.chapter.url.substringBefore('#').removeSuffix("/"),
                                 locatorJson = remote?.locator?.toJSON()?.toString(),
                                 progression = remote?.locator?.totalProgression(),
                                 positionIndex = remote?.locator?.positionIndex(),
                                 modifiedAt = remote?.modifiedAt,
                                 checkedAt = Date(),
                                 serverDate = result.serverDate,
-                            ).also { upsertCache.await(it) }
+                            )
+                            val applied = remoteProgress.apply(
+                                snapshot,
+                                listOf(KomgaRemoteProgressChange(chapter.id, key.bookId, null, null, null, cache)),
+                                checkCurrent,
+                            )
+                            cache.takeIf { chapter.id in applied }
                         }
-                        .getOrElse { cached }
+                        .getOrElse { error ->
+                            if (error is CancellationException || error is KomgaProgressOwnerChanged) throw error
+                            checkCurrent()
+                            cached.takeIf { remoteProgress.isCurrent(snapshot, chapter.id, key.bookId, checkCurrent) }
+                        }
                 }
             }
-        }.awaitAll().filterNotNull()
+        }.awaitAll().filterNotNull().also { checkCurrent() }
     }
 
-    suspend fun get(chapterId: Long): EpubRemoteProgressCache? = getCache.await(chapterId)
+    suspend fun get(chapterId: Long, source: KomgaSource): EpubRemoteProgressCache? {
+        return get(chapterId, syncService.captureSession(source))
+    }
+
+    internal suspend fun get(
+        chapterId: Long,
+        session: koharia.source.komga.KomgaProgressSession,
+        checkCurrent: suspend () -> Unit = { requireActive(session) },
+    ): EpubRemoteProgressCache? {
+        checkCurrent()
+        val cached = getCache.await(chapterId) ?: return null
+        checkCurrent()
+        val key = KomgaProgressOrdering.key(session.sourceId, session.account.key, cached.bookUrl)
+        val snapshot = remoteProgress.captureChapter(key, chapterId, checkCurrent)
+        val state = snapshot.chapters[chapterId] ?: return null
+        if (KomgaProgressOrdering.key(session.sourceId, session.account.key, state.chapter.url) != key) return null
+        return state.remoteEpub.takeIf { remoteProgress.isCurrent(snapshot, chapterId, key.bookId, checkCurrent) }
+    }
 
     suspend fun refreshChapter(
         mangaId: Long,
         chapter: Chapter,
-        sourceId: Long,
+        source: KomgaSource,
     ): EpubRemoteProgressCache? = syncManga(
         mangaId = mangaId,
-        sourceId = sourceId,
+        source = source,
         chapters = listOf(chapter),
         force = true,
         includeUnknownChapters = true,
@@ -86,6 +160,11 @@ class KomgaEpubRemoteProgressCoordinator(
 
     private fun Locator.positionIndex(): Long? =
         (locations.position as? Number)?.toLong()
+
+    private fun requireActive(session: koharia.source.komga.KomgaProgressSession) {
+        if (koharia.connection.ConnectionRestoreState.isRestoring) throw java.io.IOException("Restore in progress")
+        session.guard.requireCurrent()
+    }
 
     private companion object {
         const val MAX_CONCURRENT_REQUESTS = 2

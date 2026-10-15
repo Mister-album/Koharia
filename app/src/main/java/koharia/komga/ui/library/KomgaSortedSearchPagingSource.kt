@@ -23,7 +23,7 @@ internal class KomgaSortedSearchPagingSource(
             val page = params.key ?: 1L
             val result = session.load(page.toInt())
             val manga = networkToLocalManga(result.mangas.map { it.toDomainManga(sourceId) })
-            LoadResult.Page(manga, null, if (result.hasNextPage) page + 1 else null)
+            LoadResult.Page(manga, (page - 1).takeIf { page > 1 }, if (result.hasNextPage) page + 1 else null)
         }
     } catch (e: CancellationException) {
         throw e

@@ -8,6 +8,7 @@ class ReadOnlyStorageBackend(private val delegate: LibraryStorageBackend) : Libr
         writable = false,
         conditionalWrites = false,
         atomicMove = false,
+        atomicMoveIdentityContract = null,
     )
     override suspend fun createDirectory(path: String): Unit = denied()
     override suspend fun write(path: String, data: InputStream, length: Long, expectedVersion: String?): Unit = denied()

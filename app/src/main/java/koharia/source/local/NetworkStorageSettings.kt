@@ -10,8 +10,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import eu.kanade.presentation.more.settings.widget.PreferenceGroupHeader
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import koharia.storage.LibraryStorageBackend
@@ -33,7 +34,6 @@ import koharia.storage.StorageEntry
 import koharia.storage.StorageFailure
 import koharia.storage.StorageIdentity
 import koharia.storage.StoragePath
-import koharia.storage.StoragePendingProgress
 import koharia.storage.WebDavAddress
 import koharia.storage.authenticateSmbServer
 import koharia.storage.authenticateWebDavServer
@@ -197,6 +197,9 @@ internal fun NetworkStorageConnectionFields(
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     Column {
         PreferenceGroupHeader(title = if (config.mode == LibraryStorageMode.SMB) "SMB" else "WebDAV")
+        eu.kanade.presentation.more.settings.widget.InfoWidget(
+            stringResource(MR.strings.connection_identity_change_help),
+        )
         OutlinedTextField(
             value = if (smbAddress?.root?.isNotEmpty() == true) smbAddress.server else config.address,
             onValueChange = { onChange(draft.copy(configuration = config.copy(address = it))) },
@@ -337,6 +340,8 @@ internal suspend fun saveNetworkLibraryDraft(
     library: LocalLibraryConfig,
     assignments: Map<String, String>,
     isNew: Boolean,
+    connectionName: String? = null,
+    onSaved: (Long) -> Unit = {},
 ): LocalLibraryConfig {
     val preferences = NetworkStoragePreferences(sourceId)
     val resolved = draft.resolvedConfiguration()
@@ -346,11 +351,6 @@ internal suspend fun saveNetworkLibraryDraft(
         domain = draft.configuration.domain.trim(),
     )
     require(isNew || config.mode == initial.mode)
-    if (!isNew && !initial.persistentIdentity &&
-        !sameNetworkRoot(config.mode, config.address, initial.address)
-    ) {
-        throw StorageFailure(StorageFailure.Reason.UNVERIFIED)
-    }
     var enabled = if (library.setupCompleted) library else library.enabledLibraryConfiguration()
     draft.authenticate()
     val verified = NetworkStorageRuntime.backend(
@@ -372,7 +372,11 @@ internal suspend fun saveNetworkLibraryDraft(
                 }
                 check(primary.stat("").directory)
                 persistent = false
-                initial.rootIdentity.takeIf { !initial.persistentIdentity && it.isNotBlank() }
+                initial.rootIdentity.takeIf {
+                    !initial.persistentIdentity && it.isNotBlank() &&
+                        sameNetworkRoot(config.mode, config.address, initial.address) &&
+                        draft.username == preferences.username && draft.password == preferences.password
+                }
                     ?: UUID.randomUUID().toString()
             }
             enabled = prepareInitialNetworkDirectories(primary, enabled)
@@ -405,85 +409,111 @@ internal suspend fun saveNetworkLibraryDraft(
             )
         }
     }
-    if (!isNew &&
-        (
-            verified.rootIdentity != initial.rootIdentity ||
-                NetworkStoragePreferences.account(verified, draft.username) != preferences.account
-            )
+    val identityChanged = !isNew && (
+        Injekt.get<koharia.connection.ConnectionProfileManager>().requiresIdentityReplacement(sourceId) ||
+            verified.rootIdentity != initial.rootIdentity || initial.needsValidation ||
+            !sameNetworkRoot(config.mode, config.address, initial.address) ||
+            config.internalAddress != initial.internalAddress || config.domain != initial.domain ||
+            draft.username != preferences.username || draft.password != preferences.password
+        )
+    var saved: LocalLibraryConfig? = null
+    suspend fun write(
+        id: Long,
+        target: android.content.SharedPreferences = eu.kanade.tachiyomi.source.sourcePreferences("source_$id"),
     ) {
-        throw StorageFailure(StorageFailure.Reason.UNVERIFIED)
+        NetworkStoragePreferences(id, target).save(verified, draft.username, draft.password)
+        val uri = android.provider.DocumentsContract.buildDocumentUri(
+            NetworkStorageRuntime.authority(context),
+            "$id|${NetworkStoragePreferences.account(verified, draft.username)}|",
+        )
+        val updated = enabled.copy(
+            libraryId = verified.rootIdentity,
+            setupCompleted = true,
+            roots = enabled.roots.map { it.copy(treeUri = uri.toString()) },
+            detachedRoots = if (identityChanged) emptyList() else enabled.detachedRoots,
+            managedBaseTreeUri = enabled.managedBaseTreeUri.takeIf { it.isBlank() } ?: uri.toString(),
+            treeUri = enabled.treeUri.takeIf { it.isBlank() } ?: uri.toString(),
+        )
+        LocalLibraryPreferences(id, Injekt.get<Json>(), target).saveLibraryDraft(
+            updated,
+            if (identityChanged) emptyMap() else assignments.filterValues { updated.bookshelf(it) != null },
+        )
+        saved = updated
     }
-    Injekt.get<LocalLibraryRefreshTasks>().cancel(sourceId)
-    preferences.save(verified, draft.username, draft.password)
-    NetworkStorageRuntime.invalidate(sourceId)
-    val runtime = NetworkStorageRuntime.get(context, sourceId)
-    runtime.records.list("scans").forEach { runtime.records.remove("scans", it.key, it.revision) }
-    val saved = enabled.copy(
-        libraryId = verified.rootIdentity,
-        setupCompleted = true,
-        roots = enabled.roots.map { it.copy(treeUri = runtime.uri("").toString()) },
-    )
-    LocalLibraryPreferences(sourceId, Injekt.get<Json>()).saveLibraryDraft(
-        saved,
-        assignments.filterValues {
-            saved.bookshelf(it) !=
-                null
-        },
-    )
-    return saved
+    val targetId = if (identityChanged) {
+        val manager = Injekt.get<koharia.connection.ConnectionProfileManager>()
+        manager.replaceIdentity(
+            sourceId,
+            connectionName ?: manager.profiles().first { it.id == sourceId }.name,
+            { id -> write(id) },
+        ).id
+    } else {
+        Injekt.get<LocalLibraryRefreshTasks>().cancel(sourceId)
+        Injekt.get<koharia.connection.ConnectionProfileManager>().commitConfiguration(sourceId) { target ->
+            write(sourceId, target)
+        }
+        val runtime = NetworkStorageRuntime.get(context, sourceId)
+        runtime.records.list("scans").forEach { runtime.records.remove("scans", it.key, it.revision) }
+        sourceId
+    }
+    onSaved(targetId)
+    return requireNotNull(saved)
 }
 
 @Composable
 internal fun NetworkStoragePendingSettings(sourceId: Long) {
+    key(sourceId) { NetworkStoragePendingContent(sourceId) }
+}
+
+@Composable
+private fun NetworkStoragePendingContent(sourceId: Long) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var pending by remember(sourceId) { mutableStateOf<Pair<Int, Int>?>(null) }
-    var busy by remember(sourceId) { mutableStateOf(false) }
-    var failed by remember(sourceId) { mutableStateOf(false) }
+    val states = remember(sourceId) { observeNetworkStoragePendingState(context.applicationContext, sourceId) }
+    val state by states.collectAsStateWithLifecycle(initialValue = null)
+    var busy by remember(state?.owner) { mutableStateOf(false) }
+    var failed by remember(state?.owner) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    suspend fun load() {
-        try {
-            pending = withContext(Dispatchers.IO) {
-                val runtime = NetworkStorageRuntime.get(context, sourceId)
-                runtime.records.list("progress").count {
-                    runtime.records.json.decodeFromString<StoragePendingProgress>(it.payload).pending
-                } to runtime.records.list("mutations").size
-            }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            pending = null
-            failed = true
-        }
-    }
-    LaunchedEffect(sourceId) { load() }
     Column {
-        pending?.let {
-            TextPreferenceWidget(title = stringResource(MR.strings.storage_pending_state, it.first, it.second))
+        state?.summary?.let {
+            TextPreferenceWidget(title = stringResource(MR.strings.storage_pending_state, it.pending, it.mutations))
+            if (it.held > 0) {
+                TextPreferenceWidget(
+                    title = stringResource(MR.strings.storage_held_state, it.held),
+                    subtitle = stringResource(MR.strings.storage_held_explanation),
+                )
+            }
+            if (it.unavailable > 0) {
+                TextPreferenceWidget(
+                    title = stringResource(MR.strings.storage_unavailable_state, it.unavailable),
+                    subtitle = stringResource(MR.strings.connection_sync_status_unavailable),
+                )
+            }
+            if (state?.writesAllowed == false) {
+                TextPreferenceWidget(subtitle = stringResource(MR.strings.storage_retry_requires_validation))
+            }
+        }
+        if (state != null && state?.summary == null) {
+            TextPreferenceWidget(title = stringResource(MR.strings.connection_sync_status_unavailable))
         }
         TextPreferenceWidget(
             title = stringResource(
                 MR.strings.storage_retry_pending,
             ),
-            enabled = !busy,
+            enabled = !busy && state?.retry != null,
             onPreferenceClick = {
-                busy = true
-                scope.launch {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            val runtime = NetworkStorageRuntime.get(context, sourceId)
-                            runtime.mutations.reconcile()
-                            runtime.progress.flush()
+                state?.retry?.let { retry ->
+                    busy = true
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { retry() }
+                            failed = false
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                            failed = true
+                        } finally {
+                            busy = false
                         }
-                        failed = false
-                    } catch (
-                        error: CancellationException,
-                    ) {
-                        throw error
-                    } catch (_: Exception) {
-                        failed = true
-                    } finally {
-                        busy = false
-                        load()
                     }
                 }
             },

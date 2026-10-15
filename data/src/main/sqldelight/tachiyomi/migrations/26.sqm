@@ -1,0 +1,30 @@
+CREATE TABLE komga_page_event (
+    connection_id INTEGER NOT NULL,
+    owner_key TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    page INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    baseline TEXT,
+    phase TEXT NOT NULL,
+    PRIMARY KEY (connection_id, owner_key, book_id)
+);
+
+CREATE INDEX komga_page_event_pending ON komga_page_event(connection_id, owner_key)
+WHERE phase = 'PENDING';
+
+CREATE TABLE komga_page_attempt (
+    connection_id INTEGER NOT NULL,
+    owner_key TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    page INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    read_at INTEGER NOT NULL,
+    event_baseline TEXT,
+    baseline TEXT NOT NULL,
+    PRIMARY KEY (connection_id, owner_key, book_id)
+);

@@ -1,0 +1,4 @@
+CREATE INDEX komga_page_event_book ON komga_page_event(connection_id, book_id);
+CREATE INDEX komga_page_attempt_book ON komga_page_attempt(connection_id, book_id);
+CREATE INDEX komga_read_status_book ON komga_read_status(connection_id, book_id);
+CREATE INDEX komga_read_status_attempt_book ON komga_read_status_attempt(connection_id, book_id);

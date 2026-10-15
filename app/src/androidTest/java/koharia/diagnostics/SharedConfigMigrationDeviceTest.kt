@@ -23,6 +23,7 @@ import org.junit.runner.RunWith
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class SharedConfigMigrationDeviceTest {
@@ -35,9 +36,13 @@ class SharedConfigMigrationDeviceTest {
         val preferences = context.getSharedPreferences(name, Context.MODE_PRIVATE)
         val storage = AndroidSharedConfigStorage(preferences)
         val selected = AtomicBoolean(false)
+        val defaultsCreated = AtomicInteger()
         val migration = SharedConfigMigration(
             storage,
-            mapOf("theme" to 1, "font" to "original"),
+            {
+                defaultsCreated.incrementAndGet()
+                mapOf("theme" to 1, "font" to "original")
+            },
             { listOf(LibraryConnectionProfile(7, "lanraragi", "Migration fixture")) },
             Json,
         )
@@ -54,6 +59,7 @@ class SharedConfigMigrationDeviceTest {
                 ),
             )
             assertFalse(migration.initialize())
+            assertEquals(0, defaultsCreated.get())
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { it.setContent { SharedConfigSelection(migration) { selected.set(true) } } }
                 withTimeout(5_000) {
@@ -86,6 +92,7 @@ class SharedConfigMigrationDeviceTest {
                 }
             }
             assertFalse(migration.isPending())
+            assertEquals(1, defaultsCreated.get())
             assertEquals("chosen", preferences.getString("connection_shared::font", null))
             assertFalse(preferences.contains("connection_shared::theme"))
             assertFalse(preferences.contains("font"))

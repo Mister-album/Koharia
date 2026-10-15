@@ -456,7 +456,7 @@ class KavitaLivePublicationDeviceTest {
         ActivityScenario.launch(EpubTransitionFixtureActivity::class.java).use { scenario ->
             lateinit var fragment: EpubReaderFragment
             scenario.onActivity {
-                fragment = EpubReaderFragment.newInstance(session.chapterId, -1)
+                fragment = EpubReaderFragment.newInstance(session.chapterId, -1, 0)
                 it.supportFragmentManager.beginTransaction().replace(android.R.id.content, fragment).commitNow()
             }
             val navigator = withTimeout(30_000) {

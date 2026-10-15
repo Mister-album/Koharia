@@ -11,7 +11,10 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import eu.kanade.tachiyomi.util.system.workManager
+import koharia.connection.hasPausedConnectionWrites
+import koharia.source.komga.KomgaProgressOwnerChanged
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.guava.await
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.security.MessageDigest
@@ -20,35 +23,45 @@ import java.util.concurrent.TimeUnit
 
 class KomgaPageProgressRetryJob(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val sourceId = inputData.getLong("source", -1)
-        val url = inputData.getString("url") ?: return Result.failure()
-        return try {
-            Injekt.get<KomgaProgressSyncService>().retryPageProgress(
-                sourceId,
-                url,
-                inputData.getInt("page", -1),
-                inputData.getInt("total", 0),
-                inputData.getInt("expectedPage", -1),
-                inputData.getBoolean("expectedCompleted", false),
-                inputData.getString("expectedDate"),
-                inputData.getLong("localReadAt", -1L),
-            )
-            Result.success()
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
+        if (koharia.connection.DevReadOnlyValidation.enabled) return Result.retry()
+        val reason = when {
+            inputData.getString("owner").isNullOrBlank() -> "unknown_owner"
+            inputData.getLong("revision", -1) < 0 -> "unknown_revision"
+            else -> "legacy_payload"
+        }
+        return if (runCatching { KomgaHeldProgress.store(applicationContext, id, inputData, reason) }
+                .getOrDefault(false)
+        ) {
+            Result.failure(workDataOf("progressStatus" to "held", "reason" to reason))
+        } else {
             Result.retry()
         }
     }
 
     companion object {
-        private fun name(sourceId: Long, url: String): String = "komga-page-$sourceId-" +
-            MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+        private fun resourceName(sourceId: Long, url: String, ownerKey: String): String =
+            "komga-page-$sourceId-$ownerKey-" +
+                MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
 
-        fun enqueue(sourceId: Long, url: String, page: Int, total: Int, baseline: KomgaApi.BookProgressSnapshot): UUID {
+        private fun name(sourceId: Long, url: String, ownerKey: String, revision: Long) =
+            "${resourceName(sourceId, url, ownerKey)}-r$revision"
+
+        fun enqueue(
+            sourceId: Long,
+            url: String,
+            page: Int,
+            total: Int,
+            baseline: KomgaApi.BookProgressSnapshot,
+            ownerKey: String,
+            revision: Long,
+        ): UUID {
+            require(ownerKey.isNotBlank() && revision >= 0)
             val request = OneTimeWorkRequestBuilder<KomgaPageProgressRetryJob>()
                 .setInputData(
                     workDataOf(
                         "source" to sourceId,
+                        "owner" to ownerKey,
+                        "revision" to revision,
                         "url" to url,
                         "page" to page,
                         "total" to total,
@@ -58,29 +71,35 @@ class KomgaPageProgressRetryJob(context: Context, params: WorkerParameters) : Co
                         "localReadAt" to -1L,
                     ),
                 )
+                .addTag(resourceName(sourceId, url, ownerKey))
                 .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
                 .setInitialDelay(10, TimeUnit.SECONDS)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
                 .build()
             Injekt.get<Application>().workManager.enqueueUniqueWork(
-                name(sourceId, url),
+                name(sourceId, url, ownerKey, revision),
                 ExistingWorkPolicy.REPLACE,
                 request,
             )
             return request.id
         }
 
-        fun enqueueLocal(
+        suspend fun enqueueLocal(
             sourceId: Long,
             url: String,
             page: Int,
             total: Int,
             readAt: Long,
+            ownerKey: String,
+            revision: Long,
         ): UUID {
+            require(ownerKey.isNotBlank() && revision >= 0)
             val request = OneTimeWorkRequestBuilder<KomgaPageProgressRetryJob>()
                 .setInputData(
                     workDataOf(
                         "source" to sourceId,
+                        "owner" to ownerKey,
+                        "revision" to revision,
                         "url" to url,
                         "page" to page,
                         "total" to total,
@@ -89,20 +108,31 @@ class KomgaPageProgressRetryJob(context: Context, params: WorkerParameters) : Co
                         "localReadAt" to readAt,
                     ),
                 )
+                .addTag(resourceName(sourceId, url, ownerKey))
                 .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
                 .setInitialDelay(10, TimeUnit.SECONDS)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
                 .build()
             Injekt.get<Application>().workManager.enqueueUniqueWork(
-                name(sourceId, url),
+                name(sourceId, url, ownerKey, revision),
                 ExistingWorkPolicy.REPLACE,
                 request,
-            )
+            ).result.await()
             return request.id
         }
 
-        fun cancel(sourceId: Long, url: String) {
-            Injekt.get<Application>().workManager.cancelUniqueWork(name(sourceId, url))
+        suspend fun cancelRevision(sourceId: Long, url: String, ownerKey: String, revision: Long) {
+            Injekt.get<Application>().workManager.cancelUniqueWork(
+                name(sourceId, url, ownerKey, revision),
+            ).result.await()
+        }
+
+        /** Explicit reset/restore cancels this resource's legacy and revision-scoped work only. */
+        fun cancel(sourceId: Long, url: String, ownerKey: String) {
+            val manager = Injekt.get<Application>().workManager
+            val resource = resourceName(sourceId, url, ownerKey)
+            manager.cancelUniqueWork(resource)
+            manager.cancelAllWorkByTag(resource)
         }
     }
 }

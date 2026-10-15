@@ -78,7 +78,7 @@ findByLocalRelativePathPrefix:
 SELECT *
 FROM komga_shared_download_matches
 WHERE local_relative_path = :localRelativePathPrefix
-OR local_relative_path LIKE :localRelativePathPrefix || '/%';
+OR substr(local_relative_path, 1, length(:localRelativePathPrefix) + 1) = :localRelativePathPrefix || '/';
 
 countByLocalRelativePath:
 SELECT count(*)
@@ -157,10 +157,10 @@ WHERE local_relative_path = :oldLocalRelativePath;
 updateLocalRelativePathPrefix:
 UPDATE komga_shared_download_matches
 SET
-    local_relative_path = :newPrefix || substr(local_relative_path, :oldPrefixLength + 1),
+    local_relative_path = :newPrefix || substr(local_relative_path, length(:oldPrefix || '/')),
     last_verified_at = :lastVerifiedAt
 WHERE local_relative_path = :oldPrefix
-OR local_relative_path LIKE :oldPrefix || '/%';
+OR substr(local_relative_path, 1, length(:oldPrefix) + 1) = :oldPrefix || '/';
 
 getKomgaChapterSeedByUrl:
 SELECT

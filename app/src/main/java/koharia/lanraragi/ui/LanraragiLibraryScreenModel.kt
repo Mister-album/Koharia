@@ -196,7 +196,7 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
                     refreshProgress()
                 } else {
                     progressJob?.cancelAndJoin()
-                    source.startRefresh()
+                    source.startRefresh(explicit = true)
                 }
             }
         }

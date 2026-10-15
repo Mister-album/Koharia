@@ -12,6 +12,39 @@ import org.junit.jupiter.params.provider.ValueSource
 import java.io.InputStream
 
 class StorageIdentityTest {
+    @Test fun `repeated identity lookups use bounded memory cache and reject obsolete session`(): Unit = runBlocking {
+        val backend = MemoryStorageBackend().apply { seed("book", "data") }
+        val memory = MemoryStorageRepository()
+        var queries = 0
+        var active = true
+        val repository = object : koharia.domain.storage.LibraryStorageRepository by memory {
+            override suspend fun get(
+                connection: Long,
+                account: String,
+                root: String,
+                namespace: String,
+                key: String,
+            ): String? {
+                queries++
+                return memory.get(connection, account, root, namespace, key)
+            }
+        }
+        val records = StorageRecordStore(StorageSession(1, "account", "root") { active }, repository, Json)
+        val identities = StorageResourceIdentities(backend, records)
+        val entry = backend.stat("book")
+        val initial = identities.identity(entry)
+        repeat(100) { assertEquals(initial, identities.identity(entry)) }
+        assertEquals(1, queries)
+        repeat(600) { identities.identity(entry.copy(path = "other-$it")) }
+        val before = queries
+        assertEquals(initial, identities.identity(entry))
+        assertEquals(before + 1, queries)
+        active = false
+        assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+            runBlocking { identities.identity(entry) }
+        }
+    }
+
     @Test fun `move identities survive another device and a second rename`() = runBlocking {
         val backend = MemoryStorageBackend()
         backend.seed("first.cbz", "content")

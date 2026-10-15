@@ -1,5 +1,6 @@
 package koharia.kavita
 
+import koharia.connection.DevReadOnlyValidation
 import koharia.domain.kavita.KavitaAnnotationEntry
 import koharia.domain.kavita.KavitaCacheEntry
 import koharia.domain.kavita.KavitaRepository
@@ -28,6 +29,7 @@ data class KavitaAnnotationState(
     val remoteConflict: KavitaAnnotation? = null,
     val submittedCreate: KavitaAnnotation? = null,
     val anchorStale: Boolean = false,
+    val needsConfirmation: Boolean = false,
 )
 
 data class KavitaAnnotationRecord(val entry: KavitaAnnotationEntry, val state: KavitaAnnotationState)
@@ -42,6 +44,7 @@ class KavitaAnnotationCoordinator(
     private val catalog: KavitaCatalog,
     private val scope: CoroutineScope,
     private val checkSession: () -> Unit,
+    private val checkRemoteWrite: () -> Unit,
     private val allowLocalWrite: () -> Boolean,
 ) {
     private val api get() = catalog.api
@@ -159,6 +162,8 @@ class KavitaAnnotationCoordinator(
                             KavitaAnnotationEntry("remote-${value.id}", chapterId, value.id, "", 0, false),
                             KavitaAnnotationState(value, value),
                         )
+                    } else if (previous.state.needsConfirmation) {
+                        put(previous.entry, previous.state.copy(conflict = true, remoteConflict = value))
                     } else if (previous.entry.remoteId == null) {
                         val annotation = previous.state.annotation.copy(id = value.id)
                         put(
@@ -195,7 +200,9 @@ class KavitaAnnotationCoordinator(
                     it.entry.remoteId != null &&
                         remote.none { value -> value.id == it.entry.remoteId }
                 }) {
-                    if ((previous.entry.pending || previous.state.anchorStale) && !previous.state.deleted) {
+                    if (previous.state.needsConfirmation ||
+                        ((previous.entry.pending || previous.state.anchorStale) && !previous.state.deleted)
+                    ) {
                         put(previous.entry, previous.state.copy(conflict = true, remoteConflict = null))
                     } else {
                         put(previous.entry, previous.state.copy(deleted = true, baseline = null), false)
@@ -324,16 +331,24 @@ class KavitaAnnotationCoordinator(
                     remoteConflict = null,
                 )
             }
-            put(current.entry.copy(revision = revision + 1), next, choice == KavitaAnnotationResolution.LOCAL)
+            put(
+                current.entry.copy(revision = revision + 1),
+                next.copy(needsConfirmation = false),
+                choice == KavitaAnnotationResolution.LOCAL,
+            )
         }
         retryPending()
     }
 
     suspend fun flush() = flushMutex.withLock {
+        if (DevReadOnlyValidation.enabled) return@withLock
         val pending = repository.annotations(connectionId, account).filter { it.pending }.map(::decode)
-        val uploadable = pending.filter { !it.state.conflict && (!it.state.anchorStale || it.state.deleted) }
+        val uploadable = pending.filter {
+            !it.state.needsConfirmation && !it.state.conflict && (!it.state.anchorStale || it.state.deleted)
+        }
         if (uploadable.isEmpty()) return@withLock
         checkSession()
+        checkRemoteWrite()
         if (!api.capabilities(api.getAccount(true)).writable) throw KavitaException(KavitaException.Reason.PERMISSION)
         for (record in uploadable) {
             checkSession()
@@ -358,6 +373,7 @@ class KavitaAnnotationCoordinator(
                     if (current?.entry?.revision != record.entry.revision) {
                         false
                     } else {
+                        checkRemoteWrite()
                         put(record.entry, state.copy(submittedCreate = state.annotation))
                         true
                     }
@@ -410,6 +426,8 @@ class KavitaAnnotationCoordinator(
         put(current.entry, current.state.copy(conflict = true, remoteConflict = remote))
     }
 
+    internal suspend fun awaitClosedWriters() = flushMutex.withLock { mutex.withLock {} }
+
     private suspend fun acknowledge(record: KavitaAnnotationRecord, remote: KavitaAnnotation?) = mutex.withLock {
         val current = find(record.entry.key) ?: return@withLock
         if (remote != null && repository.annotations(connectionId, account).any {
@@ -445,6 +463,7 @@ class KavitaAnnotationCoordinator(
     }
 
     @Synchronized fun retryPending() {
+        if (DevReadOnlyValidation.enabled) return
         if (!scope.isActive) return
         scheduled.set(true)
         if (job?.isActive == true) return

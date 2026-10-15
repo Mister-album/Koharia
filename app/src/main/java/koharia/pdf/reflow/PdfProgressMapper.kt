@@ -20,6 +20,21 @@ internal object PdfProgressMapper {
         }
     }
 
+    fun progressLocator(manifest: PdfReflowManifest, locator: Locator, savedJson: String): Locator {
+        val source = runCatching { JSONObject(savedJson).optJSONObject("kohariaPdfSource") }.getOrNull()
+            ?: return locator
+        if (source.optString("sourceHash") != manifest.sourceHash ||
+            source.optString("revision") != manifest.revision
+        ) {
+            return locator
+        }
+        val id = source.optString("blockId")
+        val mapped = block(manifest, locator, id)?.takeIf {
+            it.id == id && it.source.page == source.optInt("page", -1)
+        } ?: return locator
+        return locator.copy(locations = locator.locations.copy(fragments = listOf(mapped.id)))
+    }
+
     fun initial(manifest: PdfReflowManifest, savedJson: String?, originalPage: Int): Locator? {
         val saved = savedJson?.let { runCatching { JSONObject(it) }.getOrNull() }
         val source = saved?.optJSONObject("kohariaPdfSource")

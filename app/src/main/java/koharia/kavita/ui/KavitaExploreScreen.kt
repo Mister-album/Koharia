@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
@@ -26,7 +27,11 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.library.components.ManualDownloadIndicator
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.ui.manga.MangaScreen
+import koharia.connection.ChapterFetchOrigin
+import koharia.connection.rememberConnectionShelfEntries
 import koharia.epub.EpubReaderLauncher
 import koharia.kavita.KavitaFilter
 import koharia.kavita.KavitaFilterStatement
@@ -77,11 +82,23 @@ class KavitaExploreScreen(
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
-        var rows by remember { mutableStateOf<List<JsonObject>?>(null) }
+        var rows by remember(session, section, readingListId) { mutableStateOf<List<JsonObject>?>(null) }
         var error by remember { mutableStateOf<String?>(null) }
         var createName by remember { mutableStateOf<String?>(null) }
         var busy by remember { mutableStateOf(false) }
         var ownsList by remember { mutableStateOf(false) }
+        val listState = rememberLazyListState()
+        val listItems = remember(session, rows) {
+            if (section == "ReadingList/items") {
+                rows.orEmpty().map { session.api.decode<KavitaListItem>(it.toString()) }
+            } else {
+                emptyList()
+            }
+        }
+        val localEntries = rememberConnectionShelfEntries(
+            source,
+            listItems.map { session.identity.series(it.seriesId) },
+        ) { listState.layoutInfo.visibleItemsInfo.map { it.index } }
         suspend fun load(refresh: Boolean) {
             withContext(Dispatchers.IO) {
                 val result = when (section) {
@@ -207,15 +224,45 @@ class KavitaExploreScreen(
             } else if (rows == null && error == null) {
                 LoadingScreen()
             } else {
-                LazyColumn(Modifier.padding(padding)) {
+                LazyColumn(Modifier.padding(padding), state = listState) {
                     items(rows.orEmpty(), key = { it["id"].toString() }) { row ->
                         val remoteId = row["id"]?.jsonPrimitive?.longOrNull ?: 0
                         val title = row.text("title").ifBlank { row.text("name") }.ifBlank { row.text("seriesName") }
+                        val member = if (section == "ReadingList/items") {
+                            session.api.decode<KavitaListItem>(row.toString())
+                        } else {
+                            null
+                        }
                         ListItem(
                             headlineContent = { Text(title) },
                             supportingContent = row.text("summary").takeIf {
                                 it.isNotBlank()
                             }?.let { { Text(it, maxLines = 3) } },
+                            trailingContent = member?.let { item ->
+                                {
+                                    Column {
+                                        ManualDownloadIndicator(
+                                            source.readingListDownloadState(
+                                                item,
+                                                localEntries[session.identity.series(item.seriesId)],
+                                            ),
+                                        )
+                                        TextButton(enabled = !busy, onClick = {
+                                            run {
+                                                val manga = withContext(Dispatchers.IO) {
+                                                    session.checkActive()
+                                                    localEntries[session.identity.series(item.seriesId)]?.manga
+                                                        ?: source.materialize(
+                                                            source.toManga(session.catalog.series(item.seriesId)),
+                                                        )
+                                                }
+                                                session.checkActive()
+                                                navigator.push(MangaScreen(manga.id, true, sourceId, manga.url))
+                                            }
+                                        }) { Text(stringResource(MR.strings.entry_open_details)) }
+                                    }
+                                }
+                            },
                             modifier = Modifier.clickable(enabled = !busy) {
                                 when {
                                     section == "ReadingList" -> navigator.push(
@@ -227,10 +274,10 @@ class KavitaExploreScreen(
                                             val manga = source.materialize(
                                                 source.toManga(session.catalog.series(item.seriesId)),
                                             )
-                                            Injekt.get<SyncChaptersWithSource>().await(
-                                                source.getChapterList(manga.toSManga()),
+                                            Injekt.get<SyncChaptersWithSource>().fetchAndSync(
                                                 manga,
                                                 source,
+                                                ChapterFetchOrigin.OPEN,
                                             )
                                             Injekt.get<ChapterRepository>().getChapterByMangaId(manga.id).first {
                                                 session.identity.chapter(it.url).chapterId == item.chapterId

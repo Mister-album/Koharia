@@ -1,7 +1,9 @@
 package koharia.importing
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -25,5 +27,25 @@ class IncomingMediaNavigationTest {
         assertNull(validatedTemporaryMediaUri(cacheRoot, outside.toURI().toString()))
         assertNull(validatedTemporaryMediaUri(cacheRoot, "content://other/book.epub"))
         assertNull(validatedTemporaryMediaUri(cacheRoot, File(session, "missing.epub").toURI().toString()))
+    }
+
+    @Test
+    fun `external file boundary uses canonical shared roots and excludes private directories`() {
+        val shared = File(temporaryDirectory, "shared").apply { mkdirs() }
+        val private = File(shared, "Android/data/app").apply { mkdirs() }
+        val permitted = File(shared, "Downloads/book.cbz")
+        assertTrue(isExternalMediaFile(permitted, listOf(shared), listOf(private)))
+        assertFalse(isExternalMediaFile(File(private, "private.txt"), listOf(shared), listOf(private)))
+        assertFalse(isExternalMediaFile(File(shared, "../secret.txt"), listOf(shared), listOf(private)))
+        assertFalse(
+            isExternalMediaFile(File(temporaryDirectory, "shared-other/book.txt"), listOf(shared), listOf(private)),
+        )
+        assertFalse(
+            isExternalMediaFile(
+                File(shared, "Downloads/../Android/data/app/private.txt"),
+                listOf(shared),
+                listOf(private),
+            ),
+        )
     }
 }

@@ -243,6 +243,9 @@ class RestoreBackupScreen(
                                     },
                                 )
                             }
+                            if (state.options.connectionSettings || state.options.libraryEntries) {
+                                Text(stringResource(MR.strings.connection_restore_identity_help))
+                            }
                         }
                     }
                 }

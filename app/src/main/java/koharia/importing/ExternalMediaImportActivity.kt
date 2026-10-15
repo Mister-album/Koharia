@@ -21,6 +21,7 @@ internal interface ExternalMediaFlowHost {
 
 abstract class ExternalMediaHostActivity(
     private val mode: String,
+    private val temporaryImport: Boolean = false,
 ) : BaseActivity(), ExternalMediaFlowHost {
 
     private var readerWasLaunched = false
@@ -30,14 +31,19 @@ abstract class ExternalMediaHostActivity(
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val uriValues = if (temporaryImport) {
+            IncomingMediaNavigation.validatedImportUri(this, intent)?.let(::listOf).orEmpty()
+        } else {
+            IncomingMediaNavigation.mediaUriValues(this, intent).takeIf { values ->
+                values.all { canReadIncomingUri(this, intent, android.net.Uri.parse(it)) }
+            }.orEmpty()
+        }
+        if (uriValues.isEmpty()) intent = Intent()
         super.onCreate(savedInstanceState)
         readerWasLaunched = savedInstanceState?.getBoolean(STATE_READER_WAS_LAUNCHED) ?: false
         Migrator.awaitAndRelease()
         enableEdgeToEdge()
 
-        val temporaryImportUri = IncomingMediaNavigation.validatedImportUri(this, intent)
-        val uriValues = temporaryImportUri?.let(::listOf)
-            ?: IncomingMediaNavigation.mediaUriValues(intent)
         if (uriValues.isEmpty()) {
             finish()
             return
@@ -119,4 +125,9 @@ class ExternalMediaImportActivity : ExternalMediaHostActivity(
 
 class ExternalMediaOpenActivity : ExternalMediaHostActivity(
     IncomingMediaNavigation.EXTERNAL_MEDIA_MODE_OPEN,
+)
+
+class TemporaryMediaImportActivity : ExternalMediaHostActivity(
+    IncomingMediaNavigation.EXTERNAL_MEDIA_MODE_IMPORT,
+    temporaryImport = true,
 )

@@ -18,6 +18,12 @@ getRecords:
 SELECT record_key, payload, revision FROM library_storage_record
 WHERE connection_id = :connectionId AND account_key = :account AND root_id = :root AND namespace = :namespace;
 
+getSelectedRecords:
+SELECT record_key, payload, revision FROM library_storage_record
+WHERE connection_id = :connectionId AND account_key = :account AND root_id = :root
+AND namespace = :namespace AND record_key IN :keys
+ORDER BY record_key;
+
 putRecord:
 INSERT OR REPLACE INTO library_storage_record VALUES (:connectionId, :account, :root, :namespace, :key, :payload, :revision);
 

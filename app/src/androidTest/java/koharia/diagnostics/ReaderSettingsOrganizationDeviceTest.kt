@@ -13,7 +13,10 @@ import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
@@ -34,8 +37,10 @@ class ReaderSettingsOrganizationDeviceTest {
     fun comicReaderUsesTheCompactSettingsContent(): Unit = runBlocking(Dispatchers.IO) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
+        val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val screenModel = ReaderSettingsScreenModel(
             readerState = MutableStateFlow(ReaderViewModel.State()),
+            scope = settingsScope,
             onChangeReadingMode = {},
             onChangeOrientation = {},
         )
@@ -71,6 +76,7 @@ class ReaderSettingsOrganizationDeviceTest {
                 node(instrumentation, context.stringResource(MR.strings.epub_reader_more_reading_settings))
             }
         } finally {
+            settingsScope.cancel()
             restores.asReversed().forEach { it() }
         }
     }

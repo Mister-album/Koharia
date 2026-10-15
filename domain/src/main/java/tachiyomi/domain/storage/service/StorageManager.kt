@@ -18,11 +18,18 @@ import kotlinx.coroutines.flow.shareIn
 class StorageManager(
     private val context: Context,
     private val storagePreferences: StoragePreferences,
+    private val currentTimeMillis: () -> Long = System::currentTimeMillis,
 ) {
 
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    @Volatile
     private var baseDir: UniFile? = getBaseDir(storagePreferences.baseStorageDirectory.get())
+
+    private val downloadsDirectoryLock = Any()
+
+    @Volatile
+    private var cachedDownloadsDirectory: CachedDownloadsDirectory? = null
 
     private val _changes: Channel<Unit> = Channel(Channel.UNLIMITED)
     val changes = _changes.receiveAsFlow()
@@ -56,7 +63,30 @@ class StorageManager(
     }
 
     fun getDownloadsDirectory(): UniFile? {
-        return baseDir?.createDirectory(DOWNLOADS_PATH)
+        return synchronized(downloadsDirectoryLock) {
+            val root = baseDir
+            val directory = root?.createDirectory(DOWNLOADS_PATH)
+            cachedDownloadsDirectory = if (root != null && directory != null && root.uri.scheme != "file") {
+                CachedDownloadsDirectory(root, directory, currentTimeMillis())
+            } else {
+                null
+            }
+            directory
+        }
+    }
+
+    fun getDownloadsDirectoryForRead(): UniFile? {
+        cachedDownloadsDirectory?.takeIf { it.isValid(baseDir, currentTimeMillis()) }?.let { return it.directory }
+        return synchronized(downloadsDirectoryLock) {
+            cachedDownloadsDirectory?.takeIf { it.isValid(baseDir, currentTimeMillis()) }?.directory
+                ?: getDownloadsDirectory()
+        }
+    }
+
+    fun invalidateDownloadsDirectoryCache() {
+        synchronized(downloadsDirectoryLock) {
+            cachedDownloadsDirectory = null
+        }
     }
 
     fun getLocalSourceDirectory(): UniFile? {
@@ -70,6 +100,11 @@ class StorageManager(
             ?: if (create) root.createDirectory(CUSTOM_COVERS_PATH) else null
         if (create) DiskUtil.createNoMediaFile(directory, context)
         return directory?.takeIf { it.isDirectory }
+    }
+
+    private data class CachedDownloadsDirectory(val root: UniFile, val directory: UniFile, val resolvedAt: Long) {
+        fun isValid(currentRoot: UniFile?, now: Long): Boolean =
+            root === currentRoot && now - resolvedAt in 0 until 10_000L
     }
 }
 

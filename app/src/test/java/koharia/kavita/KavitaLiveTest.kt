@@ -326,6 +326,7 @@ class KavitaLiveTest {
                 catalog,
                 stopped,
                 {},
+                {},
                 { true },
             )
             try {

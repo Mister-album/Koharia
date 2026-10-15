@@ -22,10 +22,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.library.components.ManualDownloadIndicator
 import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
 import eu.kanade.presentation.util.formatChapterNumber
 import eu.kanade.tachiyomi.util.lang.toTimestampString
+import koharia.connection.MangaDownloadState
 import tachiyomi.domain.history.model.HistoryWithRelations
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
@@ -36,6 +38,7 @@ private val HistoryItemHeight = 96.dp
 @Composable
 fun HistoryItem(
     history: HistoryWithRelations,
+    downloadState: MangaDownloadState?,
     onClickCover: () -> Unit,
     onClickResume: () -> Unit,
     onClickDelete: () -> Unit,
@@ -82,6 +85,7 @@ fun HistoryItem(
             )
         }
 
+        downloadState?.let { ManualDownloadIndicator(it) }
         IconButton(onClick = onClickDelete) {
             Icon(
                 imageVector = Icons.Outlined.Delete,
@@ -102,6 +106,7 @@ private fun HistoryItemPreviews(
         Surface {
             HistoryItem(
                 history = historyWithRelations,
+                downloadState = null,
                 onClickCover = {},
                 onClickResume = {},
                 onClickDelete = {},

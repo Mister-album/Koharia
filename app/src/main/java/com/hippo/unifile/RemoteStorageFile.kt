@@ -85,7 +85,7 @@ class RemoteStorageFile(val runtime: NetworkStorageRuntime, var storagePath: Str
     }
     override fun openInputStream(): InputStream {
         val current = entry() ?: throw StorageFailure(StorageFailure.Reason.NOT_FOUND)
-        val lease = runtime.cache.acquire(current)
+        val lease = runBlocking(Dispatchers.IO) { runtime.cache.acquire(current) }
         return object : InputStream() {
             private var position = 0L
             private var closed = false
@@ -136,7 +136,7 @@ class RemoteStorageFile(val runtime: NetworkStorageRuntime, var storagePath: Str
     override fun createRandomAccessFile(mode: String): UniRandomAccessFile {
         require(mode == "r") { "Remote random writes are not supported" }
         val current = entry() ?: throw StorageFailure(StorageFailure.Reason.NOT_FOUND)
-        val lease = runtime.cache.acquire(current)
+        val lease = runBlocking(Dispatchers.IO) { runtime.cache.acquire(current) }
         return object : UniRandomAccessFile {
             private var position = 0L
             override fun close() = lease.close()

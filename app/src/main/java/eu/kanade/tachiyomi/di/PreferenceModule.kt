@@ -47,7 +47,9 @@ class PreferenceModule(val app: Application) : InjektModule {
                 storage = koharia.connection.AndroidSharedConfigStorage(
                     androidx.preference.PreferenceManager.getDefaultSharedPreferences(app),
                 ),
-                defaults = koharia.connection.ConnectionConfigManager.buildPreferenceDefaults(app, isDebugBuildType),
+                defaults = {
+                    koharia.connection.ConnectionConfigManager.buildPreferenceDefaults(app, isDebugBuildType)
+                },
                 profiles = { get<ConnectionPreferences>().getProfiles() },
                 json = get(),
             )

@@ -10,6 +10,7 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.reader.loader.LocalPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryMetadata
 import koharia.connection.LibraryMetadataField
@@ -120,7 +121,7 @@ class LocalFolderLibraryDeviceTest {
             assertTrue(source.filterLibraryEntries(listOf(book)).any { it.id == book.id })
             val sync: SyncChaptersWithSource = Injekt.get()
             val chapters: ChapterRepository = Injekt.get()
-            sync.await(source.getChapterList(book.toSManga()), book, source, manualFetch = false)
+            sync.fetchAndSync(book, source, ChapterFetchOrigin.OPEN)
             val chapter = chapters.getChapterByMangaId(book.id).single()
             chapters.update(ChapterUpdate(id = chapter.id, read = true, lastPageRead = 1))
             source.updateMetadata(book.url, LibraryMetadata(title = "Edited title")).getOrThrow()
@@ -170,7 +171,7 @@ class LocalFolderLibraryDeviceTest {
             assertTrue(source.isIndividualFileEntry(manga.url))
             val sync: SyncChaptersWithSource = Injekt.get()
             val chapters: ChapterRepository = Injekt.get()
-            sync.await(source.getChapterList(manga.toSManga()), manga, source, manualFetch = false)
+            sync.fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
             val loader = LocalPageLoader(ReaderChapter(chapters.getChapterByMangaId(manga.id).single()), source, source)
             try {
                 assertEquals(2, loader.getPages().size)

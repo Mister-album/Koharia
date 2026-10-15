@@ -2,6 +2,7 @@ package koharia.smanga.ui
 
 import android.content.Context
 import dev.icerock.moko.resources.StringResource
+import koharia.connection.hasPausedConnectionWrites
 import koharia.smanga.SmangaException
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
@@ -14,6 +15,7 @@ import javax.net.ssl.SSLException
 fun Context.smangaError(error: Throwable): String = stringResource(smangaErrorResource(error))
 
 internal fun smangaErrorResource(error: Throwable): StringResource {
+    if (error.hasPausedConnectionWrites()) return MR.strings.connection_writes_paused
     val causes = generateSequence(error) { it.cause }.take(8).toList()
     return when (causes.filterIsInstance<SmangaException>().firstOrNull()?.reason) {
         SmangaException.Reason.ADDRESS -> MR.strings.smanga_error_connection

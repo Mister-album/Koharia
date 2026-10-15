@@ -42,6 +42,7 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
     private val notifier = BackupNotifier(context)
 
     override suspend fun doWork(): Result {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return Result.retry()
         if (uy.kohesive.injekt.Injekt.get<koharia.connection.SharedConfigMigration>().isPending()) return Result.retry()
 
         val isAutoBackup = inputData.getBoolean(IS_AUTO_BACKUP_KEY, true)

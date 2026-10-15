@@ -2,6 +2,7 @@ package koharia.smanga
 
 import com.sun.net.httpserver.HttpServer
 import koharia.domain.smanga.SmangaCacheEntry
+import koharia.domain.smanga.SmangaCatalogueCacheEntry
 import koharia.domain.smanga.SmangaHistoryEvent
 import koharia.domain.smanga.SmangaReadState
 import koharia.domain.smanga.SmangaRepository
@@ -23,11 +24,15 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URI
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import javax.net.SocketFactory
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SmangaCatalogTest {
@@ -69,12 +74,56 @@ class SmangaCatalogTest {
     private fun catalog(
         account: String = "account-a",
         connection: Long = 1,
+        openedSockets: AtomicInteger? = null,
         checkSession: () -> Unit = {
         },
     ): SmangaCatalog {
-        val api = SmangaApi(OkHttpClient(), json, address, "fixture", "fixture", account)
+        val client = OkHttpClient.Builder().apply {
+            openedSockets?.let { socketFactory(CountingSocketFactory(it)) }
+        }.build()
+        val api = SmangaApi(client, json, address, "fixture", "fixture", account)
         clients += api
         return SmangaCatalog(connection, account, repository, api, json, checkSession)
+    }
+
+    @Test
+    fun `warm read probe observes real API sockets despite listener isolation`() = runTest {
+        handler = { 200 to mediaBody(2, 3) }
+        val sockets = AtomicInteger()
+        val cold = catalog(openedSockets = sockets)
+        assertEquals(listOf(2L, 3L), cold.media().map { it.id })
+        assertTrue(sockets.get() > 0)
+        val warmSockets = AtomicInteger()
+        assertEquals(listOf(2L, 3L), catalog(openedSockets = warmSockets).media().map { it.id })
+        assertEquals(0, warmSockets.get())
+    }
+
+    @Test
+    fun `reverse pages after long scroll reuse persisted pages without opening sockets`() = runTest {
+        val first = catalog()
+        val pages = (1..32).associateWith { first.page(2, "", "mangaName asc", it) }
+        val requestsBefore = requests.size
+        handler = { 503 to "unavailable" }
+        val sockets = AtomicInteger()
+        val restored = catalog(openedSockets = sockets)
+        for (page in 32 downTo 1) assertEquals(pages[page], restored.page(2, "", "mangaName asc", page))
+        assertEquals(requestsBefore, requests.size)
+        assertEquals(0, sockets.get())
+    }
+
+    private class CountingSocketFactory(private val count: AtomicInteger) : SocketFactory() {
+        private val delegate = getDefault()
+        private inline fun opened(create: () -> Socket): Socket {
+            count.incrementAndGet()
+            return create()
+        }
+        override fun createSocket() = opened { delegate.createSocket() }
+        override fun createSocket(host: String, port: Int) = opened { delegate.createSocket(host, port) }
+        override fun createSocket(host: InetAddress, port: Int) = opened { delegate.createSocket(host, port) }
+        override fun createSocket(host: String, port: Int, local: InetAddress, localPort: Int) =
+            opened { delegate.createSocket(host, port, local, localPort) }
+        override fun createSocket(host: InetAddress, port: Int, local: InetAddress, localPort: Int) =
+            opened { delegate.createSocket(host, port, local, localPort) }
     }
 
     private fun shelfGroup(query: String = "", order: String = ORDER): String =
@@ -93,6 +142,25 @@ class SmangaCatalogTest {
     private suspend fun seedTwoPages() {
         seedPage(1, "old-one")
         seedPage(2, "old-two")
+    }
+
+    @Test
+    fun `download metadata reads persisted pages and details without network and isolates owners`() = runTest {
+        seedPage(1, "cached")
+        seedPage(2, "other-account", account = "account-b")
+        seedPage(3, "other-connection", connection = 2)
+        repository.putCache(
+            1,
+            "account-a",
+            "manga/1",
+            SmangaCacheEntry("data", json.encodeToString(SmangaManga(1, 4, "newer", updatedAt = 10)), 2),
+        )
+        repository.putCache(1, "account-a", "shelf/invalid", SmangaCacheEntry("1", "broken", 3))
+        val entries = catalog().downloadedMetadata()
+        assertEquals(setOf(1L), entries.keys)
+        assertEquals(4L, entries.getValue(1).mediaId)
+        assertEquals("newer", entries.getValue(1).name)
+        assertTrue(requests.isEmpty())
     }
 
     @Test
@@ -492,23 +560,24 @@ class SmangaCatalogTest {
             if (uri.path.endsWith("/media")) 200 to mediaBody(2, 3, 4) else 503 to """{"code":503}"""
         }
         assertTrue(runCatching { catalog().refreshShelf(0, "", ORDER) }.exceptionOrNull() is SmangaException)
-        requests.clear()
-        val reopened = catalog()
+        // A cancelled refresh can reach the server late. A fresh client's sockets identify only this warm read.
+        val reopenedSockets = AtomicInteger()
+        val reopened = catalog(openedSockets = reopenedSockets)
         assertEquals(listOf(2L, 3L), reopened.media().map { it.id })
         assertEquals(old, reopened.page(reopened.media().map { it.id }, "", ORDER, 1))
-        assertTrue(requests.isEmpty())
+        assertEquals(0, reopenedSockets.get())
 
         handler = { uri ->
             200 to if (uri.path.endsWith("/media")) mediaBody(2, 3, 4) else mergedPageBody(uri, "new-")
         }
         reopened.refreshShelf(0, "", ORDER)
-        requests.clear()
-        val refreshed = catalog()
+        val refreshedSockets = AtomicInteger()
+        val refreshed = catalog(openedSockets = refreshedSockets)
         assertEquals(listOf(2L, 3L, 4L), refreshed.media().map { it.id })
         val page = refreshed.page(refreshed.media().map { it.id }, "", ORDER, 1)
         assertEquals(303, page.total)
         assertTrue(page.data.all { it.name.startsWith("new-") })
-        assertTrue(requests.isEmpty())
+        assertEquals(0, refreshedSockets.get())
     }
 
     @Test
@@ -617,6 +686,14 @@ class SmangaCatalogTest {
         private val groups = mutableMapOf<Group, Map<String, SmangaCacheEntry>>()
         var beforeRead: suspend () -> Unit = {}
 
+        override suspend fun cachedCatalogue(connectionId: Long, accountKey: String) = synchronized(monitor) {
+            groups.filterKeys {
+                it.connection == connectionId && it.account == accountKey
+            }.flatMap { (group, entries) ->
+                entries.values.map { SmangaCatalogueCacheEntry(group.key, it.key, it.payload, it.updatedAt) }
+            }.sortedBy { it.updatedAt }
+        }
+
         fun snapshot(): Map<String, Map<String, SmangaCacheEntry>> = synchronized(monitor) {
             groups.mapKeys { it.key.toString() }.mapValues { it.value.toMap() }
         }
@@ -669,6 +746,18 @@ class SmangaCatalogTest {
             }
         }
 
+        override fun observeReadStates(
+            connectionId: Long,
+            accountKey: String,
+            chapterIds: Collection<Long>,
+        ): kotlinx.coroutines.flow.Flow<List<SmangaReadState>> = unexpected()
+        override fun observeCacheEntries(
+            connectionId: Long,
+            accountKey: String,
+            groupKey: String,
+            keys: Collection<String>,
+        ) =
+            kotlinx.coroutines.flow.flow { emit(keys.mapNotNull { cache(connectionId, accountKey, groupKey, it) }) }
         override suspend fun readState(
             connectionId: Long,
             accountKey: String,

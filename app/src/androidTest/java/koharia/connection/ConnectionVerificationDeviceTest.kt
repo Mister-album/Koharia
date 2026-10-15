@@ -7,7 +7,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.kanade.tachiyomi.data.preference.DeferredSharedPreferencesDataStore
 import eu.kanade.tachiyomi.source.sourcePreferences
+import koharia.source.komga.KomgaProgressAccount
+import koharia.source.komga.KomgaProgressOwnerChanged
 import koharia.source.komga.KomgaSource
+import koharia.source.komga.komgaProgressSync
 import koharia.testing.FixtureActivityLauncher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -17,8 +20,12 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Credentials
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,6 +40,46 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class ConnectionVerificationDeviceTest {
+    @Test
+    fun progressRequestsKeepCapturedAuthenticationAndRejectChangesBeforeTransmission(): Unit =
+        runBlocking(Dispatchers.IO) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            assertEquals("app.koharia.dev.devicefixture", context.packageName)
+            val id = -System.nanoTime()
+            val preferenceName = "source_$id"
+            val preferences = sourcePreferences(preferenceName)
+            check(preferences.all.isEmpty())
+            Fixture().use { fixture ->
+                try {
+                    preferences.edit().putString("Address", fixture.base + "public/")
+                        .putString("Username", "fixture-user").putString("Password", "fixture-password")
+                        .putString("AuthMode", "Credentials").commit()
+                    val source = KomgaSource(id)
+                    val account = source.progressAccount()
+                    val request = Request.Builder().url(fixture.base + "public/api/v1/books/book/read-progress")
+                        .headers(account.headers).tag(KomgaProgressAccount::class.java, account)
+                        .patch("{}".toRequestBody("application/json".toMediaType())).komgaProgressSync().build()
+                    source.client.newCall(request).execute().use { assertEquals(204, it.code) }
+                    assertEquals(1, fixture.writes.get())
+                    // Runs after the source's authentication and address-routing interceptors.
+                    val lateSwitchClient = source.client.newBuilder().addInterceptor { chain ->
+                        preferences.edit().putString("Password", "replacement-fixture-password").commit()
+                        chain.proceed(chain.request())
+                    }.build()
+                    assertThrows(KomgaProgressOwnerChanged::class.java) {
+                        lateSwitchClient.newCall(request).execute().close()
+                    }
+                    assertEquals(1, fixture.writes.get())
+                    assertThrows(KomgaProgressOwnerChanged::class.java) {
+                        source.client.newCall(request).execute().close()
+                    }
+                    assertEquals(1, fixture.writes.get())
+                } finally {
+                    context.deleteSharedPreferences(preferenceName)
+                }
+            }
+        }
+
     @Test
     fun inferredPreferenceDefaultsAndLegacyApiKeyDoNotChangeTheConnection() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -1,5 +1,6 @@
 package eu.kanade.domain
 
+import eu.kanade.domain.chapter.interactor.DownloadNewChapters
 import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.chapter.interactor.SetReadStatus
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
@@ -24,6 +25,8 @@ import koharia.data.epub.EpubBookmarkRepositoryImpl
 import koharia.data.epub.EpubPaginationCacheRepositoryImpl
 import koharia.data.epub.EpubProgressRepositoryImpl
 import koharia.data.epub.EpubRemoteProgressCacheRepositoryImpl
+import koharia.data.komga.KomgaReadStatusRepositoryImpl
+import koharia.data.komga.KomgaRemoteProgressRepositoryImpl
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
 import koharia.domain.epub.interactor.AddEpubBookmark
 import koharia.domain.epub.interactor.DeleteEpubBookmark
@@ -39,6 +42,8 @@ import koharia.domain.epub.repository.EpubBookmarkRepository
 import koharia.domain.epub.repository.EpubPaginationCacheRepository
 import koharia.domain.epub.repository.EpubProgressRepository
 import koharia.domain.epub.repository.EpubRemoteProgressCacheRepository
+import koharia.domain.komga.KomgaReadStatusRepository
+import koharia.domain.komga.KomgaRemoteProgressRepository
 import tachiyomi.data.category.CategoryRepositoryImpl
 import tachiyomi.data.chapter.ChapterRepositoryImpl
 import tachiyomi.data.history.HistoryRepositoryImpl
@@ -167,21 +172,28 @@ class DomainModule : InjektModule {
         addFactory { SyncChapterProgressWithTrack(get(), get(), get()) }
         addSingletonFactory {
             KomgaProgressSyncService(
-                get(),
-                get(),
-                get(),
-                get(),
-                get(),
-                get(),
-                get(),
-                get(),
-                get(),
-                get(),
-                get(),
+                trackerManager = get(),
+                getChaptersByMangaId = get(),
+                mangaRepository = get(),
+                syncChaptersWithSource = get(),
+                sourceManager = get(),
+                komgaServerPreferences = get(),
+                getEpubProgress = get(),
+                getEpubRemoteProgressCache = get(),
+                remoteProgress = get(),
             )
         }
 
         addSingletonFactory<ChapterRepository> { ChapterRepositoryImpl(get()) }
+        addSingletonFactory<KomgaReadStatusRepository> { KomgaReadStatusRepositoryImpl(get()) }
+        addSingletonFactory<koharia.domain.komga.KomgaPageEventRepository> {
+            koharia.data.komga.KomgaPageEventRepositoryImpl(get())
+        }
+        addSingletonFactory<KomgaRemoteProgressRepository> {
+            KomgaRemoteProgressRepositoryImpl(get(), get(), get(), get(), get(), get(), get()) { url ->
+                runCatching { koharia.komga.progress.KomgaProgressOrdering.bookId(url) }.getOrNull()
+            }
+        }
         addFactory { GetChapter(get()) }
         addFactory { GetChaptersByMangaId(get()) }
         addFactory { GetBookmarkedChaptersByMangaId(get()) }
@@ -189,9 +201,10 @@ class DomainModule : InjektModule {
         addFactory { UpdateChapter(get()) }
         addFactory { SetReadStatus(get(), get(), get(), get(), get()) }
         addFactory { ShouldUpdateDbChapter() }
-        addFactory { SyncChaptersWithSource(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        addFactory { SyncChaptersWithSource(get(), get(), get(), get(), get(), get(), get(), get()) }
         addFactory { GetAvailableScanlators(get()) }
         addFactory { FilterChaptersForDownload(get(), get(), get()) }
+        addFactory { DownloadNewChapters(get(), get(), get(), get()) }
 
         addSingletonFactory<HistoryRepository> { HistoryRepositoryImpl(get()) }
         addFactory { GetHistory(get()) }

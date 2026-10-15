@@ -27,6 +27,7 @@ import uy.kohesive.injekt.api.get
 internal class EpubPaginationScannerFragment : Fragment() {
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
+    private var retainedSession: koharia.epub.session.EpubReaderSession? = null
     private val fontManager: EpubFontManager = Injekt.get()
     private val sharedAppPreferences: SharedAppPreferences = Injekt.get()
     private val epubPreferencesBridge = EpubPreferencesBridge()
@@ -54,12 +55,12 @@ internal class EpubPaginationScannerFragment : Fragment() {
             fontManager = fontManager,
             selectedFontId = epubLayoutPreferences.selectedFontId.get(),
             publisherStyles = epubLayoutPreferences.publisherStyles.get() ||
-                sessionRepository.getForPagination(chapterId)?.publication?.metadata?.layout ==
+                retainedSession?.publication?.metadata?.layout ==
                 org.readium.r2.shared.publication.Layout.FIXED,
             prioritizeVisibleContent = false,
         )
     private val tocHrefs by lazy {
-        sessionRepository.getForPagination(chapterId)
+        retainedSession
             ?.publication
             ?.tableOfContents
             ?.flattenEpubTocHrefs()
@@ -95,7 +96,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
                             textAlignment = epubLayoutPreferences.textAlignment.get().takeIf { !publisherStyles },
                             tocHrefs = tocHrefs,
                             chapterBreaksEnabled = true,
-                            longWordWrappingEnabled = sessionRepository.getForPagination(chapterId)
+                            longWordWrappingEnabled = retainedSession
                                 ?.publication
                                 ?.metadata
                                 ?.layout != org.readium.r2.shared.publication.Layout.FIXED,
@@ -119,7 +120,8 @@ internal class EpubPaginationScannerFragment : Fragment() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val session = sessionRepository.getForPagination(chapterId)
+        val session = sessionRepository.getForPagination(chapterId)?.takeIf { it.retain() }
+        retainedSession = session
         val firstMissingLink = session?.publication?.readingOrder?.firstOrNull { link ->
             pageCounts.keys.none { cachedHref -> cachedHref.isSameResourceHref(link.href.toString()) }
         } ?: session?.publication?.readingOrder?.firstOrNull()
@@ -138,6 +140,15 @@ internal class EpubPaginationScannerFragment : Fragment() {
             },
         ) ?: EpubNavigatorFragment.createDummyFactory()
         super.onCreate(savedInstanceState)
+    }
+
+    override fun onDestroy() {
+        try {
+            super.onDestroy()
+        } finally {
+            retainedSession?.release()
+            retainedSession = null
+        }
     }
 
     override fun onCreateView(
@@ -251,7 +262,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
         )
     }
 
-    private fun readingOrder() = sessionRepository.getForPagination(chapterId)?.publication?.readingOrder.orEmpty()
+    private fun readingOrder() = retainedSession?.publication?.readingOrder.orEmpty()
 
     private fun navigatorFragment(): EpubNavigatorFragment? {
         if (!isAdded) return null

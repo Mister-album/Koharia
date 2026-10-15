@@ -45,6 +45,12 @@ import java.util.zip.ZipOutputStream
 @RunWith(AndroidJUnit4::class)
 class PagerSplitDeviceTest {
     @Test
+    fun delayedPersistenceKeepsCallbackOrderWithoutRewindingVisibleSelection() = verify(
+        ReadingMode.LEFT_TO_RIGHT,
+        persistenceOrdering = true,
+    )
+
+    @Test
     fun rightToLeftPreservesBothHalvesAcrossPrefetchAndReopen() = verify(ReadingMode.RIGHT_TO_LEFT)
 
     @Test
@@ -80,6 +86,7 @@ class PagerSplitDeviceTest {
         automatic: Boolean = false,
         rotateAutomaticDouble: Boolean = false,
         manualShiftSwitch: Boolean = false,
+        persistenceOrdering: Boolean = false,
     ) = runBlocking(Dispatchers.IO) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         check(context.packageName == "app.koharia.dev.devicefixture")
@@ -182,7 +189,7 @@ class PagerSplitDeviceTest {
                 ),
             ).single()
             val intent = ReaderActivity.newIntent(context, manga.id, chapter.id, sourceId, pageIndex = 0)
-            repeat(if (automatic || rotateAutomaticDouble) 1 else 2) {
+            repeat(if (automatic || rotateAutomaticDouble || persistenceOrdering) 1 else 2) {
                 ActivityScenario.launch<ReaderActivity>(intent).use { scenario ->
                     if (manualShiftSwitch) {
                         awaitLogicalSlot(scenario, 0, null)
@@ -206,6 +213,49 @@ class PagerSplitDeviceTest {
                         return@use
                     }
                     awaitHalf(scenario, 0)
+                    if (persistenceOrdering) {
+                        lateinit var model: eu.kanade.tachiyomi.ui.reader.ReaderViewModel
+                        lateinit var tasks: eu.kanade.tachiyomi.ui.reader.ReaderProgressTasks
+                        scenario.onActivity { activity ->
+                            model = activity.viewModel
+                            tasks = model.javaClass.getDeclaredField("progressTasks").let { field ->
+                                field.isAccessible = true
+                                field.get(model) as eu.kanade.tachiyomi.ui.reader.ReaderProgressTasks
+                            }
+                        }
+                        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+                        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+                        val barrier = tasks.submit {
+                            entered.complete(Unit)
+                            release.await()
+                        }
+                        val visibleDuringSaves = mutableListOf<Int>()
+                        try {
+                            kotlinx.coroutines.withTimeout(5_000) { entered.await() }
+                            scenario.onActivity {
+                                val physical = checkNotNull(model.state.value.currentChapter?.pages)
+                                for (index in listOf(3, 4, 1)) {
+                                    model.onPagesSelected(listOf(physical[index]))
+                                    tasks.submit { visibleDuringSaves += model.state.value.currentPage }
+                                }
+                                assertEquals(1, model.state.value.currentChapter?.requestedPage)
+                                assertEquals(2, model.state.value.currentPage)
+                            }
+                        } finally {
+                            release.complete(Unit)
+                        }
+                        kotlinx.coroutines.withTimeout(10_000) {
+                            barrier.await()
+                            tasks.run { Unit }
+                        }
+                        assertEquals(listOf(2, 2, 2), visibleDuringSaves)
+                        assertEquals(1L, Injekt.get<ChapterRepository>().getChapterById(chapter.id)?.lastPageRead)
+                        scenario.onActivity {
+                            assertEquals(1, model.state.value.currentChapter?.requestedPage)
+                            assertEquals(2, model.state.value.currentPage)
+                        }
+                        return@use
+                    }
                     if (rotateAutomaticDouble) {
                         scenario.onActivity { activity ->
                             (activity.viewModel.state.value.viewer as PagerViewer).moveToNext()

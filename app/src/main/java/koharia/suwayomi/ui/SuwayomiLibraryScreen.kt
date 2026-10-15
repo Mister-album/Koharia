@@ -18,8 +18,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.library.components.MangaReadProgress
-import eu.kanade.presentation.util.Screen
-import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionBrowseSourceScreen
 import koharia.connection.ui.ConnectionFilterOptionGroup
 import koharia.connection.ui.ConnectionLibraryFilterRow
 import koharia.connection.ui.ConnectionPagedShelf
@@ -49,7 +48,7 @@ class SuwayomiLibraryScreen(
     override val sourceId: Long,
     private val initialQuery: String?,
     private val showNavigationUp: Boolean,
-) : Screen(), ConnectionBrowseScreen {
+) : ConnectionBrowseSourceScreen() {
     override val refreshOnReselect = false
 
     @Transient private var runtimeModel: SuwayomiLibraryScreenModel? = null
@@ -65,13 +64,13 @@ class SuwayomiLibraryScreen(
 
     @Composable
     override fun Content() {
-        val source = Injekt.get<SourceManager>().get(sourceId) as? SuwayomiSource
+        val source = observeConnectionSource() as? SuwayomiSource
         if (source == null || !source.hasValidConnection()) {
             EmptyScreen(stringRes = MR.strings.connection_unavailable)
             return
         }
         val epoch by source.epoch.collectAsState()
-        val model = rememberScreenModel(tag = "${source.instanceKey}:$epoch") {
+        val model = rememberScreenModel(tag = "$connectionSourceGeneration:${source.instanceKey}:$epoch") {
             SuwayomiLibraryScreenModel(source, initialQuery)
         }
         runtimeModel = model

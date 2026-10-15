@@ -1,0 +1,129 @@
+import kotlin.Boolean;
+
+CREATE TABLE komga_read_status (
+    connection_id INTEGER NOT NULL,
+    owner_key TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    read INTEGER AS Boolean NOT NULL,
+    requested_at INTEGER NOT NULL,
+    baseline TEXT,
+    phase TEXT NOT NULL,
+    PRIMARY KEY (connection_id, owner_key, book_id)
+);
+
+CREATE INDEX komga_read_status_pending ON komga_read_status(connection_id, owner_key)
+WHERE phase = 'PENDING';
+
+CREATE INDEX komga_read_status_book ON komga_read_status(connection_id, book_id);
+
+CREATE TABLE komga_read_status_attempt (
+    connection_id INTEGER NOT NULL,
+    owner_key TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    read INTEGER AS Boolean NOT NULL,
+    requested_at INTEGER NOT NULL,
+    intent_baseline TEXT,
+    baseline TEXT NOT NULL,
+    PRIMARY KEY (connection_id, owner_key, book_id)
+);
+
+CREATE INDEX komga_read_status_attempt_book ON komga_read_status_attempt(connection_id, book_id);
+
+getAttempt:
+SELECT * FROM komga_read_status_attempt
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId;
+
+getAttempts:
+SELECT * FROM komga_read_status_attempt WHERE connection_id = :connectionId AND owner_key = :ownerKey;
+
+getAllAttempts:
+SELECT * FROM komga_read_status_attempt;
+
+restoreHeldAttempt:
+INSERT OR IGNORE INTO komga_read_status_attempt
+VALUES (:connectionId, :ownerKey, :bookId, :revision, :read, :requestedAt, NULL, 'restored:unknown');
+
+getAttemptsForBooks:
+SELECT * FROM komga_read_status_attempt
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id IN :bookIds;
+
+putAttempt:
+INSERT INTO komga_read_status_attempt
+VALUES (:connectionId, :ownerKey, :bookId, :revision, :read, :requestedAt, :intentBaseline, :baseline);
+
+removeAttempt:
+DELETE FROM komga_read_status_attempt
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId AND revision = :revision;
+
+removeConnectionAttempts:
+DELETE FROM komga_read_status_attempt WHERE connection_id = :connectionId;
+
+advanceConfirmedBaseline:
+UPDATE komga_read_status SET baseline = :confirmedBaseline
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId
+AND revision = :revision AND phase = 'PENDING' AND baseline = :previousBaseline;
+
+getIntent:
+SELECT * FROM komga_read_status
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId;
+
+getPending:
+SELECT * FROM komga_read_status
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND phase = 'PENDING';
+
+getForOwner:
+SELECT * FROM komga_read_status
+WHERE connection_id = :connectionId AND owner_key = :ownerKey;
+
+getUnsettled:
+SELECT * FROM komga_read_status WHERE phase != 'SYNCED';
+
+restoreHeld:
+INSERT OR IGNORE INTO komga_read_status
+VALUES (:connectionId, :ownerKey, :bookId, :revision, :read, :requestedAt, NULL, 'HELD');
+
+putIntent:
+INSERT OR REPLACE INTO komga_read_status
+VALUES (:connectionId, :ownerKey, :bookId, :revision, :read, :requestedAt, :baseline, 'PENDING');
+
+finishIntent:
+UPDATE komga_read_status SET phase = :phase
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId
+AND revision = :revision AND phase = 'PENDING';
+
+prepareBaseline:
+UPDATE komga_read_status SET baseline = :baseline, phase = 'PENDING'
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId
+AND revision = :revision AND baseline IS NULL AND phase IN ('PENDING', 'HELD');
+
+confirmIntent:
+UPDATE komga_read_status SET phase = 'SYNCED', baseline = :confirmedBaseline
+WHERE connection_id = :connectionId AND owner_key = :ownerKey AND book_id = :bookId
+AND revision = :revision AND phase = 'PENDING';
+
+changedRows:
+SELECT changes();
+
+getChapterOwner:
+SELECT C.url, M.source FROM chapters C JOIN mangas M ON C.manga_id = M._id WHERE C._id = :chapterId;
+
+applyReadStatus:
+UPDATE chapters SET read = :read, last_page_read = CASE WHEN :read THEN last_page_read ELSE 0 END, is_syncing = 0
+WHERE _id IN :chapterIds AND manga_id IN (SELECT _id FROM mangas WHERE source = :connectionId);
+
+clearEpubProgress:
+DELETE FROM epub_progress WHERE chapter_id IN :chapterIds;
+
+clearRemoteEpubProgress:
+DELETE FROM epub_remote_progress_cache WHERE chapter_id IN :chapterIds;
+
+clearTtsProgress:
+DELETE FROM tts_progress WHERE chapter_id IN :chapterIds;
+
+holdConnection:
+UPDATE komga_read_status SET phase = 'HELD' WHERE connection_id = :connectionId AND phase = 'PENDING';
+
+removeConnection:
+DELETE FROM komga_read_status WHERE connection_id = :connectionId;

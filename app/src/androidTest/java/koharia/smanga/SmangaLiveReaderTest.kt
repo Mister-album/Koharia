@@ -212,8 +212,7 @@ class SmangaLiveReaderTest {
         val chapters: ChapterRepository = Injekt.get()
         val downloads: DownloadManager = Injekt.get()
         val manga = active.materialize(active.toManga(entry))
-        val remoteChapters = active.getChapterList(manga.toSManga())
-        Injekt.get<SyncChaptersWithSource>().await(remoteChapters, manga, active)
+        Injekt.get<SyncChaptersWithSource>().fetchAndSync(manga, active, koharia.connection.ChapterFetchOrigin.OPEN)
         val chapter = chapters.getChapterByMangaId(manga.id).single {
             active.session().chapterId(it.url) == descriptor.id
         }

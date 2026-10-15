@@ -74,4 +74,24 @@ class EpubRemoteProgressPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `pending provider conflict requires a choice regardless of page time or navigation`() {
+        for (sameLocation in listOf(false, true)) {
+            for (navigated in listOf(false, true)) {
+                for (localTime in listOf(null, 1_000L, 3_000L)) {
+                    assertEquals(
+                        EpubRemoteProgressDecision.KEEP_REMOTE,
+                        EpubRemoteProgressPolicy.decide(
+                            localUpdatedAtMillis = localTime,
+                            remoteModifiedAtMillis = 2_000L,
+                            sameLocation = sameLocation,
+                            localChangedDuringCheck = navigated,
+                            requiresExplicitChoice = true,
+                        ),
+                    )
+                }
+            }
+        }
+    }
 }

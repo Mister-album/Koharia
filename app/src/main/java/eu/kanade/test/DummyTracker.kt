@@ -19,7 +19,7 @@ data class DummyTracker(
     override val supportsPrivateTracking: Boolean = false,
     override val isLoggedIn: Boolean = false,
     override val isLoggedInFlow: Flow<Boolean> = flowOf(false),
-    val valLogo: Int = R.drawable.brand_anilist,
+    val valLogo: Int = R.drawable.brand_komga,
     val valStatuses: List<Long> = (1L..6L).toList(),
     val valReadingStatus: Long = 1L,
     val valRereadingStatus: Long = 1L,

@@ -6,6 +6,9 @@ import koharia.domain.kavita.KavitaRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
@@ -82,6 +85,18 @@ class KavitaCatalog(
     suspend fun seriesBookProgress(id: Long, refresh: Boolean = false): KavitaSeriesBookProgress =
         volumes(id, refresh).bookProgress()
 
+    fun observeCachedSeriesBookCounts(ids: Set<Long>): Flow<Map<Long, Long>> =
+        repository.observeCachedGroups(connectionId, account, ids.map { "volumes/$it" }).map { rows ->
+            checkSession()
+            val cached = rows.associateBy { it.group }
+            ids.associateWith { id ->
+                cached["volumes/$id"]?.takeUnless { it.stale }?.let {
+                    runCatching { json.decodeFromString<List<KavitaVolume>>(it.payload).bookProgress().totalCount }
+                        .getOrNull()
+                } ?: 0L
+            }
+        }.distinctUntilChanged()
+
     suspend fun cachedSeriesBookProgress(id: Long): KavitaSeriesBookProgress? {
         checkSession()
         val cached = repository.cache(connectionId, account, "volumes/$id", "data")
@@ -133,7 +148,7 @@ class KavitaCatalog(
     ): JsonElement = cached("resource/$path", refresh) { api.execute(path) }
     suspend fun postResource(path: String, body: JsonElement, refresh: Boolean = false): JsonElement =
         cached("resource/$path/" + body.toString().encodeUtf8().sha256().hex(), refresh) {
-            api.execute(path, "POST", body)
+            api.execute(path, "POST", body, readOnly = true)
         }
     suspend fun lists(refresh: Boolean = false): List<KavitaList> = cached("resource/ReadingList", refresh) {
         api.allReadingLists()
@@ -149,6 +164,42 @@ class KavitaCatalog(
     suspend fun cachedSeriesIds(filter: KavitaFilter): Set<Long> =
         repository.entries(connectionId, account, shelfKey(filter, "Series/all-v2"))
             .flatMap { json.decodeFromString<KavitaSeriesPage>(it.payload).items }.mapTo(hashSetOf()) { it.id }
+
+    internal suspend fun downloadedMetadata(ids: Collection<Long>): Map<Long, KavitaDownloadedMetadata> {
+        checkSession()
+        val rows = repository.cachedGroups(connectionId, account, ids.flatMap { listOf("series/$it", "metadata/$it") })
+            .associateBy { it.group }
+        checkSession()
+        return ids.associateWith { id ->
+            KavitaDownloadedMetadata(
+                rows["series/$id"]?.takeUnless { it.stale }?.let {
+                    runCatching { json.decodeFromString<KavitaSeries>(it.payload) }.getOrNull()?.takeIf { it.id == id }
+                },
+                rows["metadata/$id"]?.takeUnless { it.stale }?.let {
+                    runCatching { json.decodeFromString<KavitaMetadata>(it.payload).releaseYear }.getOrNull()
+                },
+            )
+        }
+    }
+
+    internal suspend fun cachedSeriesOrder(filter: KavitaFilter): List<Long> {
+        suspend fun order(
+            value: KavitaFilter,
+        ) = repository.entries(connectionId, account, shelfKey(value, "Series/all-v2"))
+            .filterNot { it.stale }.sortedBy { it.key.toIntOrNull() ?: Int.MAX_VALUE }
+            .flatMap {
+                runCatching { json.decodeFromString<KavitaSeriesPage>(it.payload).items }.getOrDefault(emptyList())
+            }
+            .map { it.id }.distinct()
+        checkSession()
+        val direct = order(filter)
+        val result = direct.ifEmpty {
+            order(filter.copy(sortOptions = filter.sortOptions.copy(isAscending = !filter.sortOptions.isAscending)))
+                .reversed()
+        }
+        checkSession()
+        return result
+    }
 
     suspend fun page(page: Int, filter: KavitaFilter, feed: String = "Series/all-v2"): KavitaSeriesPage {
         val group = shelfKey(filter, feed)

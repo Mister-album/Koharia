@@ -5,6 +5,7 @@ import kotlin.math.roundToInt
 
 @Immutable
 data class MangaRemoteProgressConflict(
+    val snapshot: koharia.connection.ConnectionPageProgressSnapshot,
     val chapterId: Long,
     val localPageIndex: Int,
     val localTotalPages: Int,

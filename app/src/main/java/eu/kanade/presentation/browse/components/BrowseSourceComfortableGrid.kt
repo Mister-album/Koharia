@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -31,7 +32,9 @@ import tachiyomi.presentation.core.util.plus
 @Composable
 fun BrowseSourceComfortableGrid(
     modifier: Modifier = Modifier,
+    state: LazyGridState,
     mangaList: LazyPagingItems<StateFlow<Manga>>,
+    resolveManga: (Manga) -> Manga,
     columns: GridCells,
     contentPadding: PaddingValues,
     selectedMangaIds: Set<Long> = emptySet(),
@@ -47,6 +50,7 @@ fun BrowseSourceComfortableGrid(
 ) {
     LazyVerticalGrid(
         modifier = modifier,
+        state = state,
         columns = columns,
         contentPadding = contentPadding + PaddingValues(8.dp),
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
@@ -60,7 +64,8 @@ fun BrowseSourceComfortableGrid(
         }
 
         items(count = mangaList.itemCount) { index ->
-            val manga by mangaList[index]?.collectAsState() ?: return@items
+            val row by mangaList[index]?.collectAsState() ?: return@items
+            val manga = resolveManga(row)
             BrowseSourceComfortableGridItem(
                 manga = manga,
                 label = entryLabel?.invoke(manga) ?: manga.title,

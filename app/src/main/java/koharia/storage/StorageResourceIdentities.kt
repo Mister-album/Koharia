@@ -1,5 +1,7 @@
 package koharia.storage
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
@@ -15,12 +17,25 @@ private data class StorageIdentityManifest(
 
 /** Immutable move manifests preserve identities across clients without concurrent manifest replacement. */
 class StorageResourceIdentities(private val backend: LibraryStorageBackend, private val store: StorageRecordStore) {
-    suspend fun identity(entry: StorageEntry): String {
-        val identity = store.get<String?>("identities", entry.path)
-            ?: entry.identity?.let { store.get<String>("native-identities", it) }
-            ?: "path:${storageDigest(store.session.rootIdentity + "\n" + entry.path)}"
+    private val identityMutex = Mutex()
+    private val resolved = object : LinkedHashMap<Pair<String, String?>, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String, String?>, String>) = size > 512
+    }
+
+    suspend fun identity(entry: StorageEntry): String = identityMutex.withLock {
+        store.session.checkActive()
+        val key = entry.path to entry.identity
+        resolved[key]?.let { return@withLock it }
+        val pathIdentity = store.get<String?>("identities", entry.path)
+        val identity = cachedStorageResourceIdentity(
+            store.session.rootIdentity,
+            entry,
+            pathIdentity,
+            if (pathIdentity == null) entry.identity?.let { store.get<String>("native-identities", it) } else null,
+        )
         entry.identity?.let { store.put("native-identities", it, identity) }
-        return identity
+        resolved[key] = identity
+        identity
     }
 
     suspend fun prepareMove(
@@ -97,11 +112,15 @@ class StorageResourceIdentities(private val backend: LibraryStorageBackend, priv
         }
     }
 
-    private suspend fun applyBinding(manifestId: String, binding: StorageIdentityBinding) {
+    private suspend fun applyBinding(manifestId: String, binding: StorageIdentityBinding) = identityMutex.withLock {
         // Retired paths reserve a new generation, shared by every client replaying this move.
         val identity = binding.identity
             ?: "path:${storageDigest(store.session.rootIdentity + "\n" + binding.path + "\n" + manifestId)}"
-        store.put("identities", binding.path, identity)
+        try {
+            store.put("identities", binding.path, identity)
+        } finally {
+            resolved.keys.removeAll { it.first == binding.path }
+        }
     }
 
     private suspend fun ensureDirectory() {
@@ -123,3 +142,10 @@ class StorageResourceIdentities(private val backend: LibraryStorageBackend, priv
         private const val MAX_MANIFEST_SIZE = 4 * 1024 * 1024L
     }
 }
+
+internal fun cachedStorageResourceIdentity(
+    root: String,
+    entry: StorageEntry,
+    pathIdentity: String?,
+    nativeIdentity: String?,
+): String = pathIdentity ?: nativeIdentity ?: "path:${storageDigest(root + "\n" + entry.path)}"

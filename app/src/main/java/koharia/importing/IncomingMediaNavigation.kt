@@ -31,7 +31,7 @@ internal object IncomingMediaNavigation {
     }
 
     fun importIntent(context: Context, uriValue: String): Intent {
-        return Intent(context, ExternalMediaImportActivity::class.java).apply {
+        return Intent(context, TemporaryMediaImportActivity::class.java).apply {
             action = ACTION_IMPORT_TEMPORARY_MEDIA
             putExtra(EXTRA_TEMPORARY_MEDIA_URI, uriValue)
             putExtra(EXTRA_REPLACE_EXTERNAL_OPEN_TASK, true)
@@ -44,7 +44,10 @@ internal object IncomingMediaNavigation {
         return validatedTemporaryMediaUri(IncomingMediaSessionLocator.cacheRoot(context), value)
     }
 
-    fun mediaUriValues(intent: Intent): List<String> {
+    fun mediaUriValues(context: Context, intent: Intent): List<String> {
+        if (intent.action !in setOf(Intent.ACTION_VIEW, Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE)) {
+            return emptyList()
+        }
         val uris = buildList {
             when (intent.action) {
                 Intent.ACTION_VIEW -> intent.data?.let(::add)
@@ -62,12 +65,17 @@ internal object IncomingMediaNavigation {
                 }
             }
         }
-        return uris.asSequence()
-            .filter { uri -> uri.scheme == "content" || uri.scheme == "file" }
-            .map(Uri::toString)
-            .distinct()
-            .toList()
+        if (uris.any { !isExternalFileUri(context, it) }) {
+            return emptyList()
+        }
+        return uris.map(Uri::toString).distinct()
     }
+}
+
+internal fun isExternalMediaFile(file: File, sharedRoots: List<File>, privateRoots: List<File>): Boolean {
+    val path = file.canonicalFile.toPath()
+    return sharedRoots.any { path.startsWith(it.canonicalFile.toPath()) } &&
+        privateRoots.none { path.startsWith(it.canonicalFile.toPath()) }
 }
 
 internal fun validatedTemporaryMediaUri(cacheRoot: File, uriValue: String): String? {

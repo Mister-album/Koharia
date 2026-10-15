@@ -4,12 +4,16 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewParameter
@@ -22,8 +26,11 @@ import eu.kanade.presentation.history.components.HistoryItem
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
 import eu.kanade.presentation.util.animateItemFastScroll
 import eu.kanade.tachiyomi.ui.history.HistoryScreenModel
+import koharia.connection.ConnectionSeriesMetadata
+import koharia.connection.rememberConnectionShelfEntries
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.domain.history.model.HistoryWithRelations
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.components.ListGroupHeader
@@ -32,6 +39,8 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.time.LocalDate
 
 @Composable
@@ -116,8 +125,23 @@ private fun HistoryScreenContent(
     onClickResume: (HistoryWithRelations) -> Unit,
     onClickDelete: (HistoryWithRelations) -> Unit,
 ) {
+    val listState = rememberLazyListState()
+    val entries = remember(history) { history.filterIsInstance<HistoryUiModel.Item>().map { it.item } }
+    val entryIndices = remember(history) {
+        var index = 0
+        history.mapIndexedNotNull { position, item ->
+            if (item is HistoryUiModel.Item) position to index++ else null
+        }.toMap()
+    }
+    val sourceManager = Injekt.get<SourceManager>()
+    val sources by sourceManager.catalogueSources.collectAsState(sourceManager.getCatalogueSources())
+    val source = sources.firstOrNull { it.id == entries.firstOrNull()?.coverData?.sourceId }
+    val localEntries = rememberConnectionShelfEntries(source, entries.map { it.mangaUrl }) {
+        listState.layoutInfo.visibleItemsInfo.mapNotNull { entryIndices[it.index] }
+    }
     FastScrollLazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = listState,
         contentPadding = contentPadding,
     ) {
         items(
@@ -142,6 +166,12 @@ private fun HistoryScreenContent(
                     HistoryItem(
                         modifier = Modifier.animateItemFastScroll(),
                         history = value,
+                        downloadState = localEntries[value.mangaUrl]?.takeIf {
+                            it.manga?.id == value.mangaId && it.manga.source == value.coverData.sourceId
+                        }?.let { local ->
+                            val expected = local.manga?.let { ConnectionSeriesMetadata.fromMemo(it.memo).booksCount }
+                            local.downloads(expected?.toLong() ?: local.total)
+                        },
                         onClickCover = { onClickCover(value) },
                         onClickResume = { onClickResume(value) },
                         onClickDelete = { onClickDelete(value) },

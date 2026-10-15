@@ -184,6 +184,7 @@ class KavitaStateBackupAdapter(
             val restored = state.copy(
                 annotation = if (collision) annotation.copy(id = 0) else annotation,
                 conflict = entry.pending || collision || state.conflict,
+                needsConfirmation = entry.pending || collision || state.needsConfirmation,
                 remoteConflict = state.remoteConflict ?: state.baseline,
             )
             repository.putAnnotation(

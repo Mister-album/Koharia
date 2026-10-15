@@ -117,6 +117,26 @@ class DeferredSharedPreferencesDataStore(
     }
 
     @Suppress("UNCHECKED_CAST")
+    fun commitSelectedTo(target: SharedPreferences, keys: Set<String>) {
+        synchronized(lock) {
+            val values = prefs.all + cache
+            val editor = target.edit()
+            keys.forEach { key ->
+                when (val value = values[key]) {
+                    null -> editor.remove(key)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Int -> editor.putInt(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is String -> editor.putString(key, value)
+                    is Set<*> -> editor.putStringSet(key, value as Set<String>)
+                }
+            }
+            check(editor.commit()) { "Could not persist connection settings" }
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
     fun applyChanges() {
         val changes = synchronized(lock) {
             if (!hasUnsavedChanges) return
@@ -128,6 +148,7 @@ class DeferredSharedPreferencesDataStore(
         prefs.edit {
             changes.forEach { (k, v) ->
                 when (v) {
+                    null -> remove(k)
                     is Boolean -> putBoolean(k, v)
                     is Int -> putInt(k, v)
                     is Float -> putFloat(k, v)

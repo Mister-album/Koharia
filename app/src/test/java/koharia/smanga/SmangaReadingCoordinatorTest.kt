@@ -29,9 +29,99 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.IOException
 
 class SmangaReadingCoordinatorTest {
+    @ParameterizedTest
+    @ValueSource(ints = [1, 100, 1000])
+    fun `flushing history across mangas visits its snapshot a bounded number of times`(count: Int) = runTest {
+        val fixture = Fixture(this)
+        for (index in 1..count) {
+            val event = SmangaHistoryEvent(
+                id = "event-$index",
+                mangaId = index.toLong(),
+                chapterId = index.toLong(),
+                mediaId = 30,
+                readAt = index.toLong(),
+            )
+            fixture.history[event.id] = event
+        }
+        val snapshot = fixture.history.values.toList()
+        var visits = 0
+        val counted = object : AbstractList<SmangaHistoryEvent>() {
+            override val size: Int get() = snapshot.size
+            override fun get(index: Int): SmangaHistoryEvent {
+                visits++
+                return snapshot[index]
+            }
+        }
+        coEvery { fixture.repository.pendingHistoryEvents(7, "account-hash") } returns counted
+        coEvery { fixture.api.chapters(any()) } answers {
+            val id = firstArg<Long>()
+            listOf(chapter.copy(id = id, mangaId = id))
+        }
+        val started = System.nanoTime()
+        fixture.coordinator.retryPending()
+        advanceUntilIdle()
+        val elapsed = (System.nanoTime() - started) / 1_000_000
+
+        assertEquals(count, fixture.history.size)
+        assertTrue(fixture.history.values.all { it.status == 2 })
+        coVerify(exactly = count) { fixture.api.chapters(any()) }
+        coVerify(exactly = count) { fixture.api.addHistory(any(), any(), any()) }
+        coVerify(exactly = 1) { fixture.repository.pendingHistoryEvents(7, "account-hash") }
+        println("PENDING_SCALE count=$count snapshotVisits=$visits elapsedMs=$elapsed")
+        assertTrue(visits <= 3 * count, "snapshot visits must be linear: $visits for $count events")
+    }
+
+    @Test
+    fun `grouped flush preserves progress order missing chapters and retry isolation`() = runTest {
+        val fixture = Fixture(this)
+        val fetched = mutableListOf<Long>()
+        var failOnce = true
+        coEvery { fixture.api.chapters(any()) } answers {
+            val id = firstArg<Long>()
+            fetched += id
+            if (id == 20L && failOnce) {
+                failOnce = false
+                throw IOException("Owned fixture temporarily offline")
+            }
+            listOf(chapter.copy(id = id, mangaId = id))
+        }
+        fixture.coordinator.record(chapter.copy(id = 40, mangaId = 40), 2, 10, 100, false)
+        fixture.coordinator.record(chapter.copy(id = 20, mangaId = 20), 2, 10, 100, false)
+        fixture.history["history-only"] = SmangaHistoryEvent("history-only", 30, 30, 30, 100)
+        fixture.history["missing"] = SmangaHistoryEvent("missing", 30, 999, 30, 100)
+
+        advanceUntilIdle()
+
+        assertEquals(listOf(40L, 20L, 30L, 20L, 30L), fetched)
+        assertTrue(fixture.states.values.all { !it.pending })
+        assertEquals(3, fixture.history.values.count { it.status == 2 })
+        assertEquals(0, fixture.history.getValue("missing").status)
+        coVerify(exactly = 1) { fixture.api.pushProgress(40, 40, 2, 10, false) }
+        coVerify(exactly = 1) { fixture.api.pushProgress(20, 20, 2, 10, false) }
+        for (id in listOf(40L, 20L, 30L)) {
+            coVerify(exactly = 1) { fixture.api.addHistory(30, id, id) }
+        }
+        coVerify(exactly = 0) { fixture.api.addHistory(30, 30, 999) }
+    }
+
+    @Test
+    fun `explicit marking reports a durable queue and rejects restore-time submissions`() = runTest {
+        val fixture = Fixture(this)
+        ConnectionRestoreState.duringRestore {
+            assertEquals(
+                koharia.connection.ConnectionReadStatus.UNAVAILABLE,
+                fixture.coordinator.setRead(chapter, true),
+            )
+        }
+        assertTrue(fixture.states.isEmpty())
+        assertEquals(koharia.connection.ConnectionReadStatus.PENDING, fixture.coordinator.setRead(chapter, true))
+        assertTrue(fixture.states.getValue(chapter.id).pending)
+    }
     private val chapter = SmangaChapter(10, 20, 30, "Chapter", pageCount = 10)
     private val memo = JsonObject(emptyMap())
 
@@ -365,6 +455,38 @@ class SmangaReadingCoordinatorTest {
 
         assertEquals(1, fixture.history.values.single().status)
         coVerify(exactly = 1) { fixture.api.addHistory(30, 20, 10) }
+    }
+
+    @Test
+    fun `paused identity retains unattempted history until writes are allowed`() = runTest {
+        val fixture = Fixture(this)
+        val event = SmangaHistoryEvent("held", 20, 10, 30, 100)
+        fixture.history[event.id] = event
+        fixture.writesPaused = true
+        fixture.coordinator.retryPending()
+        advanceUntilIdle()
+        assertEquals(event, fixture.history[event.id])
+        coVerify(exactly = 0) { fixture.api.addHistory(any(), any(), any()) }
+        fixture.writesPaused = false
+        fixture.coordinator.retryPending()
+        advanceUntilIdle()
+        assertEquals(event.copy(status = 2), fixture.history[event.id])
+        coVerify(exactly = 1) { fixture.api.addHistory(30, 20, 10) }
+    }
+
+    @Test
+    fun `identity paused during chapter read cannot claim history`() = runTest {
+        val fixture = Fixture(this)
+        val event = SmangaHistoryEvent("held", 20, 10, 30, 100)
+        fixture.history[event.id] = event
+        coEvery { fixture.api.chapters(20) } coAnswers {
+            fixture.writesPaused = true
+            listOf(chapter)
+        }
+        fixture.coordinator.retryPending()
+        advanceUntilIdle()
+        assertEquals(event, fixture.history[event.id])
+        coVerify(exactly = 0) { fixture.api.addHistory(any(), any(), any()) }
     }
 
     @Test
@@ -1109,6 +1231,159 @@ class SmangaReadingCoordinatorTest {
         assertFalse(pause == true)
     }
 
+    @Test
+    fun `PDF review returns remote evidence without consuming pending progress history or pauses`() = runTest {
+        val fixture = Fixture(this)
+        val pending = local(10, 2_000).copy(pageIndex = 2, pending = true)
+        fixture.states[10] = pending
+        fixture.coordinator.requireMappingConfirmation(10)
+        val beforeCache = fixture.cache.toMap()
+        val remote = chapter.copy(format = "pdf", latest = SmangaProgress(6, 10, false, 1_000))
+        coEvery { fixture.api.chapters(20) } returns listOf(remote)
+
+        val review = fixture.coordinator.reviewPdf(chapter, memo)
+
+        assertEquals(6, review.snapshot.pageIndex)
+        assertEquals("1970-01-01T00:00:01Z", review.snapshot.readDate)
+        assertTrue(review.snapshot.blocksAutomaticSelection)
+        assertFalse(review.snapshot.requiresPageMappingConfirmation)
+        assertEquals(pending, fixture.states[10])
+        assertEquals(beforeCache, fixture.cache)
+        assertTrue(fixture.applied.isEmpty() && fixture.history.isEmpty() && fixture.acknowledged.isEmpty())
+        coVerify(exactly = 0) { fixture.api.pushProgress(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `PDF remote acceptance requires unchanged local state remote state and owner`() = runTest {
+        for (change in listOf("local", "remote", "file", "owner", "permission")) {
+            val fixture = Fixture(this)
+            fixture.states[10] = local(10, 2_000).copy(pageIndex = 2, pending = true)
+            var remote = chapter.copy(format = "pdf", latest = SmangaProgress(6, 10, false, 1_000), updatedAt = 100)
+            coEvery { fixture.api.chapters(20) } answers { listOf(remote) }
+            val review = fixture.coordinator.reviewPdf(chapter, memo)
+            when (change) {
+                "local" -> fixture.states[10] = fixture.states.getValue(10).copy(revision = 99, pageIndex = 3)
+                "remote" -> remote = remote.copy(latest = remote.latest!!.copy(pageIndex = 5))
+                "file" -> remote = remote.copy(updatedAt = 200)
+                "owner" -> fixture.currentSession = false
+            }
+            val preserved = fixture.states.toMap()
+            expectFailure<Exception> {
+                fixture.coordinator.resolvePdfReview(review, 6, 10, 1_000, useRemote = true) {
+                    if (change == "permission") throw IOException("Owned fixture writes paused")
+                }
+            }
+            assertEquals(preserved, fixture.states, change)
+            assertTrue(fixture.history.isEmpty() && fixture.applied.isEmpty(), change)
+            coVerify(exactly = 0) { fixture.api.pushProgress(any(), any(), any(), any(), any()) }
+        }
+    }
+
+    @Test
+    fun `PDF explicit acceptance settles exact remote page and time without creating a visit`() = runTest {
+        val fixture = Fixture(this)
+        fixture.states[10] = local(10, 2_000).copy(pageIndex = 2, pending = true)
+        fixture.coordinator.requireMappingConfirmation(10)
+        coEvery { fixture.api.chapters(20) } returns listOf(
+            chapter.copy(format = "pdf", latest = SmangaProgress(6, 10, false, 1_000)),
+        )
+        val review = fixture.coordinator.reviewPdf(chapter, memo)
+        fixture.coordinator.resolvePdfReview(review, 6, 10, 1_000, useRemote = true) {}
+        assertTrue(fixture.coordinator.isPageConfirmed(10, 6, 10, 1_000))
+        assertFalse(fixture.coordinator.isPageConfirmed(10, 5, 10, 1_000))
+        assertFalse(fixture.coordinator.isPageConfirmed(10, 6, 9, 1_000))
+        assertFalse(fixture.coordinator.isPageConfirmed(10, 6, 10, 999))
+        assertTrue(fixture.history.isEmpty())
+        coVerify(exactly = 0) { fixture.api.pushProgress(any(), any(), any(), any(), any()) }
+        expectFailure<IllegalStateException> {
+            fixture.coordinator.resolvePdfReview(review, 6, 10, 1_000, useRemote = true) {}
+        }
+    }
+
+    @Test
+    fun `PDF explicit local choice uses existing queue and confirms only the current original page`() = runTest {
+        val fixture = Fixture(this)
+        fixture.states[10] = local(10, 500).copy(pageIndex = 2, pending = true)
+        fixture.coordinator.requireMappingConfirmation(10)
+        var remote = chapter.copy(format = "pdf", latest = SmangaProgress(6, 10, false, 1_000))
+        coEvery { fixture.api.chapters(20) } answers { listOf(remote) }
+        coEvery { fixture.api.pushProgress(any(), any(), any(), any(), any()) } answers {
+            SmangaProgress(arg(2), arg(3), arg(4), 1_100).also { remote = remote.copy(latest = it) }
+        }
+        val review = fixture.coordinator.reviewPdf(chapter, memo)
+        fixture.coordinator.resolvePdfReview(review, 2, 10, 500, useRemote = false) {}
+        assertFalse(fixture.coordinator.isPageConfirmed(10, 2, 10, 500))
+        advanceUntilIdle()
+        assertTrue(fixture.coordinator.isPageConfirmed(10, 2, 10, 500))
+        coVerify(exactly = 1) { fixture.api.pushProgress(20, 10, 2, 10, false) }
+        fixture.coordinator.record(chapter, 3, 10, 2_000, initialPage = false)
+        assertFalse(fixture.coordinator.isPageConfirmed(10, 2, 10, 500))
+        advanceUntilIdle()
+        assertTrue(fixture.coordinator.isPageConfirmed(10, 3, 10, 2_000))
+        coVerify(exactly = 1) { fixture.api.pushProgress(20, 10, 3, 10, false) }
+        assertEquals(1, fixture.history.size)
+    }
+
+    @Test
+    fun `PDF mapping changes remain distinct from a same mapping confirmation pause`() = runTest {
+        val fixture = Fixture(this)
+        val pending = local(10, 2_000).copy(pageIndex = 2, pending = true)
+        fixture.states[10] = pending
+        val metadata = buildJsonObject {
+            put("pagesCount", 10)
+            put("smangaUpdatedAt", 100)
+        }
+        var remote = chapter.copy(format = "pdf", updatedAt = 100, latest = SmangaProgress(6, 10, false, 3_000))
+        coEvery { fixture.api.chapters(20) } answers { listOf(remote) }
+        val conflict = fixture.coordinator.pull(chapter, metadata, pdf = true)!!
+        assertTrue(conflict.blocksAutomaticSelection)
+        assertFalse(conflict.requiresPageMappingConfirmation)
+        assertEquals(pending, fixture.states[10])
+        remote = remote.copy(updatedAt = 200)
+        val changed = fixture.coordinator.reviewPdf(chapter, metadata)
+        assertTrue(changed.snapshot.requiresPageMappingConfirmation)
+        expectFailure<IllegalStateException> {
+            fixture.coordinator.resolvePdfReview(changed, 6, 10, 3_000, useRemote = true) {}
+        }
+        remote = remote.copy(updatedAt = 100, pageCount = 11)
+        assertTrue(fixture.coordinator.reviewPdf(chapter, metadata).snapshot.requiresPageMappingConfirmation)
+        assertEquals(pending, fixture.states[10])
+    }
+
+    @Test
+    fun `PDF empty remote with unknown total accepts unread without inventing a visit`() = runTest {
+        val fixture = Fixture(this)
+        fixture.states[10] = local(10, 500).copy(pageIndex = 2, pending = true)
+        var remote = chapter.copy(format = "pdf", pageCount = 0)
+        coEvery { fixture.api.chapters(20) } answers { listOf(remote) }
+        coEvery { fixture.api.pushProgress(any(), any(), any(), any(), any()) } answers {
+            SmangaProgress(arg(2), arg(3), arg(4), 2_100).also { remote = remote.copy(latest = it) }
+        }
+        val review = fixture.coordinator.reviewPdf(chapter, memo)
+        assertNull(review.snapshot.pageIndex)
+        assertEquals(0, review.snapshot.totalPages)
+        assertFalse(review.snapshot.requiresPageMappingConfirmation)
+        fixture.coordinator.resolvePdfReview(review, 0, 10, 0, useRemote = true) {}
+        assertTrue(fixture.states.getValue(10).explicitUnread)
+        assertFalse(fixture.states.getValue(10).completed)
+        assertTrue(fixture.history.isEmpty())
+        assertTrue(fixture.coordinator.isPageConfirmed(10, 0, 10, 0))
+        fixture.coordinator.record(chapter, 1, 10, 2_000, initialPage = false)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { fixture.api.pushProgress(20, 10, 1, 10, false) }
+        assertTrue(fixture.coordinator.isPageConfirmed(10, 1, 10, 2_000))
+    }
+
+    private suspend inline fun <reified T : Throwable> expectFailure(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (error: Throwable) {
+            if (error is T) return
+            throw error
+        }
+        throw AssertionError("Expected ${T::class.simpleName}")
+    }
+
     private inner class Fixture(scope: CoroutineScope) {
         val api = mockk<SmangaApi>()
         val repository = mockk<SmangaRepository>()
@@ -1118,6 +1393,7 @@ class SmangaReadingCoordinatorTest {
         val applied = mutableListOf<SmangaReadState>()
         val acknowledged = mutableListOf<Long>()
         var currentSession = true
+        var writesPaused = false
         val coordinator = createCoordinator(scope)
 
         fun createCoordinator(scope: CoroutineScope) = SmangaReadingCoordinator(
@@ -1127,6 +1403,7 @@ class SmangaReadingCoordinatorTest {
             repository,
             scope,
             checkSession = { if (!currentSession) throw CancellationException("Session replaced") },
+            checkRemoteWrite = { if (writesPaused) throw koharia.connection.ConnectionWritesPaused() },
             applyState = { applied += it },
         )
 

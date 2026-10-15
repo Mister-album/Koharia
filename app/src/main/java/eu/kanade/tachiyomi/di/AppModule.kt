@@ -21,7 +21,6 @@ import eu.kanade.tachiyomi.data.download.KomgaSharedDownloadIndexManager
 import eu.kanade.tachiyomi.data.download.KomgaSharedDownloadRepository
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.track.TrackerManager
-import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
 import koharia.connection.ConnectionContentScopeController
@@ -204,6 +203,8 @@ class AppModule(val app: Application) : InjektModule {
             ConnectionPreferences(
                 preferenceStore = get<PreferenceStore>(),
                 json = get<Json>(),
+                isReserved = { get<koharia.connection.ConnectionIdentityChanges>().isReserved(it) },
+                persist = { androidx.preference.PreferenceManager.getDefaultSharedPreferences(app).edit().commit() },
             )
         }
         addSingletonFactory {
@@ -214,7 +215,15 @@ class AppModule(val app: Application) : InjektModule {
                 json = get<Json>(),
             )
         }
-        addSingletonFactory { ConnectionProfileManager(get(), get(), get()) }
+        addSingletonFactory {
+            koharia.connection.ConnectionIdentityChanges(
+                koharia.connection.AndroidSharedConfigStorage(
+                    app.getSharedPreferences("connection_identity_changes", 0),
+                ),
+                get(),
+            )
+        }
+        addSingletonFactory { ConnectionProfileManager(get(), get(), get(), get()) }
         addSingletonFactory { koharia.source.local.LocalLibraryRefreshTasks() }
         addSingletonFactory { koharia.connection.ConnectionNetworkMonitor(app) }
         addSingletonFactory { koharia.lanraragi.LanraragiCatalogSyncCoordinator() }
@@ -233,6 +242,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { ConnectionContentScopeController(get(), get()) }
         addSingletonFactory {
             get<KomgaConnectionMigration>().migrate()
+            get<ConnectionProfileManager>().recoverIdentityChanges()
             KomgaServerPreferences(
                 context = app,
                 preferenceStore = get<PreferenceStore>(),
@@ -265,11 +275,21 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { LocalCacheCleaner(app, get(), get(), get(), get(), get(), get()) }
 
         addSingletonFactory { NetworkHelper(app, get()) }
-        addSingletonFactory { JavaScriptEngine(app) }
 
         addSingletonFactory<SourceManager> {
             get<KomgaConnectionMigration>().migrate()
-            AndroidSourceManager(app, get(), get(), get())
+            get<ConnectionProfileManager>().recoverConfigurationsBeforeSources()
+            AndroidSourceManager(
+                app,
+                get(),
+                get(),
+                get(),
+                configurationPending = { id ->
+                    get<koharia.connection.ConnectionIdentityChanges>().pendingConfigurations().any {
+                        it.connectionId == id
+                    }
+                },
+            )
         }
         addSingletonFactory { KomgaActiveServerSseManager(app, get(), get(), get(), lazy { get() }) }
 
@@ -293,6 +313,34 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { EpubPublicationResolver() }
         addSingletonFactory { EpubReaderSupportResolver() }
         addSingletonFactory { KomgaEpubProgressSyncService(get(), get(), get()) }
+        addSingletonFactory { koharia.komga.progress.KomgaProgressOrdering(get(), get()) }
+        addSingletonFactory {
+            koharia.komga.progress.KomgaProgressWakeups(
+                koharia.komga.progress.KomgaProgressWorkManager(androidx.work.WorkManager.getInstance(app)),
+            )
+        }
+        addSingletonFactory<koharia.komga.progress.KomgaProgressWorkDispatcher> {
+            koharia.komga.progress.KomgaProgressWorkDriver(
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get<TrackerManager>().komga.api,
+            )
+        }
+        addSingletonFactory { koharia.komga.progress.KomgaPageJournal(get(), get(), get(), get()) }
+        addSingletonFactory {
+            koharia.komga.progress.KomgaExplicitProgress(
+                get(), get(), get(), get(), get(), get(), get(), get<TrackerManager>().komga.api, get(),
+            )
+        }
+        addSingletonFactory {
+            koharia.komga.progress.KomgaProgressRecovery(get(), get(), get()) { key ->
+                get<koharia.komga.progress.KomgaProgressWakeups>().wake(key)
+            }
+        }
         addSingletonFactory { KomgaEpubRemoteProgressCoordinator(get(), get(), get(), get()) }
     }
 
@@ -321,6 +369,7 @@ class AppModule(val app: Application) : InjektModule {
                 Injekt.get<CustomCoverStore>().initialize(startupScope)
 
                 Injekt.get<DownloadManager>()
+                koharia.komga.progress.KomgaProgressRecoveryJob.enqueueAtStartup(app)
             }
         }
     }

@@ -1,0 +1,11 @@
+CREATE TABLE komga_read_status_attempt (
+    connection_id INTEGER NOT NULL,
+    owner_key TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    read INTEGER NOT NULL,
+    requested_at INTEGER NOT NULL,
+    intent_baseline TEXT,
+    baseline TEXT NOT NULL,
+    PRIMARY KEY (connection_id, owner_key, book_id)
+);

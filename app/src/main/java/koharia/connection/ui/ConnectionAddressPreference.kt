@@ -106,6 +106,11 @@ class ConnectionAddressPreferenceDialog : PreferenceDialogFragmentCompat() {
         )
         val internalLayout = fields.getChildAt(fields.childCount - 1)
         internalLayout.visibility = if (advancedExpanded) View.VISIBLE else View.GONE
+        fields.addView(
+            android.widget.TextView(context).apply {
+                text = context.stringResource(MR.strings.connection_identity_change_help)
+            },
+        )
         advancedButton.setOnClickListener {
             advancedExpanded = !advancedExpanded
             internalLayout.visibility = if (advancedExpanded) View.VISIBLE else View.GONE

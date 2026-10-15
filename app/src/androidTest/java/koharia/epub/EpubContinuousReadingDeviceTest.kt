@@ -18,6 +18,7 @@ import koharia.epub.settings.EpubLayoutPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,6 +30,7 @@ import java.io.File
 import java.lang.reflect.Proxy
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -81,7 +83,7 @@ class EpubContinuousReadingDeviceTest {
             ActivityScenario.launch(EpubTransitionFixtureActivity::class.java).use { scenario ->
                 lateinit var fragment: EpubReaderFragment
                 scenario.onActivity { activity ->
-                    fragment = EpubReaderFragment.newInstance(chapterId, -1)
+                    fragment = EpubReaderFragment.newInstance(chapterId, -1, 0)
                     activity.supportFragmentManager.beginTransaction().replace(
                         android.R.id.content,
                         fragment,
@@ -125,6 +127,7 @@ class EpubContinuousReadingDeviceTest {
                 awaitInstalled(0)
                 if (captureOnly) {
                     val captured = AtomicReference<Locator>()
+                    val activeSessionToken = AtomicLong(0)
                     scenario.onActivity {
                         val host = Proxy.newProxyInstance(
                             EpubReaderFragment.Host::class.java.classLoader,
@@ -134,7 +137,15 @@ class EpubContinuousReadingDeviceTest {
                                 assertEquals(Looper.getMainLooper(), Looper.myLooper())
                                 captured.set(arguments[0] as Locator)
                             }
-                            if (method.returnType == Boolean::class.javaPrimitiveType) false else null
+                            if (method.name == "isCurrentReaderSession") {
+                                assertEquals(chapterId, arguments[0])
+                                assertEquals(-1L, arguments[1])
+                                arguments[2] == activeSessionToken.get()
+                            } else if (method.returnType == Boolean::class.javaPrimitiveType) {
+                                false
+                            } else {
+                                null
+                            }
                         }
                         EpubReaderFragment::class.java.getDeclaredField("host")
                             .apply { isAccessible = true }.set(fragment, host)
@@ -152,6 +163,10 @@ class EpubContinuousReadingDeviceTest {
                         assertEquals(session.publication.readingOrder[2].href.toString(), locator.href.toString())
                         assertEquals(progression, checkNotNull(locator.locations.progression), 0.000001)
                     }
+                    activeSessionToken.incrementAndGet()
+                    captured.set(null)
+                    fragment.captureContinuousScrollProgress()
+                    assertNull("Old fragment delivered progress after its session was replaced", captured.get())
                     return@use
                 }
                 val wrongDocument = buildEpubContinuousScrollInstallScript(
@@ -194,6 +209,7 @@ class EpubContinuousReadingDeviceTest {
                         arrayOf(EpubReaderFragment.Host::class.java),
                     ) { _, method, arguments ->
                         when (method.name) {
+                            "isCurrentReaderSession" -> true
                             "onTap" -> {
                                 assertTrue((arguments[0] as Float) in 0f..1f)
                                 assertTrue((arguments[1] as Float) in 0f..1f)

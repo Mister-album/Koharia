@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.network.NetworkHelper
 import koharia.epub.cache.EpubCacheManager
 import koharia.pdf.cache.PdfReflowCacheManager
+import koharia.storage.NetworkStorageRuntime
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import tachiyomi.domain.manga.model.Manga
 
@@ -23,7 +24,7 @@ class LocalCacheCleaner(
         return Formatter.formatFileSize(
             context,
             LocalTempCacheDirectoryProvider.temporaryCacheSize(context) + koharia.smanga.SmangaPdfCache.size(context) +
-                koharia.kavita.KavitaPdfCache.size(context),
+                koharia.kavita.KavitaPdfCache.size(context) + NetworkStorageRuntime.cachedContentSize(context),
         )
     }
 
@@ -51,6 +52,7 @@ class LocalCacheCleaner(
         deleted += pdfReflowCacheManager.clear()
         deleted += koharia.smanga.SmangaPdfCache.clear(context)
         deleted += koharia.kavita.KavitaPdfCache.clear(context)
+        deleted += NetworkStorageRuntime.clearUnusedContentCache(context)
         return deleted
     }
 }

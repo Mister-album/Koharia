@@ -83,7 +83,7 @@ class StorageDocumentsProvider : ContentProvider() {
         val app = requireNotNull(context)
         val file = documentFile(uri) ?: throw java.io.FileNotFoundException()
         val entry = file.runtime.cached(file.storagePath) ?: throw java.io.FileNotFoundException()
-        val lease = file.runtime.cache.acquire(entry)
+        val lease = runBlocking(Dispatchers.IO) { file.runtime.cache.acquire(entry) }
         try {
             return app.getSystemService(StorageManager::class.java).openProxyFileDescriptor(
                 ParcelFileDescriptor.MODE_READ_ONLY,

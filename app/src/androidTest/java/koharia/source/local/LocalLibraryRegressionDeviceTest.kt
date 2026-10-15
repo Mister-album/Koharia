@@ -7,9 +7,11 @@ import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.ui.reader.loader.LocalPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionChapterMetadata
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.SharedAppPreferences
+import koharia.connection.fetchChapters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -74,7 +76,7 @@ class LocalLibraryRegressionDeviceTest {
             val manga = mangas.getMangaBySourceId(sourceId).single()
             assertFalse(manga.favorite)
             assertEquals(Manga.CHAPTER_COVER_DISPLAY_TEXT, manga.chapterCoverDisplayMode)
-            sync.await(source.getChapterList(manga.toSManga()), manga, source, manualFetch = false)
+            sync.fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
             val chapter = chapters.getChapterByMangaId(manga.id).single()
             val loader = LocalPageLoader(ReaderChapter(chapter), source, source)
             try {
@@ -93,9 +95,9 @@ class LocalLibraryRegressionDeviceTest {
             }
             defaults.set(Manga.CHAPTER_COVER_DISPLAY_TEXT)
             source.refreshLibrary().getOrThrow()
-            val refreshed = source.getChapterList(manga.toSManga())
-            assertEquals(3, ConnectionChapterMetadata.pagesCount(refreshed.single().memo))
-            sync.await(refreshed, manga, source, manualFetch = false)
+            val refreshed = source.fetchChapters(manga.toSManga(), ChapterFetchOrigin.OPEN)
+            assertEquals(3, ConnectionChapterMetadata.pagesCount(refreshed.chapters.single().memo))
+            sync.await(refreshed, manga, manualFetch = false)
             assertTrue(chapters.getChapterByMangaId(manga.id).single().read)
             assertEquals(Manga.CHAPTER_COVER_DISPLAY_TEXT, mangas.getMangaById(manga.id).chapterCoverDisplayMode)
             assertEquals(

@@ -23,6 +23,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
+import koharia.connection.ConnectionRegistry
 import koharia.komga.api.KomgaOrganizationKind
 import koharia.komga.api.KomgaOrganizationQuery
 import koharia.komga.api.dto.BookDto
@@ -127,7 +128,11 @@ data class KomgaSeriesOrganizationScreen(val sourceId: Long, val resourceUrls: L
             topBar = {
                 AppBar(
                     title = source.name,
-                    subtitle = stringResource(MR.strings.komga_organization_actions),
+                    subtitle =
+                    "${Injekt.get<ConnectionRegistry>().provider(
+                        source.providerId,
+                    )?.displayName ?: source.providerId}" +
+                        " · ${stringResource(MR.strings.komga_organization_actions)}",
                     navigateUp = { navigator.pop() },
                 )
             },

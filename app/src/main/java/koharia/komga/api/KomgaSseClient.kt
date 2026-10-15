@@ -61,6 +61,7 @@ class KomgaSseClient(
             .build()
 
     fun start(scope: CoroutineScope) {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (isStarted) return
         isStarted = true
         appScope = scope
@@ -121,6 +122,15 @@ class KomgaSseClient(
             isConnecting = false
             return
         }
+        val chapterOwner = runCatching {
+            (
+                uy.kohesive.injekt.Injekt.get<tachiyomi.domain.source.service.SourceManager>().get(sourceId)
+                    as? koharia.connection.ConnectionChapterSessionAdapter
+                )?.captureChapterOwner()
+        }.getOrNull() ?: run {
+            isConnecting = false
+            return
+        }
         val baseUrl = baseUrlProvider().trimEnd('/')
         if (baseUrl.isBlank()) {
             isConnecting = false
@@ -142,17 +152,22 @@ class KomgaSseClient(
             isConnecting = false
             return
         }
+        val factory = EventSources.createFactory(eventSourceClient)
+        if (runCatching { chapterOwner.checkCurrent() }.isFailure) {
+            isConnecting = false
+            return
+        }
         val target = synchronized(progressSyncLock) {
             KomgaSseConnectionTarget(
                 sourceId = sourceId,
                 baseUrl = baseUrl,
                 generation = ++connectionGeneration,
+                chapterOwnerKey = chapterOwner.key,
             ).also { activeTarget = it }
         }
 
         logcat(LogPriority.INFO) { "Komga SSE connecting to $baseUrl/api/v1/sse/v1/events" }
 
-        val factory = EventSources.createFactory(eventSourceClient)
         eventSource = factory.newEventSource(
             request,
             object : EventSourceListener() {
@@ -225,6 +240,23 @@ class KomgaSseClient(
 
     private fun handleEvent(target: KomgaSseConnectionTarget, type: String?, data: String) {
         if (type == null) return
+        if (target.chapterOwnerKey.isNotBlank() && type in setOf(
+                "BookAdded", "BookChanged", "BookUpdated", "BookDeleted",
+                "SeriesAdded", "SeriesChanged", "SeriesUpdated", "SeriesDeleted",
+                "LibraryAdded", "LibraryChanged", "LibraryUpdated", "LibraryDeleted",
+            )
+        ) {
+            appScope?.launch(Dispatchers.IO) {
+                if (!isCurrentConnection(target)) return@launch
+                val source = uy.kohesive.injekt.Injekt.get<tachiyomi.domain.source.service.SourceManager>()
+                    .get(target.sourceId) ?: return@launch
+                eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(
+                    source,
+                    koharia.connection.ChapterFetchOrigin.SERVER_UPDATE,
+                    expectedOwner = target.chapterOwnerKey,
+                )
+            }
+        }
         val organizationKind = when {
             type.startsWith(
                 "Collection",
@@ -356,6 +388,7 @@ internal data class KomgaSseConnectionTarget(
     val sourceId: Long,
     val baseUrl: String,
     val generation: Long,
+    val chapterOwnerKey: String,
 )
 
 internal data class PendingKomgaProgressSync(

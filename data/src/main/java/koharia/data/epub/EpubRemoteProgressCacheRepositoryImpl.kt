@@ -35,6 +35,14 @@ class EpubRemoteProgressCacheRepositoryImpl(
         )
     }
 
+    override suspend fun upsertForSession(cache: EpubRemoteProgressCache, checkCurrent: suspend () -> Unit) {
+        database.transaction {
+            checkCurrent()
+            upsert(cache)
+            checkCurrent()
+        }
+    }
+
     private fun map(
         chapterId: Long,
         mangaId: Long,

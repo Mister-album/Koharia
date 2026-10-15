@@ -138,6 +138,7 @@ data class BookReadProgressDto(
     val completed: Boolean = false,
     val page: Int? = null,
     val readDate: String? = null,
+    val lastModified: String? = null,
 )
 
 @Serializable

@@ -8,7 +8,7 @@ import java.io.File
 /**
  * Class used to create cover cache.
  * It is used to store the covers of the library.
- * Names of files are created with the md5 of the thumbnail URL.
+ * Cover files are scoped to the owning connection and thumbnail URL.
  *
  * @param context the application context.
  * @constructor creates an instance of the cover cache.
@@ -27,12 +27,13 @@ class CoverCache(private val context: Context) {
     /**
      * Returns the cover from cache.
      *
+     * @param sourceId owning connection; legacy URL-only files have no verifiable owner.
      * @param mangaThumbnailUrl thumbnail url for the manga.
      * @return cover image.
      */
-    fun getCoverFile(mangaThumbnailUrl: String?): File? {
+    fun getCoverFile(sourceId: Long, mangaThumbnailUrl: String?): File? {
         return mangaThumbnailUrl?.let {
-            File(cacheDir, DiskUtil.hashKeyForDisk(it))
+            File(cacheDir, DiskUtil.hashKeyForDisk("$sourceId;$it"))
         }
     }
 
@@ -45,7 +46,7 @@ class CoverCache(private val context: Context) {
     fun deleteFromCache(manga: Manga): Int {
         var deleted = 0
 
-        getCoverFile(manga.thumbnailUrl)?.let {
+        getCoverFile(manga.source, manga.thumbnailUrl)?.let {
             if (it.exists() && it.delete()) ++deleted
         }
 
@@ -54,7 +55,7 @@ class CoverCache(private val context: Context) {
 
     fun deleteOrphaned(activeManga: Collection<Manga>): Int {
         val activeCoverNames = activeManga.mapNotNull { manga ->
-            manga.thumbnailUrl?.let(DiskUtil::hashKeyForDisk)
+            getCoverFile(manga.source, manga.thumbnailUrl)?.name
         }.toSet()
 
         var deleted = 0

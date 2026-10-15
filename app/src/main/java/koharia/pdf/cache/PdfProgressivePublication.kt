@@ -3,6 +3,7 @@
 package koharia.pdf.cache
 
 import android.app.Application
+import koharia.core.archive.BoundedXml
 import koharia.pdf.extraction.PdfiumExtractionEngine
 import koharia.pdf.reflow.PdfBox
 import koharia.pdf.reflow.PdfExtractionIndex
@@ -30,7 +31,6 @@ import logcat.LogPriority
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Entities
-import org.jsoup.parser.Parser
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -196,11 +196,7 @@ internal class PdfProgressivePublication(
         ZipFile(File(work, "book.epub")).use { zip ->
             val text = zip.entries().asSequence().filter { it.name.startsWith("EPUB/text/") }
                 .joinToString("") { entry ->
-                    val document = Jsoup.parse(
-                        zip.getInputStream(entry).bufferedReader().readText(),
-                        "",
-                        Parser.xmlParser(),
-                    )
+                    val document = zip.getInputStream(entry).use { BoundedXml.parse(it) }
                     document.outputSettings().syntax(Document.OutputSettings.Syntax.xml)
                         .escapeMode(Entities.EscapeMode.xhtml).prettyPrint(false)
                     document.selectFirst("body")?.html().orEmpty()

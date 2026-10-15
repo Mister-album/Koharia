@@ -38,9 +38,8 @@ import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.browse.BrowseSourceContent
-import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionBrowseSourceScreen
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.ConnectionLibraryTabs
 import koharia.connection.ui.ConnectionLibraryToolbar
@@ -75,7 +74,7 @@ class KavitaLibraryScreen(
     private val filterJson: String? = null,
     private val selection: KavitaMemberSelection? = null,
     private val contentScope: koharia.connection.LibraryContentScope = koharia.connection.LibraryContentScope.ALL,
-) : Screen(), ConnectionBrowseScreen {
+) : ConnectionBrowseSourceScreen() {
     override val refreshOnReselect = false
 
     @Transient private var runtimeModel: KavitaLibraryScreenModel? = null
@@ -92,13 +91,13 @@ class KavitaLibraryScreen(
     @OptIn(androidx.compose.material.ExperimentalMaterialApi::class)
     @Composable
     override fun Content() {
-        val source = Injekt.get<SourceManager>().get(sourceId) as? KavitaSource
+        val source = observeConnectionSource() as? KavitaSource
         if (source == null || !source.hasValidConnection()) {
             EmptyScreen(stringRes = MR.strings.connection_unavailable)
             return
         }
         val epoch by source.epoch.collectAsState()
-        val model = rememberScreenModel(tag = "${source.instanceKey}:$epoch") {
+        val model = rememberScreenModel(tag = "$connectionSourceGeneration:${source.instanceKey}:$epoch") {
             KavitaLibraryScreenModel(source, initialQuery, filterJson, contentScope)
         }
         runtimeModel = model
@@ -235,6 +234,19 @@ class KavitaLibraryScreen(
                             stringResource(MR.strings.kavita_offline_scope),
                             modifier = Modifier.padding(horizontal = 16.dp),
                         )
+                        if (state.order.substringBefore(' ').toIntOrNull() !in
+                            koharia.kavita.kavitaSortOptions().map { it.first }
+                        ) {
+                            Text(
+                                stringResource(MR.strings.kavita_sort_unsupported),
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        } else if (state.downloadedSortIncomplete) {
+                            Text(
+                                stringResource(MR.strings.kavita_downloaded_sort_incomplete),
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        }
                     }
                     if (state.toolbarQuery == null) {
                         ConnectionLibraryTabs(

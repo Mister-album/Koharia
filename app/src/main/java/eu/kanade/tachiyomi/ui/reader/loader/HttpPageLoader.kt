@@ -35,6 +35,7 @@ import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.Closeable
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.PriorityBlockingQueue
@@ -72,6 +73,7 @@ internal class HttpPageLoader(
     private val schedulerLock = Any()
     private val scheduledPages = Collections.newSetFromMap(IdentityHashMap<ReaderPage, Boolean>())
     private val activeLoads = mutableSetOf<ActivePageLoad>()
+    private val imageLeases = mutableMapOf<String, Closeable>()
     private var cachedPageList: ConnectionPageList? = null
 
     @Volatile
@@ -395,7 +397,7 @@ internal class HttpPageLoader(
         val imageUrl = page.imageUrl
 
         // Check if the image has been deleted
-        if (page.status == Page.State.Ready && imageUrl != null && !chapterCache.isImageInCache(imageUrl)) {
+        if (page.status == Page.State.Ready && imageUrl != null && !chapterCache.isImageInCache(source.id, imageUrl)) {
             page.status = Page.State.Queue
         }
 
@@ -452,6 +454,8 @@ internal class HttpPageLoader(
             queue.clear()
             scheduledPages.clear()
             activeLoads.clear()
+            imageLeases.values.forEach(Closeable::close)
+            imageLeases.clear()
         }
 
         // Cache current page list progress for online chapters to allow a faster reopen
@@ -493,16 +497,21 @@ internal class HttpPageLoader(
                 page.imageUrl = source.getImageUrl(page)
             }
             val imageUrl = page.imageUrl!!
+            currentCoroutineContext().ensureActive()
+            synchronized(schedulerLock) {
+                if (!scope.isActive) return
+                imageLeases.getOrPut(imageUrl) { chapterCache.retainImage(source.id, imageUrl) }
+            }
 
             val cacheDiagnostics = if (BuildConfig.LANRARAGI_DIAGNOSTICS && connectionPageAdapter != null) {
-                chapterCache.inspectImageCache(imageUrl)
+                chapterCache.inspectImageCache(source.id, imageUrl)
             } else {
                 null
             }
             val imageInCache = if (force) {
                 false
             } else {
-                cacheDiagnostics?.entryPresent ?: chapterCache.isImageInCache(imageUrl)
+                cacheDiagnostics?.entryPresent ?: chapterCache.isImageInCache(source.id, imageUrl)
             }
             logcat {
                 "KohariaOfflineDebug: image cache check " +
@@ -527,9 +536,9 @@ internal class HttpPageLoader(
                     if (isPrefetch) response else response.withTransferMeter(transferMeter)
                 }
                 val cacheWriteStartedAt = System.nanoTime()
-                chapterCache.putImageToCache(imageUrl, imageResponse)
+                chapterCache.putImageToCache(source.id, imageUrl, imageResponse)
                 if (BuildConfig.LANRARAGI_DIAGNOSTICS && connectionPageAdapter != null) {
-                    val cache = chapterCache.inspectImageCache(imageUrl)
+                    val cache = chapterCache.inspectImageCache(source.id, imageUrl)
                     logcat {
                         "LanraragiCache: phase=write chapterId=${chapter.chapter.id} page=${page.number} " +
                             "elapsedMs=${(System.nanoTime() - cacheWriteStartedAt) / 1_000_000} " +
@@ -539,7 +548,7 @@ internal class HttpPageLoader(
                 }
             }
 
-            page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
+            page.stream = { chapterCache.getImageFile(source.id, imageUrl).inputStream() }
             page.status = Page.State.Ready
             logcat {
                 "MangaStartup: page request complete chapterId=${chapter.chapter.id} " +

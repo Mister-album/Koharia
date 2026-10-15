@@ -54,6 +54,7 @@ class HistoryRefreshUiDeviceTest {
             id = 1,
             chapterId = 11,
             mangaId = 1,
+            mangaUrl = "/series/fixture",
             title = "History refresh fixture",
             chapterNumber = 1.0,
             readAt = Date(),

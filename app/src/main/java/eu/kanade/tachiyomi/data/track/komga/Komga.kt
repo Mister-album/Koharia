@@ -18,6 +18,8 @@ import tachiyomi.domain.track.model.Track as DomainTrack
 
 class Komga(id: Long) : BaseTracker(id, "Komga"), EnhancedTracker {
 
+    override val usesSourceReadingProgress = true
+
     companion object {
         const val UNREAD = 1L
         const val READING = 2L
@@ -75,7 +77,7 @@ class Komga(id: Long) : BaseTracker(id, "Komga"), EnhancedTracker {
     }
 
     override suspend fun refresh(track: Track): Track {
-        val remoteTrack = api.getTrackSearch(track.tracking_url)
+        val remoteTrack = api.getTrackSearch(track.tracking_url, api.trackSourceId(track))
         track.copyPersonalFrom(remoteTrack)
         track.total_chapters = remoteTrack.total_chapters
         return track
@@ -98,7 +100,7 @@ class Komga(id: Long) : BaseTracker(id, "Komga"), EnhancedTracker {
 
     override suspend fun match(manga: Manga): TrackSearch? =
         try {
-            api.getTrackSearch(manga.url)
+            api.getTrackSearch(manga.url, manga.source)
         } catch (e: Exception) {
             null
         }

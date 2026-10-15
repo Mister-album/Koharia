@@ -23,6 +23,8 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.system.toast
+import koharia.connection.ui.readStatusMessages
 import koharia.core.common.utils.mutate
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -39,6 +41,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.compareToWithCollator
@@ -530,11 +533,18 @@ class LibraryScreenModel(
     fun markReadSelection(read: Boolean) {
         val selection = state.value.selectedManga
         screenModelScope.launchNonCancellable {
-            selection.forEach { manga ->
+            val results = selection.map { manga ->
                 setReadStatus.await(
                     manga = manga,
                     read = read,
                 )
+            }
+            val messages = results.readStatusMessages()
+            if (messages.isNotEmpty()) {
+                tachiyomi.core.common.util.lang.withUIContext {
+                    val context = Injekt.get<android.app.Application>()
+                    context.toast(messages.joinToString("\n") { context.stringResource(it) })
+                }
             }
         }
         clearSelection()

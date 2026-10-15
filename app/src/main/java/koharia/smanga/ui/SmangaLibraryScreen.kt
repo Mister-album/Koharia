@@ -7,8 +7,7 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.platform.LocalContext
 import androidx.paging.compose.collectAsLazyPagingItems
 import cafe.adriel.voyager.core.model.rememberScreenModel
-import eu.kanade.presentation.util.Screen
-import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionBrowseSourceScreen
 import koharia.connection.ui.ConnectionPagedShelf
 import koharia.connection.ui.ConnectionPagedShelfState
 import koharia.connection.ui.ConnectionSearchSortOption
@@ -28,7 +27,7 @@ class SmangaLibraryScreen(
     override val sourceId: Long,
     private val initialQuery: String?,
     private val showNavigationUp: Boolean,
-) : Screen(), ConnectionBrowseScreen {
+) : ConnectionBrowseSourceScreen() {
     override val refreshOnReselect = false
 
     @Transient private var runtimeModel: SmangaLibraryScreenModel? = null
@@ -44,13 +43,13 @@ class SmangaLibraryScreen(
 
     @Composable
     override fun Content() {
-        val source = Injekt.get<SourceManager>().get(sourceId) as? SmangaSource
+        val source = observeConnectionSource() as? SmangaSource
         if (source == null || !source.hasValidConnection()) {
             EmptyScreen(stringRes = MR.strings.connection_unavailable)
             return
         }
         val epoch by source.epoch.collectAsState()
-        val model = rememberScreenModel(tag = "${source.instanceKey}:$epoch") {
+        val model = rememberScreenModel(tag = "$connectionSourceGeneration:${source.instanceKey}:$epoch") {
             SmangaLibraryScreenModel(source, initialQuery)
         }
         runtimeModel = model
@@ -74,6 +73,7 @@ class SmangaLibraryScreen(
                     persistentFilters = state.persistentFilters,
                 ),
                 pages = pages, sortOptions = sorts, showNavigationUp = showNavigationUp,
+                downloadedSortAvailable = true,
                 settings = { SmangaSettingsScreen(sourceId) }, errorMessage = context::smangaError,
                 materialize = source::materialize, onQueryChange = model::setToolbarQuery,
                 onSearch = model::search, onCloseSearch = model::exitSearch,

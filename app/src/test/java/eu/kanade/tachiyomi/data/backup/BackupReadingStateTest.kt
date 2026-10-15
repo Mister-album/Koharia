@@ -20,7 +20,8 @@ class BackupReadingStateTest {
             epubProgress = listOf(BackupEpubProgress("chapter/1", "book/1", "locator", 0.42, 5, 100, 90))
             epubBookmarks = listOf(BackupEpubBookmark("chapter/1", "bookmark", "Section", 0.25, "note", 80))
             ttsProgress = listOf(BackupTtsProgress("chapter/1", 12, 70))
-            lanraragiState = listOf(BackupLanraragiState("chapter/1", 4, 12, 60, pending = true))
+            lanraragiState =
+                listOf(BackupLanraragiState("chapter/1", 4, 12, 60, pending = true, requiresConfirmation = true))
             kavitaState = listOf(
                 BackupKavitaState("/kavita/42/account/chapter/1/2/3/4.epub", """{"anchor":"//body/p[2]"}""", 7, true),
                 BackupKavitaState(

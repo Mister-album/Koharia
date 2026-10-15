@@ -297,8 +297,8 @@ internal fun LocalFolderDisplaySettings.effectiveLockedFields(): Set<String> = l
 class LocalLibraryPreferences(
     private val sourceId: Long,
     private val json: Json,
+    private val preferences: SharedPreferences = sourcePreferences("source_$sourceId"),
 ) {
-    private val preferences: SharedPreferences = sourcePreferences("source_$sourceId")
     private val indexCache = LocalLibraryIndexCache(json)
 
     fun getConfig(): LocalLibraryConfig {
@@ -364,6 +364,19 @@ class LocalLibraryPreferences(
         trySend(getConfig())
         awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }.distinctUntilChanged()
+
+    internal fun progressResourceChanges(): Flow<Unit> = callbackFlow {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_CONFIG || key == KEY_INDEX ||
+                koharia.storage.NetworkStoragePreferences.isIdentityPreference(key)
+            ) {
+                trySend(Unit)
+            }
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(Unit)
+        awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
 
     fun libraryStateChanges(): Flow<Unit> = callbackFlow {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->

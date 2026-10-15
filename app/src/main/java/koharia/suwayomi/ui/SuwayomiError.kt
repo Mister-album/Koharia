@@ -2,6 +2,7 @@ package koharia.suwayomi.ui
 
 import android.content.Context
 import dev.icerock.moko.resources.StringResource
+import koharia.connection.hasPausedConnectionWrites
 import koharia.suwayomi.SuwayomiException
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
@@ -10,6 +11,7 @@ import java.io.IOException
 fun Context.suwayomiError(error: Throwable): String = stringResource(suwayomiErrorResource(error))
 
 internal fun suwayomiErrorResource(error: Throwable): StringResource {
+    if (error.hasPausedConnectionWrites()) return MR.strings.connection_writes_paused
     val causes = generateSequence(error) { it.cause }.take(8).toList()
     return when (causes.filterIsInstance<SuwayomiException>().firstOrNull()?.reason) {
         SuwayomiException.Reason.ADDRESS -> MR.strings.suwayomi_error_connection

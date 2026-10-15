@@ -7,6 +7,14 @@ import org.junit.jupiter.api.Test
 
 class ConnectionSeriesMetadataTest {
     @Test
+    fun `zero available units remain authoritative instead of falling back to retained local chapters`() {
+        val metadata = ConnectionSeriesMetadata.fromMemo(Json.parseToJsonElement("""{"booksCount":0}""").jsonObject)
+        assertEquals(0, metadata.booksCount)
+        val retained = ConnectionShelfEntryState(downloaded = 2, total = 2, read = 0)
+        assertEquals(MangaDownloadStatus.UNKNOWN_TOTAL, retained.downloads(metadata.booksCount?.toLong()).status)
+    }
+
+    @Test
     fun `common series metadata retains available and planned book counts separately`() {
         val memo = Json.parseToJsonElement(
             """{"publisher":" Publisher ","language":"zh-CN","ageRating":0,"booksCount":4,"totalBookCount":8}""",

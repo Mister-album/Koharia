@@ -34,15 +34,16 @@ class PreferenceRestorer(
     private val preferenceStore: PreferenceStore = Injekt.get(),
     private val komgaConnectionMigration: KomgaConnectionMigration = Injekt.get(),
     private val connectionPreferences: ConnectionPreferences = Injekt.get(),
+    private val sharedConfigMigration: koharia.connection.SharedConfigMigration = Injekt.get(),
+    private val setupBackupTask: (Context) -> Unit = { BackupCreateJob.setupTask(it) },
 ) {
-    private val sharedConfigMigration = Injekt.get<koharia.connection.SharedConfigMigration>()
     private var restoredSeparateConfig = false
 
     fun finishRestore() {
         check(sharedConfigMigration.finishRestore(restoredSeparateConfig)) { "Could not stage shared settings" }
         if (!sharedConfigMigration.isPending()) {
             LibraryUpdateJob.setupTask(context)
-            BackupCreateJob.setupTask(context)
+            setupBackupTask(context)
         }
     }
     private val connectionRestorePolicy = ConnectionBackupRestorePolicy(
@@ -54,6 +55,7 @@ class PreferenceRestorer(
     suspend fun restoreApp(
         preferences: List<BackupPreference>,
         backupCategories: List<BackupCategory>?,
+        preserveConnectionInventory: Boolean = false,
     ) {
         check(sharedConfigMigration.beginRestore()) { "Could not prepare settings restore" }
         restoredSeparateConfig = koharia.connection.SharedConfigMigration.legacySeparate(
@@ -71,20 +73,22 @@ class PreferenceRestorer(
                 result
             }
         restorePreferences(
-            normalized,
+            normalized.filterNot { preserveConnectionInventory && it.key in CONNECTION_INVENTORY_KEYS },
             preferenceStore,
             backupCategories,
         )
-        if (connectionRestorePolicy.recordAppRestore(preferences.map(BackupPreference::key))) {
-            komgaConnectionMigration.migrate(forceLegacyInventory = true)
-        } else {
-            komgaConnectionMigration.migrate()
+        if (!preserveConnectionInventory) {
+            if (connectionRestorePolicy.recordAppRestore(preferences.map(BackupPreference::key))) {
+                komgaConnectionMigration.migrate(forceLegacyInventory = true)
+            } else {
+                komgaConnectionMigration.migrate()
+            }
         }
 
         // Scheduling waits until all preferences and connection settings have been restored.
     }
 
-    suspend fun restoreSource(preferences: List<BackupSourcePreferences>) {
+    suspend fun restoreSource(preferences: List<BackupSourcePreferences>, initializeLegacyInventory: Boolean = true) {
         preferences.forEach {
             if (!it.sourceKey.startsWith("source_")) return@forEach
             val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(it.sourceKey))
@@ -115,7 +119,7 @@ class PreferenceRestorer(
                 }
             }
         }
-        if (connectionRestorePolicy.shouldForceLegacyInventoryAfterSourceRestore(
+        if (initializeLegacyInventory && connectionRestorePolicy.shouldForceLegacyInventoryAfterSourceRestore(
                 sourceKeys = preferences.map(BackupSourcePreferences::sourceKey),
                 hasConnectionProfiles = connectionPreferences.getProfiles().isNotEmpty(),
             )
@@ -224,6 +228,16 @@ private val LEGACY_CONNECTION_KEYS = setOf(
     "komga_active_server_id",
     "komga_local_config_mode",
     "komga_has_initialized_profiles",
+)
+
+private val CONNECTION_INVENTORY_KEYS = LEGACY_CONNECTION_KEYS + setOf(
+    "connection_profiles",
+    "connection_active_id",
+    "connection_known_ids",
+    "connection_source_provider_mappings",
+    "connection_has_initialized_profiles",
+    "komga_server_directory_aliases",
+    "komga_download_directory_layout_version",
 )
 
 private fun String.withoutScopePrefix(): String {

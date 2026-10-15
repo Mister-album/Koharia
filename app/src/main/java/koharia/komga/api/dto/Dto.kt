@@ -310,7 +310,7 @@ private fun buildMemo(
     if (metadata.totalBookCount != null) {
         put("totalBookCount", metadata.totalBookCount)
     }
-    if (booksCount > 0) {
+    if (booksCount >= 0) {
         put("booksCount", booksCount)
     }
     if (!booksMetadata.releaseDate.isNullOrBlank()) {

@@ -1,6 +1,8 @@
 package koharia.storage
 
 import eu.kanade.tachiyomi.source.sourcePreferences
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -19,14 +21,26 @@ data class NetworkStorageConfiguration(
     val persistentIdentity: Boolean = true,
 )
 
-class NetworkStoragePreferences(val connectionId: Long) {
-    private val preferences = sourcePreferences("source_$connectionId")
+class NetworkStoragePreferences(
+    val connectionId: Long,
+    private val preferences: android.content.SharedPreferences = sourcePreferences("source_$connectionId"),
+) {
     private val json = Json { ignoreUnknownKeys = true }
     val configuration get() = preferences.getString("network_storage_configuration", null)
         ?.let { json.decodeFromString<NetworkStorageConfiguration>(it) } ?: NetworkStorageConfiguration()
     val username get() = preferences.getString(Preference.privateKey("storage_username"), "").orEmpty()
     val password get() = preferences.getString(Preference.privateKey("storage_password"), "").orEmpty()
     val account get() = configuration.accountIdentity.ifBlank { account(configuration, username) }
+
+    internal fun identityChanges() = callbackFlow {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (isIdentityPreference(key)) trySend(Unit)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(Unit)
+        awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
     fun save(configuration: NetworkStorageConfiguration, username: String, password: String) {
         check(
             preferences.edit().putString(
@@ -44,6 +58,9 @@ class NetworkStoragePreferences(val connectionId: Long) {
         )
     }
     companion object {
+        internal fun isIdentityPreference(key: String?) = key == "network_storage_configuration" ||
+            key == Preference.privateKey("storage_username") || key == Preference.privateKey("storage_password")
+
         fun account(configuration: NetworkStorageConfiguration, username: String): String =
             storageDigest("${configuration.mode}\n${configuration.rootIdentity}\n${configuration.domain}\n$username")
     }

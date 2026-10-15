@@ -55,6 +55,7 @@ class MetadataUpdateJob(private val context: Context, workerParams: WorkerParame
     private var mangaToUpdate: List<LibraryManga> = mutableListOf()
 
     override suspend fun doWork(): Result {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return Result.retry()
         setForegroundSafely()
 
         addMangaToQueue()

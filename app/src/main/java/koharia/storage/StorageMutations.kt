@@ -3,6 +3,8 @@ package koharia.storage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -14,6 +16,7 @@ import java.util.UUID
 @Serializable
 data class StorageTreeCopyEntry(val entry: StorageEntry, val hash: String? = null)
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class StorageMutation(
     val id: String = UUID.randomUUID().toString(),
@@ -24,9 +27,10 @@ data class StorageMutation(
     val contentHash: String? = null,
     val contentSize: Long? = null,
     val sourceHash: String? = null,
+    val moveEvidence: StorageMoveEvidence? = null,
     val identities: List<StorageIdentityBinding> = emptyList(),
     val tree: List<StorageTreeCopyEntry> = emptyList(),
-    val updatedAt: Long = System.currentTimeMillis(),
+    @EncodeDefault val updatedAt: Long = System.currentTimeMillis(),
 )
 
 /** Journal before requests; leave ambiguous outcomes pending for reconciliation, never blind replay. */
@@ -37,6 +41,7 @@ class StorageMutations(
     private val scratchDirectory: File? = null,
 ) {
     private val mutex = Mutex()
+    private val moveVerifier = StorageMoveVerifier(backend, records)
     private suspend fun record(
         operation: StorageMutation,
     ) = records.put("mutations", operation.id, operation, operation.updatedAt)
@@ -53,12 +58,14 @@ class StorageMutations(
     suspend fun move(entry: StorageEntry, destination: String) = mutex.withLock {
         require(entry.path.isNotEmpty() && StoragePath.normalize(destination).isNotEmpty())
         require(destination != entry.path && !destination.startsWith(entry.path + "/"))
+        val evidence = moveVerifier.capture(entry)
         val capturedTree = if (entry.directory) captureTree(entry) else emptyList()
         var operation = StorageMutation(
             kind = "move",
             source = entry,
             destination = StoragePath.normalize(destination),
-            sourceHash = if (entry.directory) null else checksum(entry),
+            sourceHash = if (entry.directory || evidence.identity != null) null else checksum(entry),
+            moveEvidence = evidence,
             identities = identities?.prepareMove(entry, destination, capturedTree.map { it.entry }).orEmpty(),
             tree = capturedTree,
         )
@@ -70,6 +77,18 @@ class StorageMutations(
                 throw error
             }
             if (statOrNull(operation.destination) != null) throw StorageFailure(StorageFailure.Reason.CONFLICT)
+            if (operation.moveEvidence?.identity != null) {
+                val current = backend.stat(entry.path)
+                if (!StorageMoveVerifier.sameObject(
+                        entry,
+                        current,
+                    )
+                ) {
+                    throw StorageFailure(StorageFailure.Reason.CONFLICT)
+                }
+                operation = operation.copy(sourceHash = checksum(current), moveEvidence = StorageMoveEvidence())
+                record(operation)
+            }
             if (entry.directory) {
                 val tree = capturedTree
                 operation = operation.copy(
@@ -107,6 +126,9 @@ class StorageMutations(
         }
         operation = operation.copy(phase = "moved")
         record(operation)
+        if (!movedTargetMatches(operation, backend.stat(operation.destination))) {
+            throw StorageFailure(StorageFailure.Reason.CONFLICT)
+        }
         identities?.commitMove(operation.id, operation.identities)
         complete(operation)
     }
@@ -164,7 +186,9 @@ class StorageMutations(
     suspend fun reconcile(): List<StorageMutation> = mutex.withLock {
         val unresolved = mutableListOf<StorageMutation>()
         for (record in records.list("mutations")) {
-            val operation = runCatching { records.json.decodeFromString<StorageMutation>(record.payload) }
+            val operation = runCatching {
+                records.json.decodeFromString<StorageMutation>(record.payload).copy(updatedAt = record.revision)
+            }
                 .onFailure { logcat(LogPriority.WARN) { "Unreadable storage mutation record stays unresolved" } }
                 .getOrNull() ?: continue
             val recovered = try {
@@ -183,6 +207,15 @@ class StorageMutations(
 
     /** Returns true when the operation is provably finished, false while it stays pending. */
     private suspend fun reconcile(operation: StorageMutation): Boolean {
+        if (operation.kind == "move-probe") return moveVerifier.recoverProbe(operation)
+        if (operation.kind == "move" && operation.moveEvidence?.let {
+                it.version != 1 ||
+                    (it.contract != null && it.contract != StorageMoveVerifier.SMB_CONTRACT) ||
+                    ((it.contract == null) != (it.identity == null)) || it.identity?.isBlank() == true
+            } == true
+        ) {
+            return false
+        }
         if (operation.kind == "move" && operation.phase in setOf("tree-copying", "tree-copied")) {
             recoverTreeMove(operation)
             return true
@@ -195,6 +228,7 @@ class StorageMutations(
         if (operation.kind == "move" && source == null && destination?.directory == true &&
             operation.tree.isNotEmpty()
         ) {
+            if (operation.tree.none { !it.entry.directory }) return false
             try {
                 verifyTree(operation, operation.destination, allowMissing = false)
                 identities?.commitMove(operation.id, operation.identities)
@@ -218,14 +252,7 @@ class StorageMutations(
         val done = when (operation.kind) {
             "delete" -> source == null
             "move" ->
-                source == null && destination != null && (
-                    operation.phase == "moved" ||
-                        (operation.source?.identity != null && destination.identity == operation.source.identity) ||
-                        (
-                            !destination.directory && operation.sourceHash != null &&
-                                checksum(destination) == operation.sourceHash
-                            )
-                    )
+                source == null && destination != null && movedTargetMatches(operation, destination)
             // Existence alone does not prove that this operation created or wrote a file.
             else -> false
         }
@@ -233,6 +260,23 @@ class StorageMutations(
         if (operation.kind == "move") identities?.commitMove(operation.id, operation.identities)
         complete(operation)
         return true
+    }
+
+    private suspend fun movedTargetMatches(operation: StorageMutation, destination: StorageEntry): Boolean {
+        val source = operation.source ?: return false
+        val evidence = operation.moveEvidence
+        if (evidence != null && evidence.version != 1) return false
+        if (evidence?.identity != null || evidence?.contract != null) {
+            return evidence.version == 1 && evidence.contract == StorageMoveVerifier.SMB_CONTRACT &&
+                backend.capabilities.atomicMoveIdentityContract == evidence.contract &&
+                evidence.identity == source.identity && StorageMoveVerifier.sameObject(source, destination)
+        }
+        if (source.directory && destination.directory && operation.tree.isNotEmpty()) {
+            verifyTree(operation, operation.destination, allowMissing = false)
+            return true
+        }
+        return !source.directory && !destination.directory && source.size == destination.size &&
+            operation.sourceHash != null && checksum(destination) == operation.sourceHash
     }
 
     private suspend fun captureTree(root: StorageEntry): List<StorageTreeCopyEntry> {

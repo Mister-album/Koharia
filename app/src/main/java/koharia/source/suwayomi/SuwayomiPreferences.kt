@@ -10,8 +10,10 @@ import koharia.suwayomi.SuwayomiLibraryFilters
 import koharia.suwayomi.SuwayomiLibraryFiltersCodec
 import tachiyomi.core.common.preference.Preference
 
-class SuwayomiPreferences(connectionId: Long) {
-    private val preferences = sourcePreferences("source_$connectionId")
+class SuwayomiPreferences(
+    connectionId: Long,
+    private val preferences: android.content.SharedPreferences = sourcePreferences("source_$connectionId"),
+) {
     val address get() = preferences.getString("address", "").orEmpty()
     val internalAddress get() = preferences.getString(ConnectionAddressRouter.INTERNAL_ADDRESS_KEY, "").orEmpty()
     val mode get() = runCatching {

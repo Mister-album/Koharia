@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.OutlinedTextField
@@ -25,8 +26,11 @@ import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.library.components.ManualDownloadIndicator
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
+import koharia.connection.ConnectionRegistry
+import koharia.connection.rememberConnectionShelfEntries
 import koharia.kavita.KavitaChapter
 import koharia.kavita.KavitaSeries
 import koharia.kavita.longValue
@@ -71,6 +75,12 @@ class KavitaSeriesScreen(private val sourceId: Long, private val seriesId: Long)
         var dialog by remember { mutableStateOf("") }
         var choices by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
         var related by remember { mutableStateOf<List<KavitaSeries>?>(null) }
+        val listState = rememberLazyListState()
+        val localEntries = rememberConnectionShelfEntries(
+            source,
+            related.orEmpty().map { session.identity.series(it.id) },
+            leadingItems = 2,
+        ) { listState.layoutInfo.visibleItemsInfo.map { it.index } }
         var chapters by remember { mutableStateOf<List<KavitaChapter>>(emptyList()) }
         var selectedList by remember { mutableStateOf(0L) }
         var rating by remember { mutableStateOf(0f) }
@@ -99,16 +109,22 @@ class KavitaSeriesScreen(private val sourceId: Long, private val seriesId: Long)
         }
         LaunchedEffect(source.instanceKey) { run { load(false) } }
         Scaffold(topBar = {
-            AppBar(title = series?.textValue("name").orEmpty(), navigateUp = { navigator.pop() }, actions = {
-                TextButton(enabled = !busy, onClick = { run { load(true) } }) {
-                    Text(stringResource(MR.strings.connection_refresh))
-                }
-            })
+            AppBar(
+                title = series?.textValue("name").orEmpty(),
+                subtitle =
+                Injekt.get<ConnectionRegistry>().provider(source.providerId)?.displayName ?: source.providerId,
+                navigateUp = { navigator.pop() },
+                actions = {
+                    TextButton(enabled = !busy, onClick = { run { load(true) } }) {
+                        Text(stringResource(MR.strings.connection_refresh))
+                    }
+                },
+            )
         }) { padding ->
             if (series == null && error == null) {
                 LoadingScreen()
             } else {
-                LazyColumn(Modifier.padding(padding)) {
+                LazyColumn(Modifier.padding(padding), state = listState) {
                     item {
                         ListItem(
                             headlineContent = { Text(stringResource(MR.strings.kavita_want_to_read)) },
@@ -200,6 +216,11 @@ class KavitaSeriesScreen(private val sourceId: Long, private val seriesId: Long)
                         items(values, key = { it.id }) { item ->
                             ListItem(
                                 headlineContent = { Text(item.name) },
+                                trailingContent = {
+                                    localEntries[session.identity.series(item.id)]?.let {
+                                        ManualDownloadIndicator(it.downloads())
+                                    }
+                                },
                                 modifier = Modifier.clickable(!busy) {
                                     run {
                                         val manga = source.materialize(source.toManga(item))

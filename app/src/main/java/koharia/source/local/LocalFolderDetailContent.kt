@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.UploadFile
@@ -28,6 +30,7 @@ import eu.kanade.presentation.components.relativeDateText
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaCompactGridItem
 import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.ManualDownloadIndicator
 import eu.kanade.presentation.library.components.displayText
 import eu.kanade.presentation.manga.ChapterProgressCorner
 import eu.kanade.presentation.manga.ChapterReadCorner
@@ -42,6 +45,7 @@ import eu.kanade.presentation.util.formatChapterNumber
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.util.system.copyToClipboard
+import koharia.connection.rememberConnectionShelfEntries
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -103,7 +107,23 @@ internal fun LocalFolderDetailContent(
     }
     val folderProgress = readProgress[folder.url.trimEnd('/')]
     val useGrid = displayMode != Manga.CHAPTER_COVER_DISPLAY_TEXT
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
+    val downloadEntries = rememberConnectionShelfEntries(
+        source,
+        mangaList,
+        leadingItems = if (tablet) 1 else 4,
+        visibleIndices = {
+            if (useGrid) {
+                gridState.layoutInfo.visibleItemsInfo.map { it.index }
+            } else {
+                listState.layoutInfo.visibleItemsInfo.map { it.index }
+            }
+        },
+    )
     MangaDetailLayout(
+        listState = listState,
+        gridState = gridState,
         isTabletUi = tablet,
         useGrid = useGrid,
         columns = columns,
@@ -219,6 +239,9 @@ internal fun LocalFolderDetailContent(
                     onLongClick = { onEntryLongClick(manga) },
                     onClick = { onEntryClick(manga) },
                     onDownloadClick = null,
+                    localDownloadIndicator = {
+                        downloadEntries[manga.url]?.let { ManualDownloadIndicator(it.downloads(it.total)) }
+                    },
                     onChapterSwipe = {},
                 )
             }
@@ -240,16 +263,15 @@ internal fun LocalFolderDetailContent(
                     entry?.let { it.kind == LocalLibraryItem.Kind.FOLDER && !it.imageComic } == true ||
                         it.readCount > 0
                 }?.displayText()
-                val overlay: (@Composable BoxScope.() -> Unit)? = if (progress.isComplete() || progressText != null) {
-                    {
-                        if (progress.isComplete()) {
-                            ChapterReadCorner(Modifier.align(Alignment.TopEnd))
-                        } else {
-                            ChapterProgressCorner(checkNotNull(progressText), Modifier.align(Alignment.TopEnd))
-                        }
+                val overlay: @Composable BoxScope.() -> Unit = {
+                    if (progress.isComplete()) {
+                        ChapterReadCorner(Modifier.align(Alignment.TopEnd))
+                    } else if (progressText != null) {
+                        ChapterProgressCorner(progressText, Modifier.align(Alignment.TopEnd))
                     }
-                } else {
-                    null
+                    downloadEntries[manga.url]?.let {
+                        ManualDownloadIndicator(it.downloads(it.total), Modifier.align(Alignment.BottomEnd))
+                    }
                 }
                 val cover =
                     MangaCover(manga.id, manga.source, manga.favorite, manga.thumbnailUrl, manga.coverLastModified)

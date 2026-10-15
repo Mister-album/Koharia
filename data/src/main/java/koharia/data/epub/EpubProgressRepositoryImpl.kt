@@ -5,8 +5,6 @@ import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import koharia.domain.epub.model.EpubProgress
 import koharia.domain.epub.repository.EpubProgressRepository
 import kotlinx.coroutines.flow.Flow
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
 import java.util.Date
@@ -41,28 +39,38 @@ class EpubProgressRepositoryImpl(
     }
 
     override suspend fun upsertProgress(progress: EpubProgress) {
-        try {
-            database.epub_progressQueries.upsert(
-                chapterId = progress.chapterId,
-                mangaId = progress.mangaId,
-                bookUrl = progress.bookUrl,
-                locatorJson = progress.locatorJson,
-                progression = progress.progression,
-                positionIndex = progress.positionIndex,
-                updatedAt = progress.updatedAt,
-                lastSyncedAt = progress.lastSyncedAt,
-            )
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Failed to upsert EPUB progress for chapterId=${progress.chapterId}" }
+        database.epub_progressQueries.upsert(
+            chapterId = progress.chapterId,
+            mangaId = progress.mangaId,
+            bookUrl = progress.bookUrl,
+            locatorJson = progress.locatorJson,
+            progression = progress.progression,
+            positionIndex = progress.positionIndex,
+            updatedAt = progress.updatedAt,
+            lastSyncedAt = progress.lastSyncedAt,
+        )
+    }
+
+    override suspend fun compareAndSetProgress(
+        expected: EpubProgress?,
+        progress: EpubProgress,
+        checkCurrent: suspend () -> Unit,
+    ): Boolean = database.transactionWithResult {
+        require(expected == null || (expected.chapterId == progress.chapterId && expected.mangaId == progress.mangaId))
+        checkCurrent()
+        check(
+            database.epub_progressQueries.getChapterMangaId(progress.chapterId).awaitAsOneOrNull() == progress.mangaId,
+        ) {
+            "EPUB progress chapter ownership changed"
         }
+        if (getProgress(progress.chapterId) != expected) return@transactionWithResult false
+        upsertProgress(progress)
+        checkCurrent()
+        true
     }
 
     override suspend fun deleteProgress(chapterId: Long) {
-        try {
-            database.epub_progressQueries.deleteByChapterId(chapterId)
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Failed to delete EPUB progress for chapterId=$chapterId" }
-        }
+        database.epub_progressQueries.deleteByChapterId(chapterId)
     }
 
     private fun mapEpubProgress(

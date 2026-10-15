@@ -18,7 +18,9 @@ internal object EpubRemoteProgressPolicy {
         remoteModifiedAtMillis: Long,
         sameLocation: Boolean,
         localChangedDuringCheck: Boolean,
+        requiresExplicitChoice: Boolean = false,
     ): EpubRemoteProgressDecision = when {
+        requiresExplicitChoice -> EpubRemoteProgressDecision.KEEP_REMOTE
         sameLocation -> EpubRemoteProgressDecision.SAME_LOCATION
         localChangedDuringCheck -> EpubRemoteProgressDecision.KEEP_LOCAL
         localUpdatedAtMillis != null && localUpdatedAtMillis > remoteModifiedAtMillis ->

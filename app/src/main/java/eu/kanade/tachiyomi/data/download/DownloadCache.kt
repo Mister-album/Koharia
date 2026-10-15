@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -76,10 +77,14 @@ class DownloadCache(
 
     private val scope = CoroutineScope(Dispatchers.IO)
 
-    private val _changes: Channel<Unit> = Channel(Channel.UNLIMITED)
-    val changes = _changes.receiveAsFlow()
-        .onStart { emit(Unit) }
+    private val _changes: Channel<DownloadCacheChange> = Channel(Channel.UNLIMITED)
+    val updates = _changes.receiveAsFlow()
+        .onStart { emit(DownloadCacheChange()) }
         .shareIn(scope, SharingStarted.Lazily, 1)
+    val changes = updates.map { Unit }.shareIn(scope, SharingStarted.Lazily, 1)
+
+    fun isAffected(manga: Manga, change: DownloadCacheChange): Boolean =
+        change.affects(manga.source, provider.getMangaDirName(manga.title))
 
     /**
      * The interval after which this cache should be invalidated. 1 hour shouldn't cause major
@@ -307,7 +312,7 @@ class DownloadCache(
             mangaDir.chapterDirs += chapterDirName
         }
 
-        notifyChanges()
+        notifyChanges(DownloadCacheChange(manga.source, setOf(provider.getMangaDirName(manga.title))))
     }
 
     /**
@@ -327,7 +332,7 @@ class DownloadCache(
             }
         }
 
-        notifyChanges()
+        notifyChanges(DownloadCacheChange(manga.source, setOf(provider.getMangaDirName(manga.title))))
     }
 
     /**
@@ -349,7 +354,7 @@ class DownloadCache(
             }
         }
 
-        notifyChanges()
+        notifyChanges(DownloadCacheChange(manga.source, setOf(provider.getMangaDirName(manga.title))))
     }
 
     /**
@@ -366,7 +371,7 @@ class DownloadCache(
             }
         }
 
-        notifyChanges()
+        notifyChanges(DownloadCacheChange(manga.source, setOf(provider.getMangaDirName(manga.title))))
     }
 
     /**
@@ -401,7 +406,12 @@ class DownloadCache(
             }
         }
 
-        notifyChanges()
+        notifyChanges(
+            DownloadCacheChange(
+                manga.source,
+                setOf(provider.getMangaDirName(manga.title), provider.getMangaDirName(newTitle)),
+            ),
+        )
     }
 
     suspend fun removeSource(source: Source) {
@@ -412,7 +422,7 @@ class DownloadCache(
             rootDownloadsDir.sourceDirs -= source.id
         }
 
-        notifyChanges()
+        notifyChanges(DownloadCacheChange(source.id))
     }
 
     suspend fun refreshSourceDirectories(sourceId: Long, directories: List<UniFile>) {
@@ -425,7 +435,7 @@ class DownloadCache(
             "DownloadCache: refreshed source directories sourceId=$sourceId " +
                 "directories=${directories.joinToString { it.name.orEmpty() }}"
         }
-        notifyChanges()
+        notifyChanges(DownloadCacheChange(sourceId))
     }
 
     /**
@@ -622,9 +632,9 @@ class DownloadCache(
         )
     }
 
-    private fun notifyChanges() {
+    private fun notifyChanges(change: DownloadCacheChange = DownloadCacheChange()) {
         scope.launchNonCancellable {
-            _changes.send(Unit)
+            _changes.send(change)
         }
         updateDiskCache()
     }

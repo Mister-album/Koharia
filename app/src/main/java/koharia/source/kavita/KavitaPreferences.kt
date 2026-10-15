@@ -14,8 +14,10 @@ import okio.ByteString.Companion.encodeUtf8
 import tachiyomi.core.common.preference.Preference
 import java.util.UUID
 
-class KavitaPreferences(connectionId: Long) {
-    private val store = sourcePreferences("source_$connectionId")
+class KavitaPreferences(
+    connectionId: Long,
+    private val store: android.content.SharedPreferences = sourcePreferences("source_$connectionId"),
+) {
     val address get() = store.getString("address", "").orEmpty()
     var internalAddress: String
         get() = store.getString("internal_address", "").orEmpty()

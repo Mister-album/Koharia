@@ -57,6 +57,10 @@ getEntries:
 SELECT cache_key, payload, generation, stale FROM kavita_cache
 WHERE connection_id = :connectionId AND account_key = :account AND group_key = :groupKey;
 
+getCachedGroups:
+SELECT group_key, payload, stale FROM kavita_cache
+WHERE connection_id = :connectionId AND account_key = :account AND group_key IN :groupKeys AND cache_key = 'data';
+
 putCache:
 INSERT OR REPLACE INTO kavita_cache VALUES (:connectionId, :account, :groupKey, :key, :payload, :generation, :stale);
 
@@ -65,6 +69,20 @@ DELETE FROM kavita_cache WHERE connection_id = :connectionId AND account_key = :
 
 invalidate:
 UPDATE kavita_cache SET stale = 1 WHERE connection_id = :connectionId AND account_key = :account;
+
+CREATE INDEX kavita_operation_pending_index ON kavita_operation(connection_id, account_key, pending);
+
+getOperation:
+SELECT operation_key, payload, revision, pending FROM kavita_operation
+WHERE connection_id = :connectionId AND account_key = :account AND operation_key = :key;
+
+getPendingOperations:
+SELECT operation_key, payload, revision, pending FROM kavita_operation
+WHERE connection_id = :connectionId AND account_key = :account AND pending = 1;
+
+getOperationsForKeys:
+SELECT operation_key, payload, revision, pending FROM kavita_operation
+WHERE connection_id = :connectionId AND account_key = :account AND operation_key IN :keys;
 
 getOperations:
 SELECT operation_key, payload, revision, pending FROM kavita_operation

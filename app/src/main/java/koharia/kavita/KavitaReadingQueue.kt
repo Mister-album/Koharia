@@ -2,6 +2,7 @@ package koharia.kavita
 
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.model.toSManga
+import koharia.connection.ChapterFetchOrigin
 import koharia.connection.ConnectionReadingQueueChapter
 import koharia.connection.ConnectionReadingQueuePosition
 import koharia.domain.kavita.KavitaCacheEntry
@@ -53,7 +54,7 @@ class KavitaReadingQueue(private val source: KavitaSource, private val repositor
             session.identity.chapter(it.url).chapterId == ref.chapterId
         }
         if (chapter == null) {
-            Injekt.get<SyncChaptersWithSource>().await(source.getChapterList(manga.toSManga()), manga, source)
+            Injekt.get<SyncChaptersWithSource>().fetchAndSync(manga, source, ChapterFetchOrigin.OPEN)
             chapter =
                 chapters.getChapterByMangaId(manga.id).first {
                     session.identity.chapter(it.url).chapterId ==

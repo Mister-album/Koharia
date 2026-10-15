@@ -38,11 +38,14 @@ data class LanraragiReadState(
     val pending: Boolean = true,
     val revision: Long = 0,
     val initialPage: Boolean = false,
+    val requiresConfirmation: Boolean = false,
 )
 
 interface LanraragiRepository {
+    fun observeReadStates(connectionId: Long, archiveIds: Collection<String>): Flow<List<LanraragiReadState>>
     fun observeEntries(connectionId: Long): Flow<List<LanraragiEntry>>
     suspend fun entries(connectionId: Long): List<LanraragiEntry>
+    suspend fun entry(connectionId: Long, resourceId: String): LanraragiEntry?
     suspend fun lastSync(connectionId: Long): Long
     suspend fun begin(connectionId: Long, generation: Long)
     suspend fun stage(connectionId: Long, generation: Long, entries: List<LanraragiEntry>)
@@ -50,6 +53,9 @@ interface LanraragiRepository {
     suspend fun abort(connectionId: Long, generation: Long)
     fun observeReadStates(connectionId: Long): Flow<List<LanraragiReadState>>
     suspend fun readStates(connectionId: Long): List<LanraragiReadState>
+    suspend fun readState(connectionId: Long, archiveId: String): LanraragiReadState?
+    suspend fun readStates(connectionId: Long, archiveIds: Collection<String>): List<LanraragiReadState>
+    suspend fun pendingReadStates(connectionId: Long): List<LanraragiReadState>
     suspend fun record(connectionId: Long, state: LanraragiReadState)
     suspend fun acknowledge(connectionId: Long, state: LanraragiReadState)
     suspend fun resetReadStates(connectionId: Long, archiveIds: List<String>)

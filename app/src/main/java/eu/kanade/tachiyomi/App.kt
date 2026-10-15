@@ -111,6 +111,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         Injekt.importModule(appModule)
         Injekt.importModule(DomainModule())
         Injekt.importModule(TtsModule(application = this))
+        eu.kanade.tachiyomi.data.library.LibraryUpdateJob.setupTask(this)
         Injekt.get<koharia.connection.SharedConfigMigration>().captureUpgradeSelection()
         Injekt.get<koharia.source.komga.KomgaConnectionMigration>().migrate()
         setupNotificationChannels()

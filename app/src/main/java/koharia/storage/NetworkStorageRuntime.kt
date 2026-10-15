@@ -23,7 +23,11 @@ import uy.kohesive.injekt.api.get
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-class NetworkStorageRuntime private constructor(val context: Context, val connectionId: Long) {
+class NetworkStorageRuntime private constructor(
+    val context: Context,
+    val connectionId: Long,
+    checkOwner: () -> Unit,
+) {
     @Volatile private var closed = false
     private val preferences = NetworkStoragePreferences(connectionId)
     val config = preferences.configuration
@@ -31,6 +35,7 @@ class NetworkStorageRuntime private constructor(val context: Context, val connec
     private val password = preferences.password
     val account = preferences.account
     val session = StorageSession(connectionId, account, config.rootIdentity) {
+        checkOwner()
         !closed && preferences.configuration == config && preferences.username == username &&
             preferences.password == password
     }
@@ -59,6 +64,11 @@ class NetworkStorageRuntime private constructor(val context: Context, val connec
     val backend = SessionStorageBackend(
         if (config.persistentIdentity) routedBackend else ReadOnlyStorageBackend(routedBackend),
         session,
+        checkWrite = {
+            if (Injekt.get<koharia.connection.ConnectionIdentityChanges>().isPaused(connectionId)) {
+                throw koharia.connection.ConnectionWritesPaused()
+            }
+        },
     )
     val records = StorageRecordStore(session, Injekt.get<LibraryStorageRepository>(), Injekt.get<Json>())
     val snapshot = StorageSnapshot(backend, records)
@@ -67,7 +77,7 @@ class NetworkStorageRuntime private constructor(val context: Context, val connec
         File(context.filesDir, "library-storage-cache"),
         session,
         backend,
-        resourceIdentity = { entry -> runBlocking(Dispatchers.IO) { identities.identity(entry) } },
+        resourceIdentity = identities::identity,
     ) {
         Injekt.get<SharedAppPreferences>().store().getInt("network_storage_cache_mb", 512).get().coerceIn(128, 4096) *
             1024L *
@@ -121,14 +131,24 @@ class NetworkStorageRuntime private constructor(val context: Context, val connec
         fun get(
             context: Context,
             connectionId: Long,
+        ): NetworkStorageRuntime = acquire(context, connectionId) {}
+
+        internal fun getForOwner(context: Context, connectionId: Long, checkOwner: () -> Unit) =
+            acquire(context, connectionId, checkOwner)
+
+        private fun acquire(
+            context: Context,
+            connectionId: Long,
+            checkOwner: () -> Unit,
         ): NetworkStorageRuntime = sessions.compute(connectionId) { _, previous ->
+            checkOwner()
             if (previous != null && runCatching { previous.session.checkActive() }.isSuccess) {
                 previous
             } else {
                 previous?.close()
-                NetworkStorageRuntime(context.applicationContext, connectionId)
+                NetworkStorageRuntime(context.applicationContext, connectionId, checkOwner)
             }
-        }!!
+        }!!.also { checkOwner() }
         fun fromUri(context: Context, uri: Uri): RemoteStorageFile? {
             if (!isRemote(context, uri)) return null
             return fromDocumentId(context, DocumentsContract.getDocumentId(uri))
@@ -136,7 +156,11 @@ class NetworkStorageRuntime private constructor(val context: Context, val connec
         fun fromDocumentId(context: Context, id: String): RemoteStorageFile {
             val parts = id.split('|', limit = 3)
             require(parts.size == 3)
-            val runtime = get(context, parts[0].toLong())
+            val connectionId = parts[0].toLong()
+            val preferences = NetworkStoragePreferences(connectionId)
+            val runtime = getForOwner(context, connectionId) {
+                check(preferences.account == parts[1]) { "Document belongs to another account" }
+            }
             check(runtime.account == parts[1]) { "Document belongs to another account" }
             return runtime.file(parts[2])
         }
@@ -169,6 +193,12 @@ class NetworkStorageRuntime private constructor(val context: Context, val connec
         fun invalidate(connectionId: Long) {
             sessions.remove(connectionId)?.close()
         }
+        fun cachedContentSize(context: Context): Long = File(context.filesDir, "library-storage-cache")
+            .walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+        fun clearUnusedContentCache(context: Context): Int =
+            StorageCacheIndex.get(File(context.filesDir, "library-storage-cache")).access { clearUnused() }
+
         fun removeCachedContent(context: Context, connectionId: Long) {
             val preferences = NetworkStoragePreferences(connectionId)
             val root = File(context.filesDir, "library-storage-cache").canonicalFile
@@ -177,7 +207,13 @@ class NetworkStorageRuntime private constructor(val context: Context, val connec
             val owned = File(root, namespace).canonicalFile
             check(owned.parentFile == root)
             invalidate(connectionId)
-            check(!owned.exists() || owned.deleteRecursively()) { "Unable to remove connection content cache" }
+            StorageCacheIndex.get(root).access {
+                try {
+                    check(!owned.exists() || owned.deleteRecursively()) { "Unable to remove connection content cache" }
+                } finally {
+                    invalidate()
+                }
+            }
         }
     }
 }

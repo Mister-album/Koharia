@@ -99,17 +99,22 @@ class KavitaAdvancedFilterScreen(
             AppBar(title = stringResource(MR.strings.kavita_advanced_filter), navigateUp = {
                 navigator.pop()
             }, actions = {
-                TextButton(enabled = !busy, onClick = {
-                    navigator.push(
-                        KavitaLibraryScreen(
-                            sourceId,
-                            null,
-                            true,
-                            session.api.json.encodeToString(filter),
-                            contentScope = contentScope,
-                        ),
-                    )
-                }) { Text(stringResource(MR.strings.action_filter)) }
+                TextButton(
+                    enabled = !busy && koharia.kavita.kavitaSortOptions().any {
+                        it.first == filter.sortOptions.sortField
+                    },
+                    onClick = {
+                        navigator.push(
+                            KavitaLibraryScreen(
+                                sourceId,
+                                null,
+                                true,
+                                session.api.json.encodeToString(filter),
+                                contentScope = contentScope,
+                            ),
+                        )
+                    },
+                ) { Text(stringResource(MR.strings.action_filter)) }
             })
         }) { padding ->
             LazyColumn(Modifier.padding(padding)) {
@@ -148,18 +153,10 @@ class KavitaAdvancedFilterScreen(
                     TextButton(onClick = {
                         editing = filter.statements.size
                     }) { Text(stringResource(MR.strings.action_add)) }
-                    val sorts = listOf(
-                        1 to MR.strings.kavita_sort_name,
-                        2 to MR.strings.kavita_sort_created,
-                        3 to MR.strings.kavita_sort_updated,
-                        4 to MR.strings.kavita_sort_chapter_added,
-                        6 to MR.strings.kavita_release_year,
-                        7 to MR.strings.kavita_read_progress,
-                        10 to MR.strings.kavita_rating,
-                        5 to MR.strings.kavita_read_hours,
-                        9 to MR.strings.kavita_random,
-                        11 to MR.strings.kavita_unread_chapters,
-                    )
+                    val sorts = koharia.kavita.kavitaSortOptions()
+                    if (sorts.none { it.first == filter.sortOptions.sortField }) {
+                        Text(stringResource(MR.strings.kavita_sort_unsupported))
+                    }
                     SelectItem(
                         stringResource(MR.strings.action_sort),
                         sorts.map {

@@ -8,8 +8,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import tachiyomi.core.common.preference.Preference
 
-class LanraragiPreferences(connectionId: Long) {
-    private val preferences = sourcePreferences("source_$connectionId")
+class LanraragiPreferences(
+    connectionId: Long,
+    private val preferences: android.content.SharedPreferences = sourcePreferences("source_$connectionId"),
+) {
     val address: String get() = preferences.getString("address", "").orEmpty()
     val internalAddress: String get() = preferences.getString("internal_address", "").orEmpty()
     val apiKey: String get() = preferences.getString(Preference.privateKey("api_key"), "").orEmpty()

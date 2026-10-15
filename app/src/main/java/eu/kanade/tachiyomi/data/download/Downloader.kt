@@ -134,6 +134,7 @@ class Downloader(
      * @return true if the downloader is started, false otherwise.
      */
     fun start(): Boolean {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return false
         val queueSizeBeforeRestore = queueState.value.size
         restorePersistedQueueIfNeeded()
         val queue = queueState.value
@@ -167,6 +168,7 @@ class Downloader(
     }
 
     private fun restorePersistedQueueIfNeeded() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (isQueueRestored) return
 
         synchronized(restoreQueueLock) {
@@ -1034,8 +1036,13 @@ class Downloader(
             val file = when {
                 imageFile != null -> imageFile
                 chapterCache.isImageInCache(
+                    download.source.id,
                     page.imageUrl!!,
-                ) -> copyImageFromCache(chapterCache.getImageFile(page.imageUrl!!), tmpDir, filename)
+                ) -> copyImageFromCache(
+                    chapterCache.getImageFile(download.source.id, page.imageUrl!!),
+                    tmpDir,
+                    filename,
+                )
                 else -> downloadImage(page, download.source as HttpSource, tmpDir, filename)
             }
 
@@ -1072,17 +1079,17 @@ class Downloader(
         return flow {
             val response = source.getImage(page)
             val file = tmpDir.createFile("$filename.tmp")!!
-            try {
-                val finalFile = response.use {
+            val finalFile = try {
+                response.use {
                     response.body.source().saveTo(file.openOutputStream())
                     val extension = getImageExtension(response, file)
                     finalizeDownloadedFile(tmpDir, file, "$filename.$extension")
                 }
-                emit(finalFile)
             } catch (e: Exception) {
                 file.delete()
                 throw e
             }
+            emit(finalFile)
         }
             // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
             .retryWhen { _, attempt ->

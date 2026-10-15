@@ -9,8 +9,10 @@ import kotlinx.serialization.json.Json
 import okio.ByteString.Companion.encodeUtf8
 import tachiyomi.core.common.preference.Preference
 
-class SmangaPreferences(connectionId: Long) {
-    private val preferences = sourcePreferences("source_$connectionId")
+class SmangaPreferences(
+    connectionId: Long,
+    private val preferences: android.content.SharedPreferences = sourcePreferences("source_$connectionId"),
+) {
 
     val address: String get() = preferences.getString("address", "").orEmpty()
     val internalAddress: String

@@ -23,16 +23,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
-import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import koharia.connection.ConnectionBrowseAdapter
 import koharia.connection.ConnectionEntryOpeningAdapter
 import koharia.connection.ConnectionEntryOpeningSetting
@@ -47,12 +44,6 @@ import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.flow.flowOf
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.service.LibraryPreferences
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_CHARGING
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_NETWORK_NOT_METERED
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY_ON_WIFI
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_HAS_UNREAD
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_COMPLETED
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_READ
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
@@ -122,7 +113,7 @@ object SettingsLibraryScreen : SearchableSettings {
             ),
             getEntryOpeningGroup(entrySettings, activeProvider?.displayName.orEmpty()),
             if (showSeriesSettings) getChapterSettingsGroup(libraryPreferences) else null,
-            getGlobalUpdateGroup(libraryPreferences),
+            getGlobalUpdateGroup(),
             if (showSeriesSettings) getBehaviorGroup(libraryPreferences) else null,
         )
     }
@@ -279,67 +270,15 @@ object SettingsLibraryScreen : SearchableSettings {
     }
 
     @Composable
-    private fun getGlobalUpdateGroup(
-        libraryPreferences: LibraryPreferences,
-    ): Preference.PreferenceGroup {
-        val context = LocalContext.current
-
-        val autoUpdateIntervalPref = libraryPreferences.autoUpdateInterval
-
-        val autoUpdateInterval by autoUpdateIntervalPref.collectAsState()
-
-        return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.pref_category_library_update),
-            preferenceItems = persistentListOf(
-                Preference.PreferenceItem.ListPreference(
-                    preference = autoUpdateIntervalPref,
-                    entries = persistentMapOf(
-                        0 to stringResource(MR.strings.update_never),
-                        12 to stringResource(MR.strings.update_12hour),
-                        24 to stringResource(MR.strings.update_24hour),
-                        48 to stringResource(MR.strings.update_48hour),
-                        72 to stringResource(MR.strings.update_72hour),
-                        168 to stringResource(MR.strings.update_weekly),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_interval),
-                    onValueChanged = {
-                        LibraryUpdateJob.setupTask(context, it)
-                        true
-                    },
-                ),
-                Preference.PreferenceItem.MultiSelectListPreference(
-                    preference = libraryPreferences.autoUpdateDeviceRestrictions,
-                    entries = persistentMapOf(
-                        DEVICE_ONLY_ON_WIFI to stringResource(MR.strings.connected_to_wifi),
-                        DEVICE_NETWORK_NOT_METERED to stringResource(MR.strings.network_not_metered),
-                        DEVICE_CHARGING to stringResource(MR.strings.charging),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_restriction),
-                    subtitle = stringResource(MR.strings.restrictions),
-                    enabled = autoUpdateInterval > 0,
-                    onValueChanged = {
-                        // Post to event looper to allow the preference to be updated.
-                        ContextCompat.getMainExecutor(context).execute { LibraryUpdateJob.setupTask(context) }
-                        true
-                    },
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = libraryPreferences.autoUpdateMetadata,
-                    title = stringResource(MR.strings.pref_library_update_refresh_metadata),
-                    subtitle = stringResource(MR.strings.pref_library_update_refresh_metadata_summary),
-                ),
-                Preference.PreferenceItem.MultiSelectListPreference(
-                    preference = libraryPreferences.autoUpdateMangaRestrictions,
-                    entries = persistentMapOf(
-                        MANGA_HAS_UNREAD to stringResource(MR.strings.pref_update_only_completely_read),
-                        MANGA_NON_READ to stringResource(MR.strings.pref_update_only_started),
-                        MANGA_NON_COMPLETED to stringResource(MR.strings.pref_update_only_non_completed),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_smart_update),
-                ),
+    private fun getGlobalUpdateGroup(): Preference.PreferenceGroup = Preference.PreferenceGroup(
+        title = stringResource(MR.strings.pref_category_library_update),
+        preferenceItems = persistentListOf(
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.connection_content_updates),
+                subtitle = stringResource(MR.strings.connection_content_updates_help),
             ),
-        )
-    }
+        ),
+    )
 
     @Composable
     private fun getChapterSettingsGroup(

@@ -39,9 +39,8 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.library.components.MangaReadProgress
 import eu.kanade.presentation.library.components.MangaReadProgressDisplay
-import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionBrowseSourceScreen
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.ConnectionLibraryToolbar
 import koharia.connection.ui.ConnectionSearchResults
@@ -74,7 +73,7 @@ class LanraragiLibraryScreen(
     override val sourceId: Long,
     private val initialQuery: String?,
     private val showNavigationUp: Boolean,
-) : Screen(), ConnectionBrowseScreen {
+) : ConnectionBrowseSourceScreen() {
     override val refreshOnReselect = false
 
     @Transient private var runtimeModel: LanraragiLibraryScreenModel? = null
@@ -96,13 +95,15 @@ class LanraragiLibraryScreen(
     @OptIn(androidx.compose.material.ExperimentalMaterialApi::class)
     @Composable
     override fun Content() {
-        val source = Injekt.get<SourceManager>().get(sourceId) as? LanraragiSource
+        val source = observeConnectionSource() as? LanraragiSource
         if (source == null) {
             EmptyScreen(stringRes = MR.strings.connection_unavailable)
             return
         }
         val model =
-            rememberScreenModel(tag = "$sourceId:${source.name}") { LanraragiLibraryScreenModel(source, initialQuery) }
+            rememberScreenModel(tag = "$connectionSourceGeneration:$sourceId:${source.name}") {
+                LanraragiLibraryScreenModel(source, initialQuery)
+            }
         runtimeModel = model
         val state by model.state.collectAsState()
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }

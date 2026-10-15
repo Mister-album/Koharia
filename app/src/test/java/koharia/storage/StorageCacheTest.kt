@@ -148,7 +148,7 @@ class StorageCacheTest {
             temporary.toFile(),
             session,
             backend,
-            resourceIdentity = { runBlocking { identities.identity(it) } },
+            resourceIdentity = identities::identity,
         ) { 1024 }
         val original = backend.stat("first.cbz")
         assertArrayEquals("oldone".encodeToByteArray(), cache.read(original, 0, 6))

@@ -190,11 +190,36 @@ class StorageRecoveryTest {
 }
 
 internal class MemoryStorageRepository : LibraryStorageRepository {
+    var afterSnapshotRead: suspend (String, String) -> Unit = { _, _ -> }
+    override fun observeNamespace(connection: Long, account: String, root: String, namespace: String) =
+        kotlinx.coroutines.flow.flow { emit(list(connection, account, root, namespace)) }
+
+    override fun observe(
+        connection: Long,
+        account: String,
+        root: String,
+        namespace: String,
+        keys: Collection<String>,
+    ) = kotlinx.coroutines.flow.flow { emit(list(connection, account, root, namespace).filter { it.key in keys }) }
     private val values = mutableMapOf<List<Any>, StorageRecord>()
     private fun key(connection: Long, account: String, root: String, namespace: String, key: String) =
         listOf(connection, account, root, namespace, key)
-    override suspend fun get(connection: Long, account: String, root: String, namespace: String, key: String) =
-        values[key(connection, account, root, namespace, key)]?.payload
+    override suspend fun get(connection: Long, account: String, root: String, namespace: String, key: String): String? {
+        val current = values[key(connection, account, root, namespace, key)]?.payload
+        afterSnapshotRead(namespace, key)
+        return current
+    }
+    override suspend fun getSnapshot(
+        connection: Long,
+        account: String,
+        root: String,
+        namespace: String,
+        key: String,
+    ): StorageRecord? {
+        val current = values[key(connection, account, root, namespace, key)]
+        afterSnapshotRead(namespace, key)
+        return current
+    }
     override suspend fun list(connection: Long, account: String, root: String, namespace: String) =
         values.filterKeys { it.take(4) == listOf(connection, account, root, namespace) }.values.toList()
     override suspend fun put(
@@ -223,6 +248,52 @@ internal class MemoryStorageRepository : LibraryStorageRepository {
     }
     override suspend fun removeConnection(connection: Long) {
         values.keys.removeAll { it.first() == connection }
+    }
+
+    override suspend fun replaceIfUnchanged(
+        connection: Long,
+        account: String,
+        root: String,
+        namespace: String,
+        expected: StorageRecord,
+        updated: StorageRecord,
+        checkActive: () -> Unit,
+    ): Boolean = compareAndSet(
+        connection,
+        account,
+        root,
+        listOf(koharia.domain.storage.StorageRecordUpdate(namespace, expected, updated)),
+        checkActive,
+    )
+
+    override suspend fun compareAndSet(
+        connection: Long,
+        account: String,
+        root: String,
+        updates: List<koharia.domain.storage.StorageRecordUpdate>,
+        checkActive: () -> Unit,
+    ): Boolean {
+        require(updates.isNotEmpty())
+        require(updates.all { it.expected == null || it.expected?.key == it.updated.key })
+        require(updates.map { it.namespace to it.updated.key }.distinct().size == updates.size)
+        checkActive()
+        val matches = updates.all {
+            values[key(connection, account, root, it.namespace, it.updated.key)] == it.expected
+        }
+        checkActive()
+        if (!matches) return false
+        updates.forEach { values[key(connection, account, root, it.namespace, it.updated.key)] = it.updated }
+        try {
+            checkActive()
+        } catch (error: Exception) {
+            updates.forEach {
+                val identity = key(connection, account, root, it.namespace, it.updated.key)
+                val expected = it.expected
+                if (expected == null) values.remove(identity) else values[identity] = expected
+            }
+            throw error
+        }
+        return true
     }
 }
 

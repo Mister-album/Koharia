@@ -15,8 +15,8 @@ class EpubReaderPreferences(
     val correctRemoteServerTimestamps: Preference<Boolean> =
         preferenceStore.getBoolean("epub_reader_correct_komga_server_timestamps", true)
 
-    fun remoteServerTimestampOffsetMinutes(sourceId: Long): Preference<Long> =
-        preferenceStore.getLong("epub_reader_komga_server_timestamp_offset_minutes_$sourceId", 0L)
+    fun remoteServerTimestampOffsetMinutes(sourceId: Long, ownerKey: String): Preference<Long> =
+        preferenceStore.getLong("epub_reader_komga_owner_timestamp_offset_minutes_${sourceId}_$ownerKey", 0L)
 
     val completionThresholdPercent: Preference<Int> =
         preferenceStore.getInt("epub_reader_completion_threshold_percent", 98)

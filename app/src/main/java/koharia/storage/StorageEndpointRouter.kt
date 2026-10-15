@@ -18,7 +18,14 @@ class StorageEndpointRouter(
     private var checkedAt = Long.MIN_VALUE
     private var useInternal = false
     private var primaryVerified = false
-    override val capabilities get() = primary.capabilities
+    override val capabilities get() = primary.capabilities.let { primaryCapabilities ->
+        primaryCapabilities.copy(
+            atomicMoveIdentityContract = primaryCapabilities.atomicMoveIdentityContract.takeIf {
+                internal == null ||
+                    (internal.capabilities.atomicMove && internal.capabilities.atomicMoveIdentityContract == it)
+            },
+        )
+    }
 
     private suspend fun selected(): LibraryStorageBackend {
         val currentNetwork = network()

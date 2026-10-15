@@ -1,6 +1,7 @@
 package koharia.smanga
 
 import com.sun.net.httpserver.HttpServer
+import koharia.connection.hasPausedConnectionWrites
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -87,6 +88,31 @@ class SmangaApiTest {
     }
 
     @Test
+    fun `credential isolation retains connection write guards for progress and history`() = runTest {
+        var paused = true
+        val guarded = network.newBuilder()
+            .addNetworkInterceptor(koharia.connection.ConnectionWriteGuard { paused })
+            .build()
+        val isolated = SmangaApi(guarded, Json, root, "reader", "fixture-password", "guard-test")
+        try {
+            isolated.media()
+            for (write in listOf<suspend () -> Unit>(
+                { isolated.pushProgress(1, 2, 3, 10, false) },
+                { isolated.addHistory(1, 2, 3) },
+            )) {
+                val failure = runCatching { write() }.exceptionOrNull()
+                assertTrue(failure?.hasPausedConnectionWrites() == true, failure.toString())
+            }
+            assertEquals(0, requests.count { it.uri.path.endsWith("/latest") || it.uri.path.endsWith("/history") })
+            paused = false
+            isolated.addHistory(1, 2, 3)
+            assertEquals(1, requests.count { it.uri.path.endsWith("/history") })
+        } finally {
+            isolated.close()
+        }
+    }
+
+    @Test
     fun `normalization preserves reverse proxy paths without duplicate api`() {
         assertEquals(root + "api/", SmangaApi.normalizeBase(root).toString())
         assertEquals(root + "api/", SmangaApi.normalizeBase(root + "api/").toString())
@@ -98,10 +124,14 @@ class SmangaApiTest {
     @Test
     fun `JSON authenticates only with token and login bodies bypass inherited logging`() = runTest {
         val logs = AtomicInteger()
+        val messages = CopyOnWriteArrayList<String>()
+        val logger = okhttp3.logging.HttpLoggingInterceptor { messages += it }.apply {
+            level = okhttp3.logging.HttpLoggingInterceptor.Level.HEADERS
+        }
         val inherited = network.newBuilder().addInterceptor {
             logs.incrementAndGet()
             it.proceed(it.request())
-        }.build()
+        }.addInterceptor(logger).addNetworkInterceptor(logger).build()
         val isolated = SmangaApi(inherited, Json, root, "reader", "fixture-password", "a")
         try {
             isolated.media()
@@ -115,6 +145,15 @@ class SmangaApiTest {
             assertEquals(null, requests[0].token)
             assertEquals("fixture-token", requests[1].token)
             assertTrue(requests.all { it.auth == null && !it.uri.toString().contains("fixture") })
+            for (status in listOf(200, 403)) {
+                handler = { status to "fixture-opds" }
+                isolated.opdsClient.newCall(Request.Builder().url(isolated.coverUrl(4)).build()).execute().use {
+                    assertEquals(status, it.code)
+                }
+            }
+            assertEquals(Credentials.basic("reader", "fixture-password"), requests.last().auth)
+            assertEquals(0, logs.get())
+            assertTrue(messages.isEmpty())
         } finally {
             isolated.close()
         }

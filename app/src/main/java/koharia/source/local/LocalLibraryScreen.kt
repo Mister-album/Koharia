@@ -65,11 +65,10 @@ import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
-import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import koharia.connection.ConnectionBrowseScreen
+import koharia.connection.ConnectionBrowseSourceScreen
 import koharia.connection.ConnectionPreferences
 import koharia.connection.EntryOpenMode
 import koharia.connection.EntryOpenPreferences
@@ -78,6 +77,7 @@ import koharia.connection.ui.ConnectionLibraryShelfDialog
 import koharia.connection.ui.ConnectionSearchResults
 import koharia.connection.ui.ConnectionSearchSortOption
 import koharia.connection.ui.SeriesMetadataEditScreen
+import koharia.connection.ui.readStatusMessages
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.EpubReaderLauncher
 import koharia.importing.ExternalMediaImportScreen
@@ -117,7 +117,7 @@ data class LocalLibraryScreen(
     private val initialQuery: String?,
     private val showNavigationUp: Boolean = true,
     private val parentUrl: String? = null,
-) : Screen(), ConnectionBrowseScreen {
+) : ConnectionBrowseSourceScreen() {
 
     override val refreshOnReselect: Boolean = false
 
@@ -140,6 +140,11 @@ data class LocalLibraryScreen(
             return
         }
 
+        if (observeConnectionSource() == null) {
+            tachiyomi.presentation.core.screens.EmptyScreen(stringRes = MR.strings.connection_unavailable)
+            return
+        }
+
         val sourceManager: SourceManager = Injekt.get()
         val sourcePreferences: SourcePreferences = Injekt.get()
         val libraryPreferences: LibraryPreferences = Injekt.get()
@@ -152,35 +157,36 @@ data class LocalLibraryScreen(
         val coverCache: CoverCache = Injekt.get()
         val epubReaderLauncher = remember { EpubReaderLauncher() }
         val coroutineScope = rememberCoroutineScope()
-        val screenModel = rememberScreenModel(tag = "$sourceId:$scope:$initialQuery:$parentUrl") {
-            LocalLibraryScreenModel(
-                sourceId = sourceId,
-                scope = scope,
-                initialQuery = initialQuery,
-                parentUrl = parentUrl,
-                sourceManager = sourceManager,
-                sourcePreferences = sourcePreferences,
-                mangaRepository = mangaRepository,
-                getChaptersByMangaId = Injekt.get(),
-                getEpubProgress = getEpubProgress,
-                setMangaChapterFlags = Injekt.get(),
-                entryOpenManager = LocalLibraryEntryOpenManager(
-                    syncChaptersWithSource = syncChaptersWithSource,
+        val screenModel =
+            rememberScreenModel(tag = "$connectionSourceGeneration:$sourceId:$scope:$initialQuery:$parentUrl") {
+                LocalLibraryScreenModel(
+                    sourceId = sourceId,
+                    scope = scope,
+                    initialQuery = initialQuery,
+                    parentUrl = parentUrl,
+                    sourceManager = sourceManager,
+                    sourcePreferences = sourcePreferences,
+                    mangaRepository = mangaRepository,
+                    getChaptersByMangaId = Injekt.get(),
+                    getEpubProgress = getEpubProgress,
+                    setMangaChapterFlags = Injekt.get(),
+                    entryOpenManager = LocalLibraryEntryOpenManager(
+                        syncChaptersWithSource = syncChaptersWithSource,
+                        chapterRepository = chapterRepository,
+                        epubReaderLauncher = epubReaderLauncher,
+                    ),
+                    updateManga = updateManga,
+                    coverCache = coverCache,
                     chapterRepository = chapterRepository,
-                    epubReaderLauncher = epubReaderLauncher,
-                ),
-                updateManga = updateManga,
-                coverCache = coverCache,
-                chapterRepository = chapterRepository,
-                downloadManager = Injekt.get(),
-                itemActions = LocalLibraryItemActions(
-                    syncChaptersWithSource = syncChaptersWithSource,
-                    chapterRepository = chapterRepository,
-                    setReadStatus = Injekt.get(),
-                    epubProgressRepository = Injekt.get(),
-                ),
-            )
-        }
+                    downloadManager = Injekt.get(),
+                    itemActions = LocalLibraryItemActions(
+                        syncChaptersWithSource = syncChaptersWithSource,
+                        chapterRepository = chapterRepository,
+                        setReadStatus = Injekt.get(),
+                        epubProgressRepository = Injekt.get(),
+                    ),
+                )
+            }
         val state by screenModel.state.collectAsState()
         val refreshTasks = remember { Injekt.get<LocalLibraryRefreshTasks>() }
         val backgroundRefreshes by refreshTasks.activeIds.collectAsState()
@@ -942,6 +948,12 @@ data class LocalLibraryScreen(
                     }
                     LocalLibraryScreenModel.Event.NoCompatibleShelf -> {
                         snackbarHostState.showSnackbar(context.stringResource(MR.strings.local_library_no_common_shelf))
+                    }
+                    is LocalLibraryScreenModel.Event.ReadStatusUpdated -> {
+                        val messages = event.results.readStatusMessages()
+                        if (messages.isNotEmpty()) {
+                            snackbarHostState.showSnackbar(messages.joinToString("\n") { context.stringResource(it) })
+                        }
                     }
                     is LocalLibraryScreenModel.Event.ItemsUpdated -> {
                         snackbarHostState.showSnackbar(

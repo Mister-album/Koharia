@@ -1,0 +1,1 @@
+CREATE INDEX mangas_source_url_index ON mangas(source, url);

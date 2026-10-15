@@ -6,6 +6,8 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.backup.BackupCrypto
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
+import eu.kanade.tachiyomi.data.backup.BackupPayloadLimits
+import eu.kanade.tachiyomi.data.backup.BackupSizeLimitExceeded
 import eu.kanade.tachiyomi.data.backup.create.creators.CategoriesBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.MangaBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.PreferenceBackupCreator
@@ -59,6 +61,7 @@ class BackupCreator(
 
     suspend fun backup(uri: Uri, options: BackupOptions, password: CharArray? = null): String {
         var file: UniFile? = null
+        var deleteOnFailure = isAutoBackup
         try {
             file = if (isAutoBackup) {
                 // Get dir of file and create
@@ -78,7 +81,20 @@ class BackupCreator(
             val providerManagedManga = mangaRepository.getProviderManagedLibraryEntries(sourceManager)
             val mangaToBackUp = (getFavorites.await() + nonFavoriteManga + providerManagedManga)
                 .distinctBy(Manga::id)
-            val backupManga = backupMangas(mangaToBackUp, options)
+            // Chapter flags and explicit intents must describe the same committed reading state.
+            val (backupManga, progressJournal) = Injekt.get<tachiyomi.data.Database>().transactionWithResult {
+                val mangas = backupMangas(mangaToBackUp, options)
+                val intents = if (options.libraryEntries && options.chapters) {
+                    eu.kanade.tachiyomi.data.backup.restore.BackupKomgaProgressJournal.export(
+                        Injekt.get<koharia.domain.komga.KomgaReadStatusRepository>().unsettled(),
+                        Injekt.get<koharia.domain.komga.KomgaPageEventRepository>().unsettledStates(),
+                        Injekt.get<koharia.domain.komga.KomgaReadStatusRepository>().allAttempts(),
+                    )
+                } else {
+                    eu.kanade.tachiyomi.data.backup.restore.BackupKomgaProgressJournal.Export()
+                }
+                mangas to intents
+            }
 
             val backup = Backup(
                 backupManga = backupManga,
@@ -86,6 +102,14 @@ class BackupCreator(
                 backupSources = backupSources(backupManga),
                 backupPreferences = backupAppPreferences(options),
                 backupSourcePreferences = backupSourcePreferences(options),
+                backupConnections = preferenceBackupCreator.createConnections(
+                    backupManga.mapTo(mutableSetOf()) { it.source } + progressJournal.connections,
+                    includeAll = options.connectionSettings || options.appSettings,
+                ),
+                backupKomgaReadStatus = progressJournal.intents,
+                backupKomgaPages = progressJournal.pages,
+                backupKomgaPageAttempts = progressJournal.pageAttempts,
+                backupKomgaReadStatusAttempts = progressJournal.readAttempts,
                 backupStorageDirectory = if (options.appSettings) {
                     Injekt.get<StoragePreferences>().baseStorageDirectory.get()
                 } else {
@@ -94,6 +118,7 @@ class BackupCreator(
             )
 
             val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
+            BackupPayloadLimits.checkSize(byteArray.size, BackupPayloadLimits.PAYLOAD_BYTES)
             if (byteArray.isEmpty()) {
                 throw IllegalStateException(context.stringResource(MR.strings.empty_backup_error))
             }
@@ -117,7 +142,10 @@ class BackupCreator(
                 encryptedPayload = encrypted?.ciphertext ?: byteArrayOf(),
             )
             val envelopeBytes = parser.encodeToByteArray(KohariaBackupEnvelope.serializer(), envelope)
-            file.openOutputStream()
+            BackupPayloadLimits.checkSize(envelopeBytes.size, BackupPayloadLimits.CONTAINER_BYTES)
+            val output = file.openOutputStream()
+            deleteOnFailure = true
+            output
                 .also { (it as? FileOutputStream)?.channel?.truncate(0) }
                 .sink().buffer().use { it.write(envelopeBytes) }
             val fileUri = file.uri
@@ -137,7 +165,10 @@ class BackupCreator(
             return fileUri.toString()
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
-            file?.delete()
+            if (deleteOnFailure) file?.delete()
+            if (e is BackupSizeLimitExceeded) {
+                throw java.io.IOException(context.stringResource(MR.strings.backup_size_limit_exceeded), e)
+            }
             throw e
         }
     }

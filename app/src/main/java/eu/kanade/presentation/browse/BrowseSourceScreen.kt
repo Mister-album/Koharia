@@ -3,6 +3,8 @@ package eu.kanade.presentation.browse
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Public
@@ -71,7 +73,26 @@ fun BrowseSourceContent(
     manualDownloadState: ((Manga) -> MangaDownloadState?)? = null,
 ) {
     val context = LocalContext.current
-    val localEntries = rememberConnectionShelfEntries(source, mangaList)
+    val gridState = rememberLazyGridState()
+    val listState = rememberLazyListState()
+    val isList = displayMode == LibraryDisplayMode.List
+    val leadingItems = (if (contentHeader == null) 0 else 1) +
+        if (isList || (showPagingLoadingIndicator && mangaList.loadState.prepend is LoadState.Loading)) 1 else 0
+    val localEntries = rememberConnectionShelfEntries(
+        source,
+        mangaList,
+        visibleIndices = {
+            if (isList) {
+                listState.layoutInfo.visibleItemsInfo.map { it.index }
+            } else {
+                gridState.layoutInfo.visibleItemsInfo.map { it.index }
+            }
+        },
+        leadingItems = leadingItems,
+    )
+    val resolveManga: (Manga) -> Manga = { remote ->
+        koharia.connection.resolveShelfManga(source, remote, localEntries[remote.url])
+    }
     val showReadProgress by Injekt.get<LibraryPreferences>().showLibraryReadProgress.collectAsState()
     val expectedTotal: (Manga) -> Long? = { manga ->
         readingUnitCount?.invoke(manga)
@@ -154,7 +175,9 @@ fun BrowseSourceContent(
         LibraryDisplayMode.ComfortableGrid -> {
             BrowseSourceComfortableGrid(
                 modifier = modifier,
+                state = gridState,
                 mangaList = mangaList,
+                resolveManga = resolveManga,
                 columns = columns,
                 contentPadding = contentPadding,
                 selectedMangaIds = selectedMangaIds,
@@ -172,7 +195,9 @@ fun BrowseSourceContent(
         LibraryDisplayMode.List -> {
             BrowseSourceList(
                 modifier = modifier,
+                state = listState,
                 mangaList = mangaList,
+                resolveManga = resolveManga,
                 contentPadding = contentPadding,
                 selectedMangaIds = selectedMangaIds,
                 showLibraryBadges = showLibraryBadges,
@@ -189,7 +214,9 @@ fun BrowseSourceContent(
         LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> {
             BrowseSourceCompactGrid(
                 modifier = modifier,
+                state = gridState,
                 mangaList = mangaList,
+                resolveManga = resolveManga,
                 columns = columns,
                 contentPadding = contentPadding,
                 showTitle = displayMode is LibraryDisplayMode.CompactGrid,

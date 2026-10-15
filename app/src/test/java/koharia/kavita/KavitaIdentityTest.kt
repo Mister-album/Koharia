@@ -34,7 +34,18 @@ class KavitaIdentityTest {
         assertFalse(original.matches(original.copy(installId = "installation-b")))
         assertFalse(original.matches(original.copy(userId = 13)))
         assertFalse(original.matches(original.copy(createdUtc = "2026-01-01")))
-        assertTrue(original.copy(installId = "").sameServerVerified(original))
+        assertFalse(original.copy(installId = "").sameServerVerified(original))
         assertFalse(KavitaAccountIdentity(username = "reader").sameServerVerified(original))
+    }
+
+    @Test fun accountTimestampAndNameCannotProveServerOrAccountContinuity() {
+        val original = KavitaAccountIdentity(12, "reader", "2025-01-01", "installation-a")
+        assertFalse(original.copy(installId = "").sameServerVerified(original.copy(installId = "")))
+        assertFalse(original.copy(userId = 0).sameServerVerified(original.copy(userId = 0)))
+        assertFalse(original.sameServerVerified(original.copy(createdUtc = "")))
+        assertFalse(original.sameServerVerified(original.copy(userId = 13)))
+        assertFalse(original.sameServerVerified(original.copy(installId = "installation-b")))
+        assertFalse(original.sameServerVerified(original.copy(createdUtc = "2026-01-01")))
+        assertTrue(original.copy(createdUtc = "").sameServerVerified(original.copy(createdUtc = "")))
     }
 }

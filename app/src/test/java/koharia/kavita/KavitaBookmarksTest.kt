@@ -15,6 +15,19 @@ import org.junit.jupiter.api.Test
 import java.net.InetSocketAddress
 
 class KavitaBookmarksTest {
+    @Test fun bookmarkEntriesSetAndFlushUsePointAndPendingQueries() = runBlocking {
+        repeat(1_000) {
+            repository.putOperation(1, "one", koharia.domain.kavita.KavitaOperation("progress/$it", "{}", 1, false))
+        }
+        val bookmarks = coordinator()
+        bookmarks.set(draft)
+        assertEquals(1, bookmarks.entries(draft.ref, draft.kind).size)
+        bookmarks.flush()
+        assertEquals(1, creates)
+        assertFalse(repository.operation(1, "one", draft.key)!!.pending)
+        assertEquals(0, repository.fullHistoryReads)
+    }
+
     private val repository = MemoryKavitaRepository()
     private val draft = KavitaBookmarkState(KavitaChapterRef(1, 2, 3, 4, 1), KavitaBookmarkKind.IMAGE, 2)
     private var remote = emptyList<JsonObject>()

@@ -1,7 +1,6 @@
 package koharia.kavita.ui
 
 import androidx.paging.Pager
-import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
@@ -15,8 +14,10 @@ import eu.kanade.presentation.library.components.MangaReadProgress
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import koharia.connection.ConnectionShelfUpdates
 import koharia.connection.LibraryContentScope
+import koharia.connection.ui.CONNECTION_SHELF_STATIC_LOAD_STATES
 import koharia.kavita.KavitaLibrary
 import koharia.kavita.KavitaSeries
+import koharia.kavita.sortKavitaDownloads
 import koharia.source.kavita.KavitaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,17 +55,10 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.random.Random
 
-internal fun mergeKavitaShelfManga(remote: Manga, local: Manga?): Manga {
-    return local?.copy(
-        title = remote.title,
-        author = remote.author,
-        description = remote.description,
-        genre = remote.genre,
-        thumbnailUrl = remote.thumbnailUrl,
-        memo = kotlinx.serialization.json.JsonObject(local.memo + remote.memo),
-    ) ?: remote
-}
+internal fun mergeKavitaShelfManga(remote: Manga, local: Manga?): Manga =
+    koharia.connection.mergeShelfMangaMetadata(remote, local)
 
 class KavitaLibraryScreenModel(
     val source: KavitaSource,
@@ -84,6 +80,7 @@ class KavitaLibraryScreenModel(
         ),
     ) {
     private val session = source.session()
+    private val downloadedRandomSeed = Random.nextLong()
     private val extraFilter get() = state.value.appliedFilter
     fun editableFilter() = (extraFilter ?: koharia.kavita.KavitaFilter()).copy(
         statements = extraFilter?.statements.orEmpty() + listOfNotNull(genreFilter),
@@ -231,6 +228,7 @@ class KavitaLibraryScreenModel(
     }
     private data class Request(
         val media: List<Long>,
+        val allMedia: List<Long>,
         val query: String,
         val order: String,
         val downloads: Boolean,
@@ -242,6 +240,7 @@ class KavitaLibraryScreenModel(
             it.media.filter { media ->
                 it.selectedMedia == 0L || media.id == it.selectedMedia
             }.map { media -> media.id },
+            it.media.map { media -> media.id },
             it.query,
             it.order,
             it.downloadedOnly,
@@ -271,15 +270,53 @@ class KavitaLibraryScreenModel(
                             ) &&
                         downloads.getDownloadCount(it) > 0
                 }
-                scheduleLocalReadProgress(shelf, session)
+                val ids = shelf.map { session.identity.seriesId(it.url) }
+                val cachedMetadata = session.catalog.downloadedMetadata(ids)
+                val metadata = shelf.associate { manga ->
+                    val id = session.identity.seriesId(manga.url)
+                    val cached = cachedMetadata.getValue(id)
+                    val stored = manga.memo["kavitaSeries"]?.let {
+                        runCatching { session.api.json.decodeFromString<KavitaSeries>(it.toString()) }.getOrNull()
+                    }?.takeIf { it.id == id }
+                    id to cached.copy(series = cached.series ?: stored)
+                }
+                val cachedOrder = if (request.order.substringBefore(' ') in listOf("3", "8")) {
+                    val selected = session.catalog.cachedSeriesOrder(
+                        filter(request.media, "", request.order, request.advanced),
+                    )
+                    if (request.media != request.allMedia && !selected.toHashSet().containsAll(ids)) {
+                        val all = session.catalog.cachedSeriesOrder(
+                            filter(request.allMedia, "", request.order, request.advanced),
+                        )
+                        val ownedIds = ids.toHashSet()
+                        if (all.count { it in ownedIds } > selected.count { it in ownedIds }) all else selected
+                    } else {
+                        selected
+                    }
+                } else {
+                    emptyList()
+                }
+                val sorted = sortKavitaDownloads(
+                    shelf,
+                    session.identity,
+                    request.order,
+                    metadata,
+                    cachedOrder,
+                    downloadedRandomSeed xor request.generation,
+                )
+                currentCoroutineContext().ensureActive()
+                session.checkActive()
+                mutableState.update { it.copy(downloadedSortIncomplete = sorted.incomplete) }
+                scheduleLocalReadProgress(sorted.entries, session)
                 PagingData.from(
-                    shelf.map { MutableStateFlow(it) as StateFlow<Manga> },
+                    sorted.entries.map { MutableStateFlow(it) as StateFlow<Manga> },
+                    sourceLoadStates = CONNECTION_SHELF_STATIC_LOAD_STATES,
                 )
             }
         } else if (request.media.isEmpty()) {
             flowOf(PagingData.empty())
         } else {
-            Pager(PagingConfig(pageSize = 50, initialLoadSize = 50, prefetchDistance = 5, enablePlaceholders = false)) {
+            Pager(koharia.connection.connectionShelfPagingConfig()) {
                 object : PagingSource<Int, Manga>() {
                     override fun getRefreshKey(state: PagingState<Int, Manga>): Int? = null
                     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Manga> =
@@ -303,9 +340,8 @@ class KavitaLibraryScreenModel(
                             }
                         }
                 }
-            }.flow.cachedIn(screenModelScope).combine(repository.getMangaBySourceIdAsFlow(source.id)) { paging, local ->
-                val byUrl = local.associateBy { it.url }
-                paging.map { MutableStateFlow(mergeKavitaShelfManga(it, byUrl[it.url])) as StateFlow<Manga> }
+            }.flow.map { paging ->
+                paging.map { MutableStateFlow(it) as StateFlow<Manga> }
             }
         }
     }.flowOn(Dispatchers.IO).cachedIn(screenModelScope)
@@ -414,6 +450,12 @@ class KavitaLibraryScreenModel(
                 }
                 session.checkActive()
                 refreshed = true
+                if (!request.downloadedOnly) {
+                    eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(
+                        source,
+                        koharia.connection.ChapterFetchOrigin.EXPLICIT_REFRESH,
+                    )
+                }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 mutableState.update { it.copy(error = error) }
@@ -526,6 +568,7 @@ class KavitaLibraryScreenModel(
         val persistentFilters: Boolean = false,
         val displayMode: LibraryDisplayMode = LibraryDisplayMode.ComfortableGrid,
         val downloadedOnly: Boolean = false,
+        val downloadedSortIncomplete: Boolean = false,
         val generation: Long = 0,
         val refreshing: Boolean = false,
         val error: Throwable? = null,

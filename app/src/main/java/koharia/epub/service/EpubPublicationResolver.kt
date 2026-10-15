@@ -6,6 +6,9 @@ import koharia.epub.locator.toNavigatorLocator
 import koharia.epub.model.EpubOpenRequest
 import koharia.epub.model.EpubOpenRequest.OpenSource
 import koharia.epub.session.EpubReaderSession
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.readium.r2.shared.publication.Locator
 import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
@@ -35,6 +38,7 @@ class EpubPublicationResolver(
 
         var lastError: Throwable? = null
         attempts.forEach { source ->
+            currentCoroutineContext().ensureActive()
             runCatching {
                 when (source) {
                     OpenSource.LOCAL -> localService.open(request, initialLocator)
@@ -53,11 +57,20 @@ class EpubPublicationResolver(
                 }
             }
                 .onSuccess { session ->
-                    return session.copy(
-                        initialLocator = initialLocator?.let(session.publication::toNavigatorLocator),
-                    )
+                    try {
+                        currentCoroutineContext().ensureActive()
+                        return session.copy(
+                            initialLocator = initialLocator?.let(session.publication::toNavigatorLocator),
+                        )
+                    } catch (error: Throwable) {
+                        runCatching(session::close).exceptionOrNull()?.let(error::addSuppressed)
+                        throw error
+                    }
                 }
-                .onFailure { lastError = it }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    lastError = it
+                }
         }
 
         throw lastError ?: IllegalStateException("No EPUB open strategy available")

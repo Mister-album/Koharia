@@ -1,6 +1,7 @@
 package koharia.kavita
 
 import eu.kanade.tachiyomi.network.await
+import koharia.connection.connectionReadOnly
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -70,7 +71,7 @@ class KavitaEvents(
 
     private suspend fun connect() {
         val negotiate = api.eventRequest("hubs/messages/negotiate?negotiateVersion=1").newBuilder()
-            .post(ByteArray(0).toRequestBody()).build()
+            .post(ByteArray(0).toRequestBody()).connectionReadOnly().build()
         val token = api.eventClient.newCall(negotiate).await().use {
             KavitaApiClient.checkResponse(it)
             val reply = api.json.parseToJsonElement(it.body.string()).jsonObject

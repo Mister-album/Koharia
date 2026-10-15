@@ -112,6 +112,9 @@ class LibraryConnectionProfilesScreen(
         val profiles by connectionPreferences.profilesChanges()
             .collectAsState(initial = connectionPreferences.getProfiles())
         val activeConnectionId by connectionPreferences.activeConnectionId.collectAsState()
+        val pausedIds by remember {
+            Injekt.get<koharia.connection.ConnectionIdentityChanges>()
+        }.pausedIds.collectAsState()
         val scope = rememberCoroutineScope()
 
         var selectedProviderId by rememberSaveable {
@@ -136,12 +139,20 @@ class LibraryConnectionProfilesScreen(
         }
 
         fun refreshProfile(profile: LibraryConnectionProfile) {
-            val refreshAdapter = sourceManager.get(profile.id) as? ConnectionLibraryRefreshAdapter ?: return
+            val source = sourceManager.get(profile.id) ?: return
+            val refreshAdapter = source as? ConnectionLibraryRefreshAdapter ?: return
             if (profile.id in refreshingConnectionIds || profile.id in localRefreshIds) return
             refreshingConnectionIds += profile.id
             scope.launch {
                 val result = try {
-                    refreshAdapter.refreshLibrary()
+                    refreshAdapter.refreshLibrary().also {
+                        if (it.isSuccess) {
+                            eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(
+                                source,
+                                koharia.connection.ChapterFetchOrigin.EXPLICIT_REFRESH,
+                            )
+                        }
+                    }
                 } finally {
                     refreshingConnectionIds -= profile.id
                 }
@@ -263,6 +274,7 @@ class LibraryConnectionProfilesScreen(
                         ConnectionRow(
                             profile = profile,
                             providerName = provider?.displayName ?: profile.providerId,
+                            writesPaused = profile.id in pausedIds,
                             isAvailable = provider != null,
                             isActive = activeConnectionId == profile.id,
                             onSelect = { connectionPreferences.activeConnectionId.set(profile.id) },
@@ -454,6 +466,7 @@ private fun ModeHelpDialog(
 private fun ConnectionRow(
     profile: LibraryConnectionProfile,
     providerName: String,
+    writesPaused: Boolean,
     isAvailable: Boolean,
     isActive: Boolean,
     onSelect: () -> Unit,
@@ -582,7 +595,9 @@ private fun ConnectionRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = if (isAvailable) {
+                    text = if (writesPaused) {
+                        "$providerName · ${stringResource(MR.strings.connection_writes_paused)}"
+                    } else if (isAvailable) {
                         providerName
                     } else {
                         "$providerName · ${stringResource(MR.strings.connection_unavailable)}"

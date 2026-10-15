@@ -99,15 +99,15 @@ internal class LanraragiPreviewImageFetcher(
             } else {
                 val cache = Injekt.get<ChapterCache>()
                 val url = checkNotNull(data.page.imageUrl)
-                if (!cache.isImageInCache(url)) {
+                if (!cache.isImageInCache(source.id, url)) {
                     val httpSource = source as? HttpSource ?: error("Page preview is unsupported")
                     val fetchContext = currentCoroutineContext()
                     httpSource.getImage(data.page).use { response ->
                         val body = LanraragiTimedBody(response.body, { fetchContext.ensureActive() }) { _, _ -> }
-                        cache.putImageToCache(url, response.newBuilder().body(body).build())
+                        cache.putImageToCache(source.id, url, response.newBuilder().body(body).build())
                     }
                 }
-                cache.getImageFile(url).source()
+                cache.getImageFile(source.id, url).source()
             }
             val stream = object : ForwardingSource(opened) {
                 override fun close() {

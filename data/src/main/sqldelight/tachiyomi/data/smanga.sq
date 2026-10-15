@@ -55,6 +55,12 @@ SELECT cache_key, payload, updated_at, generation FROM smanga_cache
 WHERE connection_id = :connectionId AND account_key = :accountKey AND group_key = :groupKey
 ORDER BY cache_key;
 
+getCachedCatalogue:
+SELECT group_key, cache_key, payload, updated_at FROM smanga_cache
+WHERE connection_id = :connectionId AND account_key = :accountKey
+AND (group_key LIKE 'manga/%' OR group_key LIKE 'shelf/%' OR group_key LIKE 'search/title-tags-v1/%')
+ORDER BY updated_at, group_key, cache_key;
+
 putCache:
 INSERT OR REPLACE INTO smanga_cache
 VALUES (:connectionId, :accountKey, :groupKey, :key, :payload, :updatedAt, :generation);
@@ -67,6 +73,15 @@ getReadState:
 SELECT chapter_id, manga_id, page_index, total_pages, completed, read_at, revision, pending, explicit_unread, initial_page
 FROM smanga_read_state
 WHERE connection_id = :connectionId AND account_key = :accountKey AND chapter_id = :chapterId;
+
+getReadStatesForChapters:
+SELECT chapter_id, manga_id, page_index, total_pages, completed, read_at, revision, pending, explicit_unread, initial_page
+FROM smanga_read_state
+WHERE connection_id = :connectionId AND account_key = :accountKey AND chapter_id IN :chapterIds;
+
+getCacheEntries:
+SELECT cache_key, payload, updated_at, generation FROM smanga_cache
+WHERE connection_id = :connectionId AND account_key = :accountKey AND group_key = :groupKey AND cache_key IN :keys;
 
 getReadStates:
 SELECT chapter_id, manga_id, page_index, total_pages, completed, read_at, revision, pending, explicit_unread, initial_page

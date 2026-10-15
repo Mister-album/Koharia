@@ -183,7 +183,7 @@ class SuwayomiBrowseCacheDeviceTest {
         compose.waitUntil(15_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    private class DirectoryFixture : SuwayomiService {
+    internal class DirectoryFixture : SuwayomiService {
         override suspend fun sources() = listOf(SuwayomiSourceInfo(12, "Fixture Source", "en"))
         override suspend fun extensions(
             refresh: Boolean,

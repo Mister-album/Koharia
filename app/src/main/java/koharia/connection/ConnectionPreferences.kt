@@ -15,7 +15,13 @@ import kotlin.random.Random
 class ConnectionPreferences(
     private val preferenceStore: PreferenceStore,
     private val json: Json,
+    private val isReserved: (Long) -> Boolean = { false },
+    private val persist: () -> Boolean = { true },
 ) {
+
+    fun flush() {
+        check(persist()) { "Could not persist connection inventory" }
+    }
 
     private val serializedProfiles = preferenceStore.getStringSet(PREF_PROFILES, emptySet())
     private val knownConnectionIds = preferenceStore.getStringSet(PREF_KNOWN_CONNECTION_IDS, emptySet())
@@ -41,6 +47,11 @@ class ConnectionPreferences(
 
     fun getProfiles(): List<LibraryConnectionProfile> {
         return normalizeProfiles(decodeProfiles(serializedProfiles.get()))
+    }
+
+    @Synchronized
+    fun mutateProfiles(transform: (List<LibraryConnectionProfile>) -> List<LibraryConnectionProfile>) {
+        setProfiles(transform(getProfiles()))
     }
 
     @Synchronized
@@ -100,9 +111,12 @@ class ConnectionPreferences(
             ?.takeIf { it < Long.MAX_VALUE }
             ?.plus(1)
             ?.takeIf { it > LOCAL_CONNECTION_ID }
-        val allocatedId = nextSequentialId ?: generateSequence {
+        val allocatedId = nextSequentialId?.let { first ->
+            generateSequence(first) { if (it < Long.MAX_VALUE) it + 1 else null }
+                .firstOrNull { !isReserved(it) }
+        } ?: generateSequence {
             Random.nextLong(1, Long.MAX_VALUE)
-        }.first { it !in reservedIds }
+        }.first { it !in reservedIds && !isReserved(it) }
 
         rememberConnectionIds(listOf(allocatedId))
         return allocatedId
