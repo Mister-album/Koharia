@@ -8,7 +8,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ListAlt
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.FolderSpecial
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
@@ -39,6 +38,7 @@ import koharia.connection.LocalOrganizationScreenOwner
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkLinearProgressIndicator
 import tachiyomi.presentation.core.components.material.TabText
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
@@ -158,7 +158,7 @@ internal fun OrganizationNameTabs(
             onSelectAll = onSelectAll,
             showAllWhenEmpty = true,
         )
-        if (directory.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (directory.loading) EInkLinearProgressIndicator(Modifier.fillMaxWidth())
         if (directory.error != null) {
             TextButton(onClick = onReload) { Text(stringResource(MR.strings.action_retry)) }
         }
