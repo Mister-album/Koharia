@@ -653,6 +653,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                         topBar = {
                             if (state.isSearchActive) {
                                 SearchToolbar(
+                                    actionTitle = state.mangaTitle,
                                     searchQuery = state.searchQuery,
                                     onChangeSearchQuery = { query ->
                                         if (query == null) {

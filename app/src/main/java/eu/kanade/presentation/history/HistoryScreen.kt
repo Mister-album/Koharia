@@ -56,6 +56,7 @@ fun HistoryScreen(
     Scaffold(
         topBar = { scrollBehavior ->
             SearchToolbar(
+                actionTitle = stringResource(MR.strings.history),
                 titleContent = { AppBarTitle(stringResource(MR.strings.history)) },
                 searchQuery = state.searchQuery,
                 onChangeSearchQuery = onSearchQueryChange,

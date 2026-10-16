@@ -74,6 +74,7 @@ private fun LibraryRegularToolbar(
 ) {
     val pillAlpha = if (isSystemInDarkTheme()) 0.12f else 0.08f
     SearchToolbar(
+        actionTitle = title.text,
         titleContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(

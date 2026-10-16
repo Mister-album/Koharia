@@ -43,11 +43,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -107,6 +110,7 @@ fun AppBar(
         isActionMode = isActionMode,
         onCancelActionMode = onCancelActionMode,
         scrollBehavior = scrollBehavior,
+        actionTitle = if (isActionMode) actionModeCounter.toString() else title,
     )
 }
 
@@ -127,7 +131,20 @@ fun AppBar(
     onCancelActionMode: () -> Unit = {},
 
     scrollBehavior: TopAppBarScrollBehavior? = null,
+    actionTitle: String? = null,
 ) {
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val titleWidth = textMeasurer.measure(
+        AnnotatedString(actionTitle ?: stringResource(MR.strings.app_name)),
+        style = MaterialTheme.typography.titleLarge,
+        maxLines = 1,
+    ).size.width
+    val reservedWidth = with(density) {
+        titleWidth.coerceAtMost(160.dp.roundToPx()) +
+            (if (isActionMode || navigateUp != null) 56.dp else 16.dp).roundToPx() +
+            8.dp.roundToPx()
+    }
     Column(
         modifier = modifier,
     ) {
@@ -149,7 +166,9 @@ fun AppBar(
                 }
             },
             title = titleContent,
-            actions = actions,
+            actions = {
+                AdaptiveAppBarActions(reservedWidth = reservedWidth) { actions() }
+            },
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = backgroundColor ?: MaterialTheme.colorScheme.surfaceColorAtElevation(
                     elevation = if (isActionMode) 3.dp else 0.dp,
@@ -277,6 +296,7 @@ fun SearchToolbar(
     scrollBehavior: TopAppBarScrollBehavior? = null,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+    actionTitle: String? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
 
@@ -398,6 +418,7 @@ fun SearchToolbar(
         },
         isActionMode = false,
         scrollBehavior = scrollBehavior,
+        actionTitle = actionTitle,
     )
 }
 

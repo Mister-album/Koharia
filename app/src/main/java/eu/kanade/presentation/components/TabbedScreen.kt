@@ -48,6 +48,7 @@ fun TabbedScreen(
             val searchEnabled = tab.searchEnabled
 
             SearchToolbar(
+                actionTitle = stringResource(titleRes),
                 titleContent = { AppBarTitle(stringResource(titleRes)) },
                 searchEnabled = searchEnabled,
                 searchQuery = if (searchEnabled) searchQuery else null,

@@ -198,6 +198,7 @@ class SuwayomiSourceScreen(
             topBar = {
                 if (searching) {
                     SearchToolbar(
+                        actionTitle = info.displayName(context),
                         titleContent = { Text(info.displayName(context)) },
                         navigateUp = closeSearch,
                         searchQuery = state.query,

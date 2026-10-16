@@ -63,6 +63,7 @@ fun ConnectionLibraryToolbar(
     var selectingDisplayMode by remember(searchQuery != null) { mutableStateOf(false) }
     var selectingConnection by remember(searchQuery != null) { mutableStateOf(false) }
     SearchToolbar(
+        actionTitle = title ?: stringResource(MR.strings.app_name),
         titleContent = { AppBarTitle(title ?: stringResource(MR.strings.app_name)) },
         navigateUp = navigateUp,
         searchQuery = searchQuery,

@@ -188,6 +188,7 @@ data class ExternalMediaImportScreen(
             topBar = {
                 if (state.step == ExternalMediaImportScreenModel.Step.SERIES_SELECTION) {
                     SearchToolbar(
+                        actionTitle = stringResource(MR.strings.external_media_choose_existing_series),
                         searchQuery = state.existingSeriesSearchQuery,
                         onChangeSearchQuery = screenModel::setExistingSeriesSearchQuery,
                         titleContent = { Text(stringResource(MR.strings.external_media_choose_existing_series)) },

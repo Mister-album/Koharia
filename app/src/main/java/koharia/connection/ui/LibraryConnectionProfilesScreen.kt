@@ -20,7 +20,6 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -77,7 +76,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
-import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -270,7 +268,6 @@ class LibraryConnectionProfilesScreen(
                         key = LibraryConnectionProfile::id,
                     ) { profile ->
                         val provider = connectionRegistry.provider(profile.providerId)
-                        val refreshAdapter = sourceManager.get(profile.id) as? ConnectionLibraryRefreshAdapter
                         ConnectionRow(
                             profile = profile,
                             providerName = provider?.displayName ?: profile.providerId,
@@ -280,9 +277,6 @@ class LibraryConnectionProfilesScreen(
                             onSelect = { connectionPreferences.activeConnectionId.set(profile.id) },
                             onLongClick = { profileActions = profile },
                             onEdit = { editProfile(profile) },
-                            canRefresh = refreshAdapter != null,
-                            isRefreshing = profile.id in refreshingConnectionIds || profile.id in localRefreshIds,
-                            onRefresh = { refreshProfile(profile) },
                             onDelete = { profileToDelete = profile },
                         )
                     }
@@ -471,9 +465,6 @@ private fun ConnectionRow(
     isActive: Boolean,
     onSelect: () -> Unit,
     onLongClick: () -> Unit,
-    canRefresh: Boolean,
-    isRefreshing: Boolean,
-    onRefresh: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -605,30 +596,6 @@ private fun ConnectionRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-            if (canRefresh) {
-                IconButton(
-                    enabled = isAvailable && !isRefreshing,
-                    onClick = {
-                        if (isDeleteRevealed) {
-                            settleRow(revealed = false)
-                        } else {
-                            onRefresh()
-                        }
-                    },
-                ) {
-                    if (isRefreshing) {
-                        EInkCircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Outlined.Refresh,
-                            contentDescription = stringResource(MR.strings.action_webview_refresh),
-                        )
-                    }
-                }
             }
             IconButton(
                 enabled = isAvailable,
