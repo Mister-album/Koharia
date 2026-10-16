@@ -10,6 +10,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSwipeHandler
 import kotlin.math.abs
 
@@ -18,6 +19,7 @@ internal class SwipePageTurnGate(
     private val onVerticalSwipe: (Boolean) -> Boolean = { false },
     onPageTurnSwipe: (Int, PageTurnOrigin) -> Unit,
     interceptPageTurns: () -> Boolean,
+    pageTurnSensitivity: () -> PageTurnSensitivity,
     private val blockPageTurns: () -> Boolean,
 ) : FrameLayout(context) {
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
@@ -32,6 +34,7 @@ internal class SwipePageTurnGate(
         horizontal = true,
         viewportSize = { width to height },
         enabled = interceptPageTurns,
+        sensitivity = pageTurnSensitivity,
         canIntercept = { !selectingText && !childOwnsGesture },
         cancelChildren = ::cancelChildren,
         onTurn = onPageTurnSwipe,

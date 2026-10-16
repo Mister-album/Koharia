@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderStatusPosition
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.connection.ConnectionConfigMode
 import koharia.connection.ConnectionPreferences
@@ -615,9 +616,20 @@ object SettingsReaderScreen : SearchableSettings {
 
     @Composable
     private fun getCommonNavigationGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+        val sensitivity by readerPreferences.pageTurnSensitivity.collectAsState()
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_reader_navigation),
             preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SliderPreference(
+                    value = sensitivity.ordinal,
+                    valueRange = 0..PageTurnSensitivity.entries.lastIndex,
+                    title = stringResource(MR.strings.pref_page_turn_sensitivity),
+                    valueString = stringResource(sensitivity.titleRes),
+                    onValueChanged = { readerPreferences.pageTurnSensitivity.set(PageTurnSensitivity.entries[it]) },
+                ),
+                Preference.PreferenceItem.InfoPreference(
+                    title = stringResource(MR.strings.pref_page_turn_sensitivity_summary),
+                ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = readerPreferences.showNavigationOverlayOnStart,
                     title = stringResource(MR.strings.pref_show_navigation_mode),

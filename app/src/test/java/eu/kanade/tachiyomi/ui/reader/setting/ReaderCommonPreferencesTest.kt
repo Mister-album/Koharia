@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.setting
 
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -7,6 +8,19 @@ import org.junit.jupiter.api.Test
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 
 class ReaderCommonPreferencesTest {
+    @Test
+    fun `page turn sensitivity defaults to existing behavior without changing swipe enablement`() {
+        val preferences = ReaderPreferences(InMemoryPreferenceStore())
+
+        assertEquals(PageTurnSensitivity.NORMAL, preferences.pageTurnSensitivity.get())
+        assertFalse(preferences.pageTurnSensitivity.isSet())
+        preferences.pageTurnSensitivity.set(PageTurnSensitivity.HIGHEST)
+        assertEquals(PageTurnSensitivity.HIGHEST, preferences.pageTurnSensitivity.get())
+        assertTrue(preferences.swipePageTurns.get())
+        preferences.swipePageTurns.set(false)
+        assertEquals(PageTurnSensitivity.HIGHEST, preferences.pageTurnSensitivity.get())
+    }
+
     @Test
     fun `reading status keeps the existing visibility key and adds independent common options`() {
         val store = InMemoryPreferenceStore()

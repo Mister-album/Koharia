@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.viewpager.widget.DirectionalViewPager
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSwipeHandler
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
 import kotlin.math.abs
@@ -23,6 +24,10 @@ open class Pager(
 ) : DirectionalViewPager(context, horizontalPaging) {
 
     var swipePageTurnsEnabled: () -> Boolean = { true }
+
+    var pageTurnSensitivity: () -> PageTurnSensitivity = { PageTurnSensitivity.NORMAL }
+
+    var pageTurnSwipeUsesNativeDrag: () -> Boolean = { false }
 
     /** Tap listener function to execute when a tap is detected. */
     var tapListener: ((MotionEvent) -> Unit)? = null
@@ -86,6 +91,8 @@ open class Pager(
         horizontal = horizontalPaging,
         viewportSize = { width to height },
         enabled = { swipePageTurnsEnabled() && pageTurnSwipeListener != null && canInterceptPageTurnSwipe != null },
+        sensitivity = { pageTurnSensitivity() },
+        dragWithContent = { pageTurnSwipeUsesNativeDrag() },
         canIntercept = { canInterceptPageTurnSwipe?.invoke(it) == true },
         cancelChildren = ::cancelTouchForChildren,
         onTurn = { delta, origin -> pageTurnSwipeListener?.invoke(delta, origin.xFraction, origin.yFraction) },

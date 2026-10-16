@@ -1843,6 +1843,8 @@
     <string name="epub_no_readable_chapters">此 EPUB 没有可阅读的章节。</string>
     <string name="series_details_load_failed">无法加载此作品，它可能已被移除。</string>
     <string name="pref_swipe_page_turns">滑动翻页</string>
+    <string name="pref_page_turn_sensitivity">翻页灵敏度</string>
+    <string name="pref_page_turn_sensitivity_summary">灵敏度越高，越短、越慢的滑动也能翻页。适用于漫画和书籍的分页阅读模式。</string>
     <string name="shared_config_choose_title">选择共同配置</string>
     <string name="shared_config_choose_message">请选择用于所有库的配置。各库内容、筛选和服务器设置保持原样。</string>
     <string name="shared_config_previous">原共享配置</string>

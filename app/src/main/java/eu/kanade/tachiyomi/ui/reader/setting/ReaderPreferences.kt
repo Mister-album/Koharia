@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.ui.graphics.BlendMode
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import koharia.reader.resampling.ReaderResamplingSettings
 import koharia.reader.resampling.ResamplingKernel
 import koharia.reader.resampling.ResamplingQuality
@@ -165,6 +166,8 @@ class ReaderPreferences(
     val cropBorders: Preference<Boolean> = preferenceStore.getBoolean("crop_borders", false)
 
     val swipePageTurns = preferenceStore.getBoolean("swipe_page_turns", true)
+
+    val pageTurnSensitivity = preferenceStore.getEnum("reader_page_turn_sensitivity", PageTurnSensitivity.NORMAL)
 
     val navigateToPan: Preference<Boolean> = preferenceStore.getBoolean("navigate_pan", true)
 

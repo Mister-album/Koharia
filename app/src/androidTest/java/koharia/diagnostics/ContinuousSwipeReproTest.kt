@@ -80,6 +80,7 @@ class ContinuousSwipeReproTest {
                     activity,
                     onPageTurnSwipe = { _, _ -> error("Disabled swipes must not turn pages") },
                     interceptPageTurns = { false },
+                    pageTurnSensitivity = { eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity.NORMAL },
                 ) { true }
                 gate.addView(
                     object : View(activity) {

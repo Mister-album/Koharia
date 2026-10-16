@@ -111,6 +111,7 @@ class EpubReaderFragment : Fragment() {
     private val fontManager: EpubFontManager = Injekt.get()
     private val eInkPreferences: EInkPreferences = Injekt.get()
     private val sharedAppPreferences: SharedAppPreferences = Injekt.get()
+    private val pageTurnSensitivity by lazy { sharedAppPreferences.readerPreferences().pageTurnSensitivity }
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
         get() = requireArguments().getLong(ARG_CHAPTER_ID)
@@ -289,6 +290,7 @@ class EpubReaderFragment : Fragment() {
     ): View {
         return SwipePageTurnGate(
             requireContext(),
+            pageTurnSensitivity = { pageTurnSensitivity.get() },
             onVerticalSwipe = ::navigateShortUnstitchedResource,
             onPageTurnSwipe = { delta, origin ->
                 val navigator = readyNavigatorFragment()

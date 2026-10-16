@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.tachiyomi.ui.reader.viewer.refreshReaderResampling
@@ -261,10 +262,21 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.pageTurnSwipeListener = { delta, xFraction, yFraction ->
             val origin = PageTurnOrigin(xFraction, yFraction, PageTurnCause.GESTURE).normalized()
             withPageTurnOrigin(origin) {
-                setCurrentItemForPageTurn(pager.currentItem + delta)
+                setCurrentItemForPageTurn(
+                    pager.currentItem + delta,
+                    nativeDragRelease = pager.pageTurnSwipeUsesNativeDrag(),
+                )
             }
         }
         pager.swipePageTurnsEnabled = { activity.readerPreferences.swipePageTurns.get() }
+        pager.pageTurnSensitivity = { activity.readerPreferences.pageTurnSensitivity.get() }
+        pager.pageTurnSwipeUsesNativeDrag = {
+            !PagerPageTurnPolicy.shouldInterceptSwipe(
+                config.pageTransitionEffect,
+                pager.horizontalPaging,
+                ValueAnimator.areAnimatorsEnabled(),
+            )
+        }
         pager.longTapListener = f@{ event ->
             if (activity.viewModel.state.value.menuVisible || config.longTapEnabled) {
                 val holder = (adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages)
@@ -715,7 +727,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun shouldAnimatePageTurn(): Boolean =
         config.pageTransitionEffect != PageTransitionEffect.NONE && ValueAnimator.areAnimatorsEnabled()
 
-    private fun setCurrentItemForPageTurn(target: Int) {
+    private fun setCurrentItemForPageTurn(target: Int, nativeDragRelease: Boolean = false) {
         // Mark app-driven page turns so they are distinguishable from viewport resize callbacks.
         markPendingUserNavigation(target)
         if (config.pageTransitionEffect == PageTransitionEffect.CURL && ValueAnimator.areAnimatorsEnabled()) {
@@ -726,7 +738,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 return
             }
         }
-        if (waitForPageTurnTarget(target)) return
+        // Replace the native cancellation's settling motion immediately when the destination is ready.
+        val nativeTargetReady = nativeDragRelease &&
+            (adapter.slots.getOrNull(target) as? PagerSlot.Pages)?.let(::isSlotRendered) == true
+        if (!nativeTargetReady && waitForPageTurnTarget(target)) return
         pager.setCurrentItem(target, shouldAnimatePageTurn())
     }
 
@@ -798,18 +813,14 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun canInterceptPageTurnSwipe(delta: Int): Boolean {
-        if (!PagerPageTurnPolicy.shouldInterceptSwipe(
-                config.pageTransitionEffect,
-                pager.horizontalPaging,
-                ValueAnimator.areAnimatorsEnabled(),
-            ) || pageFlipController.isRunning
-        ) {
+        val customSensitivity = activity.readerPreferences.pageTurnSensitivity.get() != PageTurnSensitivity.NORMAL
+        if ((pager.pageTurnSwipeUsesNativeDrag() && !customSensitivity) || pageFlipController.isRunning) {
             return false
         }
         val target = pager.currentItem + delta
         if (target !in adapter.slots.indices) return false
         val sourceSlot = adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages
-        if (shouldAnimatePageTurn() &&
+        if (!customSensitivity && shouldAnimatePageTurn() &&
             (sourceSlot == null || adapter.slots.getOrNull(target) !is PagerSlot.Pages)
         ) {
             return false

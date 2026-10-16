@@ -11,17 +11,17 @@ internal class PageTurnSwipeHandler(
     private val horizontal: Boolean,
     private val viewportSize: () -> Pair<Int, Int>,
     private val enabled: () -> Boolean,
+    private val sensitivity: () -> PageTurnSensitivity,
+    private val dragWithContent: () -> Boolean = { false },
     private val canIntercept: (Int) -> Boolean,
     private val cancelChildren: (MotionEvent) -> Unit,
     private val onTurn: (Int, PageTurnOrigin) -> Unit,
 ) {
     private val configuration = ViewConfiguration.get(context)
     private val touchSlop = configuration.scaledTouchSlop
-    private val minimumVelocity = maxOf(
-        configuration.scaledMinimumFlingVelocity.toFloat(),
-        400f * context.resources.displayMetrics.density,
-    )
-    private val minimumDistance = maxOf(touchSlop * 2f, 25f * context.resources.displayMetrics.density)
+    private val density = context.resources.displayMetrics.density
+    private var thresholds: PageTurnSwipeThresholds? = null
+    private var nativeDrag = false
     private var tracker: VelocityTracker? = null
     private var candidate = false
     private var consumed = false
@@ -34,7 +34,18 @@ internal class PageTurnSwipeHandler(
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             reset()
             candidate = enabled()
-            if (candidate) tracker = VelocityTracker.obtain()
+            nativeDrag = dragWithContent()
+            if (candidate) {
+                tracker = VelocityTracker.obtain()
+                // Keep one gesture consistent; setting changes apply to the next swipe.
+                thresholds = PageTurnSwipeThresholds(
+                    touchSlop,
+                    density,
+                    configuration.scaledMinimumFlingVelocity,
+                    sensitivity(),
+                    nativeDrag = nativeDrag,
+                )
+            }
             startX = event.x
             startY = event.y
         }
@@ -45,11 +56,12 @@ internal class PageTurnSwipeHandler(
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_POINTER_DOWN -> {
+                if (nativeDrag) reset()
                 candidate = false
                 canceled = true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (consumed) return true
+                if (consumed) return !nativeDrag
                 if (!candidate || event.pointerCount != 1) return false
                 val distance = if (horizontal) event.x - startX else event.y - startY
                 val crossDistance = abs(if (horizontal) event.y - startY else event.x - startX)
@@ -64,13 +76,15 @@ internal class PageTurnSwipeHandler(
                     delta = if (distance < 0f) 1 else -1
                     if (canIntercept(delta)) {
                         consumed = true
-                        cancelChildren(event)
-                        return true
+                        if (!nativeDrag) cancelChildren(event)
+                        return !nativeDrag
                     }
                 }
             }
             MotionEvent.ACTION_UP -> {
                 val handled = consumed
+                // Keep native drag feedback, but replace its fixed release threshold.
+                if (handled && nativeDrag) cancelChildren(event)
                 if (handled && !canceled && shouldCommit(event)) {
                     val (width, height) = viewportSize()
                     val origin = PageTurnOrigin(
@@ -87,29 +101,28 @@ internal class PageTurnSwipeHandler(
                 return handled
             }
             MotionEvent.ACTION_CANCEL -> {
-                val handled = consumed
+                val handled = consumed && !nativeDrag
                 reset()
                 return handled
             }
         }
-        return consumed
+        return consumed && !nativeDrag
     }
 
     private fun shouldCommit(event: MotionEvent): Boolean {
         val displacement = if (horizontal) event.x - startX else event.y - startY
-        if (displacement * delta >= 0f) return false
         val (width, height) = viewportSize()
         val size = if (horizontal) width else height
-        if (abs(displacement) >= maxOf(touchSlop * 2f, size * 0.18f)) return true
         tracker?.computeCurrentVelocity(1_000)
         val velocity = if (horizontal) tracker?.xVelocity else tracker?.yVelocity
-        return abs(displacement) >= minimumDistance && velocity != null &&
-            velocity * delta < 0f && abs(velocity) >= minimumVelocity
+        return thresholds?.shouldCommit(displacement, velocity ?: 0f, size, delta) == true
     }
 
     fun reset() {
         tracker?.recycle()
         tracker = null
+        thresholds = null
+        nativeDrag = false
         candidate = false
         consumed = false
         canceled = false

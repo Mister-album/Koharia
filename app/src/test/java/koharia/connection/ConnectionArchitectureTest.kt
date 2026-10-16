@@ -7,6 +7,8 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
@@ -42,6 +44,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.preference.ScopedPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
@@ -165,6 +168,21 @@ class ConnectionArchitectureTest {
     fun `all preferences use the fixed shared scope`() {
         assertEquals("connection_shared::", SharedAppPreferenceScope.currentScope().prefix)
         assertTrue(SharedAppPreferenceScope.currentScope().allowLegacyFallback)
+    }
+
+    @Test
+    fun `comic and book swipe sensitivity survives reader recreation and connection switching`() {
+        val store = MutableTestPreferenceStore()
+        val connections = ConnectionPreferences(store, json)
+        fun reader() = ReaderPreferences(ScopedPreferenceStore(store, SharedAppPreferenceScope))
+
+        connections.activeConnectionId.set(12L)
+        reader().pageTurnSensitivity.set(PageTurnSensitivity.HIGHEST)
+        connections.activeConnectionId.set(34L)
+        assertEquals(PageTurnSensitivity.HIGHEST, reader().pageTurnSensitivity.get())
+        assertEquals("HIGHEST", store.values["connection_shared::reader_page_turn_sensitivity"])
+        store.values["connection_shared::reader_page_turn_sensitivity"] = "invalid"
+        assertEquals(PageTurnSensitivity.NORMAL, reader().pageTurnSensitivity.get())
     }
 
     @Test

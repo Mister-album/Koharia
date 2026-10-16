@@ -14,6 +14,7 @@ import androidx.viewpager.widget.ViewPager
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.Pager
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerPageTurnPolicy
 import org.junit.Assert.assertEquals
@@ -25,6 +26,24 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class PageTurnSwipeDeviceTest {
+    @Test
+    fun bookSensitivityChangesApplyToTheNextGesture() {
+        var sensitivity = PageTurnSensitivity.NORMAL
+        withGate(sensitivity = { sensitivity }) { gate, _, turns, _ ->
+            drag(gate, distance = 0.1f, duration = 400)
+            assertTrue(turns.isEmpty())
+            drag(gate, distance = 0.1f, duration = 400, beforeRelease = {
+                sensitivity = PageTurnSensitivity.HIGHEST
+            })
+            assertTrue(turns.isEmpty())
+            drag(gate, distance = 0.1f, duration = 400)
+            assertEquals(1, turns.size)
+            sensitivity = PageTurnSensitivity.LOWEST
+            drag(gate, distance = 0.1f, duration = 400)
+            assertEquals(1, turns.size)
+        }
+    }
+
     @Test
     fun bookSwipeCancelsNativeTouchAndTurnsOnceWithGestureOrigin() = withGate { gate, actions, turns, _ ->
         drag(gate)
@@ -145,6 +164,7 @@ class PageTurnSwipeDeviceTest {
     }
 
     private fun withGate(
+        sensitivity: () -> PageTurnSensitivity = { PageTurnSensitivity.NORMAL },
         test: (SwipePageTurnGate, MutableList<Int>, MutableList<Pair<Int, PageTurnOrigin>>, View) -> Unit,
     ) {
         ActivityScenario.launch(EpubTransitionFixtureActivity::class.java).use { scenario ->
@@ -158,6 +178,7 @@ class PageTurnSwipeDeviceTest {
                     activity,
                     onPageTurnSwipe = { delta, origin -> turns += delta to origin },
                     interceptPageTurns = { true },
+                    pageTurnSensitivity = sensitivity,
                 ) { false }
                 child = object : View(activity) {
                     override fun onTouchEvent(event: MotionEvent): Boolean {

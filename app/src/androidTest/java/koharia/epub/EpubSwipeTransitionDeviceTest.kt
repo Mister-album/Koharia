@@ -8,9 +8,11 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.kanade.domain.ui.EInkPreferences
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import koharia.epub.model.EpubOpenRequest
 import koharia.epub.service.LocalEpubPublicationService
 import koharia.epub.session.EpubReaderSessionRepository
@@ -32,6 +34,35 @@ import kotlin.math.abs
 
 @RunWith(AndroidJUnit4::class)
 class EpubSwipeTransitionDeviceTest {
+    @Test
+    fun commonSensitivityControlsShortBookSwipesWithAndWithoutEInk() = withReader(false) {
+            scenario,
+            fragment,
+            preferences,
+        ->
+        val readerPreferences = Injekt.get<ReaderPreferences>()
+        preferences.pageTransitionEffect.set(PageTransitionEffect.SLIDE.value)
+        for (eInk in listOf(false, true)) {
+            Injekt.get<EInkPreferences>().enabled.set(eInk)
+            SystemClock.sleep(300)
+            val before = location(fragment)
+            readerPreferences.pageTurnSensitivity.set(PageTurnSensitivity.NORMAL)
+            scenario.onActivity { swipe(fragment.requireView(), true, false, 0.1f, 400) }
+            SystemClock.sleep(500)
+            scenario.onActivity { assertEquals(before, location(fragment)) }
+            readerPreferences.pageTurnSensitivity.set(PageTurnSensitivity.HIGHEST)
+            scenario.onActivity { swipe(fragment.requireView(), true, false, 0.1f, 400) }
+            await(scenario, "Short book swipe eInk=$eInk") {
+                location(fragment).second == before.second + 1 &&
+                    (field(fragment, "pageTransitionOverlay") as View).visibility == View.GONE
+            }
+            readerPreferences.pageTurnSensitivity.set(PageTurnSensitivity.LOWEST)
+            scenario.onActivity { swipe(fragment.requireView(), true, false, 0.1f, 400) }
+            SystemClock.sleep(500)
+            scenario.onActivity { assertEquals(before.second + 1, location(fragment).second) }
+        }
+    }
+
     @Test
     fun everyEffectIsUsedByForwardAndBackwardSwipes() = withReader(false) { scenario, fragment, preferences ->
         for (effect in PageTransitionEffect.entries) {
@@ -180,17 +211,30 @@ class EpubSwipeTransitionDeviceTest {
     private fun field(target: Any, name: String): Any? =
         target.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(target)
 
-    private fun swipe(view: View, forward: Boolean, rightToLeft: Boolean) {
+    private fun swipe(
+        view: View,
+        forward: Boolean,
+        rightToLeft: Boolean,
+        distance: Float = 0.6f,
+        duration: Long = 240,
+    ) {
         val towardLeft = forward != rightToLeft
         val now = SystemClock.uptimeMillis()
         for (step in 0..12) {
-            val fraction = if (towardLeft) 0.8f - step * 0.05f else 0.2f + step * 0.05f
+            val fraction = if (towardLeft) 0.8f - step * distance / 12f else 0.2f + step * distance / 12f
             val action = when (step) {
                 0 -> MotionEvent.ACTION_DOWN
                 12 -> MotionEvent.ACTION_UP
                 else -> MotionEvent.ACTION_MOVE
             }
-            val event = MotionEvent.obtain(now, now + step * 20L, action, view.width * fraction, view.height * 0.6f, 0)
+            val event = MotionEvent.obtain(
+                now,
+                now + step * duration / 12L,
+                action,
+                view.width * fraction,
+                view.height * 0.6f,
+                0,
+            )
             try {
                 view.dispatchTouchEvent(event)
             } finally {
@@ -223,6 +267,7 @@ class EpubSwipeTransitionDeviceTest {
             },
         )
         override(preferences.pageTransitionEffect, PageTransitionEffect.SLIDE.value)
+        override(Injekt.get<ReaderPreferences>().pageTurnSensitivity, PageTurnSensitivity.NORMAL)
         override(Injekt.get<EInkPreferences>().enabled, false)
         val book = File.createTempFile("swipe-transition-fixture-", ".epub", context.cacheDir)
         val chapterId = -SystemClock.elapsedRealtimeNanos()

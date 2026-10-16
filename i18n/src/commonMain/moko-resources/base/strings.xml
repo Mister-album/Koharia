@@ -1982,6 +1982,8 @@
     <string name="epub_no_readable_chapters">This EPUB contains no readable chapters.</string>
     <string name="series_details_load_failed">Could not load this work. It may have been removed.</string>
     <string name="pref_swipe_page_turns">Swipe to turn pages</string>
+    <string name="pref_page_turn_sensitivity">Page turn sensitivity</string>
+    <string name="pref_page_turn_sensitivity_summary">Higher sensitivity requires shorter, slower swipes to turn pages in paginated comic and book readers.</string>
     <string name="shared_config_choose_title">Choose shared settings</string>
     <string name="shared_config_choose_message">Choose which existing settings to use for all libraries. Library contents, filters and server settings will stay unchanged.</string>
     <string name="shared_config_previous">Previous shared settings</string>

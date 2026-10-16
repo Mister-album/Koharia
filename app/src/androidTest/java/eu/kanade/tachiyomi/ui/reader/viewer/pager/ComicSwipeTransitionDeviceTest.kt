@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import koharia.connection.ConnectionPreferences
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.SharedAppPreferences
@@ -59,7 +60,22 @@ class ComicSwipeTransitionDeviceTest {
     @Test
     fun fadeStillTransformsNativeDragging() = verify(ReadingMode.LEFT_TO_RIGHT, PageTransitionEffect.FADE)
 
-    private fun verify(mode: ReadingMode, effect: PageTransitionEffect): Unit = runBlocking(Dispatchers.IO) {
+    @Test
+    fun commonSensitivityControlsShortComicSwipes() {
+        for (mode in listOf(ReadingMode.LEFT_TO_RIGHT, ReadingMode.RIGHT_TO_LEFT, ReadingMode.VERTICAL)) {
+            verify(mode, PageTransitionEffect.NONE, checkSensitivity = true)
+            verify(mode, PageTransitionEffect.SLIDE, checkSensitivity = true)
+        }
+        verify(ReadingMode.LEFT_TO_RIGHT, PageTransitionEffect.CURL, checkSensitivity = true)
+        verify(ReadingMode.LEFT_TO_RIGHT, PageTransitionEffect.NONE, checkSensitivity = true, eInk = true)
+    }
+
+    private fun verify(
+        mode: ReadingMode,
+        effect: PageTransitionEffect,
+        checkSensitivity: Boolean = false,
+        eInk: Boolean = false,
+    ): Unit = runBlocking(Dispatchers.IO) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals("app.koharia.dev.devicefixture", context.packageName)
         val connections = Injekt.get<ConnectionPreferences>()
@@ -90,10 +106,11 @@ class ComicSwipeTransitionDeviceTest {
             override(preferences.pageLayout, PageLayout.SINGLE_PAGE.value)
             override(preferences.pagerPageTransitionEffect, effect.value)
             override(preferences.swipePageTurns, true)
+            override(preferences.pageTurnSensitivity, PageTurnSensitivity.NORMAL)
             override(preferences.imageScaleType, SubsamplingScaleImageView.SCALE_TYPE_CENTER_INSIDE)
             override(preferences.landscapeZoom, false)
             override(preferences.cropBorders, false)
-            override(Injekt.get<EInkPreferences>().enabled, false)
+            override(Injekt.get<EInkPreferences>().enabled, eInk)
             val comic = File(directory, "swipe-fixture.cbz")
             ZipOutputStream(comic.outputStream()).use { zip ->
                 repeat(5) { index ->
@@ -145,6 +162,18 @@ class ComicSwipeTransitionDeviceTest {
                 val states = mutableListOf<Int>()
                 var initialItem = 0
                 val delta = if (mode == ReadingMode.RIGHT_TO_LEFT) -1 else 1
+                if (checkSensitivity) {
+                    scenario.onActivity {
+                        initialItem = viewer.pager.currentItem
+                        it.readerPreferences.pageTurnSensitivity.set(PageTurnSensitivity.LOWEST)
+                        swipe(viewer.pager, mode, distance = 0.1f, duration = 400)
+                    }
+                    SystemClock.sleep(500)
+                    scenario.onActivity {
+                        assertEquals(initialItem, viewer.pager.currentItem)
+                        it.readerPreferences.pageTurnSensitivity.set(PageTurnSensitivity.HIGHEST)
+                    }
+                }
                 scenario.onActivity {
                     assertEquals(effect, viewer.config.pageTransitionEffect)
                     initialItem = viewer.pager.currentItem
@@ -153,14 +182,20 @@ class ComicSwipeTransitionDeviceTest {
                             states += state
                         }
                     })
-                    swipe(viewer.pager, mode, beforeRelease = {
-                        if (effect == PageTransitionEffect.NONE || effect == PageTransitionEffect.CURL) {
-                            assertEquals(initialItem, viewer.pager.currentItem)
-                            assertFalse(states.contains(ViewPager.SCROLL_STATE_DRAGGING))
-                        } else {
-                            assertTrue(states.contains(ViewPager.SCROLL_STATE_DRAGGING))
-                        }
-                    })
+                    swipe(
+                        viewer.pager,
+                        mode,
+                        distance = if (checkSensitivity) 0.1f else 0.6f,
+                        duration = if (checkSensitivity) 400 else 240,
+                        beforeRelease = {
+                            if (effect == PageTransitionEffect.NONE || effect == PageTransitionEffect.CURL) {
+                                assertEquals(initialItem, viewer.pager.currentItem)
+                                assertFalse(states.contains(ViewPager.SCROLL_STATE_DRAGGING))
+                            } else {
+                                assertTrue(states.contains(ViewPager.SCROLL_STATE_DRAGGING))
+                            }
+                        },
+                    )
                     if (effect == PageTransitionEffect.CURL) {
                         val controller = PagerViewer::class.java.getDeclaredField("pageFlipController")
                             .apply { isAccessible = true }.get(viewer) as ComicPageFlipController
@@ -201,10 +236,20 @@ class ComicSwipeTransitionDeviceTest {
         error("Timed out: $name")
     }
 
-    private fun swipe(pager: View, mode: ReadingMode, beforeRelease: () -> Unit) {
+    private fun swipe(
+        pager: View,
+        mode: ReadingMode,
+        distance: Float = 0.6f,
+        duration: Long = 240,
+        beforeRelease: () -> Unit = {},
+    ) {
         val now = SystemClock.uptimeMillis()
         for (step in 0..12) {
-            val fraction = if (mode == ReadingMode.RIGHT_TO_LEFT) 0.2f + step * 0.05f else 0.8f - step * 0.05f
+            val fraction = if (mode == ReadingMode.RIGHT_TO_LEFT) {
+                0.2f + step * distance / 12f
+            } else {
+                0.8f - step * distance / 12f
+            }
             val action = when (step) {
                 0 -> MotionEvent.ACTION_DOWN
                 12 -> MotionEvent.ACTION_UP
@@ -212,7 +257,7 @@ class ComicSwipeTransitionDeviceTest {
             }
             val event = MotionEvent.obtain(
                 now,
-                now + step * 20L,
+                now + step * duration / 12L,
                 action,
                 pager.width * if (mode == ReadingMode.VERTICAL) 0.5f else fraction,
                 pager.height * if (mode == ReadingMode.VERTICAL) fraction else 0.5f,

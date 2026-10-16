@@ -1,5 +1,7 @@
 package koharia.diagnostics
 
+import android.graphics.Rect
+import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -7,12 +9,15 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import cafe.adriel.voyager.navigator.Navigator
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.presentation.more.settings.screen.SettingsCommonReaderScreen
 import eu.kanade.presentation.reader.settings.ComicReaderSettingsContent
 import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
+import koharia.connection.SharedAppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,9 +35,81 @@ import org.junit.runner.RunWith
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 @RunWith(AndroidJUnit4::class)
 class ReaderSettingsOrganizationDeviceTest {
+    @Test
+    fun commonSettingsExposeAndPersistSensitivitySliderWithAndWithoutEInk(): Unit = runBlocking(Dispatchers.IO) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assertEquals("app.koharia.dev.devicefixture", context.packageName)
+        val preference = Injekt.get<SharedAppPreferences>().readerPreferences().pageTurnSensitivity
+        val wasSet = preference.isSet()
+        val previous = preference.get()
+        val eInk = Injekt.get<EInkPreferences>().enabled
+        val eInkWasSet = eInk.isSet()
+        val previousEInk = eInk.get()
+        try {
+            preference.set(PageTurnSensitivity.NORMAL)
+            ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.setContent { TachiyomiTheme { Navigator(SettingsCommonReaderScreen) } }
+                }
+                for (enabled in listOf(false, true)) {
+                    eInk.set(enabled)
+                    for (sensitivity in listOf(
+                        PageTurnSensitivity.HIGHEST,
+                        PageTurnSensitivity.HIGH,
+                        PageTurnSensitivity.NORMAL,
+                        PageTurnSensitivity.LOW,
+                        PageTurnSensitivity.LOWEST,
+                    )) {
+                        val slider = withTimeout(10_000) {
+                            while (true) {
+                                val title = node(
+                                    instrumentation,
+                                    context.stringResource(MR.strings.pref_page_turn_sensitivity),
+                                )
+                                val titleBounds = Rect().also(title::getBoundsInScreen)
+                                val root = instrumentation.uiAutomation.rootInActiveWindow
+                                sliderBelow(root, titleBounds.bottom)?.let { return@withTimeout it }
+                                findScrollable(root)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                                delay(100)
+                            }
+                            error("Unreachable")
+                        }
+                        assertEquals(0f, slider.rangeInfo.min, 0f)
+                        assertEquals(PageTurnSensitivity.entries.lastIndex.toFloat(), slider.rangeInfo.max, 0f)
+                        assertTrue(
+                            slider.performAction(
+                                AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
+                                Bundle().apply {
+                                    putFloat(
+                                        AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE,
+                                        sensitivity.ordinal.toFloat(),
+                                    )
+                                },
+                            ),
+                        )
+                        withTimeout(5_000) {
+                            while (preference.get() != sensitivity) delay(50)
+                        }
+                        node(instrumentation, context.stringResource(sensitivity.titleRes))
+                        assertEquals(
+                            sensitivity,
+                            Injekt.get<SharedAppPreferences>().readerPreferences().pageTurnSensitivity.get(),
+                        )
+                    }
+                }
+            }
+        } finally {
+            if (wasSet) preference.set(previous) else preference.delete()
+            if (eInkWasSet) eInk.set(previousEInk) else eInk.delete()
+        }
+    }
+
     @Test
     fun comicReaderUsesTheCompactSettingsContent(): Unit = runBlocking(Dispatchers.IO) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -144,6 +221,15 @@ class ReaderSettingsOrganizationDeviceTest {
         if (node.isScrollable) return node
         for (index in 0 until node.childCount) findScrollable(node.getChild(index))?.let { return it }
         return null
+    }
+
+    private fun sliderBelow(node: AccessibilityNodeInfo?, top: Int): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val bounds = Rect().also(node::getBoundsInScreen)
+        if (node.rangeInfo != null && bounds.top >= top) return node
+        return (0 until node.childCount)
+            .mapNotNull { sliderBelow(node.getChild(it), top) }
+            .minByOrNull { Rect().also(it::getBoundsInScreen).top }
     }
 
     private fun findByDescription(node: AccessibilityNodeInfo?, description: String): AccessibilityNodeInfo? {
