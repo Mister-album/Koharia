@@ -5,6 +5,7 @@ import androidx.paging.PagingDataEvent
 import androidx.paging.PagingDataPresenter
 import cafe.adriel.voyager.core.annotation.InternalVoyagerApi
 import cafe.adriel.voyager.core.model.ScreenModelStore
+import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import io.mockk.coEvery
@@ -17,6 +18,8 @@ import koharia.domain.epub.interactor.GetEpubProgress
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -75,8 +79,7 @@ class LocalLibraryLoadingTest {
             presenter.loadStateFlow.first { it?.refresh is LoadState.NotLoading }
             assertEquals(listOf(book.id), presenter.snapshot().items.map { it.value.id })
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -111,8 +114,7 @@ class LocalLibraryLoadingTest {
             assertEquals(listOf(book.id), presenter.snapshot().items.map { it.value.id })
             coVerify(exactly = 1) { fixture.source.refreshLibrary() }
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -133,8 +135,7 @@ class LocalLibraryLoadingTest {
             assertNotNull(fixture.model.state.value.refreshError)
             assertEquals(false, fixture.model.state.value.isRefreshing)
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -152,8 +153,7 @@ class LocalLibraryLoadingTest {
             coVerify(exactly = 0) { fixture.source.needsInitialScan() }
             coVerify(exactly = 0) { fixture.source.refreshLibrary() }
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -177,8 +177,7 @@ class LocalLibraryLoadingTest {
             coVerify(exactly = 0) { fixture.source.documentPageCount(any()) }
             coVerify(exactly = 0) { fixture.source.refreshLibrary() }
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -194,8 +193,7 @@ class LocalLibraryLoadingTest {
             coVerify(exactly = 0) { fixture.source.documentPageCount(any()) }
             coVerify(exactly = 0) { fixture.source.refreshLibrary() }
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -223,8 +221,7 @@ class LocalLibraryLoadingTest {
             presenter.presentedIds.first { it.size == 2 }
             coVerify(exactly = 0) { fixture.source.refreshLibrary() }
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -248,8 +245,7 @@ class LocalLibraryLoadingTest {
             presenter.presentedIds.first { it.isEmpty() }
             coVerify(exactly = 0) { fixture.source.refreshLibrary() }
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -274,8 +270,7 @@ class LocalLibraryLoadingTest {
             presenter.presentedIds.first { it == listOf(manga.id) }
             coVerify(exactly = 0) { fixture.source.refreshLibrary() }
         } finally {
-            ScreenModelStore.onDisposeNavigator(fixture.holderKey)
-            Dispatchers.resetMain()
+            dispose(fixture)
         }
     }
 
@@ -296,7 +291,19 @@ class LocalLibraryLoadingTest {
             applied.await()
             coVerify(exactly = 1) { flags.awaitSetDisplayMode(folder, Manga.CHAPTER_DISPLAY_FILE_NAME) }
         } finally {
+            dispose(fixture)
+        }
+    }
+
+    private suspend fun TestScope.dispose(fixture: Fixture) {
+        val modelJob = checkNotNull(fixture.model.screenModelScope.coroutineContext[Job])
+        try {
+            backgroundScope.coroutineContext[Job]?.cancelAndJoin()
             ScreenModelStore.onDisposeNavigator(fixture.holderKey)
+            // Cancellation can finish on IO after Voyager returns; keep Main installed until it does.
+            fixture.initializationJob.join()
+            modelJob.join()
+        } finally {
             Dispatchers.resetMain()
         }
     }
@@ -362,6 +369,7 @@ class LocalLibraryLoadingTest {
         coEvery { source.browseIndexedLibrary(any(), any(), any(), any(), any()) } coAnswers { firstArg() }
         every { mangaRepository.getMangaBySourceIdAsFlow(42) } returns mangas
         val holderKey = UUID.randomUUID().toString()
+        lateinit var initializationJob: Job
         val model = ScreenModelStore.getOrPut(holderKey, null) {
             LocalLibraryScreenModel(
                 sourceId = 42, scope = LibraryContentScope.ALL, initialQuery = null,
@@ -371,9 +379,9 @@ class LocalLibraryLoadingTest {
                 coverCache = mockk(), itemActions = mockk(),
                 chapterRepository = chapters, downloadManager = downloads,
                 parentUrl = parentUrl,
-            )
+            ).also { initializationJob = checkNotNull(it.screenModelScope.coroutineContext[Job]) }
         }
-        return Fixture(model, source, holderKey)
+        return Fixture(model, source, holderKey, initializationJob)
     }
 
     private fun <T> preference(value: T): Preference<T> = mockk<Preference<T>>().also {
@@ -381,5 +389,10 @@ class LocalLibraryLoadingTest {
         every { it.changes() } returns flowOf(value)
     }
 
-    private data class Fixture(val model: LocalLibraryScreenModel, val source: LocalFolderSource, val holderKey: String)
+    private data class Fixture(
+        val model: LocalLibraryScreenModel,
+        val source: LocalFolderSource,
+        val holderKey: String,
+        val initializationJob: Job,
+    )
 }
