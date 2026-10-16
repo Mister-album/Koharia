@@ -41,15 +41,37 @@ Use Windows commands:
 ```powershell
 .\gradlew.bat spotlessApply
 .\gradlew.bat spotlessCheck
+.\gradlew.bat verifyEInkMotion
 .\gradlew.bat :app:compileDebugKotlin
 ```
 
 - Run `spotlessApply` after Kotlin/XML edits when practical.
 - Run `spotlessCheck` for formatting-sensitive work and at least `:app:compileDebugKotlin` for code, schema, or resource changes unless the user requests a lighter workflow.
+- Run `verifyEInkMotion` for every feature addition, modification, or fix as required by [E-Ink Motion Policy](#e-ink-motion-policy). Compilation and formatting checks do not run or replace this gate.
 - For release validation use `.\gradlew.bat :app:assembleRelease`.
 - Focus checks when appropriate: `:data:generateDebugDatabaseInterface`, `:domain:test`, or relevant module tests.
 - If Gradle state is stale, use `.\gradlew.bat --stop` before broader cleanup.
 - Compilation alone does not verify provider integration. Follow the cross-provider verification contract below for shared behavior or provider changes. Documentation-only changes need whitespace, link, and any edited configuration syntax checks; they do not require an app build.
+
+### E-Ink Motion Policy
+
+- E-Ink compatibility is part of every feature's acceptance criteria, including small UI changes and shared/provider screens outside the readers. Inspect affected loading, saving, refreshing, error/retry, dialog, tab, navigation, list, image, and reader states; copying an existing animated component does not establish compliance. Follow the cross-provider contract for all applicable consumers of changed shared UI.
+- Use the shared motion layer and the current `LocalEInkDisplayPolicy` in Compose. View-based and reader code must use the existing `EInkPreferences`/`EInkDisplayPolicy` integration. E-Ink mode must provide a static or immediate state while ordinary mode retains its intended behavior. Do not introduce per-provider motion settings, overwrite the user's animation preferences, or rely only on the Material motion scheme to suppress component-specific animation.
+- Use these shared replacements in feature code; their implementations live in [EInkMotion.kt](presentation-core/src/main/java/tachiyomi/presentation/core/motion/EInkMotion.kt) and [CircularProgressIndicator.kt](presentation-core/src/main/java/tachiyomi/presentation/core/components/CircularProgressIndicator.kt). Both determinate and indeterminate progress indicators must use the shared components. Disabling motion must preserve loading feedback, actual progress updates, content, actions, and accessibility semantics.
+
+| Direct API | Required shared API |
+| --- | --- |
+| Material3 `CircularProgressIndicator` / `LinearProgressIndicator` | `EInkCircularProgressIndicator` / `EInkLinearProgressIndicator` |
+| `AnimatedVisibility` / `AnimatedContent` | `EInkAnimatedVisibility` / `EInkAnimatedContent` |
+| `Modifier.animateContentSize` | `Modifier.eInkAnimateContentSize` |
+| `rememberAnimatedVectorPainter` | `rememberEInkAwareAnimatedVectorPainter` with a meaningful static image |
+| `animate*AsState` | Supply `eInkAnimationSpec` for each animation |
+
+- Other motion paths need a real policy-controlled alternative: programmatic scrolling must jump immediately in E-Ink mode; list item transitions and image crossfades must be disabled; pull-to-refresh and custom/View animators must reach their correct state without motion. Keep infinite animations inside the centralized motion layer with a static E-Ink branch that does not start the animation. Inspect ongoing animations and policy changes, including cancellation where needed; a static-looking frame with an active animation/redraw loop is not sufficient.
+- Run `.\gradlew.bat verifyEInkMotion` against the final working tree for every feature addition, modification, or fix, before reporting completion and before any authorized commit/push. Run it again after subsequent relevant edits. Do not defer this check to CI or substitute `spotlessCheck`, `:app:compileDebugKotlin`, or selected unit tests. Documentation-only changes with no executable, UI resource, or build configuration changes are exempt. Record the command and result; report failures and blockers explicitly, and never count them as passes.
+- The current static rules and reviewed exceptions are defined by [VerifyEInkMotionTask.kt](gradle/build-logic/src/main/kotlin/koharia/gradle/tasks/VerifyEInkMotionTask.kt); [build.gradle.kts](build.gradle.kts) registers the scanned source directories. When adding UI modules/source roots or introducing a motion API, check this coverage and extend it when needed. A passing scan does not prove runtime behavior: inspect each changed call site, not just the presence of a policy symbol somewhere in its file.
+- Fix violations through the shared APIs or a reviewed policy branch. Do not remove the CI gate, weaken assertions, add arbitrary allowlist entries, or use aliases, fully qualified calls, dummy imports, or comments to evade detection. A necessary new exception must document why the shared API does not fit and include focused evidence for both E-Ink and ordinary behavior.
+- For changed motion behavior, verify E-Ink enabled and disabled states using proportionate policy/component tests and affected UI routes. Cover the relevant in-progress and completion/error states, immediate navigation/scrolling, and switching policy while the screen is active where supported. Reuse existing E-Ink tests and isolated fixtures under the device rules above; do not run every provider/device combination for a small shared change. Report static checks, runtime checks, and unverified routes separately. A single screenshot, compilation, or static scan cannot establish absence of continuing animation or redraws; documentation-only work does not require device validation.
 
 ### Security Repair And Validation Workflow
 

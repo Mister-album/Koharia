@@ -43,6 +43,14 @@ Before you start, please note that the ability to use following technologies is 
 
 New providers must satisfy the completion checklist in `AGENTS.md`; default-hidden settings, omitted card state, and no-op callbacks do not count as implemented features. Shared capability work is compatible with the personal-media-library direction and does not authorize restoring public content-source or extension-store ecosystems.
 
+Every feature addition, modification, or fix must follow the authoritative [E-Ink Motion Policy](./AGENTS.md#e-ink-motion-policy), including small loading indicators and screens outside the readers. Reuse its shared components and run the following against the final working tree before completion and any authorized commit/push:
+
+```powershell
+.\gradlew.bat verifyEInkMotion
+```
+
+Compilation and formatting checks do not run or replace this gate. Record its result and the applicable E-Ink enabled/disabled behavior checks in the PR; distinguish static verification from runtime coverage and disclose gaps. The policy defines the documentation-only exemption and proportional device validation requirements.
+
 Device validation must follow [AGENTS.md](./AGENTS.md), including **Staged Dev Update And Read-Only Validation**: use the existing data-preserving dev update authorization, distinguish installation/startup from online validation, and resolve or report concrete prerequisites rather than requesting the same permission again. Remote progress/history writes are not included in that authorization. Keep instrumentation, destructive scenarios, and fault injection in isolated fixture packages. Explicitly select the device, retain installed packages and existing data, and distinguish installed-dev results from validation of changed builds. Documentation-only changes need the relevant whitespace, link, and configuration syntax checks, not an app build.
 
 Security repairs follow the **Security Repair And Validation Workflow** in `AGENTS.md`. Reuse established defect evidence, prioritize fixes and compatibility checks, inspect suites before running specialized reproducers, and report blocked or omitted verification honestly. Do not retry a platform-rejected operation through another wording, task, tool or model.
