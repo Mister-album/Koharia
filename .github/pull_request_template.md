@@ -24,9 +24,9 @@ Do not include credentials or private server/user data. Keep local evidence in .
 
 <!-- List checks actually run and providers/routes covered. Distinguish real-data checks on an authorized emulator dev installation from fixture, real-service, and changed-build tests; record version limitations. Follow AGENTS.md non-destructive and isolated-test boundaries. Shared behavior tests and integration checks serve different purposes. For visual changes include useful sanitized screenshots and relevant theme/tablet checks. -->
 
-- [ ] 已按 `AGENTS.md` 的 **E-Ink Motion Policy** 在最终改动上运行 `verifyEInkMotion` 并记录结果；纯文档豁免须说明原因。 / Followed the E-Ink Motion Policy in `AGENTS.md`: ran `verifyEInkMotion` on the final changes and recorded the result, or explained the documentation-only exemption.
+- [ ] 已按 `AGENTS.md` 的 **Motion Design And E-Ink Compatibility** 运行适用的 `verifyEInkMotion` 并记录结果，或说明不适用原因。 / Followed Motion Design And E-Ink Compatibility in `AGENTS.md`: ran the applicable `verifyEInkMotion` check and recorded its result, or explained why it does not apply.
 
-<!-- 对动效相关改动，记录 E-Ink 开启/关闭时的验证、涉及状态和入口，以及未验证项；静态检查通过不代表运行时无持续动画。 / For motion changes, record E-Ink enabled/disabled checks, affected states/routes, and unverified items; a passing static scan does not prove absence of ongoing animation. -->
+<!-- 对动效改动，分别记录普通模式的预期动画/反馈与 E-Ink 模式的适配验证，范围与改动相称。不得以全局取消动画代替适配；列出涉及状态、入口和未验证项。静态检查不能证明任一模式的运行时表现。 / For motion changes, record intended ordinary-mode animation/feedback and E-Ink adaptation checks, proportional to the change. Globally removing animation is not adaptation. List affected states/routes and unverified items; static checks do not prove either mode's runtime behavior. -->
 
 <!-- Security-related work follows AGENTS.md Security Repair And Validation Workflow. Identify reused evidence and the scope of new checks; distinguish unverified specialized tests from passes. Do not conceal or work around platform review failures. -->
 

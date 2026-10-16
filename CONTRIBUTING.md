@@ -43,13 +43,13 @@ Before you start, please note that the ability to use following technologies is 
 
 New providers must satisfy the completion checklist in `AGENTS.md`; default-hidden settings, omitted card state, and no-op callbacks do not count as implemented features. Shared capability work is compatible with the personal-media-library direction and does not authorize restoring public content-source or extension-store ecosystems.
 
-Every feature addition, modification, or fix must follow the authoritative [E-Ink Motion Policy](./AGENTS.md#e-ink-motion-policy), including small loading indicators and screens outside the readers. Reuse its shared components and run the following against the final working tree before completion and any authorized commit/push:
+Follow [Motion Design And E-Ink Compatibility](./AGENTS.md#motion-design-and-e-ink-compatibility) in `AGENTS.md`: design the ordinary experience with appropriate animations and feedback, then provide conditional E-Ink adaptation through shared components. Extend those components when needed to support the intended design. Globally removing motion to satisfy E-Ink checks is a regression. For UI/motion-related changes within the policy's scope, run the following against the final working tree before completion and any authorized commit/push:
 
 ```powershell
 .\gradlew.bat verifyEInkMotion
 ```
 
-Compilation and formatting checks do not run or replace this gate. Record its result and the applicable E-Ink enabled/disabled behavior checks in the PR; distinguish static verification from runtime coverage and disclose gaps. The policy defines the documentation-only exemption and proportional device validation requirements.
+Compilation and formatting checks do not run or replace this gate. Record its result or the reason it is not applicable. For changed motion behavior, cover both ordinary-mode animations and E-Ink alternatives with verification proportional to the change; distinguish static checks from runtime coverage. The authoritative policy defines exemptions and when device checks are warranted; reusing a verified wrapper does not require a new device suite by itself.
 
 Device validation must follow [AGENTS.md](./AGENTS.md), including **Staged Dev Update And Read-Only Validation**: use the existing data-preserving dev update authorization, distinguish installation/startup from online validation, and resolve or report concrete prerequisites rather than requesting the same permission again. Remote progress/history writes are not included in that authorization. Keep instrumentation, destructive scenarios, and fault injection in isolated fixture packages. Explicitly select the device, retain installed packages and existing data, and distinguish installed-dev results from validation of changed builds. Documentation-only changes need the relevant whitespace, link, and configuration syntax checks, not an app build.
 
