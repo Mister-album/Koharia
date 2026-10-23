@@ -24,6 +24,41 @@ class KomgaShelfCacheTest {
     @TempDir lateinit var directory: File
 
     @Test
+    fun `details cache expires independently of chapter changes and fallback never renews freshness`() {
+        val context = context()
+        var requests = 0
+        var fail = false
+        val client = OkHttpClient.Builder()
+            .addInterceptor(KomgaOfflineInterceptor(context, { "account-a" }) { false })
+            .addInterceptor(KomgaCacheControlInterceptor(context) { "account-a" })
+            .addInterceptor { chain ->
+                requests++
+                if (fail) throw IOException("fixture unavailable")
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                    .code(200).message("OK").body("{}".toResponseBody("application/json".toMediaType())).build()
+            }.build()
+        val original = Request.Builder().url("https://komga.test/api/v1/series/fixture").build()
+        val now = System.currentTimeMillis()
+        fun request(force: Boolean = false, time: Long = now, revision: Long = 0L, account: String = "account-a") =
+            original.forKomgaDetails(account, force, 300_000L, revision, time)
+        fun read(request: Request) = client.newCall(request).execute().use { it.body.string() }
+
+        assertEquals("{}", read(request()))
+        repeat(3) { assertEquals("{}", read(request())) }
+        assertEquals(1, requests)
+        assertEquals("{}", read(request(force = true)))
+        assertEquals(2, requests)
+
+        fail = true
+        repeat(2) { assertEquals("{}", read(request(time = now + 600_000L))) }
+        assertEquals(4, requests, "expired fallback must remain expired on the next open")
+        assertEquals("{}", read(request(revision = Long.MAX_VALUE)))
+        assertEquals(5, requests, "server invalidation bypasses an otherwise fresh entry")
+        assertThrows(IOException::class.java) { read(request(account = "account-b")) }
+        assertEquals(6, requests, "a different account must never reuse the first account's cache")
+    }
+
+    @Test
     fun `warm shelf does not hit network and manual failure retains data`() {
         val context = context()
         var epoch = 0L

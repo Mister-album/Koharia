@@ -41,6 +41,7 @@ import koharia.connection.ConnectionRestoreState
 import koharia.connection.ConnectionSource
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryContentScope
+import koharia.connection.NetworkDiagnostics
 import koharia.connection.ProgressStatusTargets
 import koharia.connection.observeProgressStatusSessions
 import koharia.connection.withConnectionWriteGuard
@@ -188,6 +189,7 @@ class LanraragiSource(
 
     @Synchronized
     override fun onRegistered() {
+        catalogDiagnostic("registered ${preferences.diagnosticState()}")
         if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (closed || registered) return
         registered = true
@@ -196,8 +198,11 @@ class LanraragiSource(
             delay(1000)
             if (hasValidConnection()) {
                 retryPending()
+                var attempt = 0
                 while (repository.lastSync(id) == 0L) {
+                    catalogDiagnostic("bootstrap-check attempt=${++attempt} retryCheckMs=5000")
                     refreshIfStale()
+                    if (!hasValidConnection()) break
                     delay(5_000)
                 }
             }
@@ -226,6 +231,7 @@ class LanraragiSource(
                 { address },
                 { internalAddress },
                 "api/info",
+                diagnosticConnectionId = id,
             ),
         ).also {
             apiAddress = address
@@ -238,7 +244,7 @@ class LanraragiSource(
     override val client get() = api.imageClient
     override val pageLoadConcurrency = 2
     override val pagePrefetchOnActivate = false
-    override val pagePrefetchSize: Int? = 2
+    override val pagePrefetchSize: Int? = 4
     override val preserveDownloadPageBoundaries = true
     override val allowsUnvalidatedNetwork = true
     override val usesSharedDownloadStorage = false
@@ -269,6 +275,7 @@ class LanraragiSource(
     }
 
     override fun close() {
+        catalogDiagnostic("closed")
         closed = true
         lifetime.cancel()
         apiInstance?.close()
@@ -545,7 +552,17 @@ class LanraragiSource(
 
     @Synchronized
     fun startRefresh(explicit: Boolean = false) {
-        if (closed || syncJob?.isActive == true || !hasValidConnection()) return
+        if (closed || syncJob?.isActive == true) {
+            catalogDiagnostic(
+                "refresh-skipped closed=$closed active=${syncJob?.isActive == true} valid=${hasValidConnection()}",
+            )
+            return
+        }
+        if (!hasValidConnection()) {
+            invalidAddress()
+            return
+        }
+        catalogDiagnostic("refresh-start explicit=$explicit")
         lastRefreshAttempt = System.currentTimeMillis()
         syncJob = lifetime.launch {
             val result = refreshLibrary()
@@ -559,7 +576,19 @@ class LanraragiSource(
     }
 
     suspend fun refreshIfStale() {
+        if (closed) return
+        if (!hasValidConnection()) {
+            invalidAddress()
+            return
+        }
+        if ((status.value.error as? LanraragiException)?.reason == LanraragiException.Reason.ADDRESS) {
+            status.value = status.value.copy(error = null)
+        }
         val last = repository.lastSync(id)
+        catalogDiagnostic(
+            "cache-check hasCache=${last > 0} " +
+                "invalidated=${koharia.connection.ConnectionShelfUpdates.version(id) > last}",
+        )
         status.value = status.value.copy(completedAt = last)
         if (!Injekt.get<eu.kanade.domain.base.BasePreferences>().downloadedOnly.get() &&
             koharia.connection.ConnectionShelfCachePolicy.shouldRefresh(
@@ -572,20 +601,55 @@ class LanraragiSource(
     }
 
     override suspend fun refreshLibrary(): Result<ConnectionLibraryRefreshResult> = withContext(Dispatchers.IO) {
+        catalogDiagnostic("refresh-awaiting-catalog-lock")
         refreshLibraryOnIO()
+    }
+
+    private fun catalogDiagnostic(details: String) {
+        if (eu.kanade.tachiyomi.BuildConfig.DEBUG) {
+            NetworkDiagnostics.record(
+                "LanraragiCatalog: connectionId=$id instance=${System.identityHashCode(this)} $details",
+            )
+        }
+    }
+
+    private fun invalidAddress(): LanraragiException {
+        val previous = status.value.error as? LanraragiException
+        val error = previous?.takeIf { it.reason == LanraragiException.Reason.ADDRESS }
+            ?: LanraragiException(LanraragiException.Reason.ADDRESS)
+        status.value = status.value.copy(running = false, error = error)
+        catalogDiagnostic("configuration-invalid ${preferences.diagnosticState()} running=false")
+        return error
     }
 
     private suspend fun refreshLibraryOnIO(): Result<ConnectionLibraryRefreshResult> = catalogMutex.withLock {
         if (closed) throw CancellationException("Connection removed")
+        if (!hasValidConnection()) return@withLock Result.failure(invalidAddress())
         lastRefreshAttempt = System.currentTimeMillis()
         val generation = maxOf(System.currentTimeMillis(), repository.lastSync(id) + 1)
         val activeApi = api
+        val started = System.nanoTime()
+        var currentStage = "starting"
+        var stageStarted = started
+        fun stage(next: String) {
+            val now = System.nanoTime()
+            catalogDiagnostic(
+                "sync=$generation stage-end=$currentStage elapsedMs=${(now - stageStarted) / 1_000_000}",
+            )
+            currentStage = next
+            stageStarted = now
+            catalogDiagnostic("sync=$generation stage-start=$next")
+        }
         logcat { "LanraragiCatalog: start connectionId=$id generation=$generation" }
         status.value = status.value.copy(running = true, count = 0, error = null)
         try {
+            stage("server-info")
             activeApi.serverInfo(true)
+            stage("database-begin")
             repository.begin(id, generation)
+            stage("untagged")
             val untagged = activeApi.untagged()
+            stage("prepare-progress")
             val progressEpoch = readingEpoch.get()
             val progressPrepared = if (koharia.connection.DevReadOnlyValidation.enabled) {
                 false
@@ -595,11 +659,15 @@ class LanraragiSource(
                     true
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
+                    catalogDiagnostic(
+                        "sync=$generation prepare-progress-failed error=${NetworkDiagnostics.errorType(error)}",
+                    )
                     logcat(LogPriority.WARN, error) { "Unable to prepare LANraragi shelf progress refresh" }
                     false
                 }
             }
             var count = 0
+            stage("archives")
             activeApi.streamArchives { entries ->
                 repository.stage(id, generation, entries.map { it.copy(untagged = it.id in untagged) })
                 if (progressPrepared) {
@@ -607,13 +675,21 @@ class LanraragiSource(
                         applyShelfProgressEntries(activeApi, progressEpoch, entries)
                     } catch (error: Exception) {
                         if (error is CancellationException) throw error
+                        catalogDiagnostic(
+                            "sync=$generation apply-progress-failed error=${NetworkDiagnostics.errorType(error)}",
+                        )
                         logcat(LogPriority.WARN, error) { "Unable to apply LANraragi shelf progress batch" }
                     }
                 }
                 count += entries.size
+                if (count == entries.size || count % 1000 == 0) {
+                    catalogDiagnostic("sync=$generation archives-staged count=$count")
+                }
                 status.value = status.value.copy(count = count)
             }
+            stage("tanks")
             repository.stage(id, generation, activeApi.tanks())
+            stage("categories")
             val categories = activeApi.categories().map { category ->
                 if (category.search.isBlank()) {
                     category
@@ -627,17 +703,29 @@ class LanraragiSource(
             }
             repository.stage(id, generation, categories)
             val completedAt = System.currentTimeMillis()
+            stage("publish")
             repository.publish(id, generation, completedAt)
             logcat { "LanraragiCatalog: published connectionId=$id generation=$generation archives=$count" }
             preferences.markIndexed(activeApi.base.toString())
             status.value = LanraragiSyncStatus(count = count, completedAt = completedAt)
+            stage("completed")
+            catalogDiagnostic(
+                "sync=$generation success elapsedMs=${(System.nanoTime() - started) / 1_000_000} count=$count",
+            )
             val result = ConnectionLibraryRefreshResult(count, completedAt)
             refreshes.emit(result)
             retryPending()
             Result.success(result)
         } catch (error: Throwable) {
+            catalogDiagnostic(
+                "sync=$generation failed stage=$currentStage elapsedMs=${(System.nanoTime() - started) / 1_000_000} " +
+                    "error=${NetworkDiagnostics.errorType(error)} " +
+                    "reason=${(error as? LanraragiException)?.reason} status=${(error as? LanraragiException)?.status}",
+            )
+            stage("abort")
             withContext(NonCancellable) { repository.abort(id, generation) }
             status.value = status.value.copy(running = false, error = error.takeUnless { it is CancellationException })
+            catalogDiagnostic("sync=$generation stopped running=false canceled=${error is CancellationException}")
             if (error is CancellationException) throw error
             Result.failure(error)
         }
@@ -935,6 +1023,7 @@ class LanraragiSource(
 
     /** Refresh reading state independently of the shelf catalogue and without creating history. */
     suspend fun refreshShelfProgress() {
+        if (koharia.connection.DevReadOnlyValidation.enabled) return
         if (closed || ConnectionRestoreState.isRestoring) return
         if (synchronized(this) { syncJob?.isActive == true }) return
         val activeApi = api

@@ -24,7 +24,9 @@ class ConnectionWriteGuardTest {
             requests.incrementAndGet()
             if (exchange.requestURI.path == "/pause") paused.set(true)
             exchange.requestBody.close()
-            if (exchange.requestURI.path == "/lost" && dropNext.getAndSet(false)) {
+            if (exchange.requestURI.path == "/always-lost" ||
+                (exchange.requestURI.path == "/lost" && dropNext.getAndSet(false))
+            ) {
                 exchange.close()
                 return@createContext
             }
@@ -41,6 +43,30 @@ class ConnectionWriteGuardTest {
         server.stop(0)
         client.connectionPool.evictAll()
         client.dispatcher.executorService.shutdown()
+    }
+
+    @Test
+    fun `lost read response recovers once without weakening mutation guard`() {
+        client.newCall(Request.Builder().url(url + "lost").build()).execute().use {
+            assertEquals(200, it.code)
+        }
+        assertEquals(2, requests.get())
+    }
+
+    @Test
+    fun `read recovery is bounded`() {
+        assertThrows(IOException::class.java) {
+            client.newCall(Request.Builder().url(url + "always-lost").build()).execute().close()
+        }
+        assertEquals(2, requests.get())
+    }
+
+    @Test
+    fun `explicit replayable query post can recover`() {
+        client.newCall(
+            Request.Builder().url(url + "lost").post(ByteArray(0).toRequestBody()).connectionReadOnly().build(),
+        ).execute().use { assertEquals(200, it.code) }
+        assertEquals(2, requests.get())
     }
 
     @Test

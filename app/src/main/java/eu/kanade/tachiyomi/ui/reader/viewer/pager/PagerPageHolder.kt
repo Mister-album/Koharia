@@ -7,15 +7,18 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.BitmapDrawable
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.core.view.isVisible
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.SCALE_TYPE_CENTER_INSIDE
 import eu.kanade.presentation.util.formattedMessage
+import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderImagePreview
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
@@ -74,7 +77,22 @@ class PagerPageHolder(
     private var spreadDisplayed = false
     private var physicalSplitFraction = 0.5f
 
+    private fun tracePrefetch(stage: String) {
+        if (eu.kanade.tachiyomi.BuildConfig.DEBUG &&
+            android.util.Log.isLoggable("ReaderPrefetch", android.util.Log.DEBUG)
+        ) {
+            android.util.Log.d(
+                "ReaderPrefetch",
+                "holder=${System.identityHashCode(this)} page=${page.index} stage=$stage ready=$spreadDisplayed",
+            )
+        }
+    }
+
     init {
+        // A page turn may reveal this holder before its loader or decoder has started.
+        // Make that first frame a labelled loading state, never an uninitialised empty page.
+        initProgressIndicator()
+        tracePrefetch("created")
         slot.pages.forEach { physicalPage ->
             loadJobs += scope.launch { loadPageAndProcessStatus(physicalPage) }
         }
@@ -83,6 +101,7 @@ class PagerPageHolder(
     @SuppressLint("ClickableViewAccessibility")
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        tracePrefetch("detached")
         loadJobs.forEach(Job::cancel)
         loadJobs.clear()
         renderJob?.cancel()
@@ -90,6 +109,12 @@ class PagerPageHolder(
         clearPairViews()
         recycle()
         scope.cancel()
+    }
+
+    override fun onViewAdded(child: View) {
+        super.onViewAdded(child)
+        // Image views are added while decoding. Keep loading feedback above them until display.
+        progressIndicator?.bringToFront()
     }
 
     fun pageAt(x: Float, y: Float): ReaderPage {
@@ -105,6 +130,8 @@ class PagerPageHolder(
     }
 
     internal fun isTransitionTargetReady(): Boolean = spreadDisplayed
+
+    internal fun hasTransitionTargetFailed(): Boolean = errorLayout != null
 
     override fun visibleImageBounds(): RectF? {
         if (pairViews.isEmpty()) return super.visibleImageBounds()
@@ -165,6 +192,7 @@ class PagerPageHolder(
     }
 
     override fun onPageSelected(forward: Boolean) {
+        tracePrefetch("selected")
         if (pairViews.isEmpty()) {
             super.onPageSelected(forward)
         } else {
@@ -176,7 +204,10 @@ class PagerPageHolder(
 
     private fun initProgressIndicator() {
         if (progressIndicator == null) {
-            progressIndicator = ReaderProgressIndicator(context)
+            progressIndicator = ReaderProgressIndicator(
+                context,
+                label = context.stringResource(MR.strings.reader_buffering_waiting),
+            )
             addView(progressIndicator)
         }
     }
@@ -227,6 +258,7 @@ class PagerPageHolder(
     }
 
     private suspend fun renderPages() {
+        tracePrefetch("read-start")
         progressIndicator?.setProgress(0)
         failedPage = null
         var contentPage: ReaderPage? = null
@@ -251,6 +283,7 @@ class PagerPageHolder(
                 }
             }
 
+            tracePrefetch("read-complete")
             if (viewer.config.doublePages) {
                 val classifications = withIOContext {
                     pageContents.mapValues { (_, content) ->
@@ -330,8 +363,10 @@ class PagerPageHolder(
 
     private suspend fun renderSingle(content: PageContent) {
         val processed = withIOContext { process(page, content) }
+        tracePrefetch("processed")
         try {
             val isAnimated = processed is PageContent.Encoded && ImageUtil.isAnimatedAndSupported(processed.source)
+            if (!isAnimated) withIOContext { preparePreview(processed) }
             val background = if (!isAnimated) automaticBackground(processed) else null
             withUIContext {
                 clearPairViews()
@@ -356,6 +391,10 @@ class PagerPageHolder(
     }
 
     private suspend fun renderTiledPair(firstContent: PageContent, secondContent: PageContent) {
+        withIOContext {
+            preparePreview(firstContent)
+            preparePreview(secondContent)
+        }
         val firstBackground = automaticBackground(firstContent)
         val secondBackground = automaticBackground(secondContent)
         withUIContext {
@@ -403,8 +442,8 @@ class PagerPageHolder(
                             displayedPairViews++
                             if (displayedPairViews == physicalPages.size && !spreadDisplayed) {
                                 spreadDisplayed = true
+                                tracePrefetch("image-ready")
                                 progressIndicator?.hide()
-                                viewer.onTransitionTargetReady(slot)
                                 viewer.activity.onPagesDisplayed(slot.pages)
                             }
                         }
@@ -467,11 +506,23 @@ class PagerPageHolder(
         when (content) {
             is PageContent.Encoded -> {
                 val source = if (cloneEncodedSource) content.source.peek() else content.source
-                view.setImage(source, isAnimated, config)
+                view.setImage(source, isAnimated, config, content.preview)
             }
             is PageContent.Rendered -> {
                 view.setImage(BitmapDrawable(view.resources, content.take()), config)
             }
+        }
+    }
+
+    private fun preparePreview(content: PageContent) {
+        // Preview and final tiles must share source dimensions, crop and colour settings.
+        if (content is PageContent.Encoded && !ImageUtil.isAnimatedAndSupported(content.source)) {
+            content.preview = ReaderImagePreview.decode(
+                content.source,
+                cropBorders = viewer.config.imageCropBorders,
+                displayProfile = TachiyomiImageDecoder.displayProfile,
+            )
+            tracePrefetch("preview-prepared")
         }
     }
 
@@ -576,14 +627,13 @@ class PagerPageHolder(
         super.onImageLoaded()
         if (spreadDisplayed) return
         spreadDisplayed = true
+        tracePrefetch("image-ready")
         progressIndicator?.hide()
-        viewer.onTransitionTargetReady(slot)
         viewer.activity.onPagesDisplayed(slot.pages)
     }
 
     override fun onImageLoadError(error: Throwable?) {
         super.onImageLoadError(error)
-        viewer.onTransitionTargetFailed(slot)
         setError(error, failedPage ?: page)
     }
 
@@ -637,7 +687,12 @@ class PagerPageHolder(
         fun recycle()
 
         class Encoded(val source: BufferedSource, override val isSplit: Boolean = false) : PageContent {
-            override fun recycle() = Unit
+            var preview: ReaderImagePreview? = null
+
+            override fun recycle() {
+                preview?.recycle()
+                preview = null
+            }
         }
 
         class Rendered(bitmap: Bitmap, override val isSplit: Boolean = false) : PageContent {

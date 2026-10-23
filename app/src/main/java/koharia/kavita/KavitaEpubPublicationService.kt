@@ -6,6 +6,7 @@ import koharia.connection.ConnectionAddressRouter
 import koharia.connection.SharedAppPreferences
 import koharia.epub.cache.EpubCacheManager
 import koharia.epub.model.EpubOpenRequest
+import koharia.epub.replacement.installTextReplacement
 import koharia.epub.service.installEpubXhtmlCompatibility
 import koharia.epub.service.requireReadableEpub
 import koharia.epub.service.withEpubPositionsController
@@ -57,6 +58,7 @@ class KavitaEpubPublicationService(
     private val cache: EpubCacheManager = Injekt.get(),
 ) {
     suspend fun open(request: EpubOpenRequest, initial: Locator?): EpubReaderSession {
+        val replacements = koharia.epub.replacement.ReplacementPublication(request.replacements)
         val ref = session.identity.chapter(requireNotNull(request.remotePublication).resourceId)
         require(ref.format == 3)
         session.catalog.requireLibrary(ref.libraryId)
@@ -102,6 +104,7 @@ class KavitaEpubPublicationService(
             DefaultPublicationParser(application, http, AssetRetriever(application.contentResolver, http), null)
         val publication = PublicationOpener(parser).open(asset, allowUserInteraction = false, onCreatePublication = {
             installEpubXhtmlCompatibility()
+            installTextReplacement(replacements)
         }).getOrElse {
             asset.close()
             throw IOException(it.message)
@@ -115,6 +118,7 @@ class KavitaEpubPublicationService(
             navigatorFactory = EpubNavigatorFactory(positioned.publication),
             initialLocator = initial,
             positionsController = positioned.controller,
+            replacements = replacements,
         )
     }
 

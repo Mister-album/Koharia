@@ -82,6 +82,18 @@ class BackupRestorer(
         directoryBindings: Map<String, String>,
     ) {
         val backup = BackupDecoder(context).decode(uri, password)
+        var replacementEntries = eu.kanade.tachiyomi.data.backup.models.TextReplacementBackup.decode(
+            backup.textReplacement,
+        )
+            .filter {
+                if (it.entry.scope ==
+                    koharia.domain.textreplacement.ReplacementScope.GLOBAL
+                ) {
+                    options.appSettings
+                } else {
+                    options.libraryEntries
+                }
+            }
         val inventory = BackupConnectionInventory.read(backup)
         val recoveryKey = BackupRestoreKey.create(backup, options, directoryBindings)
         val libraryOwners = if (options.libraryEntries) {
@@ -200,6 +212,28 @@ class BackupRestorer(
                         },
                         recoveryKey = recoveryKey,
                     ) { targets ->
+                        replacementEntries = replacementEntries.map { saved ->
+                            val oldId = saved.entry.context.connectionId
+                            val target = targets[oldId]
+                            if (saved.entry.scope ==
+                                koharia.domain.textreplacement.ReplacementScope.GLOBAL
+                            ) {
+                                saved
+                            } else if (target == null) {
+                                saved.copy(
+                                    entry = saved.entry.copy(context = saved.entry.context.copy(connectionId = 0)),
+                                )
+                            } else {
+                                val reference = BackupConnectionReferences(oldId, target.id)
+                                saved.copy(
+                                    entry = saved.entry.copy(
+                                        context = saved.entry.context.copy(connectionId = target.id),
+                                    ),
+                                    seriesUrl = saved.seriesUrl?.let(reference::url),
+                                    bookUrl = saved.bookUrl?.let(reference::url),
+                                )
+                            }
+                        }
                         appPreferences = BackupAppConnectionReferences.remap(backup.backupPreferences, targets)
                         val references = targets.mapValues { (old, profile) ->
                             BackupConnectionReferences(old, profile.id)
@@ -238,6 +272,15 @@ class BackupRestorer(
             }
         } else {
             restoreData()
+        }
+        val replacementConflicts = eu.kanade.tachiyomi.data.backup.models.TextReplacementBackup.restore(
+            replacementEntries,
+        )
+        if (replacementConflicts >
+            0
+        ) {
+            errors +=
+                Date() to context.stringResource(MR.strings.replacement_restore_conflicts, replacementConflicts)
         }
     }
 

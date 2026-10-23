@@ -19,25 +19,40 @@ fun Throwable.hasPausedConnectionWrites(): Boolean =
 class ConnectionWriteGuard(private val paused: () -> Boolean) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        if (!request.isReadOnly() && (DevReadOnlyValidation.enabled || paused())) throw ConnectionWritesPaused()
+        if (!request.isConnectionReadOnly() &&
+            (DevReadOnlyValidation.enabled || paused())
+        ) {
+            throw ConnectionWritesPaused()
+        }
         val response = chain.proceed(request)
-        if (!request.isReadOnly() && (DevReadOnlyValidation.enabled || paused())) {
+        if (!request.isConnectionReadOnly() && (DevReadOnlyValidation.enabled || paused())) {
             response.close()
             throw ConnectionWritesPaused()
         }
         return response
     }
-
-    private fun Request.isReadOnly() = method in setOf("GET", "HEAD", "OPTIONS") ||
-        tag(ConnectionAddressRouter.ReadOnlyRequest::class.java) != null
 }
 
-fun OkHttpClient.withConnectionWriteGuard(connectionId: Long): OkHttpClient =
-    withConnectionWriteGuard { Injekt.get<ConnectionIdentityChanges>().isPaused(connectionId) }
+internal fun Request.isConnectionReadOnly() = method in setOf("GET", "HEAD", "OPTIONS") ||
+    tag(ConnectionAddressRouter.ReadOnlyRequest::class.java) != null
 
-internal fun OkHttpClient.withConnectionWriteGuard(paused: () -> Boolean): OkHttpClient = newBuilder()
+fun OkHttpClient.withConnectionWriteGuard(connectionId: Long, retryReads: Boolean = true): OkHttpClient =
+    withConnectionWriteGuard({ Injekt.get<ConnectionIdentityChanges>().isPaused(connectionId) }, retryReads)
+
+internal fun OkHttpClient.withConnectionWriteGuard(paused: () -> Boolean): OkHttpClient =
+    withConnectionWriteGuard(paused, retryReads = true)
+
+internal fun OkHttpClient.withConnectionWriteGuard(
+    paused: () -> Boolean,
+    retryReads: Boolean,
+): OkHttpClient = newBuilder()
     // A failed transport cannot tell whether a remote mutation already committed.
     .retryOnConnectionFailure(false)
+    .apply {
+        if (retryReads && interceptors().none { it is ConnectionReadRetryInterceptor }) {
+            addInterceptor(ConnectionReadRetryInterceptor())
+        }
+    }
     .addNetworkInterceptor(ConnectionWriteGuard(paused))
     .build()
 

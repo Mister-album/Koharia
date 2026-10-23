@@ -16,6 +16,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(libs.re2j)
     implementation(projects.sourceApi)
     implementation(projects.core.common)
 

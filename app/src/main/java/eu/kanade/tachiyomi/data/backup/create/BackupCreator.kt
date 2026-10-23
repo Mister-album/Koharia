@@ -97,6 +97,13 @@ class BackupCreator(
             }
 
             val backup = Backup(
+                textReplacement = if (options.appSettings ||
+                    options.libraryEntries
+                ) {
+                    eu.kanade.tachiyomi.data.backup.models.TextReplacementBackup.capture()
+                } else {
+                    null
+                },
                 backupManga = backupManga,
                 backupCategories = backupCategories(options),
                 backupSources = backupSources(backupManga),

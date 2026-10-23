@@ -35,9 +35,11 @@ import koharia.epub.settings.EpubPreferencesBridge
 import koharia.tts.progress.TtsProgressNotifier
 import koharia.tts.reader.TtsTextModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import org.json.JSONObject
@@ -108,6 +110,7 @@ class EpubReaderFragment : Fragment() {
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
     private var retainedSession: koharia.epub.session.EpubReaderSession? = null
+    private val replacementNavigation = koharia.epub.replacement.ReplacementNavigation()
     private val fontManager: EpubFontManager = Injekt.get()
     private val eInkPreferences: EInkPreferences = Injekt.get()
     private val sharedAppPreferences: SharedAppPreferences = Injekt.get()
@@ -432,6 +435,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        replacementNavigation.cancel()
         pdfAnchorCaptureJob?.cancel()
         pdfAnchorCaptureJob = null
         kavitaCaptureJob?.cancel()
@@ -498,7 +502,7 @@ class EpubReaderFragment : Fragment() {
             "[EpubReaderFragment.goTo link] rawHref=$rawHref baseHref=$baseHref anchor=$anchor"
         }
         if (userInitiated) host?.onManualReadingNavigation()
-        return navigator.go(publication.toNavigatorLocator(locator))
+        return navigateWithTextReplacement(navigator, publication, locator)
     }
 
     suspend fun capturePdfSourceAnchor() {
@@ -602,7 +606,52 @@ class EpubReaderFragment : Fragment() {
                 restorePendingKavitaLocator(navigator, navigator.currentLocator.value)
             }
         }
-        return navigator.go(publication.toNavigatorLocator(locator))
+        return navigateWithTextReplacement(navigator, publication, locator)
+    }
+
+    private fun navigateWithTextReplacement(
+        navigator: EpubNavigatorFragment,
+        publication: org.readium.r2.shared.publication.Publication,
+        locator: Locator,
+    ): Boolean {
+        replacementNavigation.cancel()
+        val session = retainedSession ?: return false
+        val replacement = session.replacements
+        if (replacement == null || replacement.rules.rules.isEmpty()) {
+            return navigator.go(publication.toNavigatorLocator(locator))
+        }
+        replacementNavigation.launch(
+            scope = viewLifecycleOwner.lifecycleScope,
+            prepare = {
+                if (!session.retain()) {
+                    false
+                } else {
+                    try {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                replacement.ensureMapped(
+                                    publication,
+                                    publication.toNavigatorLocator(locator).href,
+                                    active = true,
+                                )
+                            }
+                        } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            // Navigator owns resource-read error presentation; it will retry the read.
+                        }
+                        true
+                    } finally {
+                        session.release()
+                    }
+                }
+            },
+            navigate = {
+                if (retainedSession === session && readyNavigatorFragment() === navigator) {
+                    navigator.go(publication.toNavigatorLocator(locator))
+                }
+            },
+        )
+        return true
     }
 
     private suspend fun restorePendingKavitaLocator(navigator: EpubNavigatorFragment, location: Locator) {
@@ -615,6 +664,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     fun goForward(origin: PageTurnOrigin? = null): Boolean {
+        replacementNavigation.cancel()
         lastReadingInteraction = SystemClock.uptimeMillis()
         val navigator = readyNavigatorFragment() ?: return false
         host?.onManualReadingNavigation()
@@ -630,6 +680,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     fun goBackward(origin: PageTurnOrigin? = null): Boolean {
+        replacementNavigation.cancel()
         lastReadingInteraction = SystemClock.uptimeMillis()
         val navigator = readyNavigatorFragment() ?: return false
         host?.onManualReadingNavigation()
@@ -670,6 +721,7 @@ class EpubReaderFragment : Fragment() {
     }
 
     fun cancelPageTransition() {
+        replacementNavigation.cancel()
         pageTransitionController?.cancel()
     }
 
@@ -997,6 +1049,7 @@ class EpubReaderFragment : Fragment() {
             override fun onDrag(event: DragEvent): Boolean {
                 lastReadingInteraction = SystemClock.uptimeMillis()
                 if (event.type == DragEvent.Type.Start) {
+                    replacementNavigation.cancel()
                     pageTransitionController?.cancel()
                     host?.onManualReadingNavigation(dragging = true)
                 } else if (event.type == DragEvent.Type.End) {
@@ -1013,6 +1066,18 @@ class EpubReaderFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 navigator.currentLocator.collect { locator ->
+                    val session = retainedSession ?: return@collect
+                    if (!session.retain()) return@collect
+                    try {
+                        withContext(Dispatchers.IO) {
+                            session.replacements?.ensureMapped(session.publication, locator.href, active = true)
+                        }
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                    } finally {
+                        session.release()
+                    }
+                    if (retainedSession !== session || navigator.currentLocator.value != locator) return@collect
                     if (locator.href.toString().contains("koharia-epub/")) {
                         navigator.evaluateJavascript(koharia.kavita.KAVITA_SELECTION_SCRIPT)
                         koharia.kavita.renderKavitaHighlights(navigator, remoteHighlights)

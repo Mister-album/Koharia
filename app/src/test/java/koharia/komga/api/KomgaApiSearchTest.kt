@@ -1,6 +1,8 @@
 package koharia.komga.api
 
 import eu.kanade.tachiyomi.network.HttpException
+import koharia.connection.ConnectionWriteGuard
+import koharia.connection.ConnectionWritesPaused
 import koharia.source.komga.KomgaCachePolicy
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -22,6 +24,39 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class KomgaApiSearchTest {
+
+    @Test
+    fun `paused writes allow series and book queries but still block mutations`() {
+        val sent = mutableListOf<Request>()
+        val client = OkHttpClient.Builder()
+            .addInterceptor(ConnectionWriteGuard { true })
+            .addInterceptor { chain ->
+                sent += chain.request()
+                response(chain.request(), 200)
+            }.build()
+        val api = apiClient(client)
+        for (type in listOf(KomgaApiClient.SearchType.SERIES, KomgaApiClient.SearchType.BOOKS)) {
+            for (page in 1..2) {
+                val request = api.searchListRequest(
+                    page = page,
+                    query = "fixture",
+                    type = type,
+                    defaultLibraries = setOf("fixture-library"),
+                    readStatuses = setOf("UNREAD"),
+                    cachePolicy = KomgaCachePolicy.NetworkFirst,
+                )
+                client.newCall(request).execute().use { assertEquals(200, it.code) }
+            }
+        }
+        val mutation = Request.Builder().url("https://komga.test/api/v1/books/fixture/read-progress")
+            .patch("{}".toRequestBody("application/json".toMediaType())).build()
+        assertThrows(ConnectionWritesPaused::class.java) { client.newCall(mutation).execute().close() }
+        // Untagged POST remains blocked, even when its URL resembles a query endpoint.
+        assertThrows(ConnectionWritesPaused::class.java) {
+            client.newCall(request("POST")).execute().close()
+        }
+        assertEquals(4, sent.size)
+    }
 
     @Test
     fun `repository includes tag union in modern requests and legacy fallback for both resource types`() = runTest {

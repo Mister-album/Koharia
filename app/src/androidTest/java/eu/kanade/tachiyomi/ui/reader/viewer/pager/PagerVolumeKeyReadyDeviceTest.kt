@@ -8,17 +8,20 @@ import android.graphics.Paint
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.core.view.children
+import androidx.core.view.isVisible
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.viewpager.widget.ViewPager
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.ui.EInkPreferences
+import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import koharia.connection.ConnectionPreferences
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.SharedAppPreferences
@@ -45,53 +48,46 @@ import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-/**
- * Verifies volume key paging while E-Ink mode forces [PageTransitionEffect.NONE], which is the
- * configuration in which a page that is still loading used to be revealed as a blank placeholder.
- */
+/** Verifies that selected pages and visible loading feedback do not wait for image readiness. */
 @RunWith(AndroidJUnit4::class)
 class PagerVolumeKeyReadyDeviceTest {
+    @Test
+    fun twoFollowingPagesRenderBeforeSelection() = verify(prefetchOnly = true)
 
     @Test
-    fun rapidVolumeKeysNeverRevealAPageThatIsStillRendering() = verify(presses = 10)
+    fun rightToLeftPreparesTwoFollowingPages() = verify(mode = ReadingMode.RIGHT_TO_LEFT, prefetchOnly = true)
 
     @Test
-    fun queuedReverseKeysDrainWithoutAnimation() = verify(presses = 3, reverseAfterWaiting = true, eInkMode = false)
+    fun eInkPreparesTwoFollowingPages() = verify(eInkMode = true, prefetchOnly = true)
 
     @Test
-    fun queuedReverseKeysDrainInEInkMode() = verify(presses = 3, reverseAfterWaiting = true)
+    fun allEffectsNavigateBeforeSlowImageFinishes() {
+        PageTransitionEffect.entries.forEach { effect -> verify(effect = effect, readyDelayMs = 2_500) }
+    }
 
     @Test
-    fun queuedReverseKeysDrainWithDefaultPrefetch() = verify(
-        presses = 3,
-        reverseAfterWaiting = true,
-        eInkMode = false,
-        retainReadyTargets = false,
-    )
+    fun eInkNavigatesBeforeSlowImageFinishes() = verify(eInkMode = true, readyDelayMs = 2_500)
 
     @Test
-    fun queuedReverseKeysDrainRightToLeft() = verify(
-        presses = 3,
-        reverseAfterWaiting = true,
-        eInkMode = false,
+    fun rightToLeftNavigatesBeforeSlowImageFinishes() = verify(
         mode = ReadingMode.RIGHT_TO_LEFT,
+        readyDelayMs = 2_500,
     )
 
     @Test
-    fun queuedReverseKeysDrainVertically() = verify(
-        presses = 3,
-        reverseAfterWaiting = true,
-        eInkMode = false,
-        mode = ReadingMode.VERTICAL,
-    )
+    fun verticalNavigatesBeforeSlowImageFinishes() = verify(mode = ReadingMode.VERTICAL, readyDelayMs = 2_500)
+
+    @Test
+    fun rapidVolumeKeysAndReverseDoNotWaitForDecode() = verify(reverseAfterWaiting = true)
 
     private fun verify(
-        presses: Int,
+        prefetchOnly: Boolean = false,
         reverseAfterWaiting: Boolean = false,
-        eInkMode: Boolean = true,
-        retainReadyTargets: Boolean = true,
+        eInkMode: Boolean = false,
         mode: ReadingMode = ReadingMode.LEFT_TO_RIGHT,
-    ) = runBlocking(Dispatchers.IO) {
+        readyDelayMs: Long = 0,
+        effect: PageTransitionEffect = PageTransitionEffect.NONE,
+    ): Unit = runBlocking(Dispatchers.IO) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         check(context.packageName == "app.koharia.dev.devicefixture")
         val connections = Injekt.get<ConnectionPreferences>()
@@ -127,7 +123,7 @@ class PagerVolumeKeyReadyDeviceTest {
             override(preferences.pageLayout, PageLayout.SINGLE_PAGE.value)
             override(preferences.dualPageSplitPaged, false)
             override(preferences.navigateToPan, false)
-            override(preferences.pagerPageTransitionEffect, PageTransitionEffect.NONE.value)
+            override(preferences.pagerPageTransitionEffect, effect.value)
             override(Injekt.get<BasePreferences>().shownOnboardingFlow, true)
             // E-Ink mode is what forces the transition effect to NONE on e-ink hardware.
             override(eInkPreferences.enabled, eInkMode)
@@ -173,93 +169,94 @@ class PagerVolumeKeyReadyDeviceTest {
                     ),
                 ),
             ).single()
-            val initialPage = if (reverseAfterWaiting) 5 else 0
+            val initialPage = 5
             val intent = ReaderActivity.newIntent(context, manga.id, chapter.id, sourceId, pageIndex = initialPage)
             FixtureActivityLauncher.launch<ReaderActivity>(intent).use { scenario ->
                 awaitRenderedPage(scenario, initialPage)
-                if (reverseAfterWaiting) {
-                    if (retainReadyTargets) {
-                        scenario.onActivity { activity ->
-                            val viewer = activity.viewModel.state.value.viewer as PagerViewer
-                            viewer.pager.offscreenPageLimit = presses + 1
-                        }
-                        for (page in initialPage + 1 - presses..initialPage + 1) {
-                            awaitRenderedPage(scenario, page, requireSelected = false)
-                        }
-                    } else {
-                        awaitRenderedPage(scenario, initialPage + 1, requireSelected = false)
+                awaitRenderedPage(scenario, initialPage + 1, requireSelected = false)
+                if (prefetchOnly) {
+                    awaitRenderedPage(scenario, initialPage + 2, requireSelected = false)
+                    scenario.onActivity { activity ->
+                        val viewer = activity.viewModel.state.value.viewer as PagerViewer
+                        assertEquals(initialPage, (adapter(viewer).currentSlot() as PagerSlot.Pages).first.index)
+                        assertTrue(viewer.pager.children.filterIsInstance<PagerPageHolder>().count() <= 5)
                     }
+                    return@use
                 }
-                val revealedWhileLoading = mutableListOf<String>()
+                lateinit var slowPage: eu.kanade.tachiyomi.ui.reader.model.ReaderPage
                 scenario.onActivity { activity ->
                     activity.hideMenu()
                     val viewer = activity.viewModel.state.value.viewer as PagerViewer
-                    assertFalse(
-                        "Volume keys must be usable in this scenario",
-                        activity.viewModel.state.value.menuVisible,
-                    )
-                    assertEquals(
-                        "E-Ink mode must select the instant page turn this test covers",
-                        PageTransitionEffect.NONE,
-                        viewer.config.pageTransitionEffect,
-                    )
-                    viewer.pager.addOnPageChangeListener(
-                        object : ViewPager.SimpleOnPageChangeListener() {
-                            override fun onPageSelected(position: Int) {
-                                val slot = adapter(viewer).slots.getOrNull(position) as? PagerSlot.Pages
-                                    ?: return
-                                val holder = viewer.pager.children.filterIsInstance<PagerPageHolder>()
-                                    .firstOrNull { it.slot == slot }
-                                if (holder?.isTransitionTargetReady() != true) {
-                                    revealedWhileLoading += "position=$position page=${slot.progressPage.number}"
-                                }
-                            }
-                        },
-                    )
-                    fun press(key: Int) {
-                        viewer.handleKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, key))
-                        viewer.handleKeyEvent(KeyEvent(KeyEvent.ACTION_UP, key))
-                    }
-                    if (reverseAfterWaiting) {
-                        val currentPosition = viewer.pager.currentItem
-                        val target = adapter(viewer).slots.filterIsInstance<PagerSlot.Pages>()
-                            .single { it.first.index == initialPage + 1 }
-                        val holder = viewer.pager.children.filterIsInstance<PagerPageHolder>().single {
-                            it.slot ==
-                                target
-                        }
-                        // Hold readiness to reproduce a slow offscreen render without timing a network response.
-                        val readiness = PagerPageHolder::class.java.getDeclaredField("spreadDisplayed")
-                            .apply { isAccessible = true }
-                        readiness.setBoolean(holder, false)
-                        try {
-                            press(KeyEvent.KEYCODE_VOLUME_DOWN)
-                            assertEquals(currentPosition, viewer.pager.currentItem)
-                            repeat(presses) { press(KeyEvent.KEYCODE_VOLUME_UP) }
-                            assertEquals(
-                                if (mode == ReadingMode.RIGHT_TO_LEFT) presses else -presses,
-                                pendingPageTurnDelta(viewer),
-                            )
-                        } finally {
-                            readiness.setBoolean(holder, true)
-                        }
-                        viewer.onTransitionTargetReady(target)
-                    } else {
-                        repeat(presses) { press(KeyEvent.KEYCODE_VOLUME_DOWN) }
-                    }
+                    val target = adapter(viewer).slots.filterIsInstance<PagerSlot.Pages>()
+                        .single { it.first.index == initialPage + 1 }
+                    val holder = viewer.pager.children.filterIsInstance<PagerPageHolder>().single { it.slot == target }
+                    slowPage = target.first
+                    // Isolated fixture only: hide the decoded image and hold the real status at
+                    // LoadPage. Navigation must reveal its actual progress UI before Ready.
+                    holder.recycle()
+                    PagerPageHolder::class.java.getDeclaredField("spreadDisplayed")
+                        .apply { isAccessible = true }.setBoolean(holder, false)
+                    slowPage.status = Page.State.LoadPage
                 }
-                // Every requested turn must still be honoured, however slowly pages arrive.
-                awaitRenderedPage(scenario, if (reverseAfterWaiting) initialPage + 1 - presses else presses)
+                SystemClock.sleep(100)
+                val requestedAt = SystemClock.uptimeMillis()
                 scenario.onActivity { activity ->
-                    assertEquals(0, pendingPageTurnDelta(activity.viewModel.state.value.viewer as PagerViewer))
+                    val viewer = activity.viewModel.state.value.viewer as PagerViewer
+                    viewer.handleKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_VOLUME_DOWN))
                 }
-                logcat {
-                    "PagerVolumeKeyReady: revealedWhileLoading=$revealedWhileLoading"
+                val deadline = requestedAt + 1_000
+                var selectedWithFeedback = false
+                while (!selectedWithFeedback && SystemClock.uptimeMillis() < deadline) {
+                    scenario.onActivity { activity ->
+                        val viewer = activity.viewModel.state.value.viewer as PagerViewer
+                        val slot = adapter(viewer).currentSlot() as? PagerSlot.Pages
+                        val holder = viewer.pager.children.filterIsInstance<PagerPageHolder>()
+                            .firstOrNull { it.slot == slot }
+                        val flip = PagerViewer::class.java.getDeclaredField("pageFlipController")
+                            .apply { isAccessible = true }.get(viewer) as ComicPageFlipController
+                        val idle = PagerViewer::class.java.getDeclaredField("isIdle")
+                            .apply { isAccessible = true }.getBoolean(viewer)
+                        selectedWithFeedback = slot?.first === slowPage && holder != null &&
+                            !flip.isRunning && idle &&
+                            !holder.isTransitionTargetReady() &&
+                            holder.children.filterIsInstance<ReaderProgressIndicator>().any { it.isShown }
+                    }
+                    if (!selectedWithFeedback) SystemClock.sleep(20)
                 }
                 assertTrue(
-                    "Pager selected a page before it finished rendering: $revealedWhileLoading",
-                    revealedWhileLoading.isEmpty(),
+                    "$effect did not navigate to visible loading UI before image readiness",
+                    selectedWithFeedback,
                 )
+                logcat { "PagerResponse effect=$effect selectedLoadingMs=${SystemClock.uptimeMillis() - requestedAt}" }
+                InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
+                    File(context.getExternalFilesDir(null), "response-$effect-$eInkMode-$mode.png")
+                        .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    bitmap.recycle()
+                }
+                SystemClock.sleep(readyDelayMs.coerceAtLeast(500))
+                scenario.onActivity { activity ->
+                    val viewer = activity.viewModel.state.value.viewer as PagerViewer
+                    assertEquals(initialPage + 1, (adapter(viewer).currentSlot() as PagerSlot.Pages).first.index)
+                    if (reverseAfterWaiting) {
+                        repeat(3) {
+                            viewer.handleKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_VOLUME_UP))
+                        }
+                        assertEquals(initialPage - 2, (adapter(viewer).currentSlot() as PagerSlot.Pages).first.index)
+                    }
+                    slowPage.status = Page.State.Ready
+                }
+                val expected = if (reverseAfterWaiting) initialPage - 2 else initialPage + 1
+                awaitRenderedPage(scenario, expected)
+                SystemClock.sleep(400)
+                scenario.onActivity { activity ->
+                    val viewer = activity.viewModel.state.value.viewer as PagerViewer
+                    assertEquals(
+                        "Late readiness must not perform another navigation",
+                        expected,
+                        (adapter(viewer).currentSlot() as PagerSlot.Pages).first.index,
+                    )
+                    assertEquals(0, pendingPageTurnDelta(viewer))
+                }
             }
         } finally {
             mangaId?.let { repository.deleteMangaById(it) }

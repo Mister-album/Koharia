@@ -130,7 +130,7 @@ class DownloadCache(
                             ProtoBuf.decodeFromByteArray<RootDirectory>(it.readBytes())
                         }
                         rootDownloadsDir = diskCache
-                        lastRenew = System.currentTimeMillis()
+                        // Rebuild legacy filename snapshots asynchronously instead of probing storage per chapter.
                     }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "Failed to initialize from disk cache" }
@@ -149,6 +149,7 @@ class DownloadCache(
                         "Failed to migrate legacy connection download directories; will retry"
                     }
                 }
+            renewCache("startup_snapshot")
         }
 
         storageManager.changes
@@ -219,16 +220,8 @@ class DownloadCache(
                 )
                 if (validNames.any { it in mangaDir.chapterDirs }) return true
 
-                // Older cache snapshots stripped extensions from downloaded files. Check the
-                // actual provider entry while those snapshots are being replaced by a full scan.
-                if (validNames.any { name ->
-                        name.substringAfterLast('.', missingDelimiterValue = "") in
-                            DownloadProvider.SUPPORTED_CHAPTER_FILE_EXTENSIONS &&
-                            mangaDir.dir?.findFile(name) != null
-                    }
-                ) {
-                    return true
-                }
+                // The asynchronous index includes complete filenames. A miss must remain cheap:
+                // the initial details state explicitly opts out of storage discovery.
             }
         }
 
@@ -243,10 +236,28 @@ class DownloadCache(
                     true
                 )
         ) {
-            return provider.findChapterDir(chapterName, chapterScanlator, chapterUrl, mangaTitle, source) != null
+            return traceDownloadLookup("shared-directory", allowSharedLookup) {
+                provider.findChapterDir(chapterName, chapterScanlator, chapterUrl, mangaTitle, source) != null
+            }
         }
 
         return false
+    }
+
+    private inline fun traceDownloadLookup(stage: String, allowSharedLookup: Boolean, block: () -> Boolean): Boolean {
+        if (!eu.kanade.tachiyomi.BuildConfig.DEBUG) return block()
+        val started = System.nanoTime()
+        try {
+            return block()
+        } finally {
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+            if (elapsedMs >= 20) {
+                koharia.connection.NetworkDiagnostics.record(
+                    "DownloadLookup ${koharia.connection.DetailsLoadTrace.requestCorrelation()} " +
+                        "lookup=$stage allowShared=$allowSharedLookup elapsedMs=$elapsedMs",
+                )
+            }
+        }
     }
 
     /**

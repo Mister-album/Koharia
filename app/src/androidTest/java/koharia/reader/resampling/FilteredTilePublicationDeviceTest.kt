@@ -36,6 +36,24 @@ class FilteredTilePublicationDeviceTest {
     }
 
     @Test
+    fun offscreenPreviewLoadsWithoutFilteringAndFirstDrawRefinesWithoutBlanking() = withView(progressive = true) {
+            view,
+            decoder,
+        ->
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        var loaded = false
+        while (!loaded && SystemClock.uptimeMillis() < deadline) {
+            instrumentation.runOnMainSync { loaded = view.isImageLoaded }
+            SystemClock.sleep(20)
+        }
+        assertTrue("Offscreen base preview was not prepared", loaded)
+        assertEquals("Offscreen pages must not spend filter work before display", 0, decoder.filteredRequests.get())
+        assertEquals("First draw must retain the ready preview", setOf(Color.GREEN), colours(view))
+        awaitColour(view, Color.RED)
+        assertTrue("Original filter quality must be restored", decoder.filteredRequests.get() > 0)
+    }
+
+    @Test
     fun replacementKeepsViewportAndCancelsPreviousConfiguration() = withView { view, decoder ->
         awaitColour(view, Color.RED)
         instrumentation.runOnMainSync { view.setScaleAndCenter(.45f, PointF(600f, 500f)) }
@@ -129,7 +147,11 @@ class FilteredTilePublicationDeviceTest {
         awaitColour(view, Color.MAGENTA)
     }
 
-    private fun withView(webtoon: Boolean = false, test: (SubsamplingScaleImageView, ColouredDecoder) -> Unit) {
+    private fun withView(
+        webtoon: Boolean = false,
+        progressive: Boolean = false,
+        test: (SubsamplingScaleImageView, ColouredDecoder) -> Unit,
+    ) {
         val decoder = ColouredDecoder()
         lateinit var view: SubsamplingScaleImageView
         instrumentation.runOnMainSync {
@@ -144,6 +166,7 @@ class FilteredTilePublicationDeviceTest {
                 SubsamplingScaleImageView(context)
             }
             view.setMaxTileSize(256)
+            view.setProgressivePreviewEnabled(progressive)
             view.setRegionDecoderFactory { _, _, _ -> decoder }
             view.measure(exact(400), exact(400))
             view.layout(0, 0, 400, 400)
@@ -202,6 +225,7 @@ class FilteredTilePublicationDeviceTest {
 
         @Volatile private var failed = false
         val failures = AtomicInteger()
+        val filteredRequests = AtomicInteger()
 
         @Volatile private var ready = true
         val waiting = AtomicInteger()
@@ -240,6 +264,7 @@ class FilteredTilePublicationDeviceTest {
             filter: Boolean,
             cancelled: BooleanSupplier,
         ): Bitmap {
+            if (filter) filteredRequests.incrementAndGet()
             val target = scaleFactor / sampleSize
             if (target > 1f) {
                 val width = kotlin.math.round(region.right * target) - kotlin.math.round(region.left * target)

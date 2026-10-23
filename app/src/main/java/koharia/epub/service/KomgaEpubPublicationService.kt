@@ -2,6 +2,7 @@ package koharia.epub.service
 
 import android.app.Application
 import koharia.epub.model.EpubOpenRequest
+import koharia.epub.replacement.installTextReplacement
 import koharia.epub.session.EpubPositionsController
 import koharia.epub.session.EpubReaderSession
 import logcat.LogPriority
@@ -41,6 +42,7 @@ class KomgaEpubPublicationService(
         request: EpubOpenRequest,
         initialLocator: Locator?,
     ): EpubReaderSession {
+        val replacements = koharia.epub.replacement.ReplacementPublication(request.replacements)
         val remotePublication = requireNotNull(request.remotePublication) { "Missing Komga publication reference" }
         require(remotePublication.providerId == koharia.source.komga.KomgaConnectionProvider.ID) {
             "Unsupported publication provider ${remotePublication.providerId}"
@@ -93,7 +95,10 @@ class KomgaEpubPublicationService(
         val openedPublication = publicationOpener.open(
             manifestAsset,
             allowUserInteraction = false,
-            onCreatePublication = { installEpubXhtmlCompatibility() },
+            onCreatePublication = {
+                installEpubXhtmlCompatibility()
+                installTextReplacement(replacements)
+            },
         )
             .getOrElse {
                 manifestAsset.close()
@@ -113,6 +118,7 @@ class KomgaEpubPublicationService(
             navigatorFactory = EpubNavigatorFactory(publication),
             initialLocator = initialLocator,
             positionsController = publicationWithPositions.controller,
+            replacements = replacements,
             prefetchNextResource = { locator ->
                 val locatorHref = locator?.href?.toString()?.resourceKey()
                 val currentIndex = publication.readingOrder.indexOfFirst { link ->

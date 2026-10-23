@@ -22,6 +22,79 @@ import tachiyomi.domain.chapter.model.Chapter
 
 class HttpPageLoaderPriorityTest {
     @Test
+    fun `default window prepares four cached pages instead of only one`() = runBlocking {
+        val source = mockk<HttpSource>(moreInterfaces = arrayOf(ConnectionPageAdapter::class))
+        every { source.id } returns 701L
+        every { (source as ConnectionPageAdapter).pageLoadConcurrency } returns 2
+        every { (source as ConnectionPageAdapter).pagePrefetchOnActivate } returns false
+        every { (source as ConnectionPageAdapter).pagePrefetchSize } returns null
+        val cache = mockk<ChapterCache>(relaxed = true)
+        every { cache.isImageInCache(any(), any()) } returns true
+        every { cache.inspectImageCache(any(), any()) } returns mockk(relaxed = true) {
+            every { entryPresent } returns true
+        }
+        val chapter = ReaderChapter(Chapter.create().copy(id = 16, mangaId = 4))
+        val pages = List(8) { ReaderPage(it, imageUrl = "http://localhost/$it").also { it.chapter = chapter } }
+        chapter.state = ReaderChapter.State.Loaded(pages)
+        val loader = HttpPageLoader(chapter, source, cache)
+        try {
+            withTimeout(5000) {
+                loader.setActivePage(pages[0])
+                pages[0].statusFlow.first { it == Page.State.Ready }
+                assertEquals(Page.State.Queue, pages[1].status)
+                loader.onPageDisplayed(pages[0])
+                (1..4).forEach { index -> pages[index].statusFlow.first { it == Page.State.Ready } }
+                assertEquals(Page.State.Queue, pages[5].status)
+                coVerify(exactly = 0) { source.getImage(any()) }
+            }
+        } finally {
+            loader.recycle()
+        }
+    }
+
+    @Test
+    fun `idle worker serves newly selected page without cancelling nearby prefetch`() = runBlocking {
+        val source = mockk<HttpSource>(moreInterfaces = arrayOf(ConnectionPageAdapter::class))
+        every { source.id } returns 701L
+        every { (source as ConnectionPageAdapter).pageLoadConcurrency } returns 2
+        every { (source as ConnectionPageAdapter).pagePrefetchOnActivate } returns true
+        every { (source as ConnectionPageAdapter).pagePrefetchSize } returns 1
+        val cache = mockk<ChapterCache>(relaxed = true)
+        every { cache.isImageInCache(701L, "http://localhost/0") } returns true
+        every { cache.inspectImageCache(701L, "http://localhost/0") } returns mockk(relaxed = true) {
+            every { entryPresent } returns true
+        }
+        val chapter = ReaderChapter(Chapter.create().copy(id = 17, mangaId = 4))
+        val pages = List(5) { ReaderPage(it, imageUrl = "http://localhost/$it").also { it.chapter = chapter } }
+        chapter.state = ReaderChapter.State.Loaded(pages)
+        val requested = List(5) { CompletableDeferred<Unit>() }
+        val cancelledPrefetch = CompletableDeferred<Unit>()
+        coEvery { source.getImage(any()) } coAnswers {
+            val index = firstArg<Page>().index
+            requested[index].complete(Unit)
+            try {
+                awaitCancellation()
+            } finally {
+                if (index == 1) cancelledPrefetch.complete(Unit)
+            }
+        }
+        val loader = HttpPageLoader(chapter, source, cache)
+        try {
+            withTimeout(5000) {
+                loader.setActivePage(pages[0])
+                pages[0].statusFlow.first { it == Page.State.Ready }
+                requested[1].await()
+                loader.setActivePage(pages[2])
+                requested[2].await()
+                assertFalse(cancelledPrefetch.isCompleted)
+                coVerify(exactly = 1) { source.getImage(pages[1]) }
+            }
+        } finally {
+            loader.recycle()
+        }
+    }
+
+    @Test
     fun `cache miss does not block cached spread page while network is deferred`() = runBlocking {
         val source = mockk<HttpSource>(moreInterfaces = arrayOf(ConnectionPageAdapter::class))
         every { source.id } returns 701L

@@ -1912,6 +1912,7 @@ private fun MoreReadingSettingsSheet(
     onDismissRequest: () -> Unit,
 ) {
     var showTtsSettings by rememberSaveable { mutableStateOf(false) }
+    val readerActivity = LocalActivity.current as? EpubReaderActivity
     val tabTitles = persistentListOf(
         stringResource(MR.strings.pref_category_reading),
         stringResource(MR.strings.pref_category_general),
@@ -1940,6 +1941,16 @@ private fun MoreReadingSettingsSheet(
         ) {
             when (page) {
                 0 -> {
+                    if (readerActivity != null) {
+                        TextPreferenceWidget(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            title = stringResource(MR.strings.replacement_title),
+                            onPreferenceClick = {
+                                onDismissRequest()
+                                readerActivity.openTextReplacement()
+                            },
+                        )
+                    }
                     HeadingItem(stringResource(MR.strings.reader_read_aloud))
                     TextPreferenceWidget(
                         modifier = Modifier.padding(horizontal = 8.dp),

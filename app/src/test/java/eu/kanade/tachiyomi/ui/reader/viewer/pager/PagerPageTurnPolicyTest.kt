@@ -36,39 +36,6 @@ class PagerPageTurnPolicyTest {
     }
 
     @Test
-    fun `rendered destination page turns immediately`() {
-        assertFalse(wait(targetHolderAttached = true, targetRendered = true))
-    }
-
-    @Test
-    fun `attached but unrendered destination page is waited for`() {
-        assertTrue(wait(targetHolderAttached = true, targetRendered = false))
-    }
-
-    @Test
-    fun `destination without a holder is not waited for`() {
-        // Nothing can report readiness for a holder that was never attached, so waiting would only
-        // stall the reader until the fallback timeout.
-        assertFalse(wait(targetHolderAttached = false, targetRendered = false))
-    }
-
-    @Test
-    fun `turn already in flight keeps banking further turns`() {
-        assertTrue(wait(turnInFlight = true, targetHolderAttached = false, targetRendered = false))
-    }
-
-    @Test
-    fun `running scroll keeps banking further turns`() {
-        assertTrue(wait(pagerIdle = false, targetHolderAttached = true, targetRendered = true))
-    }
-
-    @Test
-    fun `chapter transition turns are never deferred`() {
-        assertFalse(wait(sourceIsPage = true, targetIsPage = false, targetHolderAttached = false))
-        assertFalse(wait(sourceIsPage = false, targetIsPage = true, targetHolderAttached = false))
-    }
-
-    @Test
     fun `banked turns keep the net direction`() {
         var pending = 0
         repeat(5) { pending = PagerPageTurnPolicy.accumulate(pending, 1) }
@@ -111,20 +78,4 @@ class PagerPageTurnPolicyTest {
         assertEquals(listOf(1, 1, 1), applied)
         assertEquals(0, pending)
     }
-
-    private fun wait(
-        turnInFlight: Boolean = false,
-        pagerIdle: Boolean = true,
-        sourceIsPage: Boolean = true,
-        targetIsPage: Boolean = true,
-        targetHolderAttached: Boolean,
-        targetRendered: Boolean = false,
-    ): Boolean = PagerPageTurnPolicy.shouldWaitForTarget(
-        turnInFlight = turnInFlight,
-        pagerIdle = pagerIdle,
-        sourceIsPage = sourceIsPage,
-        targetIsPage = targetIsPage,
-        targetHolderAttached = targetHolderAttached,
-        targetRendered = targetRendered,
-    )
 }

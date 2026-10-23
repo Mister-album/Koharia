@@ -24,6 +24,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.animateFloatingActionButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +41,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastAll
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastMap
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.relativeDateText
 import eu.kanade.presentation.library.components.DownloadedCorner
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
@@ -66,6 +70,9 @@ import koharia.connection.ConnectionChapterTitleAdapter
 import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
+import koharia.epub.replacement.TextReplacementScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.missingChaptersCount
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -236,6 +243,21 @@ private fun MangaScreenImpl(
         state.manga.url,
         snackbarHostState,
     )
+    val replacementNavigator = LocalNavigator.currentOrThrow
+    val replacementBooks by produceState<Set<Long>>(emptySet(), state.source, state.chapters) {
+        value = withContext(Dispatchers.IO) {
+            state.chapters.mapNotNull { item ->
+                try {
+                    item.chapter.id.takeIf {
+                        koharia.epub.replacement.TextReplacementService.supports(state.source, item.chapter)
+                    }
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    null
+                }
+            }.toSet()
+        }
+    }
     val chapters = state.processedChapters
     val listItem = state.chapterListItems
     val isAnySelected = state.isAnySelected
@@ -269,6 +291,20 @@ private fun MangaScreenImpl(
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
                 onClickEditNotes = onEditNotesClicked,
+                additionalActions = if (replacementBooks.isEmpty()) {
+                    emptyList()
+                } else {
+                    listOf(
+                        eu.kanade.presentation.components.AppBar.OverflowAction(
+                            title = stringResource(MR.strings.replacement_title),
+                            onClick = { replacementNavigator.push(TextReplacementScreen(state.manga.id)) },
+                        ),
+                    )
+                },
+                onClickTextReplacement = chapters.filter { it.selected }.singleOrNull()?.chapter
+                    ?.takeIf { it.id in replacementBooks }?.let { chapter ->
+                        { replacementNavigator.push(TextReplacementScreen(state.manga.id, chapter.id)) }
+                    },
                 actionModeCounter = chapters.count { it.selected },
                 onCancelActionMode = { onAllChapterSelected(false) },
                 onSelectAll = { onAllChapterSelected(true) },

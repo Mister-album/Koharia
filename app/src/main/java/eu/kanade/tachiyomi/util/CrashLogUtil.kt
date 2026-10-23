@@ -31,7 +31,10 @@ class CrashLogUtil(
             val uri = withContext(Dispatchers.IO) {
                 val file = context.createFileInCacheDir("koharia_crash_logs.txt")
                 val persistedReports = CrashDiagnostics.readPersistedReports(context)
-                val logcat = dumpLogcat()
+                val networkDiagnostics = koharia.connection.NetworkDiagnostics.read(context)
+                val logcat = runCatching { dumpLogcat() }.getOrElse {
+                    "Logcat unavailable: ${it.javaClass.simpleName}"
+                }
 
                 file.writeText(
                     buildString {
@@ -44,6 +47,11 @@ class CrashLogUtil(
                         if (persistedReports.isNotBlank()) {
                             appendLine()
                             appendLine(persistedReports)
+                        }
+                        if (networkDiagnostics.isNotBlank()) {
+                            appendLine()
+                            appendLine("===== dev network diagnostics =====")
+                            appendLine(networkDiagnostics)
                         }
                         appendLine()
                         appendLine("===== logcat =====")

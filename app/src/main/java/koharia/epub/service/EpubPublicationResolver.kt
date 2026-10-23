@@ -59,6 +59,20 @@ class EpubPublicationResolver(
                 .onSuccess { session ->
                     try {
                         currentCoroutineContext().ensureActive()
+                        session.replacements?.let { replacement ->
+                            koharia.epub.replacement.ReplacementPublication.attach(
+                                session.publication,
+                                replacement,
+                                session.positionsController::currentPositions,
+                            )
+                            if (replacement.rules.rules.isNotEmpty() && initialLocator != null) {
+                                replacement.ensureMapped(
+                                    session.publication,
+                                    session.publication.toNavigatorLocator(initialLocator).href,
+                                    active = true,
+                                )
+                            }
+                        }
                         return session.copy(
                             initialLocator = initialLocator?.let(session.publication::toNavigatorLocator),
                         )

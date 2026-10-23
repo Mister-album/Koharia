@@ -1098,10 +1098,24 @@ object SettingsReaderScreen : SearchableSettings {
 
     @Composable
     private fun getEpubReaderGroup(epubReaderPreferences: EpubReaderPreferences): Preference.PreferenceGroup {
+        val navigator = LocalNavigator.currentOrThrow
         val syncRemoteProgression by epubReaderPreferences.syncRemoteProgression.collectAsState()
+        val textReplacementEnabled by epubReaderPreferences.textReplacementEnabled.collectAsState()
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_category_epub_reader),
-            preferenceItems = persistentListOf(
+            preferenceItems = listOfNotNull(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = epubReaderPreferences.textReplacementEnabled,
+                    title = stringResource(MR.strings.replacement_title),
+                ),
+                if (textReplacementEnabled) {
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.replacement_manage),
+                        onClick = { navigator.push(koharia.epub.replacement.TextReplacementScreen()) },
+                    )
+                } else {
+                    null
+                },
                 Preference.PreferenceItem.SwitchPreference(
                     preference = epubReaderPreferences.preferLocalFile,
                     title = stringResource(MR.strings.pref_prefer_local_epub_file),
@@ -1129,7 +1143,7 @@ object SettingsReaderScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_epub_completion_threshold),
                     subtitle = stringResource(MR.strings.pref_epub_completion_threshold_summary),
                 ),
-            ),
+            ).toImmutableList(),
         )
     }
 }

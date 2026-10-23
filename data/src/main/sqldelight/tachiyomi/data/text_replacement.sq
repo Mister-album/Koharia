@@ -1,0 +1,10 @@
+CREATE TABLE text_replacement_scope (
+    scope_key TEXT NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);
+
+selectAll:
+SELECT payload FROM text_replacement_scope ORDER BY scope_key;
+
+upsert:
+INSERT OR REPLACE INTO text_replacement_scope(scope_key, payload) VALUES (?, ?);

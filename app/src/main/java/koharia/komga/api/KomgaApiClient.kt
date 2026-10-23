@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import koharia.connection.connectionReadOnly
 import koharia.komga.api.dto.AuthorDto
 import koharia.komga.api.dto.ClientSettingDto
 import koharia.komga.api.dto.ClientSettingUpdateDto
@@ -199,6 +200,8 @@ class KomgaApiClient(
             body = json.encodeToString(request).toRequestBody(JSON_MEDIA_TYPE),
         )
             .newBuilder()
+            // Komga's structured catalogue queries use POST without changing server state.
+            .connectionReadOnly()
             .komgaCachePolicy(cachePolicy)
             .build()
     }

@@ -30,9 +30,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.core.common.i18n.stringResource
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 /** Verifies addresses directly, without routing or falling back to another address. */
 class ConnectionAddressVerification(networkClient: OkHttpClient) {
+    private val diagnosticId = nextDiagnosticId.incrementAndGet()
     enum class Provider { KOMGA, LANRARAGI }
     enum class Reason {
         UNAVAILABLE,
@@ -81,16 +83,54 @@ class ConnectionAddressVerification(networkClient: OkHttpClient) {
 
     private val client = ConnectionValidation.client(networkClient)
 
-    suspend fun verify(provider: Provider, publicAddress: String, internalAddress: String, headers: Headers) {
-        try {
-            withTimeout(30_000) { verifyDirect(provider, publicAddress, internalAddress, headers) }
-        } catch (error: TimeoutCancellationException) {
-            currentCoroutineContext().ensureActive()
-            throw Failure(Reason.TIMEOUT, cause = error)
-        } finally {
-            client.connectionPool.evictAll()
+    suspend fun verify(provider: Provider, publicAddress: String, internalAddress: String, headers: Headers): Unit =
+        withContext(Dispatchers.IO) {
+            val started = System.nanoTime()
+            diagnostic(
+                "start provider=$provider primary=${NetworkDiagnostics.addressState(publicAddress)} " +
+                    "internal=${NetworkDiagnostics.addressState(internalAddress)}",
+            )
+            try {
+                var verificationFailure: Throwable? = null
+                try {
+                    withTimeout(30_000) { verifyDirect(provider, publicAddress, internalAddress, headers) }
+                } catch (error: Throwable) {
+                    verificationFailure = error
+                    throw error
+                } finally {
+                    // TLS shutdown may perform network IO, including when the caller has been cancelled.
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        diagnostic("pool-cleanup-start mainThread=${isMainThread()}")
+                        try {
+                            client.connectionPool.evictAll()
+                            diagnostic("pool-cleanup-complete")
+                        } catch (error: Exception) {
+                            diagnostic("pool-cleanup-failed error=${NetworkDiagnostics.errorType(error)}")
+                            if (verificationFailure == null) throw error
+                            verificationFailure.addSuppressed(error)
+                        }
+                    }
+                }
+                diagnostic("success elapsedMs=${(System.nanoTime() - started) / 1_000_000}")
+            } catch (error: TimeoutCancellationException) {
+                diagnostic("timeout elapsedMs=${(System.nanoTime() - started) / 1_000_000}")
+                currentCoroutineContext().ensureActive()
+                throw Failure(Reason.TIMEOUT, cause = error)
+            } catch (error: Exception) {
+                val failure = error as? Failure
+                diagnostic(
+                    "failed error=${NetworkDiagnostics.errorType(error)} reason=${failure?.reason} " +
+                        "endpoint=${failure?.endpoint} status=${failure?.status}",
+                )
+                throw error
+            }
         }
-    }
+
+    private fun isMainThread() = android.os.Looper.myLooper()?.let { it == android.os.Looper.getMainLooper() } == true
+
+    private fun diagnostic(message: String) = NetworkDiagnostics.record(
+        "AddressVerification: id=$diagnosticId $message",
+    )
 
     private suspend fun verifyDirect(
         provider: Provider,
@@ -107,6 +147,7 @@ class ConnectionAddressVerification(networkClient: OkHttpClient) {
         if (provider == Provider.LANRARAGI) {
             if (internal == null && headers["Authorization"].isNullOrBlank()) {
                 ConnectionValidation.at(ConnectionValidation.Endpoint.PUBLIC) {
+                    diagnostic("target=PUBLIC operation=info")
                     if (send(public, "api/info", headers) !is JsonObject) throw Failure(Reason.RESPONSE)
                 }
                 return
@@ -116,6 +157,7 @@ class ConnectionAddressVerification(networkClient: OkHttpClient) {
                 internal?.takeIf { it != public }?.let { it to ConnectionValidation.Endpoint.INTERNAL },
             )) {
                 ConnectionValidation.at(endpoint) {
+                    diagnostic("target=$endpoint operation=metadata-auth")
                     if (headers["Authorization"].isNullOrBlank()) throw Failure(Reason.AUTHENTICATION)
                     if (send(address, "api/plugins/metadata", headers) !is JsonArray) throw Failure(Reason.RESPONSE)
                 }
@@ -235,7 +277,12 @@ class ConnectionAddressVerification(networkClient: OkHttpClient) {
             .header("Accept", "application/json")
             .method(method, body)
             .build()
+        val started = System.nanoTime()
+        diagnostic("request-start method=$method")
         client.newCall(request).await().use { response ->
+            diagnostic(
+                "response-headers status=${response.code} elapsedMs=${(System.nanoTime() - started) / 1_000_000}",
+            )
             if (!response.isSuccessful) {
                 throw Failure(
                     when (response.code) {
@@ -248,6 +295,7 @@ class ConnectionAddressVerification(networkClient: OkHttpClient) {
                 )
             }
             val text = response.body.string()
+            diagnostic("response-body-complete elapsedMs=${(System.nanoTime() - started) / 1_000_000}")
             if (method == "GET" && text.isBlank()) throw Failure(Reason.RESPONSE)
             val value = if (text.isBlank()) {
                 JsonObject(emptyMap())
@@ -266,4 +314,8 @@ class ConnectionAddressVerification(networkClient: OkHttpClient) {
     }
 
     private fun JsonElement.body(): RequestBody = toString().toRequestBody("application/json".toMediaType())
+
+    private companion object {
+        val nextDiagnosticId = AtomicLong()
+    }
 }

@@ -95,12 +95,14 @@ class KomgaSource(
     UnmeteredSource,
     ConnectionSource,
     koharia.connection.ConnectionChapterSessionAdapter,
+    koharia.connection.ConnectionTextIdentityAdapter,
     koharia.connection.ConnectionBackupRestoreAdapter,
     ConnectionBrowseAdapter,
     koharia.connection.ConnectionEntryOpeningAdapter,
     ConnectionPageAdapter,
     ConnectionAccountAdapter,
     ConnectionMangaBehaviorAdapter,
+    koharia.connection.ConnectionCatalogAdapter,
     koharia.connection.ConnectionShelfLocalStateAdapter,
     ConnectionHealthAdapter,
     ConnectionRawDownloadAdapter,
@@ -308,8 +310,9 @@ class KomgaSource(
         manga: tachiyomi.domain.manga.model.Manga,
         nowMillis: Long,
     ): Boolean {
-        return manga.memo.offlineFilterMetadata() == null ||
-            super<ConnectionMangaBehaviorAdapter>.shouldRefreshMangaDetails(manga, nowMillis)
+        // Reapply the bounded cache to local state, including after an interrupted DB update.
+        // lastUpdate describes chapter changes, not the age of a successful HTTP response.
+        return true
     }
 
     override fun createBrowseScreen(
@@ -394,6 +397,13 @@ class KomgaSource(
             key,
             "KohariaKomga/${AppInfo.getVersionName()}",
         )
+    }
+
+    override suspend fun textReplacementOwnerKey(): String {
+        val binding = progressAccount().key
+        // Normal online account reads can establish the verified alias; opening a cached book
+        // must only consult the local configuration binding.
+        return localKomgaTextRuleOwner(preferences, binding)
     }
 
     override fun captureChapterOwner(): koharia.connection.ConnectionChapterOwner {
@@ -484,13 +494,19 @@ class KomgaSource(
         .dns(Dns.SYSTEM)
         .build()
 
-    override val client = super.client.withConnectionWriteGuard(id).newBuilder()
+    override val client = super.client.withConnectionWriteGuard(id, retryReads = false).newBuilder()
+        .apply {
+            if (eu.kanade.tachiyomi.BuildConfig.DEBUG) {
+                eventListenerFactory { koharia.komga.api.KomgaNetworkTimingEventListener(it) }
+            }
+        }
         .addInterceptor(
             KomgaOfflineInterceptor(application, ::shelfCacheNamespace, {
                 maxOf(browseRefreshRequestedAt.get(), koharia.connection.ConnectionShelfUpdates.version(id))
             }) { scopedBasePreferences.downloadedOnly.get() },
         )
         .addInterceptor(KomgaCacheControlInterceptor(application, ::shelfCacheNamespace))
+        .addInterceptor(koharia.connection.ConnectionReadRetryInterceptor())
         .addInterceptor { chain ->
             val original = chain.request()
             val capturedProgressAccount = original.tag(KomgaProgressAccount::class.java)
@@ -539,6 +555,27 @@ class KomgaSource(
 
     override fun mangaDetailsRequest(manga: eu.kanade.tachiyomi.source.model.SManga): Request =
         repository.mangaDetailsRequest(manga, KomgaCachePolicy.NetworkFirst)
+
+    override suspend fun getMangaDetails(
+        manga: eu.kanade.tachiyomi.source.model.SManga,
+        forceNetwork: Boolean,
+    ): eu.kanade.tachiyomi.source.model.SManga = mangaDetailsParse(
+        client.newCall(detailsCacheRequest(repository.mangaDetailsRequest(manga), forceNetwork)).awaitSuccess(),
+    ).apply { initialized = true }
+
+    override suspend fun getChapterList(
+        manga: eu.kanade.tachiyomi.source.model.SManga,
+        forceNetwork: Boolean,
+    ): List<eu.kanade.tachiyomi.source.model.SChapter> = chapterListParse(
+        client.newCall(detailsCacheRequest(repository.chapterListRequest(manga), forceNetwork)).awaitSuccess(),
+    )
+
+    private fun detailsCacheRequest(request: Request, forceNetwork: Boolean): Request = request.forKomgaDetails(
+        namespace = shelfCacheNamespace(),
+        forceNetwork = forceNetwork,
+        intervalMillis = requireNotNull(mangaBehavior.detailsRefreshIntervalMillis),
+        revision = maxOf(browseRefreshRequestedAt.get(), koharia.connection.ConnectionShelfUpdates.version(id)),
+    )
 
     override fun mangaDetailsParse(response: Response) = repository.mangaDetailsParse(response)
 
@@ -644,11 +681,26 @@ class KomgaSource(
 
     suspend fun getMe(): koharia.komga.api.dto.UserDto? {
         if (!hasValidBaseUrl()) return null
+        val binding = progressAccount().key
+        val server = baseUrl
         return try {
             client.newCall(apiClient.meRequest())
                 .awaitSuccess()
                 .let { apiClient.parse<koharia.komga.api.dto.UserDto>(it) }
+                .also { user ->
+                    if (binding == progressAccount().key && user.id.isNotBlank()) {
+                        synchronized(preferences) {
+                            val accountKey = "text_rule_account_" + koharia.connection.chapterOwnerKey(server, user.id)
+                            val bindingKey = "text_rule_owner_$binding"
+                            val owner = preferences.getString(accountKey, null)
+                                ?: preferences.getString(bindingKey, null)
+                                ?: java.util.UUID.randomUUID().toString()
+                            preferences.edit().putString(accountKey, owner).putString(bindingKey, owner).apply()
+                        }
+                    }
+                }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             null
         }
     }
@@ -1109,6 +1161,7 @@ class KomgaSource(
                 .let { apiClient.parse<Map<String, koharia.komga.api.dto.ClientSettingDto>>(it) }
             settings["koharia.manga.$mangaId.viewerFlags"]?.value?.toLongOrNull()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             null
         }
     }

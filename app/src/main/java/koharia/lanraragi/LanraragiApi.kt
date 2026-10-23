@@ -3,6 +3,7 @@ package koharia.lanraragi
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.network.await
 import koharia.connection.ConnectionAddressRouter
+import koharia.connection.NetworkDiagnostics
 import koharia.domain.lanraragi.LanraragiEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -92,6 +93,12 @@ class LanraragiApi(
         .dns(Dns.SYSTEM)
         .addNetworkInterceptor { chain ->
             if (!owns(chain.request().url) && addressRouter?.ownsInternal(chain.request().url) != true) {
+                if (BuildConfig.LANRARAGI_DIAGNOSTICS) {
+                    NetworkDiagnostics.record(
+                        "LanraragiNetwork: connectionId=$diagnosticConnectionId " +
+                            "call=${NetworkDiagnostics.callId(chain.call())} event=address-rejected",
+                    )
+                }
                 throw LanraragiException(LanraragiException.Reason.ADDRESS)
             }
             chain.proceed(chain.request())
@@ -116,6 +123,8 @@ class LanraragiApi(
                 inheritedFactory.create(call) + LanraragiNetworkTimingEventListener(
                     call = call,
                     connectionId = diagnosticConnectionId,
+                    primaryBase = base,
+                    addressRouter = addressRouter,
                 )
             }
         }

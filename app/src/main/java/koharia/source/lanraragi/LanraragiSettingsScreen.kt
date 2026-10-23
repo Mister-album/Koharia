@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +47,7 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionProfileManager
 import koharia.connection.ConnectionValidation
+import koharia.connection.NetworkDiagnostics
 import koharia.connection.ui.ConnectionAddressSetting
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.domain.lanraragi.LanraragiRepository
@@ -87,6 +89,12 @@ class LanraragiSettingsScreen(
         val initialMode = remember(sourceId) { prefs.archiveOpenMode }
         val initialCategory = remember(sourceId) { prefs.defaultCategory }
         val initialGrouped = remember(sourceId) { prefs.groupCollections }
+        DisposableEffect(sourceId) {
+            NetworkDiagnostics.record(
+                "LanraragiSettings: connectionId=$sourceId opened isNew=$isNew ${prefs.diagnosticState()}",
+            )
+            onDispose { NetworkDiagnostics.record("LanraragiSettings: connectionId=$sourceId closed") }
+        }
         var name by rememberSaveable(sourceId) { mutableStateOf(initialName) }
         var address by rememberSaveable(sourceId) { mutableStateOf(initialAddress) }
         var internalAddress by rememberSaveable(sourceId) { mutableStateOf(initialInternalAddress) }
@@ -139,7 +147,16 @@ class LanraragiSettingsScreen(
             if (saving) return
             saving = true
             scope.launch {
+                var stage = "normalize"
+                var savedId = sourceId
                 try {
+                    NetworkDiagnostics.record(
+                        "LanraragiSettings: connectionId=$sourceId save-start isNew=$isNew " +
+                            "primary=${NetworkDiagnostics.addressState(address)} " +
+                            "internal=${NetworkDiagnostics.addressState(
+                                internalAddress,
+                            )} keyPresent=${apiKey.isNotBlank()}",
+                    )
                     val normalized = LanraragiApi.normalizeBase(address).toString()
                     val reconnect = manager.requiresIdentityReplacement(sourceId)
                     if (ConnectionValidation.required(
@@ -149,6 +166,8 @@ class LanraragiSettingsScreen(
                             reconnect,
                         )
                     ) {
+                        stage = "verify"
+                        NetworkDiagnostics.record("LanraragiSettings: connectionId=$sourceId verify-start")
                         val headers = okhttp3.Headers.Builder().apply {
                             if (apiKey.isNotBlank()) {
                                 set("Authorization", "Bearer ${apiKey.trim().encodeUtf8().base64()}")
@@ -160,6 +179,7 @@ class LanraragiSettingsScreen(
                             internalAddress,
                             headers,
                         )
+                        NetworkDiagnostics.record("LanraragiSettings: connectionId=$sourceId verify-success")
                     }
                     val profile = manager.profiles().first { it.id == sourceId }
                     val identityChanged = !isNew && (
@@ -177,8 +197,10 @@ class LanraragiSettingsScreen(
                         )
                     }
                     if (identityChanged) {
-                        manager.replaceIdentity(sourceId, name, ::write)
+                        stage = "replace-identity"
+                        savedId = manager.replaceIdentity(sourceId, name, ::write).id
                     } else {
+                        stage = "commit"
                         manager.commitConfiguration(sourceId) { draft ->
                             LanraragiPreferences(sourceId, draft).save(
                                 normalized,
@@ -191,6 +213,25 @@ class LanraragiSettingsScreen(
                         }
                         manager.update(profile.copy(name = name.trim()))
                     }
+                    if (eu.kanade.tachiyomi.BuildConfig.DEBUG) {
+                        runCatching {
+                            val saved = LanraragiPreferences(savedId)
+                            val published = Injekt.get<SourceManager>().get(savedId) as? LanraragiSource
+                            NetworkDiagnostics.record(
+                                "LanraragiSettings: connectionId=$sourceId save-success savedId=$savedId " +
+                                    "${saved.diagnosticState()} primaryMatches=${saved.address == normalized} " +
+                                    "internalMatches=${saved.internalAddress == internalAddress} " +
+                                    "keyMatches=${saved.apiKey == apiKey.trim()} sourcePresent=${published != null} " +
+                                    "sourceValid=${published?.hasValidConnection()} " +
+                                    "instance=${published?.let(System::identityHashCode)}",
+                            )
+                        }.onFailure {
+                            NetworkDiagnostics.record(
+                                "LanraragiSettings: connectionId=$savedId readback-failed " +
+                                    "error=${NetworkDiagnostics.errorType(it)}",
+                            )
+                        }
+                    }
                     if (completeOnboarding) {
                         Injekt.get<BasePreferences>().shownOnboardingFlow.set(true)
                         navigator.popUntilRoot()
@@ -198,6 +239,12 @@ class LanraragiSettingsScreen(
                         navigator.pop()
                     }
                 } catch (error: Exception) {
+                    val failure = error as? koharia.connection.ConnectionAddressVerification.Failure
+                    NetworkDiagnostics.record(
+                        "LanraragiSettings: connectionId=$sourceId save-failed stage=$stage savedId=$savedId " +
+                            "error=${NetworkDiagnostics.errorType(error)} reason=${failure?.reason} " +
+                            "endpoint=${failure?.endpoint} status=${failure?.status}",
+                    )
                     if (error is CancellationException) throw error
                     message = if (error is koharia.connection.ConnectionAddressVerification.Failure) {
                         error.userMessage(context)

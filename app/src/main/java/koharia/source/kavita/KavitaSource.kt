@@ -110,6 +110,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     UnmeteredSource,
     ConnectionSource,
     koharia.connection.ConnectionChapterSessionAdapter,
+    koharia.connection.ConnectionTextIdentityAdapter,
     ConnectionManagedLifecycle,
     ConnectionBrowseAdapter,
     ConnectionCatalogAdapter,
@@ -142,6 +143,8 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     AutoCloseable {
     override val id = connectionProfile.id
     override val name = connectionProfile.name
+
+    override suspend fun textReplacementOwnerKey(): String = preferences.accountKey
 
     override fun captureChapterOwner(): koharia.connection.ConnectionChapterOwner {
         val captured = session()
@@ -492,7 +495,7 @@ class KavitaSource(private val context: Context, override val connectionProfile:
     override val client get() = session().api.client
     override val pageLoadConcurrency = 2
     override val pagePrefetchOnActivate = false
-    override val pagePrefetchSize = 2
+    override val pagePrefetchSize = 4
     override val preserveDownloadPageBoundaries = true
     override val allowsUnvalidatedNetwork = true
     override val usesSharedDownloadStorage = false

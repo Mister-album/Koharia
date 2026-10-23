@@ -29,6 +29,27 @@ import uy.kohesive.injekt.api.get
 @RunWith(AndroidJUnit4::class)
 class DevReadOnlyValidationDeviceTest {
     @Test
+    fun shelfProgressRefreshDoesNotOpenAnApiOrChangeState(): Unit = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals("app.koharia.dev.devicefixture", context.packageName)
+        assumeTrue(DevReadOnlyValidation.enabled)
+        val id = -System.nanoTime()
+        val source = koharia.source.lanraragi.LanraragiSource(
+            context,
+            LibraryConnectionProfile(id, "lanraragi", "Read-only fixture"),
+        )
+        try {
+            val before = source.status.value
+            // No address is configured: opening the API would throw before any request is made.
+            source.refreshShelfProgress()
+            assertEquals(before, source.status.value)
+        } finally {
+            source.close()
+            context.deleteSharedPreferences("source_$id")
+        }
+    }
+
+    @Test
     fun requestBoundaryAllowsReadsAndRejectsMutationsBeforeProceeding() {
         assertEquals(
             "app.koharia.dev.devicefixture",

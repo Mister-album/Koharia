@@ -58,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -115,6 +116,8 @@ import koharia.tts.progress.TtsProgressNotifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -147,6 +150,7 @@ import uy.kohesive.injekt.api.get
 import java.io.File
 import java.util.UUID
 import kotlin.math.roundToInt
+import tachiyomi.core.common.i18n.stringResource as localizedString
 
 @OptIn(ExperimentalReadiumApi::class)
 class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
@@ -302,6 +306,83 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     private val readingQueue by lazy { koharia.connection.ConnectionReadingQueueController(this) }
 
+    private var showTextReplacement by mutableStateOf(false)
+    private var replacementSample by mutableStateOf("")
+    private var replacementDocument by mutableStateOf<koharia.epub.replacement.ReplacementPreviewDocument?>(null)
+
+    internal fun openTextReplacement() {
+        viewModel.onTtsAction(koharia.tts.TtsAction.PAUSE)
+        replacementSample = ""
+        replacementDocument = null
+        showTextReplacement = true
+        val state = viewModel.state.value
+        val session = sessionRepository.get(state.chapterId) ?: return
+        lifecycleScope.launch {
+            if (!session.retain()) return@launch
+            val sample = try {
+                withContext(Dispatchers.IO) {
+                    session.replacements?.loadPreview(session.publication, state.currentHref)
+                }
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                toast(MR.strings.replacement_error)
+                null
+            } finally {
+                session.release()
+            }
+            if (showTextReplacement &&
+                isCurrentReaderSession(state.chapterId, state.sourceId, state.sessionToken)
+            ) {
+                replacementDocument = sample
+                replacementSample = sample?.original.orEmpty()
+            }
+        }
+    }
+
+    private fun observeTextReplacement() {
+        val service = koharia.epub.replacement.TextReplacementService()
+        combine(
+            service.repository.observe(),
+            sharedReplacementPreference().changes(),
+            snapshotFlow { showTextReplacement },
+            viewModel.state.map { it.isReady to it.chapterId }.distinctUntilChanged(),
+        ) { entries, _, editing, ready -> Triple(entries, editing, ready) }
+            .onEach { (entries, editing, ready) ->
+                if (editing || !ready.first) return@onEach
+                val state = viewModel.state.value
+                val session = sessionRepository.get(state.chapterId) ?: return@onEach
+                val context = try {
+                    service.context(state.mangaId, state.chapterId)
+                } catch (error: Exception) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    return@onEach
+                }
+                val rules = service.resolve(context, entries)
+                if (session.replacements?.rules?.fingerprint == rules.fingerprint) return@onEach
+                if (!isCurrentReaderSession(state.chapterId, state.sourceId, state.sessionToken)) return@onEach
+                viewModel.onTtsAction(koharia.tts.TtsAction.STOP)
+                epubReaderFragment()?.cancelPageTransition()
+                paginationJob?.cancel()
+                epubReaderFragment()?.stopPagination()
+                viewModel.onLayoutPreferencesChanged(viewModel.readingNavigationRevision)
+                viewModel.init(state.mangaId, state.chapterId, preserveLocalProgressAfterLayoutChange = true)
+            }
+            .launchIn(lifecycleScope)
+        lifecycleScope.launch {
+            viewModel.state.map { it.sessionToken }.distinctUntilChanged().collectLatest {
+                val session = sessionRepository.get(viewModel.state.value.chapterId) ?: return@collectLatest
+                session.replacements?.errors?.collect { errors ->
+                    if (errors.isNotEmpty()) {
+                        toast(localizedString(MR.strings.replacement_document_error, errors.joinToString(", ")))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun sharedReplacementPreference() = Injekt.get<koharia.connection.SharedAppPreferences>()
+        .epubReaderPreferences().textReplacementEnabled
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (needsSharedConfigSelection()) {
             configStartupDeferred = true
@@ -348,7 +429,19 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             }
             .launchIn(lifecycleScope)
 
+        observeTextReplacement()
         setComposeContent(enableAppRefresh = false) {
+            if (showTextReplacement) {
+                val replacementState = viewModel.state.value
+                koharia.epub.replacement.TextReplacementDialog(
+                    replacementState.mangaId,
+                    replacementState.chapterId,
+                    replacementSample,
+                    previewDocument = replacementDocument,
+                    onClose = { showTextReplacement = false },
+                )
+            }
+
             val state by viewModel.state.collectAsState()
             val followingManualPage by ttsPageFollow.pending.collectAsState()
             val flashOnPageChange by readerPreferences.flashOnPageChange.changes()

@@ -42,6 +42,7 @@ internal class ResamplingRegionDecoder(
     internal val nativeDecodeCount = AtomicInteger()
 
     override fun init(context: Context, provider: InputProvider): Point {
+        val startedAt = android.os.SystemClock.uptimeMillis()
         recycle()
         val file = File.createTempFile("koharia-mitchell-", ".image", context.cacheDir)
         try {
@@ -84,6 +85,16 @@ internal class ResamplingRegionDecoder(
         } catch (error: Throwable) {
             file.delete()
             throw error
+        }
+        if (eu.kanade.tachiyomi.BuildConfig.DEBUG &&
+            android.util.Log.isLoggable("ReaderPrefetch", android.util.Log.DEBUG)
+        ) {
+            android.util.Log.d(
+                "ReaderPrefetch",
+                "decoder=${System.identityHashCode(this)} stage=decoder-ready " +
+                    "elapsedMs=${android.os.SystemClock.uptimeMillis() - startedAt} " +
+                    "width=$imageWidth height=$imageHeight filtering=$enabled cropBorders=$cropBorders",
+            )
         }
         return Point(imageWidth, imageHeight)
     }

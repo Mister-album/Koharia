@@ -36,7 +36,13 @@ class KomgaOfflineInterceptor(
             (!canUseNetwork || originalRequest.tag(KomgaCachePolicy::class.java) == KomgaCachePolicy.Default)
         ) {
             val minimum = originalRequest.tag(KomgaCacheNamespace::class.java)?.minimumFetchedAt ?: minimumFetchedAt()
-            metadataCacheStore.load(originalRequest, if (canUseNetwork) minimum else 0L)?.let { return it }
+            metadataCacheStore.load(originalRequest, if (canUseNetwork) minimum else 0L)?.let {
+                koharia.connection.NetworkDiagnostics.record(
+                    "KomgaCache ${koharia.connection.DetailsLoadTrace.requestCorrelation()} " +
+                        "result=${if (canUseNetwork) "fresh" else "offline"}",
+                )
+                return it
+            }
         }
         if (!canUseNetwork && originalRequest.tag(KomgaCacheNamespace::class.java) != null) {
             throw IOException(context.stringResource(MR.strings.exception_offline))
@@ -76,7 +82,11 @@ class KomgaOfflineInterceptor(
             if (!canUseNetwork) throw IOException(context.stringResource(MR.strings.exception_offline), error)
 
             logcat(LogPriority.INFO) { "Komga network request failed, trying local cache: ${request.url}" }
-            metadataCacheStore.load(originalRequest) ?: throw error
+            metadataCacheStore.load(originalRequest)?.also {
+                koharia.connection.NetworkDiagnostics.record(
+                    "KomgaCache ${koharia.connection.DetailsLoadTrace.requestCorrelation()} result=fallback",
+                )
+            } ?: throw error
         }
     }
 }

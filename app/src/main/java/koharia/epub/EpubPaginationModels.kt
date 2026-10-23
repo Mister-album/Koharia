@@ -39,9 +39,11 @@ internal data class EpubPaginationLayoutSnapshot(
     val densityDpi: Int,
     val fontScale: Float,
     val webViewVersion: String,
+    val replacementFingerprint: String = "",
 ) {
     val json: String
         get() = buildJsonObject {
+            put("replacementFingerprint", replacementFingerprint)
             put("algorithmVersion", PAGINATION_ALGORITHM_VERSION)
             put("readiumVersion", READIUM_VERSION)
             put("readingMode", readingMode)

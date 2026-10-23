@@ -63,6 +63,7 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
         screenModelScope.launch {
             while (true) {
                 source.refreshIfStale()
+                if (!source.hasValidConnection()) break
                 delay(5_000)
                 if (source.repository.lastSync(source.id) > 0L) break
             }
@@ -188,6 +189,10 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
     }
 
     fun refresh(automatic: Boolean = false) {
+        koharia.connection.NetworkDiagnostics.record(
+            "LanraragiShelf: connectionId=${source.id} refresh-request automatic=$automatic " +
+                "downloadedOnly=${state.value.downloadedOnly} online=${source.networkAvailable.value}",
+        )
         if (state.value.downloadedOnly) return
         screenModelScope.launch(Dispatchers.IO) {
             if (!automatic || source.networkAvailable.value) {
@@ -204,7 +209,7 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
     }
 
     private fun refreshProgress() {
-        if (state.value.downloadedOnly || progressJob?.isActive == true) return
+        if (state.value.downloadedOnly || progressJob?.isActive == true || !source.hasValidConnection()) return
         progressJob = screenModelScope.launch(Dispatchers.IO) {
             try {
                 source.refreshShelfProgress()

@@ -14,6 +14,7 @@ data class EpubReaderSession(
     val navigatorFactory: EpubNavigatorFactory,
     val initialLocator: Locator?,
     val positionsController: EpubPositionsController,
+    val replacements: koharia.epub.replacement.ReplacementPublication? = null,
     val prefetchNextResource: suspend (Locator?) -> Unit = {},
     val pdfReflow: PdfReflowManifest? = null,
     val onClosed: () -> Unit = {},
@@ -68,6 +69,7 @@ data class EpubReaderSession(
             try {
                 publication.close()
             } finally {
+                replacements?.clear()
                 onClosed()
             }
         } finally {

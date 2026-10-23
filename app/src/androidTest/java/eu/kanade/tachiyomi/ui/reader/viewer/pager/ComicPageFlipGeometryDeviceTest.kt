@@ -10,12 +10,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.PopupWindow
-import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.viewpager.widget.PagerAdapter
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
 import koharia.epub.EpubTransitionFixtureActivity
+import koharia.testing.FixtureActivityLauncher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,7 +25,7 @@ import org.junit.runner.RunWith
 class ComicPageFlipGeometryDeviceTest {
     @Test
     fun differentWidthFitPageHeightsKeepWindowScaleInBothDirections() {
-        ActivityScenario.launch(EpubTransitionFixtureActivity::class.java).use { scenario ->
+        FixtureActivityLauncher.launch(EpubTransitionFixtureActivity::class.java).use { scenario ->
             lateinit var pager: Pager
             lateinit var controller: ComicPageFlipController
             scenario.onActivity { activity ->
@@ -57,7 +57,12 @@ class ComicPageFlipGeometryDeviceTest {
                         container.removeView(obj as View)
                     }
                 }
-                controller = ComicPageFlipController(root, pager, { true }, { true }) { item ->
+                controller = ComicPageFlipController(
+                    root,
+                    pager,
+                    { true },
+                    { pager.setCurrentItem(it, false) },
+                ) { item ->
                     val location = IntArray(2)
                     pager.getLocationInWindow(location)
                     pageBounds(item, pager.width, pager.height).apply { offset(location[0], location[1]) }

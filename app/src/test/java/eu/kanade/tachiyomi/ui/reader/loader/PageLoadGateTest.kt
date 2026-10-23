@@ -8,6 +8,29 @@ import org.junit.jupiter.api.Test
 class PageLoadGateTest {
 
     @Test
+    fun `reversing before decode finishes follows selection instead of last displayed page`() {
+        val gate = PageLoadGate(prefetchPageCount = 4)
+        gate.activate(10, 30)
+        gate.onPageDisplayed(10, 30)
+        gate.activate(11, 30)
+        gate.activate(12, 30)
+        assertEquals(listOf(10, 9, 8, 7), gate.activate(11, 30).prefetchIndexes)
+        assertEquals(listOf(9, 8, 7, 6), gate.activate(10, 30).prefetchIndexes)
+    }
+
+    @Test
+    fun `forward reversal before decode finishes updates prefetch immediately`() {
+        val gate = PageLoadGate(prefetchPageCount = 2)
+        gate.activate(10, 30)
+        gate.onPageDisplayed(10, 30)
+        gate.activate(9, 30)
+        assertEquals(listOf(11, 12), gate.activate(10, 30).prefetchIndexes)
+        gate.activate(9, 30)
+        gate.onPageDisplayed(9, 30)
+        assertEquals(listOf(11, 12), gate.activate(10, 30).prefetchIndexes)
+    }
+
+    @Test
     fun `prefetch remains closed until active page is displayed`() {
         val gate = PageLoadGate(preloadSize = 4)
 

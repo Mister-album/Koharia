@@ -3,6 +3,7 @@ package koharia.epub.service
 import android.app.Application
 import android.net.Uri
 import koharia.epub.model.EpubOpenRequest
+import koharia.epub.replacement.installTextReplacement
 import koharia.epub.session.EpubPositionsController
 import koharia.epub.session.EpubReaderSession
 import koharia.pdf.cache.PdfReflowCacheManager
@@ -31,6 +32,7 @@ class LocalEpubPublicationService(
         request: EpubOpenRequest,
         initialLocator: Locator?,
     ): EpubReaderSession {
+        val replacements = koharia.epub.replacement.ReplacementPublication(request.replacements)
         val pdfCache = request.pdfReflow?.let { pdfCacheManager }
         val artifact = request.pdfReflow?.let {
             checkNotNull(pdfCache?.get(request.sourceId, request.chapterId, it.revision))
@@ -58,6 +60,7 @@ class LocalEpubPublicationService(
                 onCreatePublication = {
                     artifact?.progressive?.let { installProgressivePdf(it) }
                     installEpubXhtmlCompatibility()
+                    installTextReplacement(replacements)
                 },
             )
                 .getOrElse {
@@ -78,6 +81,7 @@ class LocalEpubPublicationService(
                 navigatorFactory = EpubNavigatorFactory(publication),
                 initialLocator = initialLocator,
                 positionsController = publicationWithPositions.controller,
+                replacements = replacements,
                 pdfReflow = request.pdfReflow,
                 onClosed = { artifact?.let { pdfCache?.release(it) } },
             ).also { transferred = true }

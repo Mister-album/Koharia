@@ -310,6 +310,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private var pendingLayoutLocator: Locator? = null
     private var layoutChangeRevision = 0L
     private var preserveLocalProgressAfterLayoutChange = false
+    private var replacementRules = koharia.domain.textreplacement.EffectiveRuleSet.EMPTY
     private var currentChapter: tachiyomi.domain.chapter.model.Chapter? = null
     fun remoteBookmarks(): Pair<koharia.connection.ConnectionRemoteBookmarksAdapter, String>? {
         val chapter = currentChapter ?: return null
@@ -504,6 +505,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         reflowSession?.checkCurrent?.invoke()
                     }
                     currentProgressSessionCheck?.invoke()
+                    val replacementService = koharia.epub.replacement.TextReplacementService()
+                    replacementRules = replacementService.snapshot(replacementService.context(manga.id, chapter.id))
                     pdfReflowArtifact =
                         pdfRevision?.let { Injekt.get<PdfReflowCacheManager>().get(source.id, chapter.id, it) }
                     if (pdfReflowArtifact == null && pdfRequested) {
@@ -762,12 +765,11 @@ class EpubReaderViewModel @JvmOverloads constructor(
                             )
                         }
                     } else {
-                        savedStateLocator
-                            ?: if (preserveLocalProgressAfterLayoutChange) {
-                                persistedLocator
-                            } else {
-                                chooseMoreRecentLocator(localProgress, initialRemoteProgress)
-                            }
+                        if (preserveLocalProgressAfterLayoutChange) {
+                            latestLocator ?: savedStateLocator ?: persistedLocator
+                        } else {
+                            savedStateLocator ?: chooseMoreRecentLocator(localProgress, initialRemoteProgress)
+                        }
                     }
                     val acceptedRemoteInitially = savedStateLocator == null &&
                         !preserveLocalProgressAfterLayoutChange &&
@@ -810,6 +812,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                             localUri = localUri,
                             openSource = primarySource,
                             publisherStylesOverride = publisherStylesOverride,
+                            replacements = replacementRules,
                             publicationKey = checkNotNull(currentPublicationKey),
                             persistCache = !incognito,
                             pdfReflow = pdfReflowArtifact?.manifest,
@@ -1422,6 +1425,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                             localUri = cachedUri,
                             openSource = EpubOpenRequest.OpenSource.LOCAL,
                             publisherStylesOverride = publisherStylesOverride,
+                            replacements = replacementRules,
                             publicationKey = publicationKey,
                             persistCache = !isIncognito(),
                         ),
@@ -1836,7 +1840,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
     }
 
-    internal suspend fun preparePagination(snapshot: EpubPaginationLayoutSnapshot): EpubPaginationRequest {
+    internal suspend fun preparePagination(layoutSnapshot: EpubPaginationLayoutSnapshot): EpubPaginationRequest {
+        val snapshot = layoutSnapshot.copy(replacementFingerprint = replacementRules.fingerprint)
         paginationGeneration += 1
         val generation = paginationGeneration
         paginationLayoutKey = snapshot.key
@@ -2605,7 +2610,15 @@ class EpubReaderViewModel @JvmOverloads constructor(
                     collection.locators.forEach { locator ->
                         add(
                             EpubSearchResult(
-                                locator = locator,
+                                locator = session.replacements?.let {
+                                    locator.copy(
+                                        locations = locator.locations.copy(
+                                            otherLocations =
+                                            locator.locations.otherLocations +
+                                                ("kohariaTextCoordinates" to it.rules.fingerprint),
+                                        ),
+                                    )
+                                } ?: locator,
                                 title = locator.title,
                                 before = locator.text.before,
                                 highlight = locator.text.highlight,
@@ -2744,6 +2757,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
         val checkProgressCurrent = progressCommitGuard(generation = generation)
         val previousLocator = previousProgress?.toLocatorOrNull()
         val layoutOnlyUpdate = preserveLocalProgressAfterLayoutChange && localReadingRevision == recordedReadingRevision
+        if (layoutOnlyUpdate) return@withLock
         val progressUpdatedAt = if (previousProgress != null &&
             (layoutOnlyUpdate || (previousLocator != null && locator.isSamePaginationLocation(previousLocator)))
         ) {

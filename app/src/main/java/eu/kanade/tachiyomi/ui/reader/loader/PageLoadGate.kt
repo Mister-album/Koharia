@@ -24,9 +24,12 @@ internal class PageLoadGate(
         val previousPageCount = activePageIndexes.size.coerceAtLeast(1)
         val changed = activePageIndexes != normalizedIndexes || previousPageIndex != logicalPageIndex
         if (previousPageIndex != null) {
+            // Selection is immediate even when decoding lags behind. Follow the latest
+            // selected page, otherwise a rapid reversal keeps prefetching the old direction.
+            val directionAnchor = previousPageIndex
             prefetchDirection = when {
-                logicalPageIndex < previousPageIndex -> Direction.BACKWARD
-                logicalPageIndex > previousPageIndex -> Direction.FORWARD
+                logicalPageIndex < directionAnchor -> Direction.BACKWARD
+                logicalPageIndex > directionAnchor -> Direction.FORWARD
                 else -> prefetchDirection
             }
             val adjacentDistance = maxOf(previousPageCount, normalizedIndexes.size.coerceAtLeast(1))

@@ -44,6 +44,7 @@ flexibleAdapter = "5.1.0"
 google-services = "4.4.4"
 injekt = "91edab2317"
 jsoup = "1.23.2"
+re2j = "1.8"
 kxml = "2.3.0"
 junit = "6.1.0"
 kotest-assertions = "6.1.11"
@@ -143,6 +144,7 @@ firebase-crashlytics = { module = "com.google.firebase:firebase-crashlytics" }
 flexibleAdapter = { module = "eu.davidea:flexible-adapter", version.ref = "flexibleAdapter" }
 injekt = { module = "com.github.mihonapp:injekt", version.ref = "injekt" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+re2j = { module = "com.google.re2j:re2j", version.ref = "re2j" }
 kxml = { module = "net.sf.kxml:kxml2", version.ref = "kxml" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }

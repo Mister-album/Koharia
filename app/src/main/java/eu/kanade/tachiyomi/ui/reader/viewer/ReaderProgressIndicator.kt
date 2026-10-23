@@ -6,12 +6,18 @@ import android.view.Gravity
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
 import androidx.annotation.IntRange
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.unit.dp
 import androidx.core.view.isVisible
 import eu.kanade.presentation.theme.TachiyomiTheme
 import tachiyomi.presentation.core.components.CombinedCircularProgressIndicator
@@ -25,6 +31,7 @@ class ReaderProgressIndicator @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
+    private val label: String? = null,
 ) : AbstractComposeView(context, attrs, defStyleAttr) {
 
     init {
@@ -37,7 +44,13 @@ class ReaderProgressIndicator @JvmOverloads constructor(
     @Composable
     override fun Content() {
         TachiyomiTheme {
-            CombinedCircularProgressIndicator(progress = { progress })
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CombinedCircularProgressIndicator(progress = { progress })
+                label?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+            }
         }
     }
 

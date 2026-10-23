@@ -62,17 +62,19 @@ internal class HttpPageLoader(
 
     /** A priority queue whose concurrency is selected by the connection provider. */
     private val queue = PriorityBlockingQueue<PriorityPage>()
+    private val workerCount = (connectionPageAdapter?.pageLoadConcurrency ?: 1).coerceAtLeast(1)
 
     // LANraragi can perform expensive archive work for each uncached page. Keep both workers
     // available to the visible spread until it is displayed, then start adjacent prefetching.
     private val pageLoadGate = PageLoadGate(
         preloadSize = 2,
         prefetchOnActivate = connectionPageAdapter?.pagePrefetchOnActivate == true,
-        prefetchPageCount = connectionPageAdapter?.pagePrefetchSize,
+        prefetchPageCount = connectionPageAdapter?.pagePrefetchSize ?: 4,
     )
     private val schedulerLock = Any()
     private val scheduledPages = Collections.newSetFromMap(IdentityHashMap<ReaderPage, Boolean>())
     private val activeLoads = mutableSetOf<ActivePageLoad>()
+    private var desiredPrefetchPages: Set<ReaderPage> = emptySet()
     private val imageLeases = mutableMapOf<String, Closeable>()
     private var cachedPageList: ConnectionPageList? = null
 
@@ -83,7 +85,6 @@ internal class HttpPageLoader(
         get() = checkNotNull(chapter.chapter.toDomainChapter())
 
     init {
-        val workerCount = connectionPageAdapter?.pageLoadConcurrency ?: 1
         repeat(workerCount) {
             scope.launchIO {
                 while (true) {
@@ -139,16 +140,25 @@ internal class HttpPageLoader(
                                 scope.isActive &&
                                 !networkRequestsDeferred &&
                                 queuedPage.page.status == Page.State.Queue &&
-                                pageLoadGate.isActive(queuedPage.page.index)
+                                (
+                                    pageLoadGate.isActive(
+                                        queuedPage.page.index,
+                                    ) || queuedPage.page in desiredPrefetchPages
+                                    )
                             ) {
-                                enqueuePageLocked(queuedPage.page, PriorityPage.DEFAULT) != null
+                                val priority = if (pageLoadGate.isActive(queuedPage.page.index)) {
+                                    PriorityPage.DEFAULT
+                                } else {
+                                    PriorityPage.ADJACENT
+                                }
+                                enqueuePageLocked(queuedPage.page, priority) != null
                             } else {
                                 false
                             }
                         }
                         if (requeuedAsActive) {
                             logcat {
-                                "MangaStartup: cancelled page requeued as active " +
+                                "MangaStartup: cancelled page requeued in current window " +
                                     "chapterId=${chapter.chapter.id} page=${queuedPage.page.number}"
                             }
                         }
@@ -261,6 +271,9 @@ internal class HttpPageLoader(
             pageCount = chapterPages.size,
         )
         val needsUrgentLoad = activePages.any { it.status != Page.State.Ready }
+        synchronized(schedulerLock) {
+            desiredPrefetchPages = activation.prefetchIndexes.mapTo(linkedSetOf()) { chapterPages[it] }
+        }
         preemptLoadsOutside(activeSet, reason = "active-pages-changed")
         if (activation.changed) {
             activePages.firstOrNull { it.status == Page.State.Queue }?.let {
@@ -269,7 +282,10 @@ internal class HttpPageLoader(
         }
         synchronized(schedulerLock) {
             removeQueuedPagesLocked { queued ->
-                (queued.priority == PriorityPage.ADJACENT && queued.page !in activeSet) ||
+                (
+                    queued.priority == PriorityPage.ADJACENT && queued.page !in activeSet &&
+                        queued.page !in desiredPrefetchPages
+                    ) ||
                     (queued.priority == PriorityPage.DEFAULT && queued.page !in activeSet)
             }
             activePages.forEach { enqueuePageLocked(it, PriorityPage.DEFAULT) }
@@ -298,6 +314,7 @@ internal class HttpPageLoader(
         val prefetchIndexes = pageLoadGate.onPagesDisplayed(activeIndexes, chapterPages.size)
         synchronized(schedulerLock) {
             val prefetchPages = prefetchIndexes.mapTo(linkedSetOf()) { chapterPages[it] }
+            desiredPrefetchPages = prefetchPages
             removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT && it.page !in prefetchPages }
             enqueuePrefetchWindowLocked(chapterPages, prefetchIndexes)
         }
@@ -315,7 +332,7 @@ internal class HttpPageLoader(
                 val outsideActiveWindow = it.page.index < firstActiveIndex - maxDistance ||
                     it.page.index > lastActiveIndex + maxDistance
                 it.page !in activePages && !it.job.isCompleted &&
-                    (outsideActiveWindow || networkRequestsDeferred) &&
+                    ((outsideActiveWindow && it.page !in desiredPrefetchPages) || networkRequestsDeferred) &&
                     it.priority != PriorityPage.RETRY
             }
         }
@@ -333,9 +350,19 @@ internal class HttpPageLoader(
             ?.filterTo(linkedSetOf()) { pageLoadGate.isActive(it.index) }
             .orEmpty()
         val prefetchLoads = synchronized(schedulerLock) {
-            activeLoads.filter {
-                it.priority == PriorityPage.ADJACENT && it.page !in activePages && it.job.isActive
+            val busyLoads = activeLoads.filter { !it.job.isCompleted && !it.job.isCancelled }
+            val waitingActivePages = activePages.count { active ->
+                active.status == Page.State.Queue && busyLoads.none { it.page === active }
             }
+            val availableWorkers = (workerCount - busyLoads.size).coerceAtLeast(0)
+            // Keep useful in-flight work when an idle worker can serve the visible page.
+            // For a spread, free only the missing slots, starting with the furthest prefetch.
+            busyLoads.filter {
+                it.priority == PriorityPage.ADJACENT && it.page !in activePages && it.job.isActive
+            }.sortedByDescending { load ->
+                activePages.minOfOrNull { kotlin.math.abs(it.index - load.page.index) }
+                    ?: kotlin.math.abs(page.index - load.page.index)
+            }.take((waitingActivePages - availableWorkers).coerceAtLeast(0))
         }
         prefetchLoads.forEach { load ->
             load.job.cancel()
@@ -416,7 +443,10 @@ internal class HttpPageLoader(
                     ?.filterTo(linkedSetOf()) { pageLoadGate.isActive(it.index) }
                     .orEmpty()
                 if (!alreadyScheduled) {
-                    removeQueuedPagesLocked { it.priority == PriorityPage.ADJACENT && it.page !in activePages }
+                    removeQueuedPagesLocked {
+                        it.priority == PriorityPage.ADJACENT && it.page !in activePages &&
+                            it.page !in desiredPrefetchPages
+                    }
                 }
                 enqueuePageLocked(page, PriorityPage.DEFAULT)
             }

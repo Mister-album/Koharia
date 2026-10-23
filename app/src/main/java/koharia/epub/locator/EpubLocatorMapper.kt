@@ -8,13 +8,28 @@ import org.readium.r2.shared.util.Url
 
 fun Publication.toNavigatorLocator(locator: Locator): Locator {
     val resource = findResource(locator.href.toString()) ?: return locator
-    return locator.copy(href = resource.navigatorHref.withFragmentFrom(locator.href.toString()))
+    val mapped =
+        koharia.epub.replacement.ReplacementPublication.of(this)?.mapLocator(locator, toOriginal = false) ?: locator
+    return mapped.copy(href = resource.navigatorHref.withFragmentFrom(mapped.replacementCompatibleHref()))
 }
 
 fun Publication.toPersistentLocator(locator: Locator): Locator {
     val resource = findResource(locator.href.toString()) ?: return locator
-    val href = Url(resource.persistentHref.withFragmentFrom(locator.href.toString())) ?: return locator
-    return locator.copy(href = href)
+    val mapped =
+        koharia.epub.replacement.ReplacementPublication.of(this)?.mapLocator(locator, toOriginal = true) ?: locator
+    val href = Url(resource.persistentHref.withFragmentFrom(mapped.replacementCompatibleHref())) ?: return locator
+    return mapped.copy(href = href)
+}
+
+internal fun Locator.replacementCompatibleHref(): String {
+    val value = href.toString()
+    return if (locations.otherLocations.containsKey("kohariaTextCoordinates") &&
+        value.substringAfter('#', "").startsWith("epubcfi(")
+    ) {
+        value.substringBefore('#')
+    } else {
+        value
+    }
 }
 
 private fun Publication.findResource(href: String): ResourceHref? {

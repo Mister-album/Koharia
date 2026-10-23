@@ -15,14 +15,25 @@ import java.util.concurrent.CopyOnWriteArrayList
 class ConnectionAddressRouterTest {
     private val publicRequests = CopyOnWriteArrayList<String>()
     private val internalRequests = CopyOnWriteArrayList<String>()
+    private val diagnostics = CopyOnWriteArrayList<String>()
     private var internalStatus = 200
     private var probeStatus = 200
+    private var probeDelayMillis = 0L
+    private var redirectLocation: String? = null
     private var wifi: Any? = "home"
     private val publicServer = server(publicRequests) { 200 }
-    private val internalServer = server(internalRequests) { if (it.endsWith("/probe")) probeStatus else internalStatus }
+    private val internalServer = server(internalRequests) {
+        if (it.endsWith("/probe")) {
+            if (probeDelayMillis > 0) Thread.sleep(probeDelayMillis)
+            probeStatus
+        } else {
+            internalStatus
+        }
+    }
     private val public = "http://127.0.0.1:${publicServer.address.port}/public/"
     private var internal = "http://127.0.0.1:${internalServer.address.port}/lan/"
-    private val router = ConnectionAddressRouter({ public }, { internal }, { wifi }, "probe")
+    private val router =
+        ConnectionAddressRouter({ public }, { internal }, { wifi }, "probe", diagnostics = diagnostics::add)
     private val client = OkHttpClient.Builder().addInterceptor(router)
         .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard).build()
 
@@ -43,6 +54,9 @@ class ConnectionAddressRouterTest {
         }
         assertEquals(listOf("GET /lan/probe", "GET /lan/book/page?number=2"), internalRequests)
         assertTrue(publicRequests.isEmpty())
+        assertTrue(diagnostics.any { "probe-end status=200 available=true" in it })
+        assertTrue(diagnostics.any { "route-selected target=internal" in it })
+        assertFalse(diagnostics.any { "127.0.0.1" in it || "book/page" in it || "number=" in it })
     }
 
     @Test
@@ -62,6 +76,8 @@ class ConnectionAddressRouterTest {
         get()
         assertEquals(2, publicRequests.size)
         assertTrue(internalRequests.isEmpty())
+        assertTrue(diagnostics.any { "reason=default-network-not-wifi" in it })
+        assertTrue(diagnostics.any { "reason=no-valid-internal" in it })
     }
 
     @Test
@@ -71,11 +87,53 @@ class ConnectionAddressRouterTest {
         get()
         assertEquals(1, internalRequests.size)
         assertEquals(2, publicRequests.size)
+        assertTrue(diagnostics.any { "probe-end status=503 available=false" in it })
+        assertTrue(diagnostics.any { "probe-cached available=false" in it })
         wifi = "other wifi"
         probeStatus = 200
         get()
         assertEquals(3, internalRequests.size)
         assertEquals(2, publicRequests.size)
+    }
+
+    @Test
+    fun `slow probe records failure and fallback without recording request secrets`() {
+        probeDelayMillis = 2000
+        client.newCall(
+            Request.Builder().url(public + "private-title?token=dummy-secret")
+                .header("Authorization", "Bearer dummy-credential").build(),
+        ).execute().close()
+        assertEquals(1, publicRequests.size)
+        assertTrue(diagnostics.any { "probe-failed" in it && "elapsedMs=" in it })
+        assertTrue(diagnostics.any { "reason=internal-unavailable" in it })
+        assertFalse(diagnostics.any { "dummy" in it || "private-title" in it || "127.0.0.1" in it })
+    }
+
+    @Test
+    fun `redirect rejection is recorded before read fallback`() {
+        internalStatus = 302
+        redirectLocation = public + "redirect-target"
+        get()
+        assertEquals(listOf("GET /public/book"), publicRequests)
+        assertTrue(diagnostics.any { "redirect-rejected" in it })
+        assertTrue(diagnostics.any { "reason=internal-io-fallback" in it })
+        assertFalse(diagnostics.any { "redirect-target" in it })
+    }
+
+    @Test
+    fun `diagnostic failure does not fail the request`() {
+        val noisyRouter = ConnectionAddressRouter(
+            { public },
+            { internal },
+            { wifi },
+            "probe",
+            diagnostics = { error("diagnostic sink unavailable") },
+        )
+        val noisyClient = client.newBuilder().apply { interceptors().clear() }.addInterceptor(noisyRouter).build()
+        noisyClient.newCall(Request.Builder().url(public + "book").build()).execute().use {
+            assertEquals(200, it.code)
+        }
+        assertTrue(publicRequests.isEmpty())
     }
 
     @Test
@@ -174,7 +232,9 @@ class ConnectionAddressRouterTest {
                 exchange.requestHeaders.getFirst("Range")?.let { exchange.responseHeaders.add("Received-Range", it) }
                 exchange.requestBody.close()
                 val bytes = "{}".toByteArray()
-                exchange.sendResponseHeaders(status(exchange.requestURI.path), bytes.size.toLong())
+                val responseStatus = status(exchange.requestURI.path)
+                if (responseStatus == 302) exchange.responseHeaders.add("Location", redirectLocation)
+                exchange.sendResponseHeaders(responseStatus, bytes.size.toLong())
                 exchange.responseBody.use { it.write(bytes) }
             }
             start()

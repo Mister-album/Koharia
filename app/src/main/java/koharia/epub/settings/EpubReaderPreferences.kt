@@ -6,6 +6,7 @@ import tachiyomi.core.common.preference.PreferenceStore
 class EpubReaderPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
+    val textReplacementEnabled: Preference<Boolean> = preferenceStore.getBoolean("text_replacement_enabled", true)
 
     val preferLocalFile: Preference<Boolean> = preferenceStore.getBoolean("epub_reader_prefer_local_file", true)
 

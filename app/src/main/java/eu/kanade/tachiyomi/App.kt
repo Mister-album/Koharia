@@ -90,6 +90,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
     @SuppressLint("LaunchActivityFromNotification")
     override fun onCreate() {
         super<Application>.onCreate()
+        koharia.connection.NetworkDiagnostics.initialize(this)
         patchInjekt()
         TelemetryConfig.init(applicationContext)
 

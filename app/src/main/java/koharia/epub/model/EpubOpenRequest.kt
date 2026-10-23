@@ -1,5 +1,6 @@
 package koharia.epub.model
 
+import koharia.domain.textreplacement.EffectiveRuleSet
 import koharia.pdf.reflow.PdfReflowManifest
 
 data class RemotePublicationRef(
@@ -19,6 +20,7 @@ data class EpubOpenRequest(
     val publicationKey: String = "chapter:$chapterId",
     val persistCache: Boolean = true,
     val pdfReflow: PdfReflowManifest? = null,
+    val replacements: EffectiveRuleSet = EffectiveRuleSet.EMPTY,
 ) {
     enum class OpenSource {
         LOCAL,

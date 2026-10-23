@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.animation.ValueAnimator
+import android.app.ActivityManager
 import android.graphics.Color
 import android.graphics.PointF
 import android.graphics.drawable.ColorDrawable
@@ -29,12 +30,9 @@ import eu.kanade.tachiyomi.ui.reader.transition.PageTurnSensitivity
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.tachiyomi.ui.reader.viewer.refreshReaderResampling
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
 import kotlin.math.min
@@ -44,11 +42,6 @@ import kotlin.math.min
  */
 @Suppress("LeakingThis")
 abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
-
-    private data class PendingPageTurn(
-        val target: Int,
-        val slot: PagerSlot.Pages,
-    )
 
     val downloadManager: DownloadManager by injectLazy()
 
@@ -81,11 +74,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         container = viewerContainer,
         pager = pager,
         canAnimateTarget = { target -> adapter.slots.getOrNull(target) is PagerSlot.Pages },
-        isTargetReady = { target ->
-            (adapter.slots.getOrNull(target) as? PagerSlot.Pages)
-                ?.progressPage
-                ?.let(::getPageHolder)
-                ?.isTransitionTargetReady() == true
+        selectPage = { target ->
+            // Register at execution time, including queued turns and fallback selections.
+            markPendingUserNavigation(target)
+            pager.setCurrentItem(target, false)
         },
         contentBoundsInWindow = { target ->
             (adapter.slots.getOrNull(target) as? PagerSlot.Pages)
@@ -137,11 +129,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private var pageTransitionTransformer: PagerPageTransformer? = null
 
-    private var pendingPageTurn: PendingPageTurn? = null
-
-    private var pendingPageTurnTimeout: Job? = null
-
-    /** Net page turns requested while the destination page is still being rendered. */
+    /** Net page turns requested while a pager scroll is settling, independent of image loading. */
     private var pendingPageTurnDelta = 0
 
     /**
@@ -188,6 +176,14 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private val pagerListener = object : ViewPager.SimpleOnPageChangeListener() {
         override fun onPageSelected(position: Int) {
+            if (eu.kanade.tachiyomi.BuildConfig.DEBUG &&
+                android.util.Log.isLoggable("PagerInputTrace", android.util.Log.DEBUG)
+            ) {
+                android.util.Log.d(
+                    "PagerInputTrace",
+                    "selected item=$position pending=${pendingPageMove?.position} drag=$userDragSelectionPending",
+                )
+            }
             val pendingMove = pendingPageMove?.takeIf { it.position == position }
             if (!PagerSelectionPolicy.shouldHandle(position, pendingMove?.position, userDragSelectionPending)) {
                 // DirectionalViewPager can emit an index derived from the old viewport while rotating.
@@ -218,10 +214,15 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
 
         override fun onPageScrollStateChanged(state: Int) {
+            if (eu.kanade.tachiyomi.BuildConfig.DEBUG &&
+                android.util.Log.isLoggable("PagerInputTrace", android.util.Log.DEBUG)
+            ) {
+                android.util.Log.d("PagerInputTrace", "scroll state=$state item=${pager.currentItem}")
+            }
             if (state == ViewPager.SCROLL_STATE_DRAGGING) {
                 pendingPageMove = null
                 userDragSelectionPending = true
-                cancelPendingPageTurn(reactivateCurrent = true)
+                cancelPendingPageTurn()
             }
             isIdle = state == ViewPager.SCROLL_STATE_IDLE
             if (isIdle) userDragSelectionPending = false
@@ -232,7 +233,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.isVisible = false // Don't layout the pager yet
         pager.layoutParams = FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         pager.isFocusable = false
-        pager.offscreenPageLimit = 1
+        updateRenderAheadLimit()
         pager.id = R.id.reader_pager
         pager.adapter = adapter
         pager.addOnPageChangeListener(pagerListener)
@@ -258,7 +259,18 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 NavigationRegion.LEFT -> withPageTurnOrigin(turnOrigin) { moveLeft() }
             }
         }
-        pager.canInterceptPageTurnSwipe = ::canInterceptPageTurnSwipe
+        pager.canInterceptPageTurnSwipe = { delta ->
+            canInterceptPageTurnSwipe(delta).also { intercept ->
+                if (eu.kanade.tachiyomi.BuildConfig.DEBUG &&
+                    android.util.Log.isLoggable("PagerInputTrace", android.util.Log.DEBUG)
+                ) {
+                    android.util.Log.d(
+                        "PagerInputTrace",
+                        "intercept delta=$delta result=$intercept running=${pageFlipController.isRunning} item=${pager.currentItem}",
+                    )
+                }
+            }
+        }
         pager.pageTurnSwipeListener = { delta, xFraction, yFraction ->
             val origin = PageTurnOrigin(xFraction, yFraction, PageTurnCause.GESTURE).normalized()
             withPageTurnOrigin(origin) {
@@ -269,6 +281,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             }
         }
         pager.swipePageTurnsEnabled = { activity.readerPreferences.swipePageTurns.get() }
+        pager.doubleTapZoomEnabled = { config.doubleTapZoomEnabled }
         pager.pageTurnSensitivity = { activity.readerPreferences.pageTurnSensitivity.get() }
         pager.pageTurnSwipeUsesNativeDrag = {
             !PagerPageTurnPolicy.shouldInterceptSwipe(
@@ -301,6 +314,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
 
         config.doublePageLayoutChangedListener = {
+            updateRenderAheadLimit()
             val state = configurationState()
             val selectedAnchor = layoutRestoreAnchor ?: stableSlotAnchor ?: (currentSlot as? PagerSlot.Pages)?.first
             val anchor = if (!config.splitsWidePages &&
@@ -357,10 +371,17 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     override fun destroy() {
         pendingPageSplits.clear()
-        cancelPendingPageTurn(reactivateCurrent = false)
+        cancelPendingPageTurn()
         pageFlipController.cancel()
         super.destroy()
         scope.cancel()
+    }
+
+    private fun updateRenderAheadLimit() {
+        val memory = activity.getSystemService(ActivityManager::class.java)
+        // Bound retained image holders to five physical pages in single-page mode,
+        // or three spreads. Small heaps retain the original three-holder window.
+        pager.offscreenPageLimit = if (config.doublePages || memory.isLowRamDevice || memory.memoryClass < 192) 1 else 2
     }
 
     fun onConfigurationChanged() {
@@ -571,7 +592,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Sets the active [chapters] on this pager.
      */
     private fun setChaptersInternal(chapters: ViewerChapters) {
-        cancelPendingPageTurn(reactivateCurrent = false)
+        cancelPendingPageTurn()
         pageFlipController.cancel()
         // Remove listener so the change in item doesn't trigger it
         pager.removeOnPageChangeListener(pagerListener)
@@ -637,7 +658,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun moveToPage(page: ReaderPage, cause: PageChangeCause) {
         val position = adapter.positionOf(page)
         if (position != -1) {
-            cancelPendingPageTurn(reactivateCurrent = false)
+            cancelPendingPageTurn()
             pageFlipController.cancel()
             val currentPosition = pager.currentItem
             stableSlotAnchor = page
@@ -716,7 +737,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * changed.
      */
     private fun refreshAdapter() {
-        cancelPendingPageTurn(reactivateCurrent = false)
+        cancelPendingPageTurn()
         pageFlipController.cancel()
         val currentItem = pager.currentItem
         adapter.refresh()
@@ -728,8 +749,6 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         config.pageTransitionEffect != PageTransitionEffect.NONE && ValueAnimator.areAnimatorsEnabled()
 
     private fun setCurrentItemForPageTurn(target: Int, nativeDragRelease: Boolean = false) {
-        // Mark app-driven page turns so they are distinguishable from viewport resize callbacks.
-        markPendingUserNavigation(target)
         if (config.pageTransitionEffect == PageTransitionEffect.CURL && ValueAnimator.areAnimatorsEnabled()) {
             val origin = activePageTurnOrigin ?: PageTurnOrigin.center(PageTurnCause.KEY)
             val sourceIsPage = adapter.slots.getOrNull(pager.currentItem) is PagerSlot.Pages
@@ -738,65 +757,17 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 return
             }
         }
-        // Replace the native cancellation's settling motion immediately when the destination is ready.
-        val nativeTargetReady = nativeDragRelease &&
-            (adapter.slots.getOrNull(target) as? PagerSlot.Pages)?.let(::isSlotRendered) == true
-        if (!nativeTargetReady && waitForPageTurnTarget(target)) return
+        // Only serialize scroll animations. Network/decode readiness must not gate navigation:
+        // every holder owns a visible loading/error state until its image is ready.
+        if (!nativeDragRelease && !isIdle) {
+            pendingPageTurnDelta = PagerPageTurnPolicy.accumulate(
+                pendingPageTurnDelta,
+                target.compareTo(pager.currentItem),
+            )
+            return
+        }
+        markPendingUserNavigation(target)
         pager.setCurrentItem(target, shouldAnimatePageTurn())
-    }
-
-    /**
-     * Keeps the current page on screen until the destination page has been rendered, banking the
-     * turn when it has to wait. Moving onto a page that is still loading would reveal its empty
-     * placeholder, which reads as a blank flash when the volume keys are pressed faster than pages
-     * are delivered.
-     *
-     * Returns false when the turn has to be applied right away.
-     */
-    private fun waitForPageTurnTarget(target: Int): Boolean {
-        val delta = target.compareTo(pager.currentItem)
-        if (delta == 0) return false
-
-        val targetSlot = adapter.slots.getOrNull(target) as? PagerSlot.Pages
-        val pending = pendingPageTurn
-        val shouldWait = PagerPageTurnPolicy.shouldWaitForTarget(
-            turnInFlight = pending != null,
-            pagerIdle = isIdle,
-            sourceIsPage = adapter.slots.getOrNull(pager.currentItem) is PagerSlot.Pages,
-            targetIsPage = targetSlot != null,
-            targetHolderAttached = targetSlot?.let { getPageHolder(it.progressPage) } != null,
-            targetRendered = targetSlot != null && isSlotRendered(targetSlot),
-        )
-        if (!shouldWait) return false
-
-        if (pending != null) {
-            pendingPageTurnDelta = PagerPageTurnPolicy.accumulate(pendingPageTurnDelta, delta)
-            // The page being waited for stays the loader's priority while more turns come in.
-            activateSlotForTransition(pending.slot)
-            return true
-        }
-        if (targetSlot == null || !isIdle) {
-            pendingPageTurnDelta = PagerPageTurnPolicy.accumulate(pendingPageTurnDelta, delta)
-            return true
-        }
-        // Only a slot whose loader can be pointed at the destination may be deferred.
-        if (!activateSlotForTransition(targetSlot)) return false
-        // The armed turn stands for this press, so it must not be banked as well.
-        pendingPageTurn = PendingPageTurn(target, targetSlot)
-        pendingPageTurnTimeout = scope.launch {
-            delay(PAGE_TURN_TARGET_TIMEOUT_MS)
-            val waiting = pendingPageTurn?.takeIf { it.target == target && it.slot == targetSlot } ?: return@launch
-            logcat {
-                "Page turn target not rendered after ${PAGE_TURN_TARGET_TIMEOUT_MS}ms; " +
-                    "revealing page ${waiting.slot.progressPage.number}"
-            }
-            pendingPageTurn = null
-            pendingPageTurnTimeout = null
-            markPendingUserNavigation(waiting.target)
-            pager.setCurrentItem(waiting.target, false)
-            pager.post(::drainPendingPageTurn)
-        }
-        return true
     }
 
     private fun isSlotRendered(slot: PagerSlot.Pages): Boolean =
@@ -832,52 +803,20 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         } else {
             if (delta > 0) holder.canNavigatePanDown() else holder.canNavigatePanUp()
         }
+        if (eu.kanade.tachiyomi.BuildConfig.DEBUG &&
+            android.util.Log.isLoggable("PagerInputTrace", android.util.Log.DEBUG)
+        ) {
+            android.util.Log.d(
+                "PagerInputTrace",
+                "swipe-pan delta=$delta canPan=$canPanTowardSwipe sourceReady=${isSlotRendered(sourceSlot)}",
+            )
+        }
         return !canPanTowardSwipe
     }
 
-    internal fun onTransitionTargetReady(slot: PagerSlot.Pages) {
-        val pending = pendingPageTurn?.takeIf { it.slot == slot } ?: return
-        if (adapter.slots.getOrNull(pending.target) != slot) {
-            cancelPendingPageTurn(reactivateCurrent = true)
-            return
-        }
-        pendingPageTurnTimeout?.cancel()
-        pendingPageTurnTimeout = null
-        pager.post {
-            val committed = pendingPageTurn?.takeIf { it == pending } ?: return@post
-            pendingPageTurn = null
-            if (adapter.slots.getOrNull(committed.target) == slot && pager.currentItem != committed.target) {
-                markPendingUserNavigation(committed.target)
-                pager.setCurrentItem(committed.target, shouldAnimatePageTurn())
-            } else {
-                pendingPageTurnDelta = 0
-            }
-            drainPendingPageTurn()
-        }
-    }
-
-    internal fun onTransitionTargetFailed(slot: PagerSlot.Pages) {
-        val pending = pendingPageTurn?.takeIf { it.slot == slot } ?: return
-        pendingPageTurn = null
-        pendingPageTurnTimeout?.cancel()
-        pendingPageTurnTimeout = null
-        markPendingUserNavigation(pending.target)
-        pager.setCurrentItem(pending.target, false)
-        pager.post(::drainPendingPageTurn)
-    }
-
-    private fun activateSlotForTransition(slot: PagerSlot.Pages): Boolean {
-        val physicalPages = slot.pages.filterNot { it is InsertPage }.distinctBy { it.index }
-        val chapter = physicalPages.firstOrNull()?.chapter ?: return false
-        if (physicalPages.any { it.chapter !== chapter }) return false
-        val loader = chapter.pageLoader ?: return false
-        loader.setActivePages(physicalPages)
-        return true
-    }
-
-    /** Applies the banked turns one page at a time, waiting for each destination to render. */
+    /** Applies turns banked during scrolling without waiting for image loading. */
     private fun drainPendingPageTurn() {
-        if (!isIdle || pendingPageTurn != null) return
+        if (!isIdle) return
         val step = PagerPageTurnPolicy.nextStep(pendingPageTurnDelta)
         if (step == 0) return
         val target = pager.currentItem + step
@@ -888,27 +827,15 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pendingPageTurnDelta -= step
         setCurrentItemForPageTurn(target)
         // Instant page turns do not emit another idle event.
-        if (!shouldAnimatePageTurn() && isIdle && pendingPageTurn == null &&
+        if (!shouldAnimatePageTurn() && isIdle &&
             pager.currentItem == target && pendingPageTurnDelta != 0
         ) {
             pager.post(::drainPendingPageTurn)
         }
     }
 
-    private fun cancelPendingPageTurn(
-        reactivateCurrent: Boolean,
-        clearQueuedTurns: Boolean = true,
-    ) {
-        val hadPendingTarget = pendingPageTurn != null || pendingPageTurnTimeout != null
-        if (clearQueuedTurns) pendingPageTurnDelta = 0
-        if (!hadPendingTarget) return
-        pendingPageTurn = null
-        pendingPageTurnTimeout?.cancel()
-        pendingPageTurnTimeout = null
-        if (reactivateCurrent) {
-            (adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages)
-                ?.let(::activateSlotForTransition)
-        }
+    private fun cancelPendingPageTurn() {
+        pendingPageTurnDelta = 0
     }
 
     private inline fun withPageTurnOrigin(origin: PageTurnOrigin, action: () -> Unit) {
@@ -922,7 +849,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun applyPageTransitionEffect() {
-        cancelPendingPageTurn(reactivateCurrent = true)
+        cancelPendingPageTurn()
         pageFlipController.cancel()
         pageTransitionTransformer?.clear(pager.children.asIterable())
         val effect = config.pageTransitionEffect.takeIf { ValueAnimator.areAnimatorsEnabled() }
@@ -965,14 +892,6 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 2 -> Color.rgb(0x20, 0x21, 0x25)
                 else -> Color.BLACK
             }
-    }
-
-    private companion object {
-        /**
-         * Fallback for a destination page that never reports itself as rendered, so a page turn is
-         * never lost to a page that cannot finish loading.
-         */
-        const val PAGE_TURN_TARGET_TIMEOUT_MS = 2_000L
     }
 
     /**
@@ -1099,14 +1018,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun rebuildSlots(anchor: ReaderPage?) {
-        // A rebuild keeps the pager on the same item, so a turn that is waiting for its destination
-        // is still wanted: bank it again and replay it against the rebuilt slots instead of
-        // dropping the key press.
-        val deferredTurn = pendingPageTurn?.target?.compareTo(pager.currentItem)
-        cancelPendingPageTurn(reactivateCurrent = false, clearQueuedTurns = false)
-        if (deferredTurn != null && deferredTurn != 0) {
-            pendingPageTurnDelta = PagerPageTurnPolicy.accumulate(pendingPageTurnDelta, deferredTurn)
-        }
+        // Preserve turns banked during scrolling across an adapter rebuild.
         pageFlipController.cancel()
         val resolvedAnchor = anchor ?: stableSlotAnchor
         stableSlotAnchor = resolvedAnchor

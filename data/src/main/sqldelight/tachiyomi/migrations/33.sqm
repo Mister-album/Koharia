@@ -1,0 +1,4 @@
+CREATE TABLE text_replacement_scope (
+    scope_key TEXT NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);

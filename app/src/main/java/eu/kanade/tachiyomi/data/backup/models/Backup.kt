@@ -18,4 +18,5 @@ data class Backup(
     @ProtoNumber(110) var backupKomgaPages: List<BackupKomgaPageEvent> = emptyList(),
     @ProtoNumber(111) var backupKomgaPageAttempts: List<BackupKomgaPageEvent> = emptyList(),
     @ProtoNumber(112) var backupKomgaReadStatusAttempts: List<BackupKomgaReadStatus> = emptyList(),
+    @ProtoNumber(113) var textReplacement: String? = null,
 )

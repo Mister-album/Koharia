@@ -221,6 +221,9 @@ class DomainModule : InjektModule {
         addFactory { GetEpubPaginationCache(get()) }
         addFactory { UpsertEpubPaginationCache(get()) }
         addSingletonFactory<EpubBookmarkRepository> { EpubBookmarkRepositoryImpl(get()) }
+        addSingletonFactory<koharia.domain.textreplacement.TextReplacementRepository> {
+            koharia.data.textreplacement.TextReplacementRepositoryImpl(get())
+        }
         addFactory { GetEpubBookmarks(get()) }
         addFactory { AddEpubBookmark(get()) }
         addFactory { DeleteEpubBookmark(get()) }

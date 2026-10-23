@@ -12,6 +12,14 @@ class LanraragiPreferences(
     connectionId: Long,
     private val preferences: android.content.SharedPreferences = sourcePreferences("source_$connectionId"),
 ) {
+    internal fun diagnosticState(): String {
+        fun addressState(read: () -> String) = runCatching {
+            koharia.connection.NetworkDiagnostics.addressState(read())
+        }.getOrElse { "read-error-${it.javaClass.simpleName}" }
+        val keyPresent = runCatching { apiKey.isNotBlank().toString() }.getOrDefault("read-error")
+        return "primary=${addressState { address }} internal=${addressState { internalAddress }} keyPresent=$keyPresent"
+    }
+
     val address: String get() = preferences.getString("address", "").orEmpty()
     val internalAddress: String get() = preferences.getString("internal_address", "").orEmpty()
     val apiKey: String get() = preferences.getString(Preference.privateKey("api_key"), "").orEmpty()

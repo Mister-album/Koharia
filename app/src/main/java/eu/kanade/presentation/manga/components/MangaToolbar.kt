@@ -61,6 +61,7 @@ fun MangaToolbar(
     modifier: Modifier = Modifier,
     onClickConnectionActions: (() -> Unit)? = null,
     additionalActions: List<AppBar.AppBarAction> = emptyList(),
+    onClickTextReplacement: (() -> Unit)? = null,
 ) {
     val isActionMode = actionModeCounter > 0
     AppBar(
@@ -93,6 +94,14 @@ fun MangaToolbar(
             AppBarActions(
                 actions = persistentListOf<AppBar.AppBarAction>().builder().apply {
                     if (isActionMode) {
+                        if (onClickTextReplacement != null) {
+                            add(
+                                AppBar.OverflowAction(
+                                    title = stringResource(MR.strings.replacement_title),
+                                    onClick = onClickTextReplacement,
+                                ),
+                            )
+                        }
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_all),

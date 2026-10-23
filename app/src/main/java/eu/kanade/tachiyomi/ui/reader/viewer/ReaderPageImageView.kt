@@ -213,7 +213,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
-    fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config) {
+    fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config, preview: ReaderImagePreview? = null) {
         cancelLandscapeZoom()
         this.config = config
         if (isAnimated) {
@@ -221,7 +221,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setAnimatedImage(source, config)
         } else {
             prepareNonAnimatedImageView()
-            setNonAnimatedImage(source, config)
+            setNonAnimatedImage(source, config, preview)
         }
     }
 
@@ -399,6 +399,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         } else {
             SubsamplingScaleImageView(context)
         }.apply {
+            setProgressivePreviewEnabled(!isWebtoon)
             if (ImageResampler.available) {
                 setRegionDecoderFactory { cropBorders, _, profile ->
                     ResamplingRegionDecoder(cropBorders, profile, settings.options, enabled = filtering)
@@ -480,6 +481,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private fun setNonAnimatedImage(
         data: Any,
         config: Config,
+        preview: ReaderImagePreview? = null,
     ) = (pageView as? SubsamplingScaleImageView)?.apply {
         setDoubleTapZoomDuration(config.zoomDuration.getSystemScaledDuration())
         setMinimumScaleType(config.minimumScaleType)
@@ -508,7 +510,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
             is BufferedSource -> {
                 if (moireReduction || !isWebtoon || alwaysDecodeLongStripWithSSIV) {
                     setHardwareConfig(ImageUtil.canUseHardwareBitmap(data))
-                    setImage(ImageSource.inputStream(data.inputStream()))
+                    val source = ImageSource.inputStream(data.inputStream())
+                    if (preview != null) {
+                        setImageWithPreview(source, preview.take(), preview.width, preview.height)
+                    } else {
+                        setImage(source)
+                    }
                     isVisible = true
                     return@apply
                 }

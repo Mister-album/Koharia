@@ -26,7 +26,7 @@ internal class ComicPageFlipController(
     private val container: FrameLayout,
     private val pager: Pager,
     private val canAnimateTarget: (Int) -> Boolean,
-    private val isTargetReady: (Int) -> Boolean,
+    private val selectPage: (Int) -> Unit,
     private val contentBoundsInWindow: (Int) -> Rect?,
 ) {
 
@@ -124,8 +124,8 @@ internal class ComicPageFlipController(
                     // The blocker is a separate WindowManager window, so PixelCopy of the
                     // activity sees the destination below it instead of copying the blocker back
                     // into the destination texture.
-                    pager.setCurrentItem(target, false)
-                    awaitTarget(currentSession, origin)
+                    selectPage(target)
+                    captureTarget(currentSession, origin)
                 },
             )
             if (!blockerShown) {
@@ -143,64 +143,48 @@ internal class ComicPageFlipController(
             ?: pager.setTouchNavigationEnabled(true)
     }
 
-    private fun awaitTarget(current: Session, origin: PageTurnOrigin, attempt: Int = 0) {
-        if (!ensureCurrentTarget(current, "wait for destination")) return
-        val elapsed = SystemClock.elapsedRealtime() - current.startedAt
-        if (isTargetReady(current.targetItem)) {
-            // Two choreographer frames let the newly visible SSIV holder submit its tiles. Drawing
-            // an attached, visible holder is reliable; drawing the old off-screen holder was the
-            // source of the black textures in the previous implementation.
-            pager.postOnAnimation {
-                pager.postOnAnimation destinationFrame@{
-                    if (!ensureCurrentTarget(current, "prepare destination frame")) return@destinationFrame
-                    capturePager { destination ->
-                        if (!ensureCurrentTarget(current, "capture destination")) {
-                            destination?.recycle()
+    private fun captureTarget(current: Session, origin: PageTurnOrigin) {
+        if (!ensureCurrentTarget(current, "prepare destination")) return
+        // Capture the committed holder frame, including its loading/retry state. Waiting for
+        // decoded image content here makes a tap appear ignored for the entire network request.
+        pager.postOnAnimation {
+            pager.postOnAnimation destinationFrame@{
+                if (!ensureCurrentTarget(current, "prepare destination frame")) return@destinationFrame
+                capturePager { destination ->
+                    if (!ensureCurrentTarget(current, "capture destination")) {
+                        destination?.recycle()
+                        return@capturePager
+                    }
+                    if (destination == null) {
+                        failSession(current, "copy visible destination from window")
+                    } else {
+                        val pagerBounds = current.pagerBounds ?: pagerBoundsInWindow()
+                        if (pagerBounds == null) {
+                            destination.recycle()
+                            failSession(current, "resolve destination pager bounds")
                             return@capturePager
                         }
-                        if (destination == null) {
-                            failSession(current, "copy visible destination from window")
-                        } else {
-                            val pagerBounds = current.pagerBounds ?: pagerBoundsInWindow()
-                            if (pagerBounds == null) {
-                                destination.recycle()
-                                failSession(current, "resolve destination pager bounds")
-                                return@capturePager
-                            }
-                            // Both textures occupy the source page's GL surface. Cropping the next
-                            // image to its own bounds stretches it to the previous image's aspect
-                            // ratio until the surface disappears. Keep window coordinates identical;
-                            // the destination pager already draws any content outside this surface.
-                            val destinationBounds = current.pageBounds ?: pagerBounds
-                            val destinationPage = cropToWindowBounds(destination, pagerBounds, destinationBounds)
-                            if (destinationPage == null) {
-                                destination.recycle()
-                                failSession(current, "crop visible destination page")
-                                return@capturePager
-                            }
-                            if (destinationPage !== destination) destination.recycle()
-                            current.destination = destinationPage
-                            logcat(LogPriority.DEBUG) {
-                                "Comic page flip destination captured generation=${current.generation} " +
-                                    "bitmap=${destinationPage.width}x${destinationPage.height} " +
-                                    "bounds=$destinationBounds ${describeBitmap(destinationPage)}"
-                            }
-                            createFlipSurface(current, origin, destinationPage)
+                        // Both textures occupy the source page's GL surface. Cropping the next
+                        // image to its own bounds stretches it to the previous image's aspect
+                        // ratio until the surface disappears. Keep window coordinates identical;
+                        // the destination pager already draws any content outside this surface.
+                        val destinationBounds = current.pageBounds ?: pagerBounds
+                        val destinationPage = cropToWindowBounds(destination, pagerBounds, destinationBounds)
+                        if (destinationPage == null) {
+                            destination.recycle()
+                            failSession(current, "crop visible destination page")
+                            return@capturePager
                         }
+                        if (destinationPage !== destination) destination.recycle()
+                        current.destination = destinationPage
+                        logcat(LogPriority.DEBUG) {
+                            "Comic page flip destination captured generation=${current.generation} " +
+                                "bitmap=${destinationPage.width}x${destinationPage.height} " +
+                                "bounds=$destinationBounds ${describeBitmap(destinationPage)}"
+                        }
+                        createFlipSurface(current, origin, destinationPage)
                     }
                 }
-            }
-            return
-        }
-        if (elapsed >= TARGET_TIMEOUT_MS) {
-            failSession(current, "wait for destination after ${elapsed}ms")
-            return
-        }
-        pager.postDelayed({ awaitTarget(current, origin, attempt + 1) }, TARGET_POLL_MS)
-        if (attempt == TARGET_LOG_ATTEMPT) {
-            logcat(LogPriority.DEBUG) {
-                "Comic page flip is waiting for visible destination generation=${current.generation} " +
-                    "target=${current.targetItem}"
             }
         }
     }
@@ -429,13 +413,18 @@ internal class ComicPageFlipController(
 
     private fun failSession(current: Session, stage: String) {
         if (!isActive(current)) return
-        if (pager.currentItem != current.targetItem) {
-            pager.setCurrentItem(current.targetItem, false)
-        }
+        // A snapshot/GL failure must not undo the requested navigation or discard later input.
+        // The real destination holder provides its own loading/error UI.
+        if (pager.currentItem != current.targetItem) selectPage(current.targetItem)
         logcat(LogPriority.ERROR) {
-            "Comic page flip failed to $stage generation=${current.generation}; revealing destination"
+            "Comic page flip failed to $stage generation=${current.generation}; revealing destination holder"
         }
-        finishSession(current, animatePending = true)
+        // Keep protection until the destination holder has submitted a frame.
+        pager.postOnAnimation {
+            pager.postOnAnimation {
+                if (isActive(current)) finishSession(current, animatePending = true)
+            }
+        }
     }
 
     private fun finishSession(current: Session, animatePending: Boolean) {
@@ -495,7 +484,7 @@ internal class ComicPageFlipController(
             pendingRequests.clear()
             pager.setTouchNavigationEnabled(true)
             if (targetIsValid) {
-                pager.setCurrentItem(target, false)
+                selectPage(target)
             }
             return
         }
@@ -579,12 +568,9 @@ internal class ComicPageFlipController(
     private companion object {
         const val ARGB_BYTES = 4L
         const val MAX_SNAPSHOT_BYTES = 24L * 1024L * 1024L
-        const val TARGET_TIMEOUT_MS = 2_000L
-        const val TARGET_POLL_MS = 32L
-        const val TARGET_LOG_ATTEMPT = 12
         const val BLOCKER_COMPOSITOR_SETTLE_MS = 34L
         const val BLOCKER_READY_TIMEOUT_MS = 1_000L
-        const val MAX_PENDING_REQUESTS = 3
+        const val MAX_PENDING_REQUESTS = PagerPageTurnPolicy.MAX_PENDING_TURNS
         const val BITMAP_SAMPLE_GRID = 9
     }
 }

@@ -156,6 +156,7 @@ public class SubsamplingScaleImageView extends View {
     private Bitmap bitmap;
     // Specifies if a cache handler is also referencing the bitmap. Do not recycle if so.
     private boolean bitmapIsCached;
+    private boolean bitmapIsPreview;
     // Provider of full size image
     private InputProvider provider;
     // Sample size used to display the whole image when fully zoomed out
@@ -304,10 +305,7 @@ public class SubsamplingScaleImageView extends View {
                         }
                         refreshRequiredTiles(!isZooming && anim == null);
                     }
-                    executor.execute(() -> {
-                        decoderLock.writeLock().lock();
-                        try { previous.recycle(); } finally { decoderLock.writeLock().unlock(); }
-                    });
+                    recycleDecoderAsync(previous);
                     invalidate();
                 });
             } catch (Exception | OutOfMemoryError error) {
@@ -323,6 +321,18 @@ public class SubsamplingScaleImageView extends View {
         return true;
     }
     private float lastDisplayScale;
+
+    /** Detach on the UI thread; wait for in-flight tile readers only on the executor. */
+    private void recycleDecoderAsync(ImageRegionDecoder previous) {
+        executor.execute(() -> {
+            decoderLock.writeLock().lock();
+            try {
+                previous.recycle();
+            } finally {
+                decoderLock.writeLock().unlock();
+            }
+        });
+    }
     private boolean filteringForTiles;
     private float lastExternalScale = 1f;
 
@@ -360,6 +370,14 @@ public class SubsamplingScaleImageView extends View {
     private boolean readySent;
     // Whether a base layer loaded notification has been sent to subclasses
     private boolean imageLoadedSent;
+    private boolean progressivePreviewEnabled;
+    private boolean imageDrawn;
+    private boolean previewLayerOnly;
+
+    /** Prepare a subsampled base image offscreen; refine it when first drawn. */
+    public void setProgressivePreviewEnabled(boolean enabled) {
+        progressivePreviewEnabled = enabled;
+    }
     // Event listener
     private OnImageEventListener onImageEventListener;
     // Scale and center listener
@@ -501,6 +519,19 @@ public class SubsamplingScaleImageView extends View {
         }
     }
 
+    /** Takes ownership of a bounded preview while the original region decoder initializes. */
+    public final void setImageWithPreview(@NonNull ImageSource source, @NonNull Bitmap preview, int width, int height) {
+        setImage(source);
+        bitmap = preview;
+        bitmapIsCached = false;
+        bitmapIsPreview = true;
+        sWidth = width;
+        sHeight = height;
+        checkReady();
+        invalidate();
+        requestLayout();
+    }
+
     /**
      * Reset all state before setting/changing image or setting new rotation.
      */
@@ -535,15 +566,11 @@ public class SubsamplingScaleImageView extends View {
         sRect = null;
         if (newImage) {
             provider = null;
-            decoderLock.writeLock().lock();
-            try {
-                if (decoder != null) {
-                    decoder.recycle();
-                    decoder = null;
-                }
-            } finally {
-                decoderLock.writeLock().unlock();
-            }
+            // imageGeneration already invalidated queued/running tiles. Their read lock keeps
+            // this detached decoder alive until native decoding has returned, without parking UI.
+            final ImageRegionDecoder previous = decoder;
+            decoder = null;
+            if (previous != null) recycleDecoderAsync(previous);
             if (bitmap != null && !bitmapIsCached) {
                 bitmap.recycle();
             }
@@ -553,6 +580,9 @@ public class SubsamplingScaleImageView extends View {
             pRegion = null;
             readySent = false;
             imageLoadedSent = false;
+            bitmapIsPreview = false;
+            imageDrawn = false;
+            previewLayerOnly = false;
             bitmap = null;
             bitmapIsCached = false;
         }
@@ -644,6 +674,19 @@ public class SubsamplingScaleImageView extends View {
             this.anim = null;
             this.pendingScale = scale;
             this.sPendingCenter = sCenter;
+        }
+        // Offscreen pager children are laid out but may never receive onDraw.
+        // Decoder initialization and layout can finish in either order.
+        initialiseSizedBaseLayer();
+        if (bitmapIsPreview) checkReady();
+    }
+
+    private synchronized void initialiseSizedBaseLayer() {
+        if (decoder != null && tileMap == null && sWidth > 0 && sHeight > 0
+                && maxTileWidth > 0 && maxTileWidth != TILE_SIZE_AUTO
+                && maxTileHeight > 0 && maxTileHeight != TILE_SIZE_AUTO
+                && getWidth() > 0 && getHeight() > 0) {
+            initialiseBaseLayer(new Point(maxTileWidth, maxTileHeight));
         }
     }
 
@@ -1004,6 +1047,7 @@ public class SubsamplingScaleImageView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        imageDrawn = true;
         createPaints();
 
         // If image or view dimensions are not known yet, abort.
@@ -1064,7 +1108,8 @@ public class SubsamplingScaleImageView extends View {
             invalidate();
         }
 
-        if (tileMap != null && ((hasFilteredDecoder() && lastDisplayScale != scale * getTileExternalScale())
+        if (tileMap != null && ((progressivePreviewEnabled && imageLoadedSent && previewLayerOnly)
+                || (hasFilteredDecoder() && lastDisplayScale != scale * getTileExternalScale())
                 || lastExternalScale != getTileExternalScale()
                 || filteringForTiles != shouldFilterAtScale(scale * getTileExternalScale()))) {
             refreshRequiredTiles(!isZooming && anim == null);
@@ -1135,12 +1180,23 @@ public class SubsamplingScaleImageView extends View {
         } else if (bitmap != null && !bitmap.isRecycled()) {
 
             float xScale = scale, yScale = scale;
+            float previewOffsetX = 0f, previewOffsetY = 0f;
+            if (bitmapIsPreview) {
+                // Exact border cropping may change the source aspect while the full
+                // decoder initializes. Keep the preview undistorted until tiles replace it.
+                float previewScale = Math.min((float) sWidth / bitmap.getWidth(), (float) sHeight / bitmap.getHeight());
+                xScale *= previewScale;
+                yScale *= previewScale;
+                previewOffsetX = scale * (sWidth - bitmap.getWidth() * previewScale) / 2f;
+                previewOffsetY = scale * (sHeight - bitmap.getHeight() * previewScale) / 2f;
+            }
 
             if (matrix == null) {
                 matrix = new Matrix();
             }
             matrix.reset();
             matrix.postScale(xScale, yScale);
+            matrix.postTranslate(previewOffsetX, previewOffsetY);
             matrix.postRotate(getImageRotation().getRotation());
             matrix.postTranslate(vTranslate.x, vTranslate.y);
 
@@ -1251,7 +1307,7 @@ public class SubsamplingScaleImageView extends View {
      * Checks whether the base layer of tiles or full size bitmap is ready.
      */
     private boolean isBaseLayerReady() {
-        if (bitmap != null) {
+        if (bitmap != null && !bitmapIsPreview) {
             return true;
         } else if (tileMap != null) {
             boolean baseLayerReady = true;
@@ -1375,6 +1431,7 @@ public class SubsamplingScaleImageView extends View {
         float displayScale = (scale > 0 ? scale : minScale()) * lastExternalScale;
         lastDisplayScale = displayScale;
         filteringForTiles = shouldFilterAtScale(displayScale);
+        previewLayerOnly = progressivePreviewEnabled && hasFilteredDecoder() && (!imageLoadedSent || !imageDrawn);
         ensureUpscaleGrid(displayScale);
         int sampleSize = Math.min(fullImageSampleSize, calculateInSampleSize(displayScale));
 
@@ -1382,16 +1439,19 @@ public class SubsamplingScaleImageView extends View {
             if (entry.getKey() == -1) continue;
             List<Tile> tiles = entry.getValue();
             for (Tile tile : tiles) {
-                float target = filteringForTiles
+                // Raw previews use the pyramid's power-of-two sample directly. Using
+                // the filtered fractional scale could decode up to four times as many pixels.
+                float target = previewLayerOnly ? 1f / tile.sampleSize : filteringForTiles
                         ? (entry.getKey() == 0 ? displayScale : Math.min(displayScale, tileScaleFactor / tile.sampleSize))
                         : tileScaleFactor / tile.sampleSize;
-                if (tile.requestedFiltering != filteringForTiles || tile.requestedScale != target) {
-                    tile.requestedFiltering = filteringForTiles;
+                boolean filterTile = filteringForTiles && !previewLayerOnly;
+                if (tile.requestedFiltering != filterTile || tile.requestedScale != target) {
+                    tile.requestedFiltering = filterTile;
                     tile.requestedScale = target;
                     tile.clearPending();
                 }
                 tile.visible = entry.getKey() == fullImageSampleSize
-                        || (entry.getKey() == sampleSize && tileVisible(tile));
+                        || (!previewLayerOnly && entry.getKey() == sampleSize && tileVisible(tile));
                 if (!tile.visible) {
                     tile.clearPending();
                     if (tile.bitmap != null) {
@@ -1725,7 +1785,7 @@ public class SubsamplingScaleImageView extends View {
         // If actual dimensions don't match the declared size, reset everything.
         if (this.sWidth > 0 && this.sHeight > 0 && (this.sWidth != sWidth || this.sHeight != sHeight)) {
             reset(false);
-            if (bitmap != null) {
+            if (bitmap != null && !bitmapIsPreview) {
                 if (!bitmapIsCached) {
                     bitmap.recycle();
                 }
@@ -1738,8 +1798,8 @@ public class SubsamplingScaleImageView extends View {
         this.sHeight = sHeight;
         checkReady();
         debug("maxTile " + maxTileWidth + ", " + maxTileHeight + " view size: " + getWidth() + ", " + getHeight());
-        if (!checkImageLoaded() && maxTileWidth > 0 && maxTileWidth != TILE_SIZE_AUTO && maxTileHeight > 0 && maxTileHeight != TILE_SIZE_AUTO && getWidth() > 0 && getHeight() > 0) {
-            initialiseBaseLayer(new Point(maxTileWidth, maxTileHeight));
+        if (!checkImageLoaded()) {
+            initialiseSizedBaseLayer();
         }
         invalidate();
         requestLayout();
@@ -1757,6 +1817,7 @@ public class SubsamplingScaleImageView extends View {
                 bitmap.recycle();
             }
             bitmap = null;
+            bitmapIsPreview = false;
             bitmapIsCached = false;
         }
         invalidate();
@@ -3023,6 +3084,7 @@ public class SubsamplingScaleImageView extends View {
         private final WeakReference<SubsamplingScaleImageView> viewRef;
         private final WeakReference<Context> contextRef;
         private final WeakReference<InputProvider> providerRef;
+        private final long generation;
         private ImageRegionDecoder decoder;
         private Exception exception;
 
@@ -3030,6 +3092,7 @@ public class SubsamplingScaleImageView extends View {
             this.viewRef = new WeakReference<>(view);
             this.contextRef = new WeakReference<>(context);
             this.providerRef = new WeakReference<>(provider);
+            this.generation = view.imageGeneration;
         }
 
         @Override
@@ -3038,7 +3101,8 @@ public class SubsamplingScaleImageView extends View {
                 Context context = contextRef.get();
                 SubsamplingScaleImageView view = viewRef.get();
                 InputProvider provider = providerRef.get();
-                if (context != null && view != null && provider == view.provider) {
+                if (context != null && view != null && provider != null
+                        && provider == view.provider && generation == view.imageGeneration) {
                     view.debug("TilesInitTask.doInBackground");
                     decoder = view.regionDecoderFactory.create(view.cropBorders, view.hardwareConfig, view.displayProfile.toByteArray());
                     Point dimensions = decoder.init(context, provider);
@@ -3065,7 +3129,7 @@ public class SubsamplingScaleImageView extends View {
         protected void onPostExecute(int[] xy) {
             final SubsamplingScaleImageView view = viewRef.get();
             final InputProvider provider = providerRef.get();
-            if (view != null && provider == view.provider) {
+            if (view != null && provider != null && provider == view.provider && generation == view.imageGeneration) {
                 if (decoder != null && xy != null && xy.length == 2) {
                     view.onTilesInited(decoder, xy[0], xy[1]);
                 } else {

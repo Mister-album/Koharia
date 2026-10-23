@@ -134,6 +134,7 @@ class LocalFolderSource(
     UnmeteredSource,
     ConnectionSource,
     koharia.connection.ConnectionChapterSessionAdapter,
+    koharia.connection.ConnectionTextIdentityAdapter,
     ConnectionBrowseAdapter,
     koharia.connection.ConnectionEntryOpeningAdapter,
     ConnectionLibraryRefreshAdapter,
@@ -164,6 +165,12 @@ class LocalFolderSource(
     private val json = Injekt.get<kotlinx.serialization.json.Json>()
     private val xml: XML by injectLazy()
     private val preferences by lazy { LocalLibraryPreferences(id, json) }
+
+    override suspend fun textReplacementOwnerKey(): String {
+        val library = preferences.getConfig().libraryId.ifBlank { "local:$id" }
+        val storage = koharia.storage.NetworkStoragePreferences(id)
+        return koharia.connection.chapterOwnerKey(library, storage.account)
+    }
 
     override fun captureChapterOwner(): koharia.connection.ConnectionChapterOwner {
         val config = preferences.getConfig()

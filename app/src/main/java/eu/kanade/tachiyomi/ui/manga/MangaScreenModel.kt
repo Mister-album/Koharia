@@ -180,6 +180,9 @@ class MangaScreenModel(
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
+    private val detailsTrace = koharia.connection.DetailsLoadTrace()
+    private var viewerSettingsJob: kotlinx.coroutines.Job? = null
+
     private val successState: State.Success?
         get() = state.value as? State.Success
 
@@ -239,11 +242,13 @@ class MangaScreenModel(
     }
 
     init {
+        detailsTrace.mark("open")
         observeDownloads()
 
         screenModelScope.launchIO {
-            val manga = resolveManga()
+            val manga = detailsTrace.measure("resolve-local-entry") { resolveManga() }
             if (manga == null) {
+                detailsTrace.mark("route-invalid")
                 logcat(LogPriority.WARN) {
                     "Manga route is no longer valid: mangaId=$mangaId, " +
                         "routeSourceId=$routeSourceId, hasRouteUrl=${!routeUrl.isNullOrBlank()}"
@@ -255,12 +260,18 @@ class MangaScreenModel(
             val cachedOnlyPreference = sharedAppPreferences.basePreferences().downloadedOnly
 
             val chaptersDeferred = async {
-                getMangaAndChapters.awaitChapters(resolvedMangaId, applyScanlatorFilter = true)
+                detailsTrace.measure("read-local-chapters") {
+                    getMangaAndChapters.awaitChapters(resolvedMangaId, applyScanlatorFilter = true)
+                }
             }
-            val localProgressDeferred = async { getEpubProgress.awaitByMangaId(resolvedMangaId) }
+            val localProgressDeferred = async {
+                detailsTrace.measure("read-local-progress") { getEpubProgress.awaitByMangaId(resolvedMangaId) }
+            }
             val remoteProgressDeferred = async {
                 runCatching {
-                    getEpubRemoteProgressCache.awaitByMangaId(resolvedMangaId)
+                    detailsTrace.measure("read-cached-remote-progress") {
+                        getEpubRemoteProgressCache.awaitByMangaId(resolvedMangaId)
+                    }
                 }.onFailure { error ->
                     logcat(LogPriority.WARN, error) {
                         "Failed to load cached EPUB remote progress for mangaId=$resolvedMangaId"
@@ -275,11 +286,13 @@ class MangaScreenModel(
                 remoteProgresses = remoteProgressDeferred.await(),
             )
             val chapterModels = chaptersDeferred.await()
-            val chapters = chapterModels.toChapterListItems(
-                manga = manga,
-                epubProgresses = epubProgresses,
-                allowSharedDownloadLookup = false,
-            )
+            val chapters = detailsTrace.measure("build-cached-chapter-items") {
+                chapterModels.toChapterListItems(
+                    manga = manga,
+                    epubProgresses = epubProgresses,
+                    allowSharedDownloadLookup = false,
+                )
+            }
             val source = Injekt.get<SourceManager>().getOrStub(manga.source)
 
             launch {
@@ -346,6 +359,15 @@ class MangaScreenModel(
             val shouldRefreshChapters = connectionBehavior?.shouldRefreshChapters(manga) ?: false
             val needRefreshInfo = !manga.initialized || shouldRefreshInfo
             val needRefreshChapter = chapters.isEmpty() || shouldRefreshChapters
+            val lastChangeAge = if (manga.lastUpdate > 0L) System.currentTimeMillis() - manga.lastUpdate else -1L
+            detailsTrace.mark(
+                "refresh-decision",
+                "provider=${source.javaClass.simpleName} initialized=${manga.initialized} " +
+                    "cachedChapters=${chapters.size} refreshInfo=$needRefreshInfo " +
+                    "refreshChapters=$needRefreshChapter " +
+                    "lastChangeAgeMs=$lastChangeAge " +
+                    "intervalMs=${connectionBehavior?.mangaBehavior?.detailsRefreshIntervalMillis ?: -1L}",
+            )
 
             // Show what we have earlier
             mutableState.update {
@@ -366,8 +388,11 @@ class MangaScreenModel(
                 )
             }
 
+            detailsTrace.mark("cached-state-published")
             launch {
-                val resolvedChapters = chapterModels.toChapterListItems(manga, epubProgresses)
+                val resolvedChapters = detailsTrace.measure("resolve-download-availability") {
+                    chapterModels.toChapterListItems(manga, epubProgresses)
+                }
                     .associateBy { it.chapter.id }
                 updateSuccessState { current ->
                     current.copy(
@@ -398,6 +423,7 @@ class MangaScreenModel(
 
             // Initial loading finished
             updateSuccessState { it.copy(isRefreshingData = false) }
+            detailsTrace.mark("initial-refresh-settled")
 
             successState?.let { current ->
                 // A series screen is a user-visible refresh point. Pull Komga's EPUB
@@ -431,6 +457,7 @@ class MangaScreenModel(
 
     fun fetchAllFromSource(manualFetch: Boolean = true) {
         screenModelScope.launch {
+            detailsTrace.mark("refresh-requested", "manual=$manualFetch")
             updateSuccessState { it.copy(isRefreshingData = true) }
             try {
                 val fetchFromSourceTasks = listOf(
@@ -440,6 +467,7 @@ class MangaScreenModel(
                 fetchFromSourceTasks.awaitAll()
             } finally {
                 updateSuccessState { it.copy(isRefreshingData = false) }
+                detailsTrace.mark("refresh-settled")
             }
             successState?.let { syncConnectionProgressInBackground(it.source) }
             successState?.let { state ->
@@ -530,25 +558,43 @@ class MangaScreenModel(
         try {
             withIOContext {
                 session.checkCurrent()
-                val networkManga = (state.source as? koharia.connection.ConnectionCatalogAdapter)
-                    ?.getMangaDetails(state.manga.toSManga(), manualFetch)
-                    ?: state.source.getMangaDetails(state.manga.toSManga())
-                updateManga.awaitUpdateFromSource(state.manga, networkManga, manualFetch, session::checkCurrent)
+                val networkManga = detailsTrace.measure("fetch-metadata") {
+                    (state.source as? koharia.connection.ConnectionCatalogAdapter)
+                        ?.getMangaDetails(state.manga.toSManga(), manualFetch)
+                        ?: state.source.getMangaDetails(state.manga.toSManga())
+                }
+                detailsTrace.measure("save-metadata") {
+                    updateManga.awaitUpdateFromSource(state.manga, networkManga, manualFetch, session::checkCurrent)
+                }
 
                 val progressAdapter = state.source as? ConnectionViewerSettingsAdapter
                 if (progressAdapter != null) {
-                    val flags = progressAdapter.getViewerFlags(state.manga.url)
-                    session.checkCurrent()
-                    val currentManga = mangaRepository.getMangaById(state.manga.id)
-                    if (flags != null && flags != currentManga.viewerFlags) {
-                        mangaRepository.updateFromSource(
-                            state.manga,
-                            tachiyomi.domain.manga.model.MangaUpdate(
-                                id = currentManga.id,
-                                viewerFlags = flags,
-                            ),
-                            session::checkCurrent,
-                        )
+                    viewerSettingsJob?.cancel()
+                    viewerSettingsJob = screenModelScope.launchIO {
+                        try {
+                            session.checkCurrent()
+                            val expectedFlags = mangaRepository.getMangaById(state.manga.id).viewerFlags
+                            val flags = detailsTrace.measure("fetch-viewer-settings") {
+                                progressAdapter.getViewerFlags(state.manga.url)
+                            }
+                            session.checkCurrent()
+                            val currentManga = mangaRepository.getMangaById(state.manga.id)
+                            if (flags != null && flags != currentManga.viewerFlags &&
+                                currentManga.viewerFlags == expectedFlags
+                            ) {
+                                mangaRepository.updateFromSource(
+                                    state.manga,
+                                    tachiyomi.domain.manga.model.MangaUpdate(
+                                        id = currentManga.id,
+                                        viewerFlags = flags,
+                                    ),
+                                    session::checkCurrent,
+                                )
+                            }
+                        } catch (error: Exception) {
+                            if (error is CancellationException) throw error
+                            detailsTrace.mark("viewer-settings-unavailable", "error=${error.javaClass.simpleName}")
+                        }
                     }
                 }
             }
@@ -875,17 +921,23 @@ class MangaScreenModel(
         val state = successState ?: return
         try {
             withIOContext {
-                val chapters = state.source.fetchChapters(
-                    state.manga.toSManga(),
-                    if (manualFetch) ChapterFetchOrigin.EXPLICIT_REFRESH else ChapterFetchOrigin.OPEN,
-                    manualFetch,
-                )
+                val chapters = detailsTrace.measure("fetch-chapters") {
+                    state.source.fetchChapters(
+                        state.manga.toSManga(),
+                        if (manualFetch) ChapterFetchOrigin.EXPLICIT_REFRESH else ChapterFetchOrigin.OPEN,
+                        manualFetch,
+                    )
+                }
+                detailsTrace.mark("chapters-received", "count=${chapters.chapters.size}")
 
-                val newChapters = syncChaptersWithSource.await(
-                    chapters,
-                    state.manga,
-                    manualFetch,
-                )
+                val newChapters = detailsTrace.measure("sync-chapters-to-db") {
+                    syncChaptersWithSource.await(
+                        chapters,
+                        state.manga,
+                        manualFetch,
+                    )
+                }
+                detailsTrace.mark("chapters-synced", "newChapters=${newChapters.size}")
 
                 if (manualFetch) {
                     downloadNewChapters.await(state.manga, chapters, newChapters)

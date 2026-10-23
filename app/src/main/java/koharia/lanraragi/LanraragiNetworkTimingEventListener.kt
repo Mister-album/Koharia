@@ -1,24 +1,27 @@
 package koharia.lanraragi
 
+import koharia.connection.ConnectionAddressRouter
+import koharia.connection.NetworkDiagnostics
 import okhttp3.Call
 import okhttp3.Connection
 import okhttp3.Dispatcher
 import okhttp3.EventListener
+import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
-import tachiyomi.core.common.util.system.logcat
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
-import java.util.concurrent.atomic.AtomicLong
 
 internal class LanraragiNetworkTimingEventListener(
     call: Call,
     private val connectionId: Long?,
+    private val primaryBase: HttpUrl,
+    private val addressRouter: ConnectionAddressRouter?,
 ) : EventListener() {
-    private val callId = nextCallId.incrementAndGet()
-    private val endpoint = diagnosticEndpoint(call.request())
+    private val callId = NetworkDiagnostics.callId(call)
+    private val endpoint = NetworkDiagnostics.endpoint(call.request())
     private val callStartedAt = System.nanoTime()
     private var queueStartedAt = 0L
     private var dnsStartedAt = 0L
@@ -30,7 +33,11 @@ internal class LanraragiNetworkTimingEventListener(
     private var connectAttempts = 0
     private var requestAttempts = 0
 
-    override fun callStart(call: Call) = log("call-start")
+    override fun callStart(call: Call) = log("call-start", "callTimeoutMs=${call.timeout().timeoutNanos() / 1_000_000}")
+
+    override fun secureConnectStart(call: Call) = log("tls-start")
+
+    override fun secureConnectEnd(call: Call, handshake: okhttp3.Handshake?) = log("tls-end")
 
     override fun dispatcherQueueStart(call: Call, dispatcher: Dispatcher) {
         queueStartedAt = System.nanoTime()
@@ -90,7 +97,16 @@ internal class LanraragiNetworkTimingEventListener(
 
     override fun requestHeadersEnd(call: Call, request: Request) {
         requestHeadersEndedAt = System.nanoTime()
-        log("request-headers-end", "attempt=$requestAttempts sinceAcquireMs=${stageMillis(connectionAcquiredAt)}")
+        val target = when {
+            ConnectionAddressRouter.owns(primaryBase, request.url) -> "primary"
+            addressRouter?.ownsInternal(request.url) == true -> "internal"
+            else -> "other"
+        }
+        log(
+            "request-headers-end",
+            "attempt=$requestAttempts sinceAcquireMs=${stageMillis(connectionAcquiredAt)} " +
+                "target=$target endpoint=${NetworkDiagnostics.endpoint(request)} scheme=${request.url.scheme}",
+        )
     }
 
     override fun requestFailed(call: Call, ioe: IOException) {
@@ -132,7 +148,7 @@ internal class LanraragiNetworkTimingEventListener(
     override fun canceled(call: Call) = log("canceled")
 
     private fun log(event: String, details: String = "") {
-        logcat {
+        NetworkDiagnostics.record(
             buildString {
                 append("LanraragiNetwork: connectionId=")
                 append(connectionId ?: "settings")
@@ -148,24 +164,10 @@ internal class LanraragiNetworkTimingEventListener(
                     append(' ')
                     append(details)
                 }
-            }
-        }
+            },
+        )
     }
 
     private fun stageMillis(startedAt: Long): Long =
         if (startedAt == 0L) -1L else (System.nanoTime() - startedAt) / 1_000_000
-
-    private companion object {
-        val nextCallId = AtomicLong()
-
-        fun diagnosticEndpoint(request: Request): String = buildString {
-            append(request.method)
-            append(' ')
-            append(request.url.encodedPath)
-            request.url.queryParameter("path")?.let { pagePath ->
-                append(" page=")
-                append(pagePath.substringAfterLast('/'))
-            }
-        }
-    }
 }

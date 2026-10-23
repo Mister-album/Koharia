@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
@@ -48,11 +50,13 @@ import koharia.connection.ui.ConnectionSearchSortOption
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.lanraragi.LanraragiEntryDestination
 import koharia.lanraragi.LanraragiEntryOpenManager
+import koharia.lanraragi.LanraragiException
 import koharia.lanraragi.flattenLanraragiTank
 import koharia.lanraragi.isLanraragiConnectivityFailure
 import koharia.lanraragi.lanraragiEntryDestination
 import koharia.source.lanraragi.LanraragiSettingsScreen
 import koharia.source.lanraragi.LanraragiSource
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -64,6 +68,7 @@ import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
+import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -99,6 +104,17 @@ class LanraragiLibraryScreen(
         if (source == null) {
             EmptyScreen(stringRes = MR.strings.connection_unavailable)
             return
+        }
+        DisposableEffect(source) {
+            koharia.connection.NetworkDiagnostics.record(
+                "LanraragiShelf: connectionId=$sourceId instance=${System.identityHashCode(source)} " +
+                    "screen-enter ${source.preferences.diagnosticState()}",
+            )
+            onDispose {
+                koharia.connection.NetworkDiagnostics.record(
+                    "LanraragiShelf: connectionId=$sourceId instance=${System.identityHashCode(source)} screen-exit",
+                )
+            }
         }
         val model =
             rememberScreenModel(tag = "$connectionSourceGeneration:$sourceId:${source.name}") {
@@ -164,7 +180,11 @@ class LanraragiLibraryScreen(
         val error = state.error ?: status.error?.takeUnless {
             it.isLanraragiConnectivityFailure() && state.entries.isNotEmpty()
         }
-        LaunchedEffect(error) { error?.let { snackbar.showSnackbar(context.lanraragiError(it)) } }
+        val invalidAddress = (status.error as? LanraragiException)?.reason == LanraragiException.Reason.ADDRESS
+        val showAddressError = invalidAddress && state.entries.isEmpty() && !state.downloadedOnly
+        LaunchedEffect(error, showAddressError) {
+            if (!showAddressError) error?.let { snackbar.showSnackbar(context.lanraragiError(it)) }
+        }
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner, model) {
             val observer = LifecycleEventObserver { _, event ->
@@ -233,27 +253,42 @@ class LanraragiLibraryScreen(
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding).pullRefresh(pullState)) {
                 Column(Modifier.fillMaxSize()) {
-                    BrowseSourceContent(
-                        modifier = Modifier.weight(
-                            1f,
-                        ),
-                        source = source,
-                        mangaList = pages,
-                        columns = if (columnCount > 0) GridCells.Fixed(columnCount) else GridCells.Adaptive(120.dp),
-                        displayMode = state.displayMode,
-                        snackbarHostState = snackbar, contentPadding = PaddingValues(0.dp), showLibraryBadges = false,
-                        readProgress = if (showReadProgress) {
-                            { manga -> readProgress[manga.url] }
-                        } else {
-                            null
-                        },
-                        onWebViewClick = {
-                            navigator.push(LanraragiSettingsScreen(sourceId))
-                        }, onHelpClick = { navigator.push(LanraragiSettingsScreen(sourceId)) },
-                        onMangaClick = { openEntry(it, false) },
-                        onMangaLongClick = { openEntry(it, true) },
-                        onRefresh = { model.refresh() },
-                    )
+                    if (showAddressError) {
+                        EmptyScreen(
+                            stringRes = MR.strings.lanraragi_error_address,
+                            actions = persistentListOf(
+                                EmptyScreenAction(
+                                    stringRes = MR.strings.pref_connection_settings,
+                                    icon = Icons.Outlined.Settings,
+                                    onClick = { navigator.push(LanraragiSettingsScreen(sourceId)) },
+                                ),
+                            ),
+                        )
+                    } else {
+                        BrowseSourceContent(
+                            modifier = Modifier.weight(
+                                1f,
+                            ),
+                            source = source,
+                            mangaList = pages,
+                            columns = if (columnCount > 0) GridCells.Fixed(columnCount) else GridCells.Adaptive(120.dp),
+                            displayMode = state.displayMode,
+                            snackbarHostState = snackbar,
+                            contentPadding = PaddingValues(0.dp),
+                            showLibraryBadges = false,
+                            readProgress = if (showReadProgress) {
+                                { manga -> readProgress[manga.url] }
+                            } else {
+                                null
+                            },
+                            onWebViewClick = {
+                                navigator.push(LanraragiSettingsScreen(sourceId))
+                            }, onHelpClick = { navigator.push(LanraragiSettingsScreen(sourceId)) },
+                            onMangaClick = { openEntry(it, false) },
+                            onMangaLongClick = { openEntry(it, true) },
+                            onRefresh = { model.refresh() },
+                        )
+                    }
                 }
                 PullRefreshIndicator(
                     refreshing = refreshing,
