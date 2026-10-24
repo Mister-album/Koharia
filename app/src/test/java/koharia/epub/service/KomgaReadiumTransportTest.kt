@@ -4,7 +4,9 @@ import com.sun.net.httpserver.HttpServer
 import io.mockk.every
 import io.mockk.mockk
 import koharia.connection.ConnectionAddressRouter
+import koharia.source.komga.withKomgaAuthentication
 import kotlinx.coroutines.test.runTest
+import okhttp3.Credentials
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import org.junit.jupiter.api.AfterEach
@@ -20,13 +22,15 @@ class KomgaReadiumTransportTest {
     private var status = 200
     private var receivedRange: String? = null
     private var receivedAuth: String? = null
+    private var receivedAuthValues: List<String> = emptyList()
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/") { exchange ->
             receivedRange = exchange.requestHeaders.getFirst("Range")
             receivedAuth = exchange.requestHeaders.getFirst("Authorization")
+            receivedAuthValues = exchange.requestHeaders["Authorization"].orEmpty()
             exchange.responseHeaders.add("Content-Type", "application/xhtml+xml")
             val bytes = "<html>reader</html>".toByteArray()
-            exchange.sendResponseHeaders(status, bytes.size.toLong())
+            exchange.sendResponseHeaders(if (receivedAuthValues.size > 1) 400 else status, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }
         }
         start()
@@ -34,6 +38,9 @@ class KomgaReadiumTransportTest {
     private val base = "http://127.0.0.1:1/public/"
     private val internal = "http://127.0.0.1:${server.address.port}/internal/"
     private val client = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            chain.proceed(chain.request().withKomgaAuthentication("Credentials", "reader", "fixture", ""))
+        }
         .addInterceptor(ConnectionAddressRouter({ base }, { internal }, { "wifi" }, "probe"))
         .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard).build()
     private val transport = KomgaReadiumTransport {
@@ -57,7 +64,8 @@ class KomgaReadiumTransportTest {
         assertEquals(url, response.response.url)
         assertEquals("<html>reader</html>", response.body.bufferedReader().use { it.readText() })
         assertEquals("bytes=0-18", receivedRange)
-        assertEquals("Basic fixture", receivedAuth)
+        assertEquals(Credentials.basic("reader", "fixture"), receivedAuth)
+        assertEquals(listOf(receivedAuth), receivedAuthValues)
     }
 
     @Test

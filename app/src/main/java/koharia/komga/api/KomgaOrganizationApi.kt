@@ -229,7 +229,7 @@ class KomgaOrganizationApi(
 
     suspend fun series(id: String) = read<SeriesDto>(request("series/$id"))
 
-    suspend fun account() = read<UserDto>(request("users/me", strict = true))
+    suspend fun account() = read<UserDto>(request("users/me", strict = true, apiVersion = 2))
 
     suspend fun libraries() = read<List<LibraryDto>>(request("libraries"))
 

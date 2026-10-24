@@ -26,6 +26,11 @@ import org.junit.jupiter.api.Test
 class KomgaApiSearchTest {
 
     @Test
+    fun `source account endpoint uses v2`() {
+        assertEquals("/api/v2/users/me", apiClient(OkHttpClient()).meRequest().url.encodedPath)
+    }
+
+    @Test
     fun `paused writes allow series and book queries but still block mutations`() {
         val sent = mutableListOf<Request>()
         val client = OkHttpClient.Builder()

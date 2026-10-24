@@ -24,6 +24,16 @@ class KomgaOrganizationApiTest {
     private val json = Json { ignoreUnknownKeys = true }
     private val requests = mutableListOf<Request>()
 
+    @Test
+    fun `account uses v2 and preserves roles and strict owner scope`() = runTest {
+        val account = api("""{"id":"reader","email":"reader@example.test","roles":["USER","PAGE_STREAMING"]}""")
+            .account()
+        assertEquals(listOf("USER", "PAGE_STREAMING"), account.roles)
+        assertEquals("/api/v2/users/me", requests.single().url.encodedPath)
+        assertTrue(requests.single().isKomgaNetworkRequired)
+        assertEquals(KomgaCacheNamespace("account-a", 42L), requests.single().tag(KomgaCacheNamespace::class.java))
+    }
+
     private fun api(body: String = "{}"): KomgaOrganizationApi {
         val client =
             OkHttpClient.Builder()

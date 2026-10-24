@@ -518,14 +518,7 @@ class KomgaSource(
             if (capturedAccount != null && capturedAccount != shelfCacheNamespace()) {
                 throw java.io.IOException(application.stringResource(MR.strings.komga_organization_account_changed))
             }
-            val newBuilder = original.newBuilder()
-
-            if (authMode == AUTH_MODE_API_KEY && apiKey.isNotBlank()) {
-                newBuilder.addHeader("X-Komga-Api-Key", apiKey)
-            } else if (authMode == AUTH_MODE_CREDENTIALS && username.isNotBlank() && password.isNotBlank()) {
-                newBuilder.addHeader("Authorization", Credentials.basic(username, password))
-            }
-            chain.proceed(newBuilder.build())
+            chain.proceed(original.withKomgaAuthentication(authMode, username, password, apiKey))
         }
         .addInterceptor(addressRouter)
         .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard)

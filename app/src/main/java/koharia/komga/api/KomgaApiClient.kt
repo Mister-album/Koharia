@@ -278,7 +278,7 @@ class KomgaApiClient(
             .komgaCachePolicy(cachePolicy)
             .build()
 
-    fun meRequest(): Request = GET("$baseUrl/api/v1/users/me", headers)
+    fun meRequest(): Request = GET("$baseUrl/api/v2/users/me", headers)
 
     fun bookFileRequest(url: String, rangeStart: Long? = null): Request {
         val request = GET("$url/file", headers)
