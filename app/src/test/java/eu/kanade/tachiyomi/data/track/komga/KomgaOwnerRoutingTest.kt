@@ -57,7 +57,7 @@ class KomgaOwnerRoutingTest {
                     { if (materialized) listOf(chapter) else emptyList() }
                 coEvery { fixture.mangas.getMangaBySourceId(2L) } returns listOf(manga)
                 coEvery { fixture.mangas.getMangaByUrlAndSourceId(manga.url, 2L) } returns manga
-                coEvery { fixture.second.getChapterList(any()) } returns emptyList()
+                coEvery { fixture.second.getChapterList(any(), false) } returns emptyList()
                 coEvery { fixture.syncChapters.await(any(), manga, false, any()) } answers {
                     events += "materialize"
                     materialized = true
@@ -91,6 +91,7 @@ class KomgaOwnerRoutingTest {
                     events,
                     route,
                 )
+                coVerify(exactly = 1) { fixture.second.getChapterList(any(), false) }
                 coVerify(exactly = 1) {
                     fixture.remoteProgress.apply(after, match { it.single().read == false }, any())
                 }
