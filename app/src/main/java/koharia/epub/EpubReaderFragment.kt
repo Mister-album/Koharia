@@ -57,6 +57,7 @@ import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.RelativeUrl
 import org.readium.r2.shared.util.Url
+import org.readium.r2.shared.util.data.ReadError
 import org.readium.r2.shared.util.mediatype.MediaType
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
@@ -100,6 +101,8 @@ class EpubReaderFragment : Fragment() {
         fun onImageInteraction(reference: EpubImageReference, interaction: EpubImageInteraction)
 
         fun onFontLoadFailed()
+
+        fun onReadingResourceFailed()
 
         fun onVisibleFontRequirementsCaptured(chapterId: Long, requirementsJson: String?)
 
@@ -190,7 +193,92 @@ class EpubReaderFragment : Fragment() {
     private var continuousScrollInstalledHref: String? = null
     private var continuousScrollLocator: Locator? = null
 
+    private val failedReadingResources = mutableSetOf<String>()
+    private var readingFailureCheckJob: Job? = null
+    private var pageFailureCheckJob: Job? = null
+
+    private suspend fun reportReadingFailure(href: String, checkDocument: Boolean = false): Boolean {
+        if (!checkDocument && failedReadingResources.none { it.sameEpubResource(href) }) return false
+        val navigator = readyNavigatorFragment() ?: return true
+        val session = retainedSession ?: return true
+        val link = session.publication.readingOrder.firstOrNull { it.href.toString().sameEpubResource(href) }
+            ?: return false
+        val servedHref = link.readiumServedUrl(session.publication.baseUrl) ?: return true
+        // A previous prefetch failure is only a hint. A new WebView/load may already have
+        // recovered. Wait for the matching document instead of rejecting it by URL alone.
+        repeat(30) {
+            if (readyNavigatorFragment() !== navigator || retainedSession !== session ||
+                !navigator.currentLocator.value.href.toString().sameEpubResource(href)
+            ) {
+                return true
+            }
+            // Readium's public evaluator supports reflowable pages only. Inspect the
+            // matching visible WebView directly so fixed-layout books recover too.
+            var documentView: WebView? = null
+            navigator.view?.forEachWebView {
+                if (it.isVisiblyDrawn() && it.url?.substringBefore('#') == servedHref.substringBefore('#')) {
+                    documentView = it
+                }
+            }
+            val target = documentView
+            val result = if (target == null) {
+                null
+            } else {
+                withTimeoutOrNull(500) {
+                    kotlinx.coroutines.suspendCancellableCoroutine<String?> { continuation ->
+                        target.evaluateJavascript(epubReadingDocumentStateScript(servedHref)) {
+                            if (continuation.isActive) continuation.resumeWith(Result.success(it))
+                        }
+                    }
+                }
+            }
+            if (readyNavigatorFragment() !== navigator || retainedSession !== session ||
+                !navigator.currentLocator.value.href.toString().sameEpubResource(href)
+            ) {
+                return true
+            }
+            if (target != null && (!target.isAttachedToWindow || !target.isVisiblyDrawn())) return true
+            when (result) {
+                "\"ready\"" -> {
+                    failedReadingResources.removeAll { it.sameEpubResource(href) }
+                    return false
+                }
+                "\"failed\"" -> {
+                    host?.onReadingResourceFailed()
+                    return true
+                }
+            }
+            delay(100)
+        }
+        return true
+    }
+
     private val navigatorListener = object : EpubNavigatorFragment.Listener {
+        override fun onResourceLoadFailed(href: Url, error: ReadError) {
+            val reportingView = view ?: return
+            val session = retainedSession ?: return
+            reportingView.post {
+                if (view !== reportingView || retainedSession !== session) return@post
+                val index = session.publication.readingOrder.indexOfFirst {
+                    it.href.toString().sameEpubResource(href.toString())
+                }
+                // Optional images/styles and prefetched adjacent chapters must not cover a
+                // working page with an error. Remember failed chapters until they are visible.
+                if (index < 0) return@post
+                failedReadingResources.add(href.toString())
+                logcat(LogPriority.WARN) {
+                    "EPUB reading resource failed chapterId=$chapterId resourceIndex=$index " +
+                        "errorType=${error.javaClass.simpleName}"
+                }
+                readingFailureCheckJob?.cancel()
+                readingFailureCheckJob = viewLifecycleOwner.lifecycleScope.launch {
+                    readyNavigatorFragment()?.currentLocator?.value?.href?.toString()?.let {
+                        reportReadingFailure(it)
+                    }
+                }
+            }
+        }
+
         override fun onExternalLinkActivated(url: AbsoluteUrl) {
             host?.onExternalLinkActivated(url)
         }
@@ -211,6 +299,19 @@ class EpubReaderFragment : Fragment() {
     @Suppress("DEPRECATION")
     private val paginationListener = object : EpubNavigatorFragment.PaginationListener {
         override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+            pageFailureCheckJob?.cancel()
+            if (failedReadingResources.any { it.sameEpubResource(locator.href.toString()) }) {
+                pageFailureCheckJob = viewLifecycleOwner.lifecycleScope.launch {
+                    if (!reportReadingFailure(locator.href.toString())) {
+                        publishPageChanged(pageIndex, totalPages, locator)
+                    }
+                }
+                return
+            }
+            publishPageChanged(pageIndex, totalPages, locator)
+        }
+
+        private fun publishPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
             pageTransitionController?.onPageChanged(pageIndex, locator.href.toString())
             currentTransitionPageIndex = pageIndex
             currentTransitionPageCount = totalPages
@@ -236,6 +337,14 @@ class EpubReaderFragment : Fragment() {
         }
 
         override fun onPageLoaded() {
+            // Readium calls this for both successful documents and its error fallback,
+            // including reloads that reused the same resource URL.
+            readingFailureCheckJob?.cancel()
+            readingFailureCheckJob = viewLifecycleOwner.lifecycleScope.launch {
+                readyNavigatorFragment()?.currentLocator?.value?.href?.toString()?.let {
+                    reportReadingFailure(it, checkDocument = true)
+                }
+            }
             pageTransitionController?.onPageLoaded()
             scheduleContinuousScrollInstall(readyNavigatorFragment())
             schedulePageLoadedPreparation()
@@ -348,6 +457,7 @@ class EpubReaderFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        failedReadingResources.clear()
         val session = retainedSession
         if (session == null) {
             host?.onSessionMissing(chapterId)
@@ -435,6 +545,10 @@ class EpubReaderFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        readingFailureCheckJob?.cancel()
+        readingFailureCheckJob = null
+        pageFailureCheckJob?.cancel()
+        pageFailureCheckJob = null
         replacementNavigation.cancel()
         pdfAnchorCaptureJob?.cancel()
         pdfAnchorCaptureJob = null
@@ -487,7 +601,7 @@ class EpubReaderFragment : Fragment() {
             logcat(LogPriority.WARN) { "[EpubReaderFragment.goTo link] empty href path (raw=$rawHref)" }
             return false
         }
-        val hrefUrl = Url.fromDecodedPath(baseHref) ?: run {
+        val hrefUrl = Url(EpubHrefDecoder.resourceHref(rawHref)) ?: Url.fromDecodedPath(baseHref) ?: run {
             logcat(LogPriority.WARN) {
                 "[EpubReaderFragment.goTo link] cannot build Url from baseHref=$baseHref (raw=$rawHref)"
             }
@@ -1066,6 +1180,7 @@ class EpubReaderFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 navigator.currentLocator.collect { locator ->
+                    if (reportReadingFailure(locator.href.toString())) return@collect
                     val session = retainedSession ?: return@collect
                     if (!session.retain()) return@collect
                     try {

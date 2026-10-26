@@ -78,7 +78,9 @@ class EpubPreferencesBridge(
             verticalText = flowPreferences.verticalText,
             theme = theme.toReadiumTheme(customBackgroundColor),
             backgroundColor = ReadiumColor(theme.backgroundColor(customBackgroundColor)),
-            textColor = ReadiumColor(theme.textColor(customBackgroundColor)),
+            // Readium's explicit textColor override also forces links to inherit the body color.
+            // The selected theme already supplies the matching default text and link colors.
+            textColor = null,
             fontSize = fontSize.toDouble(),
             lineHeight = lineHeight.toDouble(),
             paragraphSpacing = paragraphSpacing.toDouble(),
@@ -120,11 +122,6 @@ class EpubPreferencesBridge(
             EpubLayoutPreferences.Theme.GRAY -> 0xFFF1F3F5.toInt()
             EpubLayoutPreferences.Theme.CUSTOM -> customBackgroundColor
         }
-    }
-
-    private fun EpubLayoutPreferences.Theme.textColor(customBackgroundColor: Int): Int {
-        val backgroundColor = backgroundColor(customBackgroundColor)
-        return if (backgroundColor.isDark()) 0xFFFEFEFE.toInt() else 0xFF121212.toInt()
     }
 
     private fun Int.isDark(): Boolean = ColorUtils.calculateLuminance(this) < 0.35

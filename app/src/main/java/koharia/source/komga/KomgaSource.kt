@@ -331,6 +331,9 @@ class KomgaSource(
     override val baseUrl: String
         get() = preferences.getString(PREF_ADDRESS, "")!!.trim().trimEnd('/')
 
+    internal val readiumInternalBaseUrl: String
+        get() = preferences.getString(ConnectionAddressRouter.INTERNAL_ADDRESS_KEY, "").orEmpty()
+
     private val username: String
         get() = preferences.getString(PREF_USERNAME, "")!!
 

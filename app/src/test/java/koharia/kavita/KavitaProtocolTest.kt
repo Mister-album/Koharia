@@ -64,6 +64,16 @@ class KavitaProtocolTest {
     ).also { clients += it }
     private fun catalog(account: String = "a") = KavitaCatalog(1, account, repository, api()) {}
 
+    @Test fun progressClockUsesHttpResponseDateAndReceiptTime() = runTest {
+        responseBody = """{"pageNum":2,"lastModifiedUtc":"0001-01-01T00:00:00"}"""
+        val startedAt = System.currentTimeMillis()
+        val response = api().progressWithClock(4)
+        assertEquals("0001-01-01T00:00:00", response.progress.lastModifiedUtc)
+        assertTrue(response.clock.checkedAt in startedAt..System.currentTimeMillis())
+        assertTrue(kotlin.math.abs(checkNotNull(response.clock.serverDate) - response.clock.checkedAt) < 5_000)
+        assertTrue(requests.any { it.path.endsWith("Reader/get-progress") && "chapterId=4" in it.query.split('&') })
+    }
+
     @Test fun cachedUnitCountsObserveChangesWithoutNetworkAndKeepAccountIsolation() = runTest {
         val observed = mutableListOf<Map<Long, Long>>()
         val job = backgroundScope.launch {

@@ -126,16 +126,20 @@ class KavitaReadingCoordinator(
     }
 
     suspend fun pull(ref: KavitaChapterRef, total: Int): KavitaReadingState = flushMutex.withLock {
-        val remote = api.progress(
-            ref.chapterId,
-        ).copy(libraryId = ref.libraryId, seriesId = ref.seriesId, volumeId = ref.volumeId, chapterId = ref.chapterId)
+        val response = api.progressWithClock(ref.chapterId)
+        val remote = response.progress.copy(
+            libraryId = ref.libraryId,
+            seriesId = ref.seriesId,
+            volumeId = ref.volumeId,
+            chapterId = ref.chapterId,
+        )
         mutex.withLock {
             checkSession()
             baselines[ref.chapterId] = remote
             reviewed[ref.chapterId] = remote
             val operation = operation(ref.chapterId)
             val old = operation?.let { json.decodeFromString<KavitaReadingState>(it.payload) }
-            val snapshot = KavitaReadingState(ref, remote, total)
+            val snapshot = KavitaReadingState(ref, remote, total, clockSample = response.clock)
             var conflict = old?.conflict == true
             if (operation?.pending == true) {
                 if (old != null && kavitaProgressConflict(old, remote)) {

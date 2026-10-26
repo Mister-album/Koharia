@@ -61,6 +61,7 @@ import koharia.kavita.KavitaReadingCoordinator
 import koharia.kavita.KavitaReadingState
 import koharia.kavita.KavitaSeries
 import koharia.kavita.KavitaSort
+import koharia.kavita.epubProgressCache
 import koharia.kavita.kavitaTimestamp
 import koharia.kavita.progressSyncStatus
 import koharia.kavita.quarantineForActivation
@@ -92,6 +93,7 @@ import okhttp3.Response
 import okio.ByteString.Companion.encodeUtf8
 import org.readium.r2.shared.publication.Locator
 import rx.Observable
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
@@ -861,12 +863,15 @@ class KavitaSource(private val context: Context, override val connectionProfile:
             state: KavitaReadingState,
         ): EpubRemoteProgressCache {
             session.checkActive()
-            val date = Date(kavitaTimestamp(state.progress.lastModifiedUtc))
             val locator = koharia.kavita.kavitaLocator(session.api, state)
-            return EpubRemoteProgressCache(
-                chapter.id, chapter.mangaId, chapter.url, locator.toJSON().toString(),
-                state.progress.pageNum.toDouble() / state.totalPages.coerceAtLeast(1), null, date, Date(), date,
-            )
+            if (eu.kanade.tachiyomi.BuildConfig.DEBUG) {
+                val clock = state.clockSample
+                logcat {
+                    "Kavita EPUB clock sampled=${clock != null} " +
+                        "offsetMs=${clock?.serverDate?.let { it - clock.checkedAt }}"
+                }
+            }
+            return state.epubProgressCache(chapter.id, chapter.mangaId, chapter.url, locator.toJSON().toString())
         }
         override suspend fun pullEpubProgress(resourceId: String): RemoteEpubProgression {
             session.checkActive()

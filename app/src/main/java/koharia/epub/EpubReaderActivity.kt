@@ -1665,6 +1665,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         toast(MR.strings.epub_font_load_failed)
     }
 
+    override fun onReadingResourceFailed() {
+        viewModel.onReadingResourceFailed()
+    }
+
     override fun onVisibleFontRequirementsCaptured(chapterId: Long, requirementsJson: String?) {
         capturedVisibleFontRequirements = requirementsJson?.let { chapterId to it }
     }

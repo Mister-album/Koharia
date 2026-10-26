@@ -1217,6 +1217,7 @@
     <string name="myanimelist_relogin">Please login to MAL again</string>
     <string name="source_unsupported">Source is not supported</string>
     <string name="epub_reader_open_failed">Failed to open EPUB</string>
+    <string name="epub_reader_content_load_failed">Couldn’t load this section. Check the connection and retry. A cached copy will be used if available.</string>
     <string name="epub_reader_server_time_warning_title">Server time is not synchronized</string>
     <string name="epub_reader_server_time_warning_message">The server and this device differ by about %d minutes. Reading progress may be overwritten or restored incorrectly. Please synchronize the date, time, and time zone on both devices.</string>
     <string name="epub_reader_toc">Table of contents</string>

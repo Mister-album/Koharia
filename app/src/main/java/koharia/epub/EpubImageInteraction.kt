@@ -191,6 +191,7 @@ internal fun buildEpubImageInteractionInstallScript(
         const state = {
             resourceIndex: resourceIndex,
             active: null,
+            gesture: null,
             suppressClickImage: null,
         };
         window.__kohariaImageInteractions = state;
@@ -206,6 +207,17 @@ internal fun buildEpubImageInteractionInstallScript(
         function eventImage(event) {
             const target = event && event.target;
             return imageElementType(target) ? target : null;
+        }
+
+        function isPreviewPoint(image, x, y) {
+            // Keep an inset ring available to the reader's normal tap navigation.
+            // CSS pixels match the document's touch coordinates; cap the inset for small images.
+            const rect = image.getBoundingClientRect();
+            const insetX = Math.min(32, rect.width * 0.2);
+            const insetY = Math.min(32, rect.height * 0.2);
+            return rect.width > 0 && rect.height > 0 &&
+                x > rect.left + insetX && x < rect.right - insetX &&
+                y > rect.top + insetY && y < rect.bottom - insetY;
         }
 
         function rawImageSource(image, type) {
@@ -237,6 +249,19 @@ internal fun buildEpubImageInteractionInstallScript(
             state.active = null;
         }
 
+        function cancelGesture() {
+            if (state.gesture) state.gesture.cancelled = true;
+            cancelLongPress();
+        }
+
+        function checkMovement(event) {
+            const gesture = state.gesture;
+            if (!gesture || gesture.pointerId !== event.pointerId) return;
+            const deltaX = event.clientX - gesture.startX;
+            const deltaY = event.clientY - gesture.startY;
+            if (Math.hypot(deltaX, deltaY) > $touchSlopCssPx) cancelGesture();
+        }
+
         function notify(action, image) {
             const bridge = window.$EPUB_IMAGE_BRIDGE_NAME;
             if (!bridge || !bridge.onImageInteraction) return false;
@@ -259,16 +284,26 @@ internal fun buildEpubImageInteractionInstallScript(
         }
 
         document.addEventListener('pointerdown', function(event) {
-            const image = eventImage(event);
-            if (!image || event.isPrimary === false || (event.button !== undefined && event.button !== 0)) return;
+            if (event.isPrimary === false) {
+                cancelGesture();
+                return;
+            }
             cancelLongPress();
+            state.gesture = null;
+            state.suppressClickImage = null;
+            const image = eventImage(event);
+            if (event.button !== undefined && event.button !== 0) return;
             const active = {
                 image: image,
                 pointerId: event.pointerId,
                 startX: event.clientX,
                 startY: event.clientY,
+                cancelled: false,
+                ended: false,
                 timer: 0,
             };
+            state.gesture = active;
+            if (!image) return;
             active.timer = window.setTimeout(function() {
                 if (state.active !== active) return;
                 state.active = null;
@@ -277,17 +312,17 @@ internal fun buildEpubImageInteractionInstallScript(
             state.active = active;
         }, true);
 
-        document.addEventListener('pointermove', function(event) {
-            const active = state.active;
-            if (!active || active.pointerId !== event.pointerId) return;
-            const deltaX = event.clientX - active.startX;
-            const deltaY = event.clientY - active.startY;
-            if (Math.hypot(deltaX, deltaY) > $touchSlopCssPx) cancelLongPress();
-        }, { passive: true, capture: true });
+        document.addEventListener('pointermove', checkMovement, { passive: true, capture: true });
 
-        document.addEventListener('pointerup', cancelLongPress, true);
-        document.addEventListener('pointercancel', cancelLongPress, true);
-        document.addEventListener('scroll', cancelLongPress, { passive: true, capture: true });
+        document.addEventListener('pointerup', function(event) {
+            const gesture = state.gesture;
+            if (!gesture || gesture.pointerId !== event.pointerId) return;
+            checkMovement(event);
+            gesture.ended = true;
+            cancelLongPress();
+        }, true);
+        document.addEventListener('pointercancel', cancelGesture, true);
+        document.addEventListener('scroll', cancelGesture, { passive: true, capture: true });
 
         document.addEventListener('contextmenu', function(event) {
             const image = eventImage(event);
@@ -295,6 +330,7 @@ internal fun buildEpubImageInteractionInstallScript(
             event.preventDefault();
             event.stopImmediatePropagation();
             cancelLongPress();
+            if (state.gesture && state.gesture.cancelled) return;
             if (state.suppressClickImage !== image && notify('actions', image)) {
                 state.suppressClickImage = image;
             }
@@ -303,13 +339,23 @@ internal fun buildEpubImageInteractionInstallScript(
         document.addEventListener('click', function(event) {
             const image = eventImage(event);
             if (!image) return;
-            if (state.suppressClickImage === image) {
+            // Keyboard/accessibility activation has no pointer gesture. Keep it available
+            // even when the preceding touch was cancelled and produced no click.
+            const nonPointerActivation = event.detail === 0 && !event.pointerType;
+            const gesture = state.gesture;
+            const rejectedGesture = gesture &&
+                (gesture.cancelled || !gesture.ended || gesture.image !== image);
+            if (!nonPointerActivation && (rejectedGesture || state.suppressClickImage === image)) {
                 state.suppressClickImage = null;
                 event.preventDefault();
                 event.stopImmediatePropagation();
                 return;
             }
             if (image.closest && image.closest('a[href]')) return;
+            if (!nonPointerActivation &&
+                (!isPreviewPoint(image, event.clientX, event.clientY) ||
+                    (gesture && !isPreviewPoint(image, gesture.startX, gesture.startY)))
+            ) return;
             if (notify('preview', image)) {
                 event.preventDefault();
                 event.stopImmediatePropagation();

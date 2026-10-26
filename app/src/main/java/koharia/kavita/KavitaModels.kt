@@ -173,6 +173,8 @@ data class KavitaReadingState(
     val baseline: KavitaProgress? = null,
     val explicit: Boolean = false,
     val conflict: Boolean = false,
+    // Clock evidence belongs to this HTTP response, not a persisted reading operation.
+    @kotlinx.serialization.Transient val clockSample: KavitaClockSample? = null,
 )
 
 @Serializable

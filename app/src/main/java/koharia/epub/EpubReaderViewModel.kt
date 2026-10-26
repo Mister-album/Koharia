@@ -124,7 +124,6 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-private const val SERVER_TIME_WARNING_THRESHOLD_MS = 5 * 60 * 1_000L
 private const val PAGINATION_LOCATOR_PROGRESSION_TOLERANCE = 0.0001
 
 @OptIn(ExperimentalReadiumApi::class)
@@ -746,7 +745,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                             null
                         }
                     }
-                    val serverTimeOffsetMinutes = remoteCache?.serverDate?.serverTimeOffsetMinutes()
+                    val serverTimeOffsetMinutes = remoteCache?.serverTimeOffsetMinutes()
                     val persistedLocator = localProgress?.toLocatorOrNull()
                     val savedStateLocator = restoreLocator()
                     val deferCachedRemoteSelection =
@@ -941,7 +940,19 @@ class EpubReaderViewModel @JvmOverloads constructor(
     fun retry(): Pair<Long, Long>? {
         val mangaId = mangaId.takeIf { it > 0 } ?: return null
         val chapterId = chapterId.takeIf { it > 0 } ?: return null
+        // Re-evaluate the source: a complete local copy may have arrived since launch.
+        savedState.remove<String>("epub_resolution_open_source")
         return mangaId to chapterId
+    }
+
+    fun onReadingResourceFailed() {
+        mutableState.update {
+            it.copy(
+                isReady = false,
+                isLoading = false,
+                errorMessage = application.stringResource(MR.strings.epub_reader_content_load_failed),
+            )
+        }
     }
 
     suspend fun resolveDetailsRoute(): DetailsRoute? {
@@ -1546,6 +1557,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 }
                 return@launch
             }
+            mutableState.update { it.copy(serverTimeOffsetMinutes = remote.serverTimeOffsetMinutes()) }
             val locator = remote.locatorJson
                 ?.let { json -> runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull() }
             val modifiedAt = remote.modifiedAt
@@ -1646,7 +1658,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                 EpubRemoteProgressDecision.KEEP_REMOTE -> {
                     mutableState.update {
                         it.copy(
-                            serverTimeOffsetMinutes = remote.serverDate?.serverTimeOffsetMinutes(),
+                            serverTimeOffsetMinutes = remote.serverTimeOffsetMinutes(),
                             remoteProgressConflict = EpubRemoteProgressConflict(
                                 locatorJson = locator.toJSON().toString(),
                                 progressionPercent = locator.progressionPercent(),
@@ -3035,12 +3047,6 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private fun Int.toProgression(totalPositions: Int): Double {
         if (totalPositions <= 1) return 0.0
         return ((this - 1).toDouble() / (totalPositions - 1)).coerceIn(0.0, 1.0)
-    }
-
-    private fun Date.serverTimeOffsetMinutes(): Long? {
-        val offsetMillis = time - System.currentTimeMillis()
-        if (abs(offsetMillis) < SERVER_TIME_WARNING_THRESHOLD_MS) return null
-        return (abs(offsetMillis) / 60_000.0).roundToLong().coerceAtLeast(1L)
     }
 
     private fun Locator?.debugProgress(): String {

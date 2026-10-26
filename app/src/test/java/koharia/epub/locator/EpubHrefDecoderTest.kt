@@ -5,6 +5,24 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 class EpubHrefDecoderTest {
+    @Test
+    fun `absolute resource URL retains authority and encoded query`() {
+        val resource = "http://127.0.0.1:25600/api/books/book/resource/Text/a%2Fb.xhtml?key=a%2Bb"
+        EpubHrefDecoder.resourceHref("$resource#section") shouldBe resource
+    }
+
+    @Test
+    fun `remote legacy encoded anchor is removed without decoding resource URL`() {
+        val resource = "https://fixture.invalid/Text/chapter.xhtml"
+        EpubHrefDecoder.resourceHref("$resource%23简单") shouldBe resource
+        EpubHrefDecoder.decode("$resource%23简单").fragment shouldBe "简单"
+    }
+
+    @Test
+    fun `local encoded filename remains distinct from its anchor`() {
+        EpubHrefDecoder.resourceHref("Text%23Notes.xhtml#section") shouldBe "Text%23Notes.xhtml"
+        EpubHrefDecoder.resourceHref("a+b.xhtml#section") shouldBe "a+b.xhtml"
+    }
 
     @Test
     fun `plain path without fragment keeps path and null fragment`() {

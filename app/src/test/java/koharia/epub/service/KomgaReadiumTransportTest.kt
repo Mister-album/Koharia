@@ -1,6 +1,8 @@
 package koharia.epub.service
 
 import com.sun.net.httpserver.HttpServer
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import koharia.connection.ConnectionAddressRouter
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Test
 import org.readium.r2.shared.util.AbsoluteUrl
+import org.readium.r2.shared.util.Try
 import org.readium.r2.shared.util.http.HttpError
 import org.readium.r2.shared.util.http.HttpRequest
 import java.net.InetSocketAddress
@@ -44,7 +47,7 @@ class KomgaReadiumTransportTest {
         .addInterceptor(ConnectionAddressRouter({ base }, { internal }, { "wifi" }, "probe"))
         .addNetworkInterceptor(ConnectionAddressRouter.redirectGuard).build()
     private val transport = KomgaReadiumTransport {
-        KomgaReadiumTransport.Connection(base, client, Headers.headersOf("Authorization", "Basic fixture"))
+        KomgaReadiumTransport.Connection(base, client, Headers.headersOf("Authorization", "Basic fixture"), internal)
     }
 
     @AfterEach
@@ -66,6 +69,42 @@ class KomgaReadiumTransportTest {
         assertEquals("bytes=0-18", receivedRange)
         assertEquals(Credentials.basic("reader", "fixture"), receivedAuth)
         assertEquals(listOf(receivedAuth), receivedAuthValues)
+    }
+
+    @Test
+    fun `absolute internal manifest resources retain authenticated connection routing`() = runTest {
+        val url = mockk<AbsoluteUrl>()
+        every { url.toString() } returns internal + "page.xhtml?version=2"
+        val response = checkNotNull(transport.stream(HttpRequest(url, extras = mockk())).getOrNull())
+        assertEquals(url, response.response.url)
+        assertEquals("<html>reader</html>", response.body.bufferedReader().use { it.readText() })
+        assertEquals(Credentials.basic("reader", "fixture"), receivedAuth)
+        assertEquals(listOf(receivedAuth), receivedAuthValues)
+    }
+
+    @Test
+    fun `unconfigured origins and paths never receive connection credentials`() = runTest {
+        val external = mockk<org.readium.r2.shared.util.http.HttpClient>()
+        coEvery { external.stream(any()) } returns Try.failure(HttpError.IO(java.io.IOException("fixture")))
+        val transport = KomgaReadiumTransport(external) {
+            KomgaReadiumTransport.Connection(
+                base,
+                client,
+                Headers.headersOf("Authorization", "Basic fixture"),
+                internal,
+            )
+        }
+        for (address in listOf(
+            "https://third-party.invalid/page.xhtml",
+            internal.replace("/internal/", "/internal-other/"),
+        )) {
+            val url = mockk<AbsoluteUrl>()
+            every { url.toString() } returns address
+            val request = HttpRequest(url, extras = mockk())
+            transport.stream(request)
+            coVerify(exactly = 1) { external.stream(request) }
+            assertEquals(emptyMap<String, List<String>>(), request.headers)
+        }
     }
 
     @Test

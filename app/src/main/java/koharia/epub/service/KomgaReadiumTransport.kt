@@ -21,14 +21,29 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** Reuses the connection transport while the outer Readium cache keeps canonical resource URLs. */
-internal class KomgaReadiumTransport(private val source: () -> Connection?) : HttpClient {
-    data class Connection(val baseUrl: String, val client: okhttp3.OkHttpClient, val headers: okhttp3.Headers)
-    private val externalClient = DefaultHttpClient()
+internal class KomgaReadiumTransport(
+    private val externalClient: HttpClient = DefaultHttpClient(),
+    private val source: () -> Connection?,
+) : HttpClient {
+    data class Connection(
+        val baseUrl: String,
+        val client: okhttp3.OkHttpClient,
+        val headers: okhttp3.Headers,
+        val internalBaseUrl: String? = null,
+    )
 
     override suspend fun stream(request: HttpRequest): HttpTry<HttpStreamResponse> {
         val connection = source() ?: return externalClient.stream(request)
         val base = ConnectionAddressRouter.normalize(connection.baseUrl) ?: return externalClient.stream(request)
-        val url = request.url.toString().toHttpUrlOrNull() ?: return externalClient.stream(request)
+        val requestedUrl = request.url.toString().toHttpUrlOrNull() ?: return externalClient.stream(request)
+        val internal = connection.internalBaseUrl?.let(ConnectionAddressRouter::normalize)
+        // Manifests can contain absolute URLs for the configured LAN endpoint. Canonicalize
+        // only that known alias before applying the connection's authentication and routing.
+        val url = if (internal != null && ConnectionAddressRouter.owns(internal, requestedUrl)) {
+            ConnectionAddressRouter.remap(requestedUrl, internal, base)
+        } else {
+            requestedUrl
+        }
         if (!ConnectionAddressRouter.owns(base, url)) return externalClient.stream(request)
         return try {
             val body = when (val value = request.body) {

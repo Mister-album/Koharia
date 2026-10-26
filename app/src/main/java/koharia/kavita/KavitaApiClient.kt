@@ -244,6 +244,16 @@ class KavitaApiClient(
     }
 
     suspend fun progress(id: Long): KavitaProgress = get("Reader/get-progress?chapterId=$id")
+
+    suspend fun progressWithClock(id: Long): KavitaProgressResponse {
+        val request = Request.Builder().url(url("Reader/get-progress?chapterId=$id")).build()
+        return client.newCall(request).await().use { response ->
+            checkResponse(response)
+            val clock = kavitaClockSample(response.header("Date"), response.receivedResponseAtMillis)
+            val progress = decode<KavitaProgress>(withContext(Dispatchers.IO) { response.body.string() })
+            KavitaProgressResponse(progress, clock)
+        }
+    }
     suspend fun annotationPage(page: Int, filter: JsonElement): KavitaAnnotationPage {
         require(page > 0)
         val request = Request.Builder().url(url("Annotation/all-filtered", "PageNumber" to page, "PageSize" to 50))

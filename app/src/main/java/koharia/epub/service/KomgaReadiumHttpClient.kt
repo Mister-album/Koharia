@@ -70,7 +70,12 @@ class KomgaReadiumHttpClient(
 
     private fun createClient(sourceId: Long): HttpClient = KomgaReadiumTransport {
         (sourceManager.get(sourceId) as? KomgaSource)?.let {
-            KomgaReadiumTransport.Connection(it.baseUrl, it.client, it.currentReadiumHeaders())
+            KomgaReadiumTransport.Connection(
+                it.baseUrl,
+                it.client,
+                it.currentReadiumHeaders(),
+                internalBaseUrl = it.readiumInternalBaseUrl,
+            )
         }
     }
 }

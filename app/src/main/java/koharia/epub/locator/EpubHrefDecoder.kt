@@ -29,6 +29,12 @@ data class DecodedEpubHref(
  */
 object EpubHrefDecoder {
 
+    /** Preserve URL authority, query and escaped path separators before removing the anchor. */
+    fun resourceHref(rawHref: String): String {
+        val end = findFragmentDelimiter(rawHref)?.first ?: rawHref.length
+        return rawHref.substring(0, end)
+    }
+
     fun decode(rawHref: String): DecodedEpubHref {
         if (rawHref.isEmpty()) return DecodedEpubHref(path = "", fragment = null)
 
