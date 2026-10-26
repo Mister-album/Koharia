@@ -644,11 +644,11 @@ class LanraragiSource(
         status.value = status.value.copy(running = true, count = 0, error = null)
         try {
             stage("server-info")
-            activeApi.serverInfo(true)
+            activeApi.serverInfo(true, catalogSync = true)
             stage("database-begin")
             repository.begin(id, generation)
             stage("untagged")
-            val untagged = activeApi.untagged()
+            val untagged = activeApi.untagged(catalogSync = true)
             stage("prepare-progress")
             val progressEpoch = readingEpoch.get()
             val progressPrepared = if (koharia.connection.DevReadOnlyValidation.enabled) {
@@ -667,9 +667,14 @@ class LanraragiSource(
                 }
             }
             var count = 0
+            var databaseNanos = 0L
+            var progressNanos = 0L
             stage("archives")
             activeApi.streamArchives { entries ->
+                val databaseStarted = System.nanoTime()
                 repository.stage(id, generation, entries.map { it.copy(untagged = it.id in untagged) })
+                databaseNanos += System.nanoTime() - databaseStarted
+                val progressStarted = System.nanoTime()
                 if (progressPrepared) {
                     try {
                         applyShelfProgressEntries(activeApi, progressEpoch, entries)
@@ -681,21 +686,25 @@ class LanraragiSource(
                         logcat(LogPriority.WARN, error) { "Unable to apply LANraragi shelf progress batch" }
                     }
                 }
+                progressNanos += System.nanoTime() - progressStarted
                 count += entries.size
                 if (count == entries.size || count % 1000 == 0) {
-                    catalogDiagnostic("sync=$generation archives-staged count=$count")
+                    catalogDiagnostic(
+                        "sync=$generation archives-staged count=$count " +
+                            "databaseMs=${databaseNanos / 1_000_000} progressMs=${progressNanos / 1_000_000}",
+                    )
                 }
                 status.value = status.value.copy(count = count)
             }
             stage("tanks")
-            repository.stage(id, generation, activeApi.tanks())
+            repository.stage(id, generation, activeApi.tanks(catalogSync = true))
             stage("categories")
-            val categories = activeApi.categories().map { category ->
+            val categories = activeApi.categories(catalogSync = true).map { category ->
                 if (category.search.isBlank()) {
                     category
                 } else {
                     category.copy(
-                        members = activeApi.search(category = category.id).map {
+                        members = activeApi.search(category = category.id, catalogSync = true).map {
                             it.id
                         },
                     )

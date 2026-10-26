@@ -6,8 +6,14 @@ import koharia.connection.ConnectionAddressRouter
 import koharia.connection.NetworkDiagnostics
 import koharia.domain.lanraragi.LanraragiEntry
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.DecodeSequenceMode
@@ -22,6 +28,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import okhttp3.Call
 import okhttp3.Dispatcher
 import okhttp3.Dns
 import okhttp3.HttpUrl
@@ -81,12 +88,13 @@ class LanraragiApi(
     private val apiKey: String,
     networkClient: OkHttpClient,
     private val json: Json,
-    diagnosticConnectionId: Long? = null,
+    private val diagnosticConnectionId: Long? = null,
     private val addressRouter: ConnectionAddressRouter? = null,
 ) {
     val base: HttpUrl = normalizeBase(baseUrl)
 
     @Volatile private var closed = false
+    private val catalogCalls = mutableSetOf<Call>()
     private val clientBuilder = networkClient.newBuilder()
         .cache(null)
         .dispatcher(Dispatcher())
@@ -132,6 +140,14 @@ class LanraragiApi(
 
     val client = clientBuilder.build()
 
+    // Full catalogue import includes server work, transfer, decoding and staged DB writes.
+    // A fixed total deadline aborts healthy large imports. Bound idle reads instead, and keep
+    // the shared dispatcher. Track body consumption separately for connection cancellation.
+    internal val catalogClient = client.newBuilder()
+        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .readTimeout(3, TimeUnit.MINUTES)
+        .build()
+
     // Large pages may transfer continuously for longer than the metadata request deadline.
     // Keep inactivity timeouts and the shared dispatcher so connection reload still cancels them.
     val imageClient = client.newBuilder().callTimeout(0, TimeUnit.MILLISECONDS).build()
@@ -143,7 +159,11 @@ class LanraragiApi(
     val hasTankThumbnails: Boolean get() = info?.modern == true
 
     fun close() {
-        closed = true
+        val activeCatalogCalls = synchronized(catalogCalls) {
+            closed = true
+            catalogCalls.toList()
+        }
+        activeCatalogCalls.forEach(Call::cancel)
         client.dispatcher.cancelAll()
         readerClient.dispatcher.cancelAll()
     }
@@ -173,7 +193,10 @@ class LanraragiApi(
 
     private suspend fun execute(request: Request): Response {
         if (closed) throw CancellationException("Connection configuration changed")
-        val response = client.newCall(request).await()
+        return checkedResponse(client.newCall(request).await())
+    }
+
+    private fun checkedResponse(response: Response): Response {
         if (!response.isSuccessful) {
             val code = response.code
             response.close()
@@ -191,18 +214,70 @@ class LanraragiApi(
         return response
     }
 
-    suspend fun read(request: Request): JsonElement = execute(request).use { response ->
-        if (response.code == 204) return@use JsonObject(emptyMap())
-        json.parseToJsonElement(response.body.string()).also { value ->
+    private suspend fun <T> catalogResponse(request: Request, consume: suspend (Response) -> T): T =
+        withContext(Dispatchers.IO) {
+            coroutineScope {
+                if (closed) throw CancellationException("Connection configuration changed")
+                val call = catalogClient.newCall(request)
+                synchronized(catalogCalls) {
+                    if (closed) throw CancellationException("Connection configuration changed")
+                    catalogCalls.add(call)
+                }
+                if (BuildConfig.LANRARAGI_DIAGNOSTICS) {
+                    NetworkDiagnostics.record(
+                        "LanraragiCatalog: connectionId=$diagnosticConnectionId " +
+                            "call=${NetworkDiagnostics.callId(
+                                call,
+                            )} endpoint=${NetworkDiagnostics.endpoint(request)} " +
+                            "event=request-policy callTimeoutMs=0 readTimeoutMs=${catalogClient.readTimeoutMillis}",
+                    )
+                }
+                // await() covers cancellation only until headers arrive. Keep the socket
+                // cancellable while blocking on the response body or consuming a batch.
+                val cancellation = launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        call.cancel()
+                    }
+                }
+                try {
+                    call.await().use { response ->
+                        currentCoroutineContext().ensureActive()
+                        if (closed) throw CancellationException("Connection configuration changed")
+                        consume(checkedResponse(response)).also {
+                            currentCoroutineContext().ensureActive()
+                            if (closed) throw CancellationException("Connection configuration changed")
+                        }
+                    }
+                } catch (error: Exception) {
+                    // Closing a blocked socket surfaces as IOException. Preserve cancellation
+                    // semantics instead of reporting an intentional stop as a network failure.
+                    currentCoroutineContext().ensureActive()
+                    if (closed) throw CancellationException("Connection configuration changed", error)
+                    throw error
+                } finally {
+                    cancellation.cancel()
+                    synchronized(catalogCalls) { catalogCalls.remove(call) }
+                }
+            }
+        }
+
+    suspend fun read(request: Request, catalogSync: Boolean = false): JsonElement =
+        if (catalogSync) catalogResponse(request, ::readJson) else execute(request).use(::readJson)
+
+    private fun readJson(response: Response): JsonElement {
+        if (response.code == 204) return JsonObject(emptyMap())
+        return json.parseToJsonElement(response.body.string()).also { value ->
             if (value is JsonObject && value["success"]?.jsonPrimitive?.content in listOf("0", "false")) {
                 throw LanraragiException(LanraragiException.Reason.SERVER)
             }
         }
     }
 
-    suspend fun serverInfo(force: Boolean = false): LanraragiServerInfo {
+    suspend fun serverInfo(force: Boolean = false, catalogSync: Boolean = false): LanraragiServerInfo {
         if (!force) info?.let { return it }
-        val value = read(request("api/info")).jsonObject
+        val value = read(request("api/info"), catalogSync).jsonObject
         val version = value.text("version")
         if (versionNumbers(version) < 90070) throw LanraragiException(LanraragiException.Reason.VERSION)
         return LanraragiServerInfo(
@@ -215,12 +290,43 @@ class LanraragiApi(
 
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun streamArchives(consume: suspend (List<LanraragiEntry>) -> Unit) {
-        execute(request("api/archives")).use { response ->
-            json.decodeToSequence<LanraragiArchiveDto>(response.body.byteStream(), DecodeSequenceMode.ARRAY_WRAPPED)
-                .chunked(200).forEach { batch ->
-                    currentCoroutineContext().ensureActive()
-                    consume(batch.map(LanraragiArchiveDto::entry))
+        val started = System.nanoTime()
+        var count = 0
+        var consumeNanos = 0L
+        var bytes = 0L
+        var complete = false
+        try {
+            catalogResponse(request("api/archives")) { response ->
+                val context = currentCoroutineContext()
+                LanraragiTimedBody(response.body, { context.ensureActive() }) { size, finished ->
+                    bytes = size
+                    complete = finished
+                }.use { body ->
+                    json.decodeToSequence<LanraragiArchiveDto>(body.byteStream(), DecodeSequenceMode.ARRAY_WRAPPED)
+                        .chunked(200).forEach { batch ->
+                            context.ensureActive()
+                            if (closed) throw CancellationException("Connection configuration changed")
+                            val entries = batch.map(LanraragiArchiveDto::entry)
+                            val batchStarted = System.nanoTime()
+                            try {
+                                consume(entries)
+                            } finally {
+                                consumeNanos += System.nanoTime() - batchStarted
+                            }
+                            count += entries.size
+                        }
                 }
+            }
+        } finally {
+            if (BuildConfig.LANRARAGI_DIAGNOSTICS) {
+                val elapsed = System.nanoTime() - started
+                NetworkDiagnostics.record(
+                    "LanraragiCatalog: connectionId=$diagnosticConnectionId event=archive-body " +
+                        "entries=$count bytes=$bytes complete=$complete elapsedMs=${elapsed / 1_000_000} " +
+                        "consumeMs=${consumeNanos / 1_000_000} " +
+                        "requestDecodeMs=${(elapsed - consumeNanos) / 1_000_000}",
+                )
+            }
         }
     }
 
@@ -232,20 +338,25 @@ class LanraragiApi(
     suspend fun pages(id: String): List<String> = read(request("api/archives/$id/files")).jsonObject["pages"]
         ?.jsonArray?.map { imageUrl(it.jsonPrimitive.content) }.orEmpty()
 
-    suspend fun categories(): List<LanraragiEntry> = read(request("api/categories")).jsonArray.map { element ->
-        val value = element.jsonObject
-        LanraragiEntry(
-            id = value.text("id"),
-            kind = LanraragiEntry.Kind.CATEGORY,
-            title = value.text("name"),
-            search = value.text("search"),
-            pinned = value.bool("pinned"),
-            members = value.strings("archives"),
-        )
-    }
+    suspend fun categories(catalogSync: Boolean = false): List<LanraragiEntry> =
+        read(request("api/categories"), catalogSync).jsonArray.map { element ->
+            val value = element.jsonObject
+            LanraragiEntry(
+                id = value.text("id"),
+                kind = LanraragiEntry.Kind.CATEGORY,
+                title = value.text("name"),
+                search = value.text("search"),
+                pinned = value.bool("pinned"),
+                members = value.strings("archives"),
+            )
+        }
 
-    suspend fun search(query: String = "", category: String? = null): List<LanraragiEntry> {
-        val pageSize = serverInfo().pageSize
+    suspend fun search(
+        query: String = "",
+        category: String? = null,
+        catalogSync: Boolean = false,
+    ): List<LanraragiEntry> {
+        val pageSize = serverInfo(catalogSync = catalogSync).pageSize
         val result = linkedMapOf<String, LanraragiEntry>()
         var start = 0
         while (true) {
@@ -253,7 +364,7 @@ class LanraragiApi(
                 .addQueryParameter("filter", query).addQueryParameter("groupby_tanks", "false")
                 .addQueryParameter("sortby", "title").addQueryParameter("order", "asc")
                 .apply { category?.let { addQueryParameter("category", it) } }.build()
-            val value = read(Request.Builder().url(url).build()).jsonObject
+            val value = read(Request.Builder().url(url).build(), catalogSync).jsonObject
             val batch = value["data"]?.jsonArray.orEmpty().map {
                 json.decodeFromJsonElement(LanraragiArchiveDto.serializer(), it).entry()
             }
@@ -273,10 +384,11 @@ class LanraragiApi(
         return result.values.toList()
     }
 
-    suspend fun untagged(): Set<String> = read(request("api/archives/untagged")).jsonArray
-        .mapTo(mutableSetOf()) { it.jsonPrimitive.content }
+    suspend fun untagged(catalogSync: Boolean = false): Set<String> =
+        read(request("api/archives/untagged"), catalogSync).jsonArray
+            .mapTo(mutableSetOf()) { it.jsonPrimitive.content }
 
-    suspend fun tanks(): List<LanraragiEntry> {
+    suspend fun tanks(catalogSync: Boolean = false): List<LanraragiEntry> {
         val ids = linkedSetOf<String>()
         var page = 0
         while (true) {
@@ -285,6 +397,7 @@ class LanraragiApi(
                     url("api/tankoubons").newBuilder()
                         .addQueryParameter("page", page.toString()).build(),
                 ).build(),
+                catalogSync,
             ).jsonObject
             val batch = value["result"]?.jsonArray.orEmpty()
             if (batch.isEmpty()) break
@@ -294,11 +407,11 @@ class LanraragiApi(
             if (ids.size >= (value["total"]?.jsonPrimitive?.intOrNull ?: ids.size)) break
             page++
         }
-        return ids.map { tank(it) }
+        return ids.map { tank(it, catalogSync) }
     }
 
-    suspend fun tank(id: String): LanraragiEntry {
-        val modern = serverInfo().modern
+    suspend fun tank(id: String, catalogSync: Boolean = false): LanraragiEntry {
+        val modern = serverInfo(catalogSync = catalogSync).modern
         val members = mutableListOf<String>()
         var page = 0
         var metadata: JsonObject
@@ -306,7 +419,7 @@ class LanraragiApi(
             val url = url("api/tankoubons/$id" + if (modern) "/full" else "").newBuilder()
                 .addQueryParameter("page", page.toString())
                 .apply { if (!modern) addQueryParameter("include_full_data", "true") }.build()
-            val value = read(Request.Builder().url(url).build()).jsonObject
+            val value = read(Request.Builder().url(url).build(), catalogSync).jsonObject
             metadata = value["result"]?.jsonObject ?: throw LanraragiException(LanraragiException.Reason.UNAVAILABLE)
             val batch = metadata.strings("archives")
             members += batch
