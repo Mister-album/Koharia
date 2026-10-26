@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.VerticalPagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import koharia.reader.resampling.ResamplingKernel
@@ -118,6 +119,17 @@ private fun ColumnScope.PagerViewerSettings(
         label = stringResource(MR.strings.pref_swipe_page_turns),
         pref = screenModel.preferences.swipePageTurns,
     )
+
+    val transitionEffect by screenModel.preferences.pagerPageTransitionEffect.collectAsState()
+    SettingsChipRow(MR.strings.pref_page_transition_effect) {
+        PageTransitionEffect.entries.forEach { effect ->
+            FilterChip(
+                selected = transitionEffect == effect.value,
+                onClick = { screenModel.preferences.pagerPageTransitionEffect.set(effect.value) },
+                label = { Text(stringResource(effect.titleRes)) },
+            )
+        }
+    }
 
     val imageScaleType by screenModel.preferences.imageScaleType.collectAsState()
     SettingsChipRow(MR.strings.pref_image_scale_type) {

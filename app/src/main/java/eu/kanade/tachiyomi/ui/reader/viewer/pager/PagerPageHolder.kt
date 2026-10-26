@@ -10,12 +10,16 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.core.view.isVisible
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.SCALE_TYPE_CENTER_INSIDE
+import eu.kanade.presentation.reader.readerBufferingText
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.ui.reader.loader.EmptyReaderBufferingState
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderImagePreview
@@ -41,6 +45,7 @@ import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.decoder.ImageDecoder
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.util.collectAsState
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -206,7 +211,12 @@ class PagerPageHolder(
         if (progressIndicator == null) {
             progressIndicator = ReaderProgressIndicator(
                 context,
-                label = context.stringResource(MR.strings.reader_buffering_waiting),
+                label = {
+                    val buffering by (page.chapter.pageLoader?.bufferingState ?: EmptyReaderBufferingState)
+                        .collectAsState()
+                    val showSpeed by viewer.activity.readerPreferences.showBufferingSpeed.collectAsState()
+                    readerBufferingText(buffering, showSpeed)
+                },
             )
             addView(progressIndicator)
         }

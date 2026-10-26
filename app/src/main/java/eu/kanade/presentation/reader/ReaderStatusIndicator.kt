@@ -284,19 +284,23 @@ fun ReaderBufferingIndicator(
     if (!enabled || !buffering.isBuffering) return
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         StatusSurface(modifier = Modifier.offset(y = 40.dp)) {
-            StatusText(
-                if (buffering.bytesPerSecond > 0L) {
-                    stringResource(
-                        MR.strings.reader_buffering_speed,
-                        formatReaderTransferSpeed(buffering.bytesPerSecond),
-                    )
-                } else {
-                    stringResource(MR.strings.reader_buffering_waiting)
-                },
-            )
+            StatusText(readerBufferingText(buffering, enabled))
         }
     }
 }
+
+@Composable
+internal fun readerBufferingText(buffering: ReaderBufferingState, enabled: Boolean): String {
+    val speed = buffering.visibleSpeed(enabled)
+    return if (speed != null) {
+        stringResource(MR.strings.reader_buffering_speed, formatReaderTransferSpeed(speed))
+    } else {
+        stringResource(MR.strings.reader_buffering_waiting)
+    }
+}
+
+internal fun ReaderBufferingState.visibleSpeed(enabled: Boolean): Long? =
+    bytesPerSecond.takeIf { enabled && isBuffering && it > 0L }
 
 @Composable
 private fun StatusSurface(

@@ -11,7 +11,6 @@ import androidx.compose.runtime.getValue
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderEInkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
-import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import tachiyomi.i18n.MR
@@ -95,17 +94,6 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
             label = stringResource(MR.strings.pref_webtoon_smooth_scroll),
             pref = screenModel.preferences.webtoonSmoothScroll,
         )
-    } else {
-        val transitionEffect by screenModel.preferences.pagerPageTransitionEffect.collectAsState()
-        SettingsChipRow(MR.strings.pref_page_transition_effect) {
-            PageTransitionEffect.entries.forEach { effect ->
-                FilterChip(
-                    selected = transitionEffect == effect.value,
-                    onClick = { screenModel.preferences.pagerPageTransitionEffect.set(effect.value) },
-                    label = { Text(stringResource(effect.titleRes)) },
-                )
-            }
-        }
     }
 
     CheckboxItem(

@@ -31,7 +31,7 @@ class ReaderProgressIndicator @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
-    private val label: String? = null,
+    private val label: (@Composable () -> String)? = null,
 ) : AbstractComposeView(context, attrs, defStyleAttr) {
 
     init {
@@ -49,7 +49,7 @@ class ReaderProgressIndicator @JvmOverloads constructor(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 CombinedCircularProgressIndicator(progress = { progress })
-                label?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                label?.let { Text(it(), color = MaterialTheme.colorScheme.primary) }
             }
         }
     }

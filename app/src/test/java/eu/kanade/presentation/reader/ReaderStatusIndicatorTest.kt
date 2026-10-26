@@ -1,9 +1,25 @@
 package eu.kanade.presentation.reader
 
+import eu.kanade.tachiyomi.ui.reader.loader.ReaderBufferingState
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 class ReaderStatusIndicatorTest {
+    @Test
+    fun `loading label becomes speed only during a measured transfer`() {
+        assertNull(ReaderBufferingState().visibleSpeed(enabled = true))
+        assertNull(ReaderBufferingState(activeTransfers = 1).visibleSpeed(enabled = true))
+        assertEquals(2_048L, ReaderBufferingState(1, 2_048).visibleSpeed(enabled = true))
+        // The meter may retain its final sample after download while the page is still decoding.
+        assertNull(ReaderBufferingState(0, 2_048).visibleSpeed(enabled = true))
+    }
+
+    @Test
+    fun `disabling transfer speed keeps the loading label during download`() {
+        assertNull(ReaderBufferingState(1, 2_048).visibleSpeed(enabled = false))
+    }
+
     @Test
     fun `transfer speed chooses compact binary units`() {
         assertEquals("512 B/s", formatReaderTransferSpeed(512))

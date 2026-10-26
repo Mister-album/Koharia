@@ -9,25 +9,107 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.presentation.reader.ReaderStatusIndicator
+import eu.kanade.presentation.reader.readerBufferingText
 import eu.kanade.presentation.theme.TachiyomiTheme
+import eu.kanade.tachiyomi.ui.reader.loader.ReaderBufferingState
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderStatusPosition
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class ReaderStatusStyleDeviceTest {
+    @Test
+    fun loadingAndSpeedUseOneLabelInBothDisplayModes(): Unit = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assertEquals("app.koharia.dev.devicefixture", context.packageName)
+        fun stage(value: String) {
+            instrumentation.sendStatus(2, android.os.Bundle().apply { putString("stream", "Loading label: $value\n") })
+        }
+        stage("initializing")
+        val buffering = MutableStateFlow(ReaderBufferingState())
+        val showSpeed = mutableStateOf(true)
+        val waiting = context.stringResource(MR.strings.reader_buffering_waiting)
+        val speed = context.stringResource(MR.strings.reader_buffering_speed, "2 KB/s")
+        val eInk = Injekt.get<EInkPreferences>().enabled
+        val wasSet = eInk.isSet()
+        val previous = eInk.get()
+        stage("preferences ready")
+        fun texts(node: android.view.accessibility.AccessibilityNodeInfo?): List<String> {
+            if (node == null) return emptyList()
+            return listOfNotNull(node.text?.toString()) + (0 until node.childCount).flatMap { texts(node.getChild(it)) }
+        }
+        suspend fun expectLabel(expected: String) {
+            stage("expect $expected")
+            withTimeout(5_000) {
+                while (true) {
+                    val labels = texts(instrumentation.uiAutomation.rootInActiveWindow)
+                        .filter { it == waiting || it == speed }
+                    if (labels == listOf(expected)) break
+                    delay(100)
+                }
+            }
+        }
+        try {
+            stage("launching activity")
+            ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+                stage("activity launched")
+                scenario.onActivity { activity ->
+                    activity.setContentView(
+                        android.widget.FrameLayout(activity).apply {
+                            addView(
+                                ReaderProgressIndicator(
+                                    activity,
+                                    label = { readerBufferingText(buffering.collectAsState().value, showSpeed.value) },
+                                ),
+                            )
+                        },
+                    )
+                }
+                for (enabled in listOf(false, true)) {
+                    stage("E-Ink=$enabled")
+                    eInk.set(enabled)
+                    buffering.value = ReaderBufferingState()
+                    expectLabel(waiting)
+                    buffering.value = ReaderBufferingState(activeTransfers = 1)
+                    expectLabel(waiting)
+                    buffering.value = ReaderBufferingState(1, 2_048)
+                    expectLabel(speed)
+                    scenario.onActivity { showSpeed.value = false }
+                    expectLabel(waiting)
+                    scenario.onActivity { showSpeed.value = true }
+                    expectLabel(speed)
+                    buffering.value = ReaderBufferingState(0, 2_048)
+                    expectLabel(waiting)
+                }
+            }
+        } finally {
+            if (wasSet) eInk.set(previous) else eInk.delete()
+        }
+    }
+
     @Test
     fun statusIsVisibleButExcludedFromPageSnapshotsAndDoesNotInterceptTouches(): Unit = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

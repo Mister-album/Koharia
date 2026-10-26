@@ -556,7 +556,10 @@ class ReaderActivity : BaseActivity() {
                 )
             }
 
-            ReaderBufferingIndicator(buffering = buffering, enabled = showBufferingSpeed)
+            // Paged readers render loading/speed text together inside the page's progress indicator.
+            if (state.viewer !is PagerViewer) {
+                ReaderBufferingIndicator(buffering = buffering, enabled = showBufferingSpeed)
+            }
 
             AppBars(
                 state = state,
