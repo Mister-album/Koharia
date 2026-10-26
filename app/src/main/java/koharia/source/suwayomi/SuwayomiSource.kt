@@ -183,21 +183,7 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
         }
         val prefix get() = identity.prefix
 
-        /**
-         * Chapters whose preview failed. A source that cannot serve pages fails for every one of its
-         * chapters, so without this every scroll would re-request the same broken URLs. Scoped to the
-         * session because remote chapter ids repeat across connections and accounts.
-         */
-        val failedPreviewChapters: MutableSet<Int> = java.util.Collections.newSetFromMap(
-            java.util.concurrent.ConcurrentHashMap<Int, Boolean>(),
-        )
-
-        /**
-         * Series whose extension the server no longer has. Detected once per series instead of once
-         * per chapter, which is what kept a library full of dead sources from issuing a doomed page
-         * request for every visible grid row.
-         */
-        val unavailableSourceMangas = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+        internal val previewFailures = koharia.suwayomi.SuwayomiPreviewFailures()
 
         fun checkActive() {
             if (closed || active !== this) throw CancellationException("Suwayomi connection session changed")
@@ -338,14 +324,14 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
      * thumbnail, so the cover is fetched lazily per visible grid item through
      * [loadChapterThumbnail] rather than as a plain URL.
      *
-     * Returns null for a series whose extension the server no longer has: its pages can never be
-     * resolved, so asking for them would only produce a failed request per chapter.
+     * Temporarily suppress series whose extension is missing, without requiring a reconnect after
+     * the server's source is repaired.
      */
     override fun chapterThumbnailUrl(chapterUrl: String): String? {
         if (!hasValidConnection()) return null
         val session = session()
         val mangaId = runCatching { session.identity.chapter(chapterUrl).first }.getOrNull() ?: return null
-        if (session.unavailableSourceMangas.containsKey(mangaId)) return null
+        if (session.previewFailures.blocksSource(mangaId)) return null
         return CHAPTER_THUMBNAIL_PREFIX + chapterUrl.encodeUtf8().base64Url()
     }
 
@@ -359,8 +345,13 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
         val session = session()
         val (mangaId, chapterId) = runCatching { session.identity.chapter(decoded) }.getOrNull()
             ?: return@withIOContext null
-        if (chapterId in session.failedPreviewChapters || session.unavailableSourceMangas.containsKey(mangaId)) {
-            return@withIOContext null
+        session.api.withChapterPreview { loadChapterThumbnail(session, mangaId, chapterId) }
+    }
+
+    private suspend fun loadChapterThumbnail(session: Session, mangaId: Int, chapterId: Int): ByteArray? {
+        session.checkActive()
+        if (session.previewFailures.blocksChapter(mangaId, chapterId)) {
+            return null
         }
         // Checked before the fetch so a chapter belonging to another account is never requested.
         session.checkActive()
@@ -370,9 +361,9 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
                 if (error.isMissingSource()) {
                     // A per-series condition. Recorded atomically because the grid's in-flight
                     // requests for other chapters of this series would otherwise each repeat it.
-                    if (session.unavailableSourceMangas.putIfAbsent(mangaId, true) == null) {
+                    if (session.previewFailures.missingSource(mangaId)) {
                         logcat(LogPriority.INFO) {
-                            "Suwayomi preview: series $mangaId has no source on the server; previews disabled"
+                            "Suwayomi preview: source missing; previews temporarily paused"
                         }
                     }
                 } else {
@@ -383,7 +374,7 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
                 rememberFailedPreview(session, chapterId)
             }
             .getOrNull()
-        if (pages == null) return@withIOContext null
+        if (pages == null) return null
         val page = pages.pages.firstOrNull()
         if (page.isNullOrBlank()) {
             logcat(LogPriority.WARN) {
@@ -391,19 +382,25 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
                     "(declared pageCount=${pages.chapter.pageCount})"
             }
             rememberFailedPreview(session, chapterId)
-            return@withIOContext null
+            return null
         }
-        runCatching {
-            session.api.client.newCall(session.api.resourceRequest(page)).await().use { response ->
+        return runCatching {
+            val request = session.api.resourceRequest(page).newBuilder()
+                .tag(
+                    koharia.suwayomi.SuwayomiLoadDiagnostics.Origin::class.java,
+                    koharia.suwayomi.SuwayomiLoadDiagnostics.Origin.PREVIEW,
+                )
+                .build()
+            session.api.client.newCall(request).await().use { response ->
                 if (!response.isSuccessful) {
-                    // The server could not get the bytes from the source; retrying it is futile.
+                    // Back off on failure, but allow a later visit to recover after server repair.
                     logcat(LogPriority.WARN) {
                         "Suwayomi preview: HTTP ${response.code} for chapter $chapterId"
                     }
                     rememberFailedPreview(session, chapterId)
                     return@use null
                 }
-                response.body.bytes()
+                response.body.bytes().also { session.previewFailures.succeeded(chapterId) }
             }
         }.onFailure { error ->
             if (error is CancellationException) throw error
@@ -417,9 +414,7 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
         this is SuwayomiException && reason == SuwayomiException.Reason.SOURCE
 
     private fun rememberFailedPreview(session: Session, chapterId: Int) {
-        val failed = session.failedPreviewChapters
-        if (failed.size >= FAILED_PREVIEW_MEMORY) failed.clear()
-        failed += chapterId
+        session.previewFailures.failedChapter(chapterId)
     }
     override fun hasValidConnection() = runCatching { SuwayomiApi.normalizeBase(preferences.address) }.isSuccess
     override suspend fun isConnectionReachable() = runCatching { session().api.about() }.isSuccess
@@ -615,10 +610,17 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
             },
         )
     }
+    private fun diagnosticReaderImageRequest(page: Page): Request = imageRequest(page).newBuilder()
+        .tag(
+            koharia.suwayomi.SuwayomiLoadDiagnostics.Origin::class.java,
+            koharia.suwayomi.SuwayomiLoadDiagnostics.Origin.READER,
+        )
+        .build()
+
     override suspend fun getImage(page: Page): Response = localized {
         val session = session()
         val (_, chapterId) = session.identity.chapter(page.url)
-        var response = session.api.client.newCall(imageRequest(page)).await()
+        var response = session.api.client.newCall(diagnosticReaderImageRequest(page)).await()
         if (response.code == 404) {
             response.close()
             val fresh = session.catalog.pages(chapterId, true)
@@ -629,7 +631,7 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
             }
             val path = fresh.pages.getOrNull(page.index) ?: throw SuwayomiException(SuwayomiException.Reason.NOT_FOUND)
             page.imageUrl = session.identity.imageUrl(session.api.resourceUrl(path), fresh.version)
-            response = session.api.client.newCall(imageRequest(page)).await()
+            response = session.api.client.newCall(diagnosticReaderImageRequest(page)).await()
         }
         if (!response.isSuccessful || response.header("Content-Type").orEmpty().substringBefore(';')
                 .let { !it.startsWith("image/") && it != "application/octet-stream" }
@@ -851,6 +853,5 @@ class SuwayomiSource(private val context: Context, override val connectionProfil
     private companion object {
         /** Recognised by the cover fetcher, which routes these through [loadChapterThumbnail]. */
         const val CHAPTER_THUMBNAIL_PREFIX = "koharia-local-v1:suwayomi/"
-        const val FAILED_PREVIEW_MEMORY = 512
     }
 }

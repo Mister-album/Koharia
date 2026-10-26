@@ -6,6 +6,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -37,6 +38,28 @@ class ConnectionWriteGuardTest {
     }
     private val url = "http://127.0.0.1:${server.address.port}/"
     private val client = OkHttpClient().withConnectionWriteGuard(paused::get)
+
+    @Test
+    fun `dev content exception retains identity pause and does not make mutations replayable`() {
+        val guarded = client.newBuilder().addInterceptor(
+            ConnectionWriteGuard(validationReadOnly = true, paused = paused::get),
+        ).build()
+        val content = Request.Builder().url(url).post(ByteArray(0).toRequestBody())
+            .tag(DevReadOnlyValidation.ReaderContentRequest::class.java, DevReadOnlyValidation.ReaderContentRequest)
+            .build()
+        assertFalse(content.isConnectionReadOnly())
+        guarded.newCall(content).execute().close()
+        assertEquals(1, requests.get())
+        assertThrows(ConnectionWritesPaused::class.java) {
+            guarded.newCall(
+                content.newBuilder().tag(DevReadOnlyValidation.ReaderContentRequest::class.java, null).build(),
+            )
+                .execute().close()
+        }
+        paused.set(true)
+        assertThrows(ConnectionWritesPaused::class.java) { guarded.newCall(content).execute().close() }
+        assertEquals(1, requests.get())
+    }
 
     @AfterEach
     fun close() {

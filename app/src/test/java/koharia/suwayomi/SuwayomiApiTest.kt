@@ -4,8 +4,10 @@ package koharia.suwayomi
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import eu.kanade.tachiyomi.network.await
 import koharia.connection.ConnectionAddressRouter
 import koharia.connection.ConnectionAddressVerification
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -32,6 +34,8 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class SuwayomiApiTest {
@@ -150,6 +154,8 @@ class SuwayomiApiTest {
             return
         }
         val response = when {
+            query.contains("fetchChapterPages(") ->
+                """{"fetchChapterPages":{"pages":["/proxy/api/v1/manga/3/chapter/0/page/0"],"chapter":{"id":11,"mangaId":3,"pageCount":1}}}"""
             exchange.requestMethod == "GET" -> "{\"aboutServer\":{\"version\":\"v2.4.2366\"}}"
             query.contains("setGlobalMeta(") -> {
                 fixture.meta[variables["key"]!!.jsonPrimitive.content] = variables["value"]!!.jsonPrimitive.content
@@ -192,6 +198,40 @@ class SuwayomiApiTest {
     @AfterEach fun close() {
         clients.forEach { it.close() }
         servers.forEach { it.stop(0) }
+    }
+
+    @Test
+    fun `slow previews leave dispatcher capacity for foreground and cancelled waiters never request`() = runTest {
+        val entered = CountDownLatch(2)
+        val release = CountDownLatch(1)
+        val previewRequests = AtomicInteger()
+        val fixture = Fixture(SuwayomiAuthMode.NONE)
+        val base = server(fixture)
+        val network = OkHttpClient.Builder().addInterceptor { chain ->
+            if (chain.request().url.encodedPath.endsWith("preview")) {
+                previewRequests.incrementAndGet()
+                entered.countDown()
+                check(release.await(10, TimeUnit.SECONDS))
+            }
+            chain.proceed(chain.request())
+        }.build()
+        val api = SuwayomiApi(network, json, base, fixture.mode, "", "").also { clients += it }
+        suspend fun preview() = api.withChapterPreview {
+            api.client.newCall(Request.Builder().url(base + "preview").build()).await().use { it.body.string() }
+        }
+        val running = (1..2).map { async(Dispatchers.IO) { preview() } }
+        try {
+            assertTrue(withContext(Dispatchers.IO) { entered.await(3, TimeUnit.SECONDS) })
+            val waiting = launch(start = CoroutineStart.UNDISPATCHED) { preview() }
+            waiting.cancelAndJoin()
+            assertEquals(1, withContext(Dispatchers.IO) { withTimeout(3000) { api.categories().size } })
+            assertEquals(2, previewRequests.get())
+        } finally {
+            release.countDown()
+            running.awaitAll()
+        }
+        withContext(Dispatchers.IO) { preview() }
+        assertEquals(3, previewRequests.get())
     }
 
     @Test
@@ -411,6 +451,39 @@ class SuwayomiApiTest {
         }
         assertTrue(fixture.requests.isEmpty())
         assertEquals(0, fixture.loginCount.get())
+    }
+
+    @Test
+    fun `dev reading can fetch pages while unrelated mutations and identity pause remain blocked`() = runTest {
+        val fixture = Fixture(SuwayomiAuthMode.NONE)
+        var paused = false
+        val client = SuwayomiApi(
+            OkHttpClient.Builder().addNetworkInterceptor(
+                koharia.connection.ConnectionWriteGuard(validationReadOnly = true, paused = { paused }),
+            ).build(),
+            json,
+            server(fixture),
+            fixture.mode,
+            "",
+            "",
+        ).also { clients += it }
+        assertEquals(1, client.pages(11).pages.size)
+        var blocked = false
+        try {
+            client.updateChapter(11, 1, false)
+        } catch (error: IOException) {
+            blocked = true
+        }
+        assertTrue(blocked)
+        paused = true
+        blocked = false
+        try {
+            client.pages(11)
+        } catch (error: IOException) {
+            blocked = true
+        }
+        assertTrue(blocked)
+        assertEquals(1, fixture.requests.size)
     }
 
     @Test

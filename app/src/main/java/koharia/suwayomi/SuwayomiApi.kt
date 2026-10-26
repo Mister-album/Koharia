@@ -8,7 +8,10 @@ import koharia.connection.ConnectionAddressVerification
 import koharia.connection.connectionReadOnly
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -60,12 +63,23 @@ class SuwayomiApi(
     val base = normalizeBase(address)
     private val internal = internalAddress.takeIf(String::isNotBlank)?.let(::normalizeBase)
     private val dispatcher = Dispatcher(networkClient.dispatcher.executorService)
+    private val previewSlots = Semaphore(2)
+
+    /** Bound the entire preview (manifest and image) so it cannot fill the foreground dispatcher. */
+    internal suspend fun <T> withChapterPreview(block: suspend () -> T): T = previewSlots.withPermit {
+        if (closed) throw CancellationException("Suwayomi session is closed")
+        block()
+    }
+
     private val rawClient = networkClient.newBuilder().dispatcher(dispatcher).cache(null)
         .cookieJar(CookieJar.NO_COOKIES).dns(okhttp3.Dns.SYSTEM)
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .apply {
             interceptors().removeAll { it is okhttp3.logging.HttpLoggingInterceptor }
             networkInterceptors().removeAll { it is okhttp3.logging.HttpLoggingInterceptor }
+            if (eu.kanade.tachiyomi.BuildConfig.DEBUG) {
+                eventListenerFactory { SuwayomiNetworkTimingEventListener(it) }
+            }
         }.build()
     private class Authentication {
         var revision = 0L
@@ -104,7 +118,15 @@ class SuwayomiApi(
                 authenticatedEndpoint = endpoint
                 val request: Request
                 val revision: Long
+                val authWaitStarted = System.nanoTime()
                 synchronized(auth) {
+                    if (eu.kanade.tachiyomi.BuildConfig.DEBUG) {
+                        koharia.connection.NetworkDiagnostics.record(
+                            "SuwayomiAuth call=${koharia.connection.NetworkDiagnostics.callId(
+                                chain.call(),
+                            )} event=lock-acquired waitMs=${(System.nanoTime() - authWaitStarted) / 1_000_000} initial=${auth.revision == 0L}",
+                        )
+                    }
                     if (auth.revision == 0L) refresh(endpoint, auth)
                     revision = auth.revision
                     request = authenticated(original, auth)
@@ -113,6 +135,13 @@ class SuwayomiApi(
                 if (!unauthorized(response)) {
                     response
                 } else {
+                    if (eu.kanade.tachiyomi.BuildConfig.DEBUG) {
+                        koharia.connection.NetworkDiagnostics.record(
+                            "SuwayomiAuth call=${koharia.connection.NetworkDiagnostics.callId(
+                                chain.call(),
+                            )} event=reauth-required",
+                        )
+                    }
                     response.close()
                     synchronized(auth) {
                         if (revision == auth.revision) refresh(endpoint, auth)
@@ -238,8 +267,24 @@ class SuwayomiApi(
             }
         }.build()
 
-    private suspend fun operation(query: String, variables: JsonObject = JsonObject(emptyMap())): JsonObject =
-        client.newCall(graphqlRequest(base, query, variables)).await().use { response ->
+    private suspend fun operation(
+        query: String,
+        variables: JsonObject = JsonObject(emptyMap()),
+        readerContent: Boolean = false,
+    ): JsonObject =
+        client.newCall(
+            graphqlRequest(base, query, variables).newBuilder()
+                .tag(SuwayomiNetworkOperation::class.java, SuwayomiNetworkOperation.from(query))
+                .tag(SuwayomiLoadDiagnostics::class.java, currentCoroutineContext()[SuwayomiLoadDiagnostics])
+                .apply {
+                    if (readerContent) {
+                        tag(
+                            koharia.connection.DevReadOnlyValidation.ReaderContentRequest::class.java,
+                            koharia.connection.DevReadOnlyValidation.ReaderContentRequest,
+                        )
+                    }
+                }.build(),
+        ).await().use { response ->
             when {
                 response.code == 401 || response.code == 403 ->
                     throw SuwayomiException(SuwayomiException.Reason.AUTH, response.code)
@@ -250,8 +295,14 @@ class SuwayomiApi(
                 throw SuwayomiException(SuwayomiException.Reason.PROTOCOL)
             }
             if (root["errors"]?.jsonArray?.isNotEmpty() == true) {
-                // Source-side failures arrive as GraphQL errors; keep the server message diagnosable.
-                logcat(LogPriority.WARN) { "Suwayomi rejected an operation: ${root["errors"]}" }
+                // HTTP success can contain GraphQL failures. Never retain raw server messages/URLs.
+                koharia.connection.NetworkDiagnostics.record(
+                    "SuwayomiGraphql operation=${SuwayomiNetworkOperation.from(
+                        query,
+                    )} load=${currentCoroutineContext()[SuwayomiLoadDiagnostics]?.id ?: 0} event=rejected errors=${root["errors"]?.jsonArray?.size} auth=${unauthorizedRoot(
+                        root,
+                    )}",
+                )
                 throw SuwayomiException(
                     if (unauthorizedRoot(root)) SuwayomiException.Reason.AUTH else SuwayomiException.Reason.SERVER,
                 )
@@ -284,7 +335,7 @@ class SuwayomiApi(
 
     override suspend fun libraryPage(after: String?): SuwayomiNodes<SuwayomiManga> = decode(
         operation(
-            "query(\$after:Cursor){mangas(condition:{inLibrary:true},first:100,after:\$after,order:{by:ID}){nodes{$MANGA_FIELDS} pageInfo{hasNextPage endCursor}}}",
+            "query(\$after:Cursor){mangas(condition:{inLibrary:true},first:500,after:\$after,order:{by:ID}){nodes{$MANGA_FIELDS} pageInfo{hasNextPage endCursor}}}",
             buildJsonObject { put("after", after?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: JsonNull) },
         ),
         "mangas",
@@ -322,6 +373,9 @@ class SuwayomiApi(
         operation(
             "mutation(\$id:Int!){fetchChapterPages(input:{chapterId:\$id}){pages chapter{$CHAPTER_FIELDS} syncConflict{deviceName remotePage}}}",
             buildJsonObject { put("id", chapterId) },
+            // Unlike a replayable query, this can pull reader progress from the server's sync service.
+            // Permit only this content operation in the dev reading validation boundary.
+            readerContent = true,
         )
     } catch (error: SuwayomiException) {
         if (error.reason != SuwayomiException.Reason.SERVER) throw error

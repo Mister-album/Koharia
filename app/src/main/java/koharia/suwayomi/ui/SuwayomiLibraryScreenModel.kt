@@ -93,6 +93,7 @@ class SuwayomiLibraryScreenModel(val source: SuwayomiSource, initialQuery: Strin
     private fun load(refresh: Boolean = false) {
         if (loadJob?.isActive == true) return
         loadJob = screenModelScope.launch(Dispatchers.IO) {
+            val started = System.nanoTime()
             mutableState.update { it.copy(refreshing = refresh, error = null) }
             try {
                 val shelf = session.catalog.shelf(refresh).withVisibleCategories(visibleCategoryIds)
@@ -112,6 +113,9 @@ class SuwayomiLibraryScreenModel(val source: SuwayomiSource, initialQuery: Strin
                         error = null,
                     )
                 }
+                koharia.connection.NetworkDiagnostics.record(
+                    "SuwayomiShelf event=published entries=${shelf.mangas.size} elapsedMs=${(System.nanoTime() - started) / 1_000_000}",
+                )
                 if (refresh) {
                     ConnectionShelfUpdates.notify(source.id)
                     eu.kanade.tachiyomi.data.library.LibraryUpdateJob.request(

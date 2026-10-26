@@ -24,6 +24,7 @@ class SuwayomiCatalog(
     private val checkSession: () -> Unit,
 ) {
     private val locks = ConcurrentHashMap<String, Mutex>()
+    private val pageRevisions = ConcurrentHashMap<Int, Long>()
     private fun lock(key: String) = locks.getOrPut(key, ::Mutex)
 
     @Volatile private var shelfSnapshot: SuwayomiShelf? = null
@@ -178,14 +179,24 @@ class SuwayomiCatalog(
     }
 
     suspend fun shelf(refresh: Boolean = false): SuwayomiShelf = lock("shelf").withLock {
+        val started = System.nanoTime()
         val cached = cachedShelf()
+        koharia.connection.NetworkDiagnostics.record(
+            "SuwayomiShelf event=cache-read hit=${cached != null} refresh=$refresh elapsedMs=${(System.nanoTime() - started) / 1_000_000}",
+        )
         if (!ConnectionShelfCachePolicy.shouldRefresh(cached != null, refresh)) return@withLock checkNotNull(cached)
         val categories = api.categories()
         val mangas = linkedMapOf<Int, SuwayomiManga>()
         val cursors = hashSetOf<String>()
         var cursor: String? = null
+        var pageNumber = 0
         do {
+            val pageStarted = System.nanoTime()
             val page = api.libraryPage(cursor)
+            pageNumber++
+            koharia.connection.NetworkDiagnostics.record(
+                "SuwayomiShelf event=page-loaded page=$pageNumber entries=${page.nodes.size} hasNext=${page.pageInfo.hasNextPage} durationMs=${(System.nanoTime() - pageStarted) / 1_000_000}",
+            )
             page.nodes.forEach { entry ->
                 if (entry.id <= 0 || !entry.inLibrary) throw SuwayomiException(SuwayomiException.Reason.PROTOCOL)
                 mangas[entry.id] = entry
@@ -205,6 +216,9 @@ class SuwayomiCatalog(
         shelfSnapshot = result
         shelfInvalidated = false
         categoryInventory.accept(result.categories)
+        koharia.connection.NetworkDiagnostics.record(
+            "SuwayomiShelf event=fetched entries=${result.mangas.size} categories=${result.categories.size} elapsedMs=${(System.nanoTime() - started) / 1_000_000}",
+        )
         result
     }
 
@@ -226,35 +240,66 @@ class SuwayomiCatalog(
         }
     }
 
-    suspend fun pages(id: Int, refresh: Boolean = false): SuwayomiPages = loadPages(id, refresh, false)
+    suspend fun pages(id: Int, refresh: Boolean = false): SuwayomiPages = loadPages(
+        id,
+        refresh,
+        false,
+        if (refresh) SuwayomiLoadDiagnostics.Origin.CONTENT_REFRESH else SuwayomiLoadDiagnostics.Origin.PREVIEW,
+    )
 
     suspend fun pagesForReading(id: Int, online: Boolean, forceNetwork: Boolean): SuwayomiPages =
-        loadPages(id, refresh = forceNetwork || online, allowCachedOnTransportFailure = !forceNetwork)
+        loadPages(
+            id,
+            refresh = forceNetwork || online,
+            allowCachedOnTransportFailure = !forceNetwork,
+            origin = SuwayomiLoadDiagnostics.Origin.READER,
+            coalesceInFlight = !forceNetwork,
+        )
 
     private suspend fun loadPages(
         id: Int,
         refresh: Boolean,
         allowCachedOnTransportFailure: Boolean,
-    ): SuwayomiPages = lock("pages/$id").withLock {
-        currentCoroutineContext().ensureActive()
-        checkSession()
-        if (!refresh) cachedPages(id)?.let { return@withLock it }
-        val result = try {
-            api.pages(id)
-        } catch (error: IOException) {
-            currentCoroutineContext().ensureActive()
-            checkSession()
-            if (!allowCachedOnTransportFailure || generateSequence<Throwable>(error) { it.cause }.any {
-                    it is ConnectionAddressRouter.NonRoutingFailure || it is CancellationException
+        origin: SuwayomiLoadDiagnostics.Origin,
+        coalesceInFlight: Boolean = false,
+    ): SuwayomiPages {
+        val revision = pageRevisions[id] ?: 0L
+        return SuwayomiLoadDiagnostics.trace(origin, refresh) { trace ->
+            lock("pages/$id").withLock {
+                trace?.record("lock-acquired")
+                currentCoroutineContext().ensureActive()
+                checkSession()
+                // Reuse only a fetch completed while this caller waited, never an older online snapshot.
+                if (!refresh || (coalesceInFlight && (pageRevisions[id] ?: 0L) != revision)) {
+                    val cached = cachedPages(id)
+                    trace?.record("cache-read", "hit=${cached != null}")
+                    cached?.let { return@withLock it }
                 }
-            ) {
-                throw error
+                trace?.record("network-start")
+                val result = try {
+                    api.pages(id)
+                } catch (error: IOException) {
+                    currentCoroutineContext().ensureActive()
+                    checkSession()
+                    if (!allowCachedOnTransportFailure || generateSequence<Throwable>(error) { it.cause }.any {
+                            it is ConnectionAddressRouter.NonRoutingFailure || it is CancellationException
+                        }
+                    ) {
+                        throw error
+                    }
+                    cachedPages(id)?.let {
+                        trace?.record("transport-cache-fallback")
+                        return@withLock it
+                    }
+                    throw error
+                }
+                trace?.record("network-complete", "pages=${result.pages.size}")
+                save("pages", id.toString(), json.encodeToString(result))
+                pageRevisions[id] = (pageRevisions[id] ?: 0L) + 1
+                trace?.record("cache-saved")
+                result
             }
-            cachedPages(id)?.let { return@withLock it }
-            throw error
         }
-        save("pages", id.toString(), json.encodeToString(result))
-        result
     }
 
     private suspend fun cachedPages(id: Int): SuwayomiPages? {

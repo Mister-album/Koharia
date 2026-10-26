@@ -2,6 +2,8 @@ package koharia.suwayomi
 
 import koharia.domain.suwayomi.SuwayomiOperation
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
@@ -40,6 +42,47 @@ class SuwayomiCatalogTest {
     private val identity = SuwayomiIdentity(4, "a".repeat(64))
     private fun catalog(api: SuwayomiService, identity: SuwayomiIdentity = this.identity, check: () -> Unit = {}) =
         SuwayomiCatalog(identity, repository, api, json, check)
+
+    @Test
+    fun `reader shares a completing preview but later openings revalidate`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        var requests = 0
+        val api = object : FakeSuwayomiService() {
+            override suspend fun pages(chapterId: Int): SuwayomiPages {
+                requests++
+                release.await()
+                return super.pages(chapterId)
+            }
+        }
+        val catalog = catalog(api)
+        val preview = async(start = CoroutineStart.UNDISPATCHED) { catalog.pages(11) }
+        val reader = async(start = CoroutineStart.UNDISPATCHED) { catalog.pagesForReading(11, true, false) }
+        release.complete(Unit)
+        assertEquals(preview.await(), reader.await())
+        assertEquals(1, requests)
+        catalog.pagesForReading(11, true, false)
+        assertEquals(2, requests)
+    }
+
+    @Test
+    fun `forced manifest refresh does not share an earlier in flight preview`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        var requests = 0
+        val api = object : FakeSuwayomiService() {
+            override suspend fun pages(chapterId: Int): SuwayomiPages {
+                requests++
+                release.await()
+                val result = super.pages(chapterId)
+                return result.copy(chapter = result.chapter.copy(sourceOrder = requests))
+            }
+        }
+        val catalog = catalog(api)
+        val preview = async(start = CoroutineStart.UNDISPATCHED) { catalog.pages(11) }
+        val reader = async(start = CoroutineStart.UNDISPATCHED) { catalog.pagesForReading(11, true, true) }
+        release.complete(Unit)
+        assertNotEquals(preview.await(), reader.await())
+        assertEquals(2, requests)
+    }
 
     @Test
     fun `warm startup never requests a shelf and successful empty shelves remain cached`() = runTest {

@@ -16,21 +16,31 @@ fun Throwable.hasPausedConnectionWrites(): Boolean =
     generateSequence(this) { it.cause }.take(8).any { it is ConnectionWritesPaused }
 
 /** Reused by API clients and their derived transfer clients, including retained old source instances. */
-class ConnectionWriteGuard(private val paused: () -> Boolean) : Interceptor {
+class ConnectionWriteGuard(
+    private val validationReadOnly: Boolean = DevReadOnlyValidation.enabled,
+    private val paused: () -> Boolean,
+) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        if (!request.isConnectionReadOnly() &&
-            (DevReadOnlyValidation.enabled || paused())
-        ) {
+        if (blocks(request)) {
             throw ConnectionWritesPaused()
         }
         val response = chain.proceed(request)
-        if (!request.isConnectionReadOnly() && (DevReadOnlyValidation.enabled || paused())) {
+        if (blocks(request)) {
             response.close()
             throw ConnectionWritesPaused()
         }
         return response
     }
+
+    private fun blocks(request: Request): Boolean = !request.isConnectionReadOnly() &&
+        (
+            paused() || (
+                validationReadOnly && request.tag(
+                    DevReadOnlyValidation.ReaderContentRequest::class.java,
+                ) == null
+                )
+            )
 }
 
 internal fun Request.isConnectionReadOnly() = method in setOf("GET", "HEAD", "OPTIONS") ||
@@ -53,7 +63,7 @@ internal fun OkHttpClient.withConnectionWriteGuard(
             addInterceptor(ConnectionReadRetryInterceptor())
         }
     }
-    .addNetworkInterceptor(ConnectionWriteGuard(paused))
+    .addNetworkInterceptor(ConnectionWriteGuard(paused = paused))
     .build()
 
 fun Request.Builder.connectionReadOnly(): Request.Builder =
