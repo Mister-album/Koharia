@@ -168,7 +168,7 @@ internal fun KavitaFilterDialog(
                 HorizontalDivider()
                 CheckboxItem(stringResource(MR.strings.shelf_persistent_filters), persistentFilters) {
                     persistentFilters = !persistentFilters
-                    onPersistentFiltersChange(!persistentFilters)
+                    onPersistentFiltersChange(persistentFilters)
                 }
             }
         }
