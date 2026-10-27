@@ -98,8 +98,8 @@ android {
         applicationId = "app.koharia"
         manifestPlaceholders["kohariaAppLabel"] = "@string/app_name"
 
-        versionCode = 14
-        versionName = "0.7.0"
+        versionCode = 15
+        versionName = "0.7.5"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getLatestCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getLatestCommitSha()}\"")
