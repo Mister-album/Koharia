@@ -503,16 +503,7 @@ data class KomgaOrganizationScreen(
                                         TextButton(
                                             enabled = !state.busy && state.books.isNotEmpty(),
                                             onClick = {
-                                                openBook(
-                                                    model,
-                                                    repository.lastReading(organizationId)
-                                                        ?: state.books
-                                                            .firstOrNull {
-                                                                it.readProgress?.completed != true
-                                                            }
-                                                            ?.id
-                                                        ?: state.books.first().id,
-                                                )
+                                                openBook(model, null)
                                             },
                                         ) {
                                             Text(readTitle)
@@ -598,16 +589,18 @@ data class KomgaOrganizationScreen(
     }
 
     @Composable
-    private fun openBookAction(): (KomgaOrganizationScreenModel, String) -> Unit {
+    private fun openBookAction(): (KomgaOrganizationScreenModel, String?) -> Unit {
         val context = LocalContext.current
         return { model, id ->
             model.action {
                 val list = requireNotNull(model.state.value.organization)
                 val books = model.allBooks()
-                val book =
-                    books.firstOrNull { it.id == id }
-                        ?: books.firstOrNull { it.readProgress?.completed != true }
-                        ?: books.first()
+                val remembered = model.repository.lastReading(list.id)
+                val resume = koharia.connection.readingQueueResumeIndex(
+                    books.map { it.readProgress?.completed == true },
+                    books.indexOfFirst { it.id == remembered },
+                ) ?: return@action
+                val book = books.firstOrNull { it.id == id } ?: books[resume]
                 val resolved = model.repository.resolveBook(book)
                 val queue = model.repository.createQueue(list, books)
                 model.repository.rememberReading(list.id, book.id)

@@ -97,7 +97,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
 
                     val lastIndex = layoutManager.findLastEndVisibleItemPosition()
                     val lastItem = adapter.items.getOrNull(lastIndex)
-                    if (lastItem is ChapterTransition.Next && lastItem.to == null) {
+                    if (lastItem is ChapterTransition.Next && lastItem.to == null && !activity.readingQueue.active) {
                         activity.showMenu()
                     }
                 }
@@ -315,6 +315,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         }
         val transition = adapter.items.getOrNull(position)
         if ((forward && transition is ChapterTransition.Next) || (!forward && transition is ChapterTransition.Prev)) {
+            if (activity.requestReadingQueueTransition(forward)) return
             val chapter = (transition as ChapterTransition).to
             if (chapter != null && chapter.state !is ReaderChapter.State.Error) {
                 activity.requestTransitionChapter(chapter)

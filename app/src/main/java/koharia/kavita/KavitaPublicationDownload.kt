@@ -38,6 +38,7 @@ internal class KavitaPublicationDownload(
         try {
             runBlocking { KavitaOfflineEpub(session.api, session.catalog).write(chapterId, file, ::check) }
             check()
+            val contentLength = file.length()
             val source = object : ForwardingSource(file.source()) {
                 override fun close() {
                     try {
@@ -49,7 +50,7 @@ internal class KavitaPublicationDownload(
             }.buffer()
             val body = object : ResponseBody() {
                 override fun contentType() = "application/epub+zip".toMediaType()
-                override fun contentLength() = file.length()
+                override fun contentLength() = contentLength
                 override fun source(): BufferedSource = source
             }
             return Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")

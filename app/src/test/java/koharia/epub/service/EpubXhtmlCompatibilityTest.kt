@@ -53,12 +53,51 @@ class EpubXhtmlCompatibilityTest {
 
     @Test
     fun `valid quoted and namespaced attributes are preserved`() {
-        val source = "<html xmlns=\"http://www.w3.org/1999/xhtml\" epub:type=\"chapter\"><p>Text</p></html>"
+        val source = "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" " +
+            "epub:type=\"chapter\"><p>Text</p></html>"
 
         val result = source.normalizeEpubXhtmlForCompatibility()
 
         assertEquals(source, result.content)
         assertEquals(0, result.repairedAttributes)
+    }
+
+    @Test
+    fun `previously cached documents regain missing standard namespace bindings`() {
+        val source = """
+            <html xmlns="http://www.w3.org/1999/xhtml"><head/><body>
+            <div epub:type="chapter" id="same-anchor"><a xlink:href="#same-anchor">Text</a></div>
+            </body></html>
+        """.trimIndent()
+        val result = source.normalizeEpubXhtmlForCompatibility()
+        val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val document = factory.newDocumentBuilder().parse(result.content.byteInputStream())
+        assertEquals(2, result.repairedAttributes)
+        assertEquals(
+            "chapter",
+            document.getElementsByTagName("div").item(0).attributes
+                .getNamedItemNS("http://www.idpf.org/2007/ops", "type").nodeValue,
+        )
+        assertEquals(result.content, result.content.normalizeEpubXhtmlForCompatibility().content)
+    }
+
+    @Test
+    fun `namespace shaped quoted text comments and scripts do not trigger repairs`() {
+        val source = """
+            <html><body><p title='epub:type="example"'>Text</p>
+            <!-- <div epub:type="chapter"/> --><script>const s = '<a xlink:href="x"/>';</script>
+            </body></html>
+        """.trimIndent()
+        assertEquals(source, source.normalizeEpubXhtmlForCompatibility().content)
+    }
+
+    @Test
+    fun `explicit namespace mappings and nested overrides are preserved`() {
+        val source = """
+            <html xmlns:epub="urn:explicit"><body><div epub:type="chapter"/>
+            <div xmlns:epub="urn:nested" epub:type="note"/></body></html>
+        """.trimIndent()
+        assertEquals(source, source.normalizeEpubXhtmlForCompatibility().content)
     }
 
     @Test

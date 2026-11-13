@@ -116,6 +116,9 @@ internal fun String.normalizeEpubXhtmlForCompatibility(): EpubXhtmlCompatibility
     // inside quoted values, comments, CDATA or processing instructions.
     val normalized = StringBuilder(length)
     var repairedAttributes = 0
+    var htmlTagEnd: Int? = null
+    val rootAttributes = mutableSetOf<String>()
+    val usedPrefixes = mutableSetOf<String>()
     var cursor = 0
     while (cursor < length) {
         val tagStart = indexOf('<', cursor)
@@ -133,8 +136,17 @@ internal fun String.normalizeEpubXhtmlForCompatibility(): EpubXhtmlCompatibility
 
         val markup = substring(tagStart, tagEnd + 1)
         if (tagStart + 1 < length && this[tagStart + 1].isXmlNameStart()) {
-            val result = markup.normalizeStartTagAttributes()
+            val name = markup.startTagName()
+            val isHtmlRoot = htmlTagEnd == null && name?.substringAfter(':') == "html"
+            name?.substringBefore(':', "")?.let(usedPrefixes::add)
+            val result = markup.normalizeStartTagAttributes { attribute ->
+                usedPrefixes += attribute.substringBefore(':', "")
+                if (isHtmlRoot) rootAttributes += attribute
+            }
             normalized.append(result.content)
+            if (isHtmlRoot) {
+                htmlTagEnd = normalized.length - if (result.content.isSelfClosingStartTag()) 2 else 1
+            }
             repairedAttributes += result.repairedAttributes
 
             val rawTextElement = markup.startTagName()
@@ -156,6 +168,18 @@ internal fun String.normalizeEpubXhtmlForCompatibility(): EpubXhtmlCompatibility
             normalized.append(markup)
         }
         cursor = tagEnd + 1
+    }
+    htmlTagEnd?.let { insertion ->
+        val missing = EPUB_NAMESPACE_BINDINGS.filterKeys { it in usedPrefixes && "xmlns:$it" !in rootAttributes }
+        if (missing.isNotEmpty()) {
+            normalized.insert(
+                insertion,
+                missing.entries.joinToString("") { (prefix, uri) ->
+                    " xmlns:$prefix=\"$uri\""
+                },
+            )
+            repairedAttributes += missing.size
+        }
     }
     return EpubXhtmlCompatibilityResult(normalized.toString(), repairedAttributes)
 }
@@ -215,7 +239,7 @@ private fun String.findTagEnd(start: Int): Int {
     return -1
 }
 
-private fun String.normalizeStartTagAttributes(): EpubXhtmlCompatibilityResult {
+private fun String.normalizeStartTagAttributes(onAttribute: (String) -> Unit): EpubXhtmlCompatibilityResult {
     if (length < 3 || first() != '<' || last() != '>') {
         return EpubXhtmlCompatibilityResult(this, 0)
     }
@@ -245,7 +269,9 @@ private fun String.normalizeStartTagAttributes(): EpubXhtmlCompatibilityResult {
         val nameStart = cursor
         cursor++
         while (cursor < lastIndex && this[cursor].isXmlNamePart()) cursor++
-        normalized.append(substring(nameStart, cursor))
+        val attribute = substring(nameStart, cursor)
+        onAttribute(attribute)
+        normalized.append(attribute)
 
         val separatorStart = cursor
         while (cursor < lastIndex && this[cursor].isWhitespace()) cursor++
@@ -287,6 +313,10 @@ private fun Char.isXmlNamePart(): Boolean =
     isXmlNameStart() || this == '-' || this == '.' || isDigit()
 
 private val HTML_FILE_EXTENSIONS = setOf("htm", "html", "xht", "xhtml")
+private val EPUB_NAMESPACE_BINDINGS = mapOf(
+    "epub" to "http://www.idpf.org/2007/ops",
+    "xlink" to "http://www.w3.org/1999/xlink",
+)
 private val RAW_TEXT_ELEMENT_NAMES = setOf("script", "style")
 private val UTF_8_BOM = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
 private val UTF_16_BE_BOM = byteArrayOf(0xFE.toByte(), 0xFF.toByte())

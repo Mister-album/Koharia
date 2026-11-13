@@ -1372,6 +1372,7 @@ internal suspend fun copyRawDownloadResponse(
         throw IOException("Expected a complete raw download response, received HTTP ${response.code}")
     }
     var downloadedBytes = if (restart) 0L else resumedBytes
+    val expectedBytes = response.body.contentLength()
     val coroutineContext = currentCoroutineContext()
     response.body.byteStream().use { input ->
         if (!restart && response.code == 200 && resumedBytes > 0L) {
@@ -1388,7 +1389,6 @@ internal suspend fun copyRawDownloadResponse(
         }
         output.flush()
     }
-    val expectedBytes = response.body.contentLength()
     val expectedTotal = if (response.code == 206) resumedBytes + expectedBytes else expectedBytes
     if (expectedBytes >= 0L && downloadedBytes != expectedTotal) {
         throw IOException("Incomplete raw download: expected=$expectedTotal received=$downloadedBytes")

@@ -57,6 +57,14 @@ class EpubReadingDocumentDeviceTest {
             }
             createWebView()
             try {
+                load(
+                    """<html xmlns="http://www.w3.org/1999/xhtml"><body><div epub:type="chapter">Fixture</div></body></html>""",
+                )
+                assertEquals(
+                    "WebView XML parser errors must not be ready",
+                    "\"failed\"",
+                    evaluate(epubReadingDocumentStateScript(href)),
+                )
                 load(fallback)
                 assertEquals("\"failed\"", evaluate(epubReadingDocumentStateScript(href)))
                 assertEquals("\"pending\"", evaluate(epubReadingDocumentStateScript("$href?other=1")))

@@ -27,7 +27,7 @@ class KavitaOfflineEpubTest {
                 path.endsWith("book-info") -> """{"pages":2,"bookTitle":"中文 & test"}"""
                 path.endsWith("/chapters") -> """[{"title":"第一章","page":0,"part":"heading"}]"""
                 path.endsWith("book-page") -> """
-                    <div><style>img{background:url('$resources?apiKey=secret&amp;file=a.svg')}</style>
+                    <div epub:type="chapter"><style>img{background:url('$resources?apiKey=secret&amp;file=a.svg')}</style>
                     <h1 id="heading">中文</h1><p>text</p>
                     <img src="$resources?apiKey=secret&amp;file=a.svg">
                     <a kavita-page="1" kavita-part="heading">Next</a></div>
@@ -71,6 +71,7 @@ class KavitaOfflineEpubTest {
             assertEquals(java.util.zip.ZipEntry.STORED, entries.first().method)
             assertEquals(1, entries.count { "/assets/" in it.name })
             val factory = DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = true
                 setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
             }
             for (entry in entries.filter { it.name.endsWith(".html") || it.name.endsWith(".opf") }) {
@@ -86,6 +87,26 @@ class KavitaOfflineEpubTest {
             assertTrue(html.contains("page-1.html#heading"))
             assertTrue(html.contains("assets/"))
         }
+    }
+
+    @Test fun rewritePreservesNamespacesDeclaredOnTheOriginalRoot() {
+        val input = """
+            <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"
+                xmlns:custom="urn:fixture"><head><title>Fixture</title></head>
+                <body><div epub:type="chapter" custom:label="preserved">Fixture</div></body></html>
+        """.trimIndent()
+        val rewritten = org.jsoup.Jsoup.parse(rewriteKavitaHtml(input, api, 4))
+        val root = checkNotNull(rewritten.selectFirst("html"))
+        assertEquals("http://www.idpf.org/2007/ops", root.attr("xmlns:epub"))
+        assertEquals("urn:fixture", root.attr("xmlns:custom"))
+        rewritten.outputSettings().syntax(org.jsoup.nodes.Document.OutputSettings.Syntax.xml)
+        val parsed = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
+            .parse(rewritten.outerHtml().byteInputStream())
+        assertEquals(
+            "chapter",
+            parsed.getElementsByTagName("div").item(0).attributes
+                .getNamedItemNS("http://www.idpf.org/2007/ops", "type").nodeValue,
+        )
     }
 
     @Test fun noDownloadPermissionRejectsOfflineExport() = runTest {

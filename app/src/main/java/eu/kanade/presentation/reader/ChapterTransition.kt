@@ -50,6 +50,7 @@ fun ChapterTransition(
     transition: ChapterTransition,
     currChapterDownloaded: Boolean,
     goingToChapterDownloaded: Boolean,
+    queueDestination: String? = null,
 ) {
     val currChapter = transition.from.chapter.toDomainChapter()
     val goingToChapter = transition.to?.chapter?.toDomainChapter()
@@ -60,6 +61,7 @@ fun ChapterTransition(
                 TransitionText(
                     topLabel = stringResource(MR.strings.transition_previous),
                     topChapter = goingToChapter,
+                    topName = goingToChapter?.name ?: queueDestination,
                     topChapterDownloaded = goingToChapterDownloaded,
                     bottomLabel = stringResource(MR.strings.transition_current),
                     bottomChapter = currChapter,
@@ -75,6 +77,7 @@ fun ChapterTransition(
                     topChapterDownloaded = currChapterDownloaded,
                     bottomLabel = stringResource(MR.strings.transition_next),
                     bottomChapter = goingToChapter,
+                    bottomName = goingToChapter?.name ?: queueDestination,
                     bottomChapterDownloaded = goingToChapterDownloaded,
                     fallbackLabel = stringResource(MR.strings.transition_no_next),
                     chapterGap = calculateChapterGap(goingToChapter, currChapter),
@@ -94,17 +97,19 @@ private fun TransitionText(
     bottomChapterDownloaded: Boolean,
     fallbackLabel: String,
     chapterGap: Int,
+    topName: String? = topChapter?.name,
+    bottomName: String? = bottomChapter?.name,
 ) {
     Column(
         modifier = Modifier
             .widthIn(max = 460.dp)
             .fillMaxWidth(),
     ) {
-        if (topChapter != null) {
+        if (topName != null) {
             ChapterText(
                 header = topLabel,
-                name = topChapter.name,
-                scanlator = topChapter.scanlator,
+                name = topName,
+                scanlator = topChapter?.scanlator,
                 downloaded = topChapterDownloaded,
             )
 
@@ -116,7 +121,7 @@ private fun TransitionText(
             )
         }
 
-        if (bottomChapter != null) {
+        if (bottomName != null) {
             if (chapterGap > 0) {
                 ChapterGapWarning(
                     gapCount = chapterGap,
@@ -128,8 +133,8 @@ private fun TransitionText(
 
             ChapterText(
                 header = bottomLabel,
-                name = bottomChapter.name,
-                scanlator = bottomChapter.scanlator,
+                name = bottomName,
+                scanlator = bottomChapter?.scanlator,
                 downloaded = bottomChapterDownloaded,
             )
         } else {

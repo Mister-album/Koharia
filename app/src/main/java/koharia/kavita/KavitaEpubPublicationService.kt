@@ -287,7 +287,7 @@ class KavitaEpubPublicationService(
 
 /** Keep Kavita's body wrapper and element order so server XPath anchors remain reversible. */
 internal fun rewriteKavitaHtml(html: String, api: KavitaApiClient, chapterId: Long): String {
-    val document = Jsoup.parseBodyFragment(html)
+    val document = Jsoup.parse(html)
     val root = document.body().children().firstOrNull { it.tagName() != "style" } ?: document.body()
     document.body().addClass("reading-section")
     document.body().addClass("book-content")

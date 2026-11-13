@@ -276,7 +276,7 @@ class ReaderActivity : BaseActivity() {
     lateinit var binding: ReaderActivityBinding
 
     val viewModel by viewModels<ReaderViewModel>()
-    private val readingQueue by lazy { koharia.connection.ConnectionReadingQueueController(this) }
+    internal val readingQueue by lazy { koharia.connection.ConnectionReadingQueueController(this) }
     private var assistUrl: String? = null
 
     /**
@@ -1390,7 +1390,16 @@ class ReaderActivity : BaseActivity() {
     private fun setChapters(viewerChapters: ViewerChapters) {
         binding.readerContainer.removeView(loadingIndicator)
         try {
-            viewModel.state.value.viewer?.setChapters(viewerChapters)
+            viewModel.state.value.viewer?.setChapters(
+                if (readingQueue.active) {
+                    viewerChapters.copy(
+                        prevChapter = null,
+                        nextChapter = null,
+                    )
+                } else {
+                    viewerChapters
+                },
+            )
         } catch (error: Throwable) {
             CrashDiagnostics.recordNonFatal(this, "reader.viewer.setChapters", error)
         }
@@ -1529,6 +1538,18 @@ class ReaderActivity : BaseActivity() {
 
     fun requestTransitionChapter(chapter: ReaderChapter) {
         lifecycleScope.launchIO { viewModel.preload(chapter, allowPdfDownload = true) }
+    }
+
+    fun requestReadingQueueTransition(forward: Boolean): Boolean {
+        if (!readingQueue.active) return false
+        readingQueue.position?.let {
+            if ((if (forward) it.next else it.previous) == null) {
+                showMenu()
+                return true
+            }
+        }
+        readingQueue.navigate(forward)
+        return true
     }
 
     /**

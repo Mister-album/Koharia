@@ -154,7 +154,10 @@ class KavitaOfflineEpub(private val api: KavitaApiClient, private val catalog: K
                     }
                 }
                 document.outputSettings().syntax(Document.OutputSettings.Syntax.xml).prettyPrint(false)
-                document.selectFirst("html")?.attr("xmlns", "http://www.w3.org/1999/xhtml")
+                document.selectFirst("html")?.apply {
+                    attr("xmlns", "http://www.w3.org/1999/xhtml")
+                    if (!hasAttr("xmlns:epub")) attr("xmlns:epub", "http://www.idpf.org/2007/ops")
+                }
                 write("OEBPS/koharia-epub/page-$page.html", document.outerHtml().toByteArray())
             }
             val toc = catalog.toc(chapterId)

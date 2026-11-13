@@ -10,6 +10,8 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
 import okio.Buffer
+import okio.ForwardingSource
+import okio.buffer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -18,6 +20,30 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 
 class RawDownloadPolicyTest {
+    @Test
+    fun `length is captured before closing a disposable publication response`() = runBlocking {
+        for (policy in ConnectionRawDownloadResumePolicy.entries) {
+            var closed = false
+            val source = object : ForwardingSource(Buffer().writeUtf8("complete-publication")) {
+                override fun close() {
+                    super.close()
+                    closed = true
+                }
+            }.buffer()
+            val body = object : ResponseBody() {
+                override fun contentType() = null
+                override fun contentLength() = if (closed) 0L else 20L
+                override fun source() = source
+            }
+            val output = ByteArrayOutputStream()
+            response("").newBuilder().body(body).build().use {
+                assertEquals(20L, copyRawDownloadResponse(it, output, policy, 0) {})
+            }
+            assertEquals(true, closed)
+            assertEquals("complete-publication", output.toString())
+        }
+    }
+
     @Test
     fun `epub retry repairs a previously persisted page fallback`() {
         val source = object : TestRawAdapter() {

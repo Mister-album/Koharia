@@ -50,10 +50,13 @@ class ConnectionReadingQueueController(private val activity: ComponentActivity) 
 
     fun navigate(forward: Boolean, beforeLeaving: suspend () -> Unit = {}) {
         if (!active || busy) return
-        val target = (if (forward) position?.next else position?.previous) ?: return
         busy = true
         activity.lifecycleScope.launch {
             try {
+                val current = position ?: withContext(Dispatchers.IO) {
+                    adapter().readingQueuePosition(context, chapterUrl)
+                }.also { position = it }
+                val target = (if (forward) current.next else current.previous) ?: return@launch
                 val resolved = withContext(Dispatchers.IO) { adapter().resolveReadingQueueChapter(context, target) }
                 beforeLeaving()
                 val intent = EpubReaderLauncher().resolveIntent(activity, resolved.mangaId, resolved.chapterId)

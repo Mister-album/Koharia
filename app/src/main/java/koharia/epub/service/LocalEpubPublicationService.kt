@@ -54,6 +54,7 @@ class LocalEpubPublicationService(
 
             val asset = assetRetriever.retrieve(url, MediaType.EPUB)
                 .getOrElse { throw IllegalStateException(it.message) }
+                .withEpubPackageCompatibility()
             val openedPublication = publicationOpener.open(
                 asset,
                 allowUserInteraction = false,

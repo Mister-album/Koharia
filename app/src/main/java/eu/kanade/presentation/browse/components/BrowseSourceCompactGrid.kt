@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.itemKey
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.DownloadedCorner
 import eu.kanade.presentation.library.components.LibraryReadProgressCorner
@@ -57,14 +58,17 @@ fun BrowseSourceCompactGrid(
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
-        contentHeader?.let { header -> item(span = { GridItemSpan(maxLineSpan) }) { header() } }
+        contentHeader?.let { header -> item(key = "shelf-header", span = { GridItemSpan(maxLineSpan) }) { header() } }
         if (showPagingLoadingIndicator && mangaList.loadState.prepend is LoadState.Loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
+            item(key = "shelf-prepend", span = { GridItemSpan(maxLineSpan) }) {
                 BrowseSourceLoadingItem()
             }
         }
 
-        items(count = mangaList.itemCount) { index ->
+        items(
+            count = mangaList.itemCount,
+            key = mangaList.itemKey { "manga:${it.value.source}:${it.value.url}" },
+        ) { index ->
             val row by mangaList[index]?.collectAsState() ?: return@items
             val manga = resolveManga(row)
             BrowseSourceCompactGridItem(
@@ -85,7 +89,7 @@ fun BrowseSourceCompactGrid(
             showPagingLoadingIndicator &&
             (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading)
         ) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
+            item(key = "shelf-append", span = { GridItemSpan(maxLineSpan) }) {
                 BrowseSourceLoadingItem()
             }
         }

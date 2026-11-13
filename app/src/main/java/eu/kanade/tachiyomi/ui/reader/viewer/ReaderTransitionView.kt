@@ -15,7 +15,10 @@ import eu.kanade.presentation.reader.ChapterTransition
 import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
+import koharia.connection.ConnectionReadingQueueController
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
 
 class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
     AbstractComposeView(context, attrs) {
@@ -26,10 +29,16 @@ class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: At
         layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
     }
 
-    fun bind(transition: ChapterTransition, downloadManager: DownloadManager, manga: Manga?) {
+    fun bind(
+        transition: ChapterTransition,
+        downloadManager: DownloadManager,
+        manga: Manga?,
+        queue: ConnectionReadingQueueController,
+    ) {
         data = if (manga != null) {
             Data(
                 transition = transition,
+                queue = queue,
                 currChapterDownloaded = transition.from.pageLoader?.isLocal == true,
                 goingToChapterDownloaded = transition.to?.chapter?.let { goingToChapter ->
                     downloadManager.isChapterDownloaded(
@@ -59,6 +68,20 @@ class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: At
                         transition = it.transition,
                         currChapterDownloaded = it.currChapterDownloaded,
                         goingToChapterDownloaded = it.goingToChapterDownloaded,
+                        queueDestination = if (it.queue.active) {
+                            val position = it.queue.position
+                            val forward = it.transition is ChapterTransition.Next
+                            when {
+                                position == null -> stringResource(MR.strings.transition_pages_loading)
+                                (if (forward) position.next else position.previous) != null -> {
+                                    val index = position.index + if (forward) 2 else 0
+                                    "${position.title} · $index/${position.size}"
+                                }
+                                else -> null
+                            }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -67,6 +90,7 @@ class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: At
 
     private data class Data(
         val transition: ChapterTransition,
+        val queue: ConnectionReadingQueueController,
         val currChapterDownloaded: Boolean,
         val goingToChapterDownloaded: Boolean,
     )

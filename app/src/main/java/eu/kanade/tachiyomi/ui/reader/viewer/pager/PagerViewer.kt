@@ -479,7 +479,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                         anchor = selectionAnchor,
                     )
                 }
-                is PagerSlot.Transition -> onTransitionSelected(slot.transition)
+                is PagerSlot.Transition -> onTransitionSelected(
+                    slot.transition,
+                    cause == PageChangeCause.USER_NAVIGATION,
+                )
             }
         }
     }
@@ -564,8 +567,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Called when a [ChapterTransition] is marked as active. It request the
      * preload of the destination chapter of the transition.
      */
-    private fun onTransitionSelected(transition: ChapterTransition) {
+    private fun onTransitionSelected(transition: ChapterTransition, userNavigation: Boolean) {
         logcat { "onTransitionSelected: $transition" }
+        if (userNavigation && activity.requestReadingQueueTransition(transition is ChapterTransition.Next)) return
         val toChapter = transition.to
         if (toChapter != null) {
             logcat { "Request preload destination chapter because we're on the transition" }
